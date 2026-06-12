@@ -1,0 +1,7 @@
+agent-framework>=1.0.0
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+typing-extensions>=4.0.0
+openai>=1.0.0
+agent-framework-ollama>=1.0.0b0
+

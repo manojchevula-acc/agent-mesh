@@ -1,0 +1,38 @@
+{
+  "policies": [
+    {
+      "id": "finance_folder_access",
+      "name": "Finance Folder Access Policy",
+      "description": "Rules governing access requests to folders containing financial information.",
+      "rules": {
+        "access_level": "restricted",
+        "requires_manager_approval": true,
+        "compliance_check_required": true,
+        "max_duration_days": 90
+      },
+      "guidelines": "Access to the finance folder is strictly regulated. All requests must define the business reason, undergo compliance validation to prevent PII exposure, and obtain explicit manager sign-off via the Approval Gate. Self-granting or direct access is prohibited."
+    },
+    {
+      "id": "travel_reimbursement",
+      "name": "Travel and Expense Reimbursement Policy",
+      "description": "Rules for travel expense submission, pre-approval limits, and auditing.",
+      "rules": {
+        "pre_approval_limit_usd": 500.0,
+        "requires_manager_approval_above_limit": true,
+        "audit_check_required": true,
+        "receipt_required": true
+      },
+      "guidelines": "Reimbursements under $500 are automatically approved upon submission of valid receipts (simulated). Any reimbursement request of $500 or higher is considered a high-risk expense and requires formal manager approval through the Approval Gate."
+    },
+    {
+      "id": "general_policy",
+      "name": "General Employee Policies",
+      "description": "General office hours, remote work guidelines, and general support.",
+      "rules": {
+        "requires_manager_approval": false,
+        "compliance_check_required": false
+      },
+      "guidelines": "Standard office hours are 9:00 AM to 5:00 PM. Remote work eligibility is managed by department leads. Standard inquiries and general support requests are pre-approved and do not require additional gatekeepers."
+    }
+  ]
+}
