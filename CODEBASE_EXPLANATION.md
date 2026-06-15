@@ -1,34 +1,37 @@
 # Agent Mesh — End-to-End Codebase Explanation
 
-A complete walkthrough of the `agent-mesh` project: what it is, how it is structured, how a request flows through the system step by step, known correctness issues, and the areas of improvement required to make it production-grade.
+A complete walkthrough of the `agent-mesh` project: what it is, how it is structured as a **distributed agent-to-agent (A2A) mesh**, how a request flows through the system step by step, and the security model.
 
 ---
 
 ## 1. What this project is
 
-A **reference demo for the Microsoft Agent Framework (Python SDK)** that simulates a *Policy-Aware Employee Action Request Assistant*. A user types a request (e.g. "Can I access the finance folder?") and a **mesh of 5 specialist LLM agents** cooperate to route, check compliance, look up policy, gate on approval, execute a simulated action, and summarize — all powered by a **local Ollama LLM**, with audit logging and file-based session memory.
+A **distributed multi-agent system built on the Microsoft Agent Framework (Python SDK)**. It models a *Role-Aware Enterprise Assistant Mesh*: an employee (or leader) asks a question, and a mesh of independent agents — **each running as its own A2A server on an isolated port** — cooperate to route, guard, and answer it.
+
+Three **domain agents** (Finance, HR, Internal Job) serve different business needs, gated by **role-based access control** and **defense-in-depth guardrails**, with shared **Policy** and **Compliance** agents. Domain agents use **framework tool-calling** (`@tool`, hardcoded now / MCP-ready) and the Finance agent's payment tool uses the SDK's **native human-in-the-loop approval**.
 
 ---
 
-## 2. High-level architecture
+## 2. High-level architecture (distributed A2A mesh)
 
 ```mermaid
 graph TD
-    User([User CLI]) --> Run[run.py]
-    Run --> Coord[run_multi_agent_workflow<br/>coordinator_agent.py]
-    Coord --> C1[CoordinatorAgent: Route]
-    Coord --> C2[ComplianceAgent: PII/safety]
-    Coord --> C3[PolicyRetrievalAgent: rules]
-    Coord --> C4[ApprovalGateAgent: sign-off]
-    Coord --> C5[ActionAgent: execute]
-    Coord --> C6[CoordinatorAgent: Summarize]
-    C1 & C2 & C3 & C4 & C5 -.->|every call| MW[AuditMiddleware<br/>PII redact + JSONL log]
-    Coord <-->|load/save| Mem[(FileSessionStore<br/>conversations/*.json)]
-    C3 -.-> KB[(policies.json)]
-    MW -.-> Log[(audit_trail.jsonl)]
+    CLI([run.py CLI<br/>mock login + role]) -->|orchestrate| ORCH[Mesh Orchestrator]
+    ORCH -->|1. deterministic screen| GR[Guardrails<br/>injection/PII/destructive]
+    ORCH -->|2. A2A :8010| GW[Gateway / Router]
+    ORCH -->|3. role access control| AC{allowed?}
+    ORCH -->|4. A2A :8015| COMP[Compliance Agent]
+    AC -->|finance + leadership| FIN[Finance :8011]
+    AC -->|hr| HR[HR :8012]
+    AC -->|internal_job| JOB[Internal Job :8013]
+    FIN -->|@tool| FT[finance_tools<br/>+ approval gate]
+    HR -->|@tool| HT[hr_tools]
+    JOB -->|@tool| JT[job_tools → job_postings.json]
+    FIN & HR & JOB -.->|consult_policy A2A :8014| POL[Policy :8014]
+    GW & FIN & HR & JOB & POL & COMP -.->|AuditMiddleware| LOG[(audit_trail.jsonl)]
 ```
 
-Every agent is built the same way via `agent_factory.py` → wraps an `OllamaChatClient` + attaches `AuditMiddleware`. Only the **instructions** (system prompt) differ per agent.
+Each node is a plain `agent_framework` Agent wrapped by `A2AExecutor` and served over HTTP via Starlette + uvicorn (`src/a2a/hosting.py`). Other nodes reach it with an `A2AAgent` client (`src/a2a/clients.py`).
 
 ---
 
@@ -36,100 +39,104 @@ Every agent is built the same way via `agent_factory.py` → wraps an `OllamaCha
 
 | File | Role |
 |------|------|
-| `run.py` | CLI entry point — banner, interactive loop, calls the workflow |
-| `src/config.py` | Loads env vars (Ollama host/model, file paths), `validate()` |
-| `src/agents/agent_factory.py` | Factory `create_demo_agent()` — Ollama client + audit middleware |
-| `src/agents/coordinator_agent.py` | The **orchestrator** `run_multi_agent_workflow()` + Coordinator agent |
-| `src/agents/policy_retrieval_agent.py` | Policy Retrieval Agent (rules embedded in prompt) |
-| `src/agents/compliance_agent.py` | Compliance/PII guardrail agent |
-| `src/agents/approval_gate_agent.py` | Approval Gate agent (manager sign-off) |
-| `src/agents/action_execution_agent.py` | Action/Execution agent (simulated) |
-| `src/agents/mesh_workflow.py` | Wraps the orchestration as a `WorkflowBuilder` executor for **DevUI** |
-| `src/memory/session_store.py` | `FileSessionStore` — JSON conversation history per session |
-| `src/middleware/audit_middleware.py` | Intercepts each agent call, redacts PII, writes JSONL + latency |
+| `run.py` | CLI client — mock login, then dispatches each query through the mesh orchestrator |
+| `launch_mesh.py` | Spawns all six nodes, one isolated process/port each |
+| `a2a_server.py` | Generic A2A server entry: `--agent <node> [--port N]` |
+| `src/config.py` | Env config + the **port registry** (`AGENT_PORTS`) and `agent_url()` |
+| `src/a2a/hosting.py` | `build_agent_card()` / `serve()` — host an agent as an A2A server |
+| `src/a2a/clients.py` | `get_remote_agent()` / `ask_remote()` — call a node over A2A |
+| `src/mesh/orchestrator.py` | The pipeline: guardrails → router → access control → compliance → domain → redact |
+| `src/auth/identity_provider.py` | Mock SSO: `Role` enum, users, `login()` |
+| `src/guardrails/deterministic_filters.py` | Hard regex gates: injection / PII / destructive + `redact_pii` |
+| `src/agents/agent_factory.py` | `create_demo_agent()` — Ollama client + audit middleware + tools |
+| `src/agents/gateway_agent.py` | Router agent + deterministic `parse_domain()` |
+| `src/agents/finance_agent.py` | Finance domain agent (leadership-only) |
+| `src/agents/hr_agent.py` | HR domain agent |
+| `src/agents/internal_job_agent.py` | Internal Job domain agent |
+| `src/agents/policy_agent.py` | Shared Policy agent (loads `policies.json`) |
+| `src/agents/compliance_agent.py` | Shared Compliance agent (semantic safety review) |
+| `src/agents/node_registry.py` | Maps node name → builder + card metadata |
+| `src/tools/finance_tools.py` | `@tool` budget/summary + `issue_payment` (approval gate) |
+| `src/tools/hr_tools.py` | `@tool` leave / benefits / HR policy |
+| `src/tools/job_tools.py` | `@tool` search postings over `job_postings.json` |
+| `src/tools/governance_tools.py` | `consult_policy` — agent-initiated A2A call to the Policy node |
+| `src/middleware/audit_middleware.py` | Per-call audit logging + PII redaction |
+| `src/memory/session_store.py` | File-based session history (available for stateful extensions) |
 | `src/utils/console_logger.py` | ANSI-colored console logging |
-| `data/policies.json` | Knowledge base (finance access, travel reimbursement, general) |
-| `test_agent_mesh.py` | Offline unit tests with a `LocalMockChatClient` (no Ollama needed) |
+| `data/policies.json` | Role access + domain policies + legacy policy rules |
+| `data/job_postings.json` | Internal postings knowledge base |
+| `test_agent_mesh.py` | Offline tests (A2A mocked): guardrails, auth, routing, access, orchestrator |
 
 ---
 
 ## 4. Step-by-step execution flow
 
-When you run `python run.py`:
+**Startup:** run `python launch_mesh.py` — it spawns six processes: `policy:8014`, `compliance:8015`, `finance:8011`, `hr:8012`, `internal_job:8013`, `gateway:8010`. Each is an isolated A2A server. (Ports default to 8010–8015 to avoid Windows-reserved ports; override via `PORT_*` env vars.)
 
-1. **Startup** (`run.py`): `Config.validate()` checks Ollama host/model → prints banner → generates a `session_id` (`session_<hex>`) → enters the input loop.
-2. **User input**: `exit`/`quit` breaks, `clear` wipes the session file, otherwise calls `run_multi_agent_workflow(user_query, session_id)`.
+**Client:** run `python run.py` → mock login resolves a `User` + `Role` → enter a query. The query goes to `handle_request()` in `src/mesh/orchestrator.py`:
 
-Inside `run_multi_agent_workflow()` (`coordinator_agent.py`) — a **procedural sequential orchestration**:
+1. **Deterministic input screen** (`screen_input`): hard regex gate for prompt injection, PII, and destructive intent. A hit **blocks immediately** — no agent is ever called.
+2. **Router (A2A → `gateway:8010`)**: the Gateway LLM classifies the request; `parse_domain()` deterministically extracts `finance | hr | internal_job`.
+3. **Role-based access control**: looks up `role_access` in `policies.json`. e.g. `finance` requires `leadership` — otherwise denied here.
+4. **Compliance (A2A → `compliance:8015`)**: the Compliance agent does a semantic safety review. `COMPLIANCE_FAILED` **blocks**.
+5. **Domain agent (A2A → `:8011/8012/8013`)**: the specialist answers using its `@tool` functions. It may call `consult_policy` (a genuine A2A call to `policy:8014`). Finance's `issue_payment` triggers the framework's **native approval gate**.
+6. **Deterministic output redaction** (`redact_pii`): scrubs any PII from the answer before returning.
 
-3. **Load context**: `memory.get_context_summary(session_id)` reads prior turns; user message appended to history.
-4. **STEP 1 – Routing**: `CoordinatorAgent.run()` analyzes the query and emits a routing decision.
-5. **STEP 2 – Compliance**: `ComplianceAgent.run()` scans for PII. If the response text contains `"failed"`, the workflow **short-circuits** → coordinator synthesizes a failure summary → returns.
-6. **STEP 3 – Policy**: `PolicyRetrievalAgent.run()` returns applicable rules.
-7. **STEP 4 – Approval gate**: A Python check — `needs_approval = "requires manager approval" in policy_text or "restricted" in policy_text`. If true, `ApprovalGateAgent.run()` is called. If the result contains `"denied"`/`"rejected"`, **short-circuit** → failure summary → return. Otherwise it defaults to auto-approved.
-8. **STEP 5 – Action**: `ActionAgent.run()` simulates execution (folder provisioning / payout).
-9. **STEP 6 – Synthesis**: Coordinator gets a consolidated prompt (compliance + policy + approval + action) and produces the final user-facing summary.
-10. **Throughout**: Each `agent.run()` passes through `AuditMiddleware.process()`, which times the call, redacts emails/SSNs from inputs & outputs, and appends a JSON line to `audit_trail.jsonl`. Each step is also persisted via `memory.append_message()`.
+Every hop is logged by each node's `AuditMiddleware` to `audit_trail.jsonl`.
 
-### Control flow (the branching gates)
+### Control flow
 
 ```mermaid
 flowchart TD
-    A[Route] --> B[Compliance]
-    B -->|failed| Z[Summarize failure]
-    B -->|passed| C[Policy]
-    C --> D{needs approval?}
-    D -->|no| F[Action]
-    D -->|yes| E[Approval]
-    E -->|denied| Z
-    E -->|approved| F
-    F --> G[Synthesize summary]
+    A[Input screen] -->|block| Z[Return blocked]
+    A -->|pass| B[Router A2A]
+    B --> C{role allowed?}
+    C -->|no| Z
+    C -->|yes| D[Compliance A2A]
+    D -->|fail| Z
+    D -->|pass| E[Domain agent A2A]
+    E --> F[Redact PII]
+    F --> G[Return answer]
 ```
 
-**Two parallel ways to run it:** the CLI (`run.py`) and the **DevUI workflow** (`mesh_workflow.py`), which wraps the same `run_multi_agent_workflow` inside a `MultiAgentMeshExecutor` so it appears in the Agent Framework dashboard.
+---
 
-**Testing** (`test_agent_mesh.py`): Patches `OllamaChatClient` with a deterministic `LocalMockChatClient` that pattern-matches the system prompt + query to return canned responses, so the full mesh is testable offline.
+## 5. Security model (defense in depth)
+
+- **Layer 1 — deterministic filters** (`src/guardrails`): regex gates that run before any LLM sees the input and again on output. Cannot be talked around by prompt injection.
+- **Layer 2 — Compliance agent**: semantic LLM review for injection / leakage / harmful intent.
+- **Access control**: role-gated domains (Finance = leadership-only), enforced in Python from `policies.json`.
+- **Approval gate**: outbound payments require the framework's native human approval.
+- **Audit**: every A2A hop logged with PII redacted.
 
 ---
 
-## 5. Key design observations & correctness issues
+## 6. Microsoft Agent Framework features used
 
-A few things stand out where the **docs and code disagree**, or where logic is fragile:
-
-1. **"Human-in-the-loop" is not actually interactive.** The README and `architecture.md` claim the Approval Gate prompts the operator with `Approve this sensitive request? (yes/no)`. But `coordinator_agent.py` just calls `approval_agent.run()` — an LLM, no `input()`. The approval is simulated, not human-driven.
-2. **Control flow depends on fragile string matching.** Gating on substrings like `"failed"`, `"denied"`, `"restricted"` in free-form LLM text is brittle — a model rewording its answer can silently bypass a guardrail. This is a real **security weakness** for anything beyond a demo.
-3. **The real PII guardrail is the LLM, not deterministic code.** The `ComplianceAgent` relies on the LLM to detect PII. The regex redaction in `AuditMiddleware` only scrubs *logs* — it does not block the request. So PII enforcement is non-deterministic.
-4. **Per-call agent re-instantiation.** Every workflow invocation rebuilds all 5 agents and a new `OllamaChatClient` — fine for a demo, wasteful at scale.
-5. **Silent exception swallowing.** `FileSessionStore` and `AuditMiddleware` use bare `except: pass`. Audit-log write failures vanish — unacceptable for a compliance audit trail.
-6. **`policies.json` is loaded by no one.** Policy rules are hard-coded inside the agent's prompt string in `policy_retrieval_agent.py`; the JSON file is never actually read. The KB and the agent can drift apart.
-7. **No concurrency safety.** `FileSessionStore` does read-modify-write without locking — concurrent turns on the same session can lose data.
+1. **A2A protocol** — `A2AExecutor` (host) + `A2AAgent` (client); each agent isolated on its own port.
+2. **Tool calling** — `@tool` functions passed to agents (`tools=[...]`); MCP-ready (swap for `MCPStreamableHTTPTool` later).
+3. **Native human-in-the-loop** — `approval_mode="always_require"` on the payment tool.
+4. **Agent middleware** — `AuditMiddleware` intercepts every call.
+5. **Local LLM** — `OllamaChatClient`.
 
 ---
 
-## 6. Areas of improvement to make it production-grade
+## 7. How to run
 
-### Reliability & correctness
-- Replace substring-based gating with **structured agent outputs** (JSON / Pydantic schema: `{decision: PASS|FAIL, reason, ...}`) and branch on typed fields, not text.
-- Make compliance & policy **deterministic code paths** (regex/validators + the actual `policies.json`), using the LLM only for explanation, not for the security decision.
-- Actually load and parse `policies.json` into the Policy agent so rules are single-sourced.
+```bash
+pip install -r requirements.txt          # includes agent-framework-a2a, uvicorn, starlette
+python launch_mesh.py                     # terminal 1: starts all six nodes
+python run.py                             # terminal 2: login + chat
+python -m unittest test_agent_mesh.py     # offline tests (no servers needed)
+```
 
-### Security
-- Enforce PII blocking before any downstream processing (not just log redaction); expand detectors (phone, credit card, addresses) and consider a vetted library (e.g. Presidio).
-- Add authn/authz — today any caller can request finance access; there's no real user identity.
-- Implement genuine human-in-the-loop using the framework's interrupt/approval primitives, with a real approver identity recorded in the audit log.
-- Validate/limit input length to mitigate prompt-injection and resource abuse.
+Demo users: `alice` (leadership), `carol` (hr), `bob`/`dave` (employee).
 
-### Observability & audit integrity
-- Stop swallowing exceptions; log failures and surface audit-write errors loudly (an audit trail that can silently fail is not an audit trail).
-- Add structured logging (JSON to stdout) + the `--instrumentation` OpenTelemetry tracing already hinted in the README; add correlation/trace IDs spanning the whole workflow.
-- Make audit logging append atomic and tamper-evident (e.g. hash chaining) for compliance use.
+---
 
-### State & scalability
-- Swap `FileSessionStore` for a real store (Redis/Postgres) with transactions and locking; add history trimming/summarization so prompts don't grow unbounded.
-- Reuse agent/client instances (or pool connections) instead of rebuilding per request.
-- Add retries, timeouts, and circuit-breaking around the Ollama calls; handle model-unavailable gracefully.
+## 8. Future work
 
-### Quality & ops
-- Add typed config validation (e.g. Pydantic Settings), a real `.env.example`, and fail-fast on missing required vars.
-- Expand tests: error paths, short-circuit branches, middleware redaction, and concurrency — current tests mostly cover happy paths.
-- Add CI, linting (ruff/mypy), dependency pinning, and containerization.
+- Replace hardcoded `@tool` responses with a real **MCP server** (`MCPStreamableHTTPTool`).
+- Swap the file session store for a transactional database.
+- Add authn/identity beyond the mock provider; persist approvals with approver identity.
+- Tamper-evident audit log; OpenTelemetry tracing across the mesh.
