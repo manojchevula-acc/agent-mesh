@@ -51,27 +51,28 @@ my_end_to_end_project/
 ├── README.md
 ├── architecture.md
 ├── run.py                 # Core CLI entry point
-├── test_project.py        # Automated test suite (with self-contained offline tests)
+├── test_agent_mesh.py     # Automated test suite (with self-contained offline tests)
 ├── src/
 │   ├── __init__.py
 │   ├── config.py          # Environment configuration loader
 │   ├── agents/
 │   │   ├── __init__.py
-│   │   ├── base_demo_agent.py   # General agent wrapper (injects OllamaChatClient)
-│   │   ├── coordinator.py       # Coordinator/Router Agent
-│   │   ├── policy.py            # Policy Retrieval Agent
-│   │   ├── compliance.py        # Compliance/Guardrail Agent
-│   │   ├── approval.py          # Approval Gate Agent
-│   │   └── action.py            # Action/Execution Agent
+│   │   ├── agent_factory.py            # General agent wrapper (injects OllamaChatClient)
+│   │   ├── coordinator_agent.py        # Coordinator/Router Agent
+│   │   ├── policy_retrieval_agent.py   # Policy Retrieval Agent
+│   │   ├── compliance_agent.py         # Compliance/Guardrail Agent
+│   │   ├── approval_gate_agent.py      # Approval Gate Agent
+│   │   ├── action_execution_agent.py   # Action/Execution Agent
+│   │   └── mesh_workflow.py            # DevUI workflow wrapper for the mesh
 │   ├── middleware/
 │   │   ├── __init__.py
 │   │   └── audit_middleware.py  # Structured logging & PII redaction middleware
 │   ├── memory/
 │   │   ├── __init__.py
-│   │   └── file_store.py        # Thread-based conversation history store
+│   │   └── session_store.py     # Thread-based conversation history store
 │   └── utils/
 │       ├── __init__.py
-│       └── logger.py            # Custom ANSI colored stdout logger
+│       └── console_logger.py    # Custom ANSI colored stdout logger
 └── data/
     ├── policies.json            # Hardcoded policy knowledge base
     └── audit_trail.jsonl        # Observability output
@@ -157,19 +158,19 @@ To launch the DevUI dashboard:
 ## 10. How to Test
 Run the automated test suite using `unittest`:
 ```bash
-python -m unittest test_project.py
+python -m unittest test_agent_mesh.py
 ```
 
 ---
 
 ## 11. How Memory/Context Works
-* **Conversational Thread Continuity**: Handled by `src/memory/file_store.py`. Every query is written under a specific session file `data/conversations/{session_id}.json`.
+* **Conversational Thread Continuity**: Handled by `src/memory/session_store.py`. Every query is written under a specific session file `data/conversations/{session_id}.json`.
 * **State Passing**: The `run_multi_agent_workflow` reads context from the session file and appends execution results, ensuring that follow-up queries (e.g. "approve it") are context-aware.
 
 ---
 
 ## 12. Where Approvals Happen
-* **Approval Location**: Initiated in `src/agents/approval.py` inside the `ApprovalGateAgent`.
+* **Approval Location**: Initiated in `src/agents/approval_gate_agent.py` inside the `ApprovalGateAgent`.
 * **Human-in-the-Loop Gate**: If a request is flagged as restricted (from policy check), the client interrupts workflow processing and prompts:
   `>>> Approve this sensitive request? (yes/no): `
   If the operator type `yes`, a mock approval statement is passed downstream; otherwise, execution short-circuits.

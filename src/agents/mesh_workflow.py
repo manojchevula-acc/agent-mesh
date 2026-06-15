@@ -9,7 +9,7 @@ if project_root not in sys.path:
 
 from typing import Never
 from agent_framework import Executor, handler, WorkflowContext, WorkflowBuilder
-from src.agents.coordinator import run_multi_agent_workflow
+from src.agents.coordinator_agent import run_multi_agent_workflow
 
 class MultiAgentMeshExecutor(Executor):
     """

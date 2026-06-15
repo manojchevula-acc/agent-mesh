@@ -10,11 +10,11 @@ from unittest.mock import patch
 
 from agent_framework import Message, Content, ResponseStream, ChatResponseUpdate
 from src.config import Config
-from src.memory.file_store import FileSessionStore
-from src.agents.compliance import get_compliance_agent
-from src.agents.policy import get_policy_agent
-from src.agents.coordinator import run_multi_agent_workflow
-from src.agents.workflow import workflow
+from src.memory.session_store import FileSessionStore
+from src.agents.compliance_agent import get_compliance_agent
+from src.agents.policy_retrieval_agent import get_policy_agent
+from src.agents.coordinator_agent import run_multi_agent_workflow
+from src.agents.mesh_workflow import workflow
 
 def get_message_text(msg: Any) -> str:
     if isinstance(msg, dict):
@@ -234,8 +234,8 @@ class TestMultiAgentSystem(unittest.TestCase):
         if os.path.exists("data/audit_trail_test.jsonl"):
             os.remove("data/audit_trail_test.jsonl")
 
-        # Start patching the OllamaChatClient directly in base_demo_agent modules
-        cls.patcher = patch("src.agents.base_demo_agent.OllamaChatClient", new=LocalMockChatClient)
+        # Start patching the OllamaChatClient directly in agent_factory module
+        cls.patcher = patch("src.agents.agent_factory.OllamaChatClient", new=LocalMockChatClient)
         cls.patcher.start()
 
     @classmethod

@@ -9,14 +9,14 @@ if project_root not in sys.path:
 import os
 from typing import Dict, Any, List
 from agent_framework import Agent, Message
-from src.agents.base_demo_agent import create_demo_agent
-from src.agents.policy import get_policy_agent
-from src.agents.compliance import get_compliance_agent
-from src.agents.approval import get_approval_agent
-from src.agents.action import get_action_agent
-from src.memory.file_store import FileSessionStore
+from src.agents.agent_factory import create_demo_agent
+from src.agents.policy_retrieval_agent import get_policy_agent
+from src.agents.compliance_agent import get_compliance_agent
+from src.agents.approval_gate_agent import get_approval_agent
+from src.agents.action_execution_agent import get_action_agent
+from src.memory.session_store import FileSessionStore
 from src.config import Config
-from src.utils.logger import AgentLogger
+from src.utils.console_logger import AgentLogger
 
 COORDINATOR_INSTRUCTIONS = """
 You are the Coordinator and Router Agent.

@@ -10,9 +10,9 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from src.config import Config
-from src.utils.logger import AgentLogger
-from src.agents.coordinator import run_multi_agent_workflow
-from src.memory.file_store import FileSessionStore
+from src.utils.console_logger import AgentLogger
+from src.agents.coordinator_agent import run_multi_agent_workflow
+from src.memory.session_store import FileSessionStore
 
 async def main():
     # 1. Validate environment configuration

@@ -6,7 +6,7 @@ project_root = str(pathlib.Path(__file__).resolve().parents[2])
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from src.agents.base_demo_agent import create_demo_agent
+from src.agents.agent_factory import create_demo_agent
 from agent_framework import Agent
 
 ACTION_INSTRUCTIONS = """
