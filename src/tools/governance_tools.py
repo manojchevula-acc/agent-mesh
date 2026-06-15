@@ -19,7 +19,7 @@ async def consult_policy(question: str) -> str:
     """Asks the Policy agent node (over A2A) which rules apply. Returns its guidance."""
     try:
         return await ask_remote("policy", f"Which corporate policy rules apply to: {question}")
-    except Exception as e:  # policy node unreachable
+    except Exception as e:
         return f"POLICY_UNAVAILABLE: could not reach the Policy agent ({e})."
 
 

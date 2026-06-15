@@ -10,6 +10,17 @@ project_root = str(pathlib.Path(__file__).resolve().parent)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+# Activate the Agent Framework SDK's built-in OpenTelemetry instrumentation.
+# This auto-traces agent.run(), @tool calls, and LLM get_response() across all
+# nodes. Reads standard OTEL_EXPORTER_OTLP_* env vars; set
+# ENABLE_CONSOLE_EXPORTERS=true to print spans to stdout during development.
+# For App Insights: replace with configure_azure_monitor(connection_string=...).
+try:
+    from agent_framework.observability import configure_otel_providers
+    configure_otel_providers()
+except Exception:
+    pass
+
 from src.config import Config
 from src.utils.console_logger import AgentLogger
 from src.auth.identity_provider import login, list_users

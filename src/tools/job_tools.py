@@ -30,24 +30,20 @@ def search_job_postings(query: str) -> str:
     postings = _load_postings()
     if not postings:
         return "No internal postings are currently available."
-
     q = (query or "").strip().lower()
     if not q:
         matches = postings
     else:
         terms = [t for t in q.replace(",", " ").split() if t]
-        matches = []
-        for p in postings:
-            haystack = " ".join([
+        matches = [
+            p for p in postings
+            if any(t in " ".join([
                 p.get("title", ""), p.get("department", ""), p.get("level", ""),
                 p.get("location", ""), " ".join(p.get("skills", [])), p.get("description", ""),
-            ]).lower()
-            if any(t in haystack for t in terms):
-                matches.append(p)
-
+            ]).lower() for t in terms)
+        ]
     if not matches:
         return f"No internal postings matched '{query}'."
-
     lines = [
         f"- [{p['id']}] {p['title']} ({p['department']}, {p['level']}) - {p['location']}; "
         f"skills: {', '.join(p.get('skills', []))}"

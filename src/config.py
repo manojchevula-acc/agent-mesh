@@ -12,6 +12,7 @@ class Config:
     POLICIES_FILE: str = os.getenv("POLICIES_FILE", "data/policies.json")
     JOB_POSTINGS_FILE: str = os.getenv("JOB_POSTINGS_FILE", "data/job_postings.json")
     AUDIT_LOG_FILE: str = os.getenv("AUDIT_LOG_FILE", "data/audit_trail.jsonl")
+    TRACE_LOG_FILE: str = os.getenv("TRACE_LOG_FILE", "data/trace_log.jsonl")  # structured trace events for all mesh layers
     CONVERSATION_STORE_DIR: str = os.getenv("CONVERSATION_STORE_DIR", "data/conversations")
 
     # Mesh networking: each agent is hosted as an isolated A2A server on its own port.

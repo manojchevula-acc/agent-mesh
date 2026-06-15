@@ -7,4 +7,12 @@ agent-framework-ollama>=1.0.0b0
 agent-framework-a2a>=1.0.0b0
 uvicorn>=0.30.0
 starlette>=0.37.0
+# OpenTelemetry SDK -- required by agent_framework.observability.configure_otel_providers()
+# and for the mesh-specific spans emitted via get_tracer() in tracer.py.
+opentelemetry-api>=1.20.0
+opentelemetry-sdk>=1.20.0
+# Optional: uncomment to export to any OTLP backend (Jaeger, Grafana, etc.)
+# opentelemetry-exporter-otlp-proto-grpc>=1.20.0
+# Optional: uncomment for Azure Application Insights
+# azure-monitor-opentelemetry>=1.0.0
 
