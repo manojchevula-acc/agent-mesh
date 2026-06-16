@@ -17,4 +17,6 @@ opentelemetry-exporter-otlp-proto-grpc>=1.20.0
 opentelemetry-instrumentation-httpx>=0.40b0
 # Azure Application Insights (prod): OBS_PROFILE=prod uses configure_azure_monitor().
 azure-monitor-opentelemetry>=1.0.0
+# DevUI (dev-only): Docker-free live trace + agent visualization. Install with --pre.
+agent-framework-devui>=1.0.0b0
 

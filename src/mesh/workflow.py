@@ -99,6 +99,35 @@ class MeshState:
 # --- Executors ----------------------------------------------------------------
 
 
+class DevUIEntryExecutor(Executor):
+    """Start node for the DevUI workflow.
+
+    DevUI invokes a workflow with a plain ``str`` (the user's chat input), but the
+    mesh pipeline flows a :class:`MeshState`. This executor adapts the text into a
+    ``MeshState`` stamped with the DevUI session's identity (user/role), then hands
+    off to the normal guardrail stage. It exists only for the single-process DevUI
+    entrypoint; the distributed orchestrator seeds ``MeshState`` itself.
+    """
+
+    def __init__(self, user_name: str, role: str, id: str = "devui_entry") -> None:
+        super().__init__(id=id)
+        self._user_name = user_name
+        self._role = role
+
+    @handler
+    async def run(self, query: str, ctx: WorkflowContext[MeshState]) -> None:
+        state = MeshState(
+            user_name=self._user_name,
+            role=self._role,
+            query=query,
+            session_id=f"devui_{self._user_name}",
+        )
+        _log.info("DevUI request user=%s role=%s query_len=%d",
+                  self._user_name, self._role, len(query or ""),
+                  extra={"user": self._user_name})
+        await ctx.send_message(state)
+
+
 class InputGuardrailExecutor(Executor):
     """Deterministic input screen (hard gate, pre-routing). Workflow start node."""
 
@@ -279,6 +308,51 @@ def build_mesh_workflow(ask: AskRemote, approver: Approver):
             # Every executor that can yield a terminal output (block points + final).
             output_from=[guardrail, access, compliance, payment, redact],
         )
+        .add_edge(guardrail, router)
+        .add_edge(router, access)
+        .add_edge(access, compliance)
+        .add_edge(compliance, payment)
+        .add_edge(payment, domain)
+        .add_edge(domain, redact)
+        .build()
+    )
+
+
+def build_devui_workflow(ask: AskRemote, approver: Approver, user_name: str, role: str):
+    """Builds the mesh workflow for the DevUI single-process entrypoint.
+
+    Identical pipeline to :func:`build_mesh_workflow`, but prepended with a
+    :class:`DevUIEntryExecutor` so the graph accepts the plain ``str`` that DevUI
+    sends and stamps it with the configured ``user_name`` / ``role``. The injected
+    ``ask`` here is an in-process adapter (calls each node agent directly), which
+    keeps the entire trace tree in one process so DevUI can visualize it.
+
+    Args:
+        ask: async ``(node, prompt, **kwargs) -> str`` transport (in-process for DevUI).
+        approver: sync ``(prompt) -> bool`` for the payment HITL gate.
+        user_name: identity stamped on every DevUI request.
+        role: role used for access-control decisions in DevUI.
+
+    Returns:
+        An immutable, reusable ``Workflow`` instance whose input is ``str``.
+    """
+    entry = DevUIEntryExecutor(user_name, role, id="devui_entry")
+    guardrail = InputGuardrailExecutor(id="input_guardrail")
+    router = RouterExecutor(ask, id="router")
+    access = AccessControlExecutor(id="access_control")
+    compliance = ComplianceExecutor(ask, id="compliance")
+    payment = PaymentApprovalExecutor(approver, id="payment_gate")
+    domain = DomainExecutor(ask, id="domain")
+    redact = OutputRedactionExecutor(id="output_redaction")
+
+    return (
+        WorkflowBuilder(
+            start_executor=entry,
+            name="agent_mesh_pipeline",
+            description="DevUI entry -> guardrail -> route -> access -> compliance -> approval -> domain -> redact",
+            output_from=[guardrail, access, compliance, payment, redact],
+        )
+        .add_edge(entry, guardrail)
         .add_edge(guardrail, router)
         .add_edge(router, access)
         .add_edge(access, compliance)

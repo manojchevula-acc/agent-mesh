@@ -44,6 +44,22 @@ class Config:
     # spans cover the same ground (avoids duplicate telemetry).
     ENABLE_TRACE_JSONL: bool = os.getenv("ENABLE_TRACE_JSONL", "false").lower() in ("1", "true", "yes")
 
+    # ----------------------------------------------------------------------
+    # DevUI (Microsoft Agent Framework dev tool) — Docker-free live trace viewer
+    # ----------------------------------------------------------------------
+    # ``devui_app.py`` runs the whole mesh in ONE process so DevUI can capture the
+    # full in-process trace tree (workflow -> executors -> agents -> tools). DevUI
+    # is a development-only sample app; do not expose it as a production surface.
+    DEVUI_HOST: str = os.getenv("DEVUI_HOST", "127.0.0.1")
+    DEVUI_PORT: int = int(os.getenv("DEVUI_PORT", "8090"))
+    # Identity stamped on DevUI requests. Default role is leadership so the finance
+    # domain isn't access-blocked, letting you exercise every node from the UI.
+    DEVUI_USER: str = os.getenv("DEVUI_USER", "devui")
+    DEVUI_ROLE: str = os.getenv("DEVUI_ROLE", "leadership")
+    DEVUI_AUTO_OPEN: bool = os.getenv("DEVUI_AUTO_OPEN", "true").lower() in ("1", "true", "yes")
+    # No-auth is only honoured on loopback hosts by DevUI itself.
+    DEVUI_NO_AUTH: bool = os.getenv("DEVUI_NO_AUTH", "true").lower() in ("1", "true", "yes")
+
     # Mesh networking: each agent is hosted as an isolated A2A server on its own port.
     A2A_HOST: str = os.getenv("A2A_HOST", "127.0.0.1")
 
