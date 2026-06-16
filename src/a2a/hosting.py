@@ -16,6 +16,8 @@ from typing import List
 
 import uvicorn
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_jsonrpc_routes, create_agent_card_routes
 from a2a.server.tasks import InMemoryTaskStore
@@ -23,6 +25,40 @@ from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from agent_framework.a2a import A2AExecutor
 
 from src.config import Config
+
+
+class TraceContextMiddleware(BaseHTTPMiddleware):
+    """Continues the caller's distributed trace on inbound A2A requests.
+
+    Extracts W3C ``traceparent`` / ``tracestate`` (injected by the A2A client in
+    ``src/a2a/clients.py``) from the request headers and attaches the resulting
+    OpenTelemetry context for the duration of the request. This makes every span
+    the node emits (``invoke_agent``, ``chat``, ``execute_tool``) a child of the
+    orchestrator's span, yielding one coherent end-to-end distributed trace.
+
+    Safe no-op when OpenTelemetry is not installed/configured.
+    """
+
+    async def dispatch(self, request, call_next):
+        token = None
+        ctx = None
+        try:
+            from opentelemetry import context as otel_context
+            from opentelemetry.propagate import extract
+
+            ctx = extract(dict(request.headers))
+            token = otel_context.attach(ctx)
+        except Exception:
+            token = None
+        try:
+            return await call_next(request)
+        finally:
+            if token is not None:
+                try:
+                    from opentelemetry import context as otel_context
+                    otel_context.detach(token)
+                except Exception:
+                    pass
 
 
 def build_agent_card(
@@ -48,13 +84,18 @@ def build_agent_card(
 
 
 def build_starlette_app(agent, card: AgentCard) -> Starlette:
-    """Wraps an agent_framework Agent into a Starlette A2A application."""
+    """Wraps an agent_framework Agent into a Starlette A2A application.
+
+    Installs ``TraceContextMiddleware`` so inbound A2A calls continue the
+    caller's distributed trace.
+    """
     request_handler = DefaultRequestHandler(
         agent_executor=A2AExecutor(agent),
         task_store=InMemoryTaskStore(),
         agent_card=card,
     )
     return Starlette(
+        middleware=[Middleware(TraceContextMiddleware)],
         routes=[
             *create_agent_card_routes(card),
             *create_jsonrpc_routes(request_handler, "/"),

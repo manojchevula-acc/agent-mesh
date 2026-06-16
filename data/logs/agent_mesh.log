@@ -1,0 +1,22 @@
+2026-06-16 15:29:55,928 | INFO     | mesh.system      | trace=- span=- parent=- | Logging configured (service=agent_mesh, level=INFO, file=data/logs/agent_mesh.log, json=False)
+2026-06-16 15:30:03,806 | INFO     | mesh.system      | trace=- span=- parent=- | Logging configured (service=agent_mesh, level=INFO, file=data/logs/agent_mesh.log, json=False)
+2026-06-16 15:30:03,829 | INFO     | mesh.system      | trace=- span=- parent=- | Logging configured (service=agent_mesh, level=INFO, file=data/logs/agent_mesh.log, json=False)
+2026-06-16 15:30:05,585 | INFO     | mesh.system      | trace=- span=- parent=- | Logging configured (service=agent_mesh, level=INFO, file=data/logs/agent_mesh.log, json=False)
+2026-06-16 15:30:12,025 | INFO     | mesh.system      | trace=- span=- parent=- | Logging configured (service=agent_mesh, level=INFO, file=data/logs/agent_mesh.log, json=False)
+2026-06-16 15:30:14,860 | INFO     | mesh.system      | trace=- span=- parent=- | Logging configured (service=agent_mesh, level=INFO, file=data/logs/agent_mesh.log, json=False)
+2026-06-16 15:30:16,143 | INFO     | mesh.system      | trace=- span=- parent=- | Logging configured (service=agent_mesh, level=INFO, file=data/logs/agent_mesh.log, json=False)
+2026-06-16 15:30:39,376 | INFO     | mesh.system      | trace=- span=- parent=- | Observability profile=dev: OTLP endpoint=http://localhost:4317, console=False, sensitive=False
+2026-06-16 15:30:39,499 | INFO     | mesh.system      | trace=- span=- parent=- | Observability profile=dev: OTLP endpoint=http://localhost:4317, console=False, sensitive=False
+2026-06-16 15:30:39,602 | INFO     | mesh.system      | trace=- span=- parent=- | httpx instrumentation enabled (A2A trace propagation active).
+2026-06-16 15:30:39,612 | INFO     | mesh.system      | trace=- span=- parent=- | httpx instrumentation enabled (A2A trace propagation active).
+2026-06-16 15:30:44,489 | INFO     | mesh.system      | trace=- span=- parent=- | Observability profile=dev: OTLP endpoint=http://localhost:4317, console=False, sensitive=False
+2026-06-16 15:30:44,585 | INFO     | mesh.system      | trace=- span=- parent=- | httpx instrumentation enabled (A2A trace propagation active).
+2026-06-16 15:30:49,145 | INFO     | mesh.system      | trace=- span=- parent=- | Observability profile=dev: OTLP endpoint=http://localhost:4317, console=False, sensitive=False
+2026-06-16 15:30:49,244 | INFO     | mesh.system      | trace=- span=- parent=- | httpx instrumentation enabled (A2A trace propagation active).
+2026-06-16 15:30:49,503 | INFO     | mesh.system      | trace=- span=- parent=- | Observability profile=dev: OTLP endpoint=http://localhost:4317, console=False, sensitive=False
+2026-06-16 15:30:49,593 | INFO     | mesh.system      | trace=- span=- parent=- | httpx instrumentation enabled (A2A trace propagation active).
+2026-06-16 15:30:49,632 | INFO     | mesh.system      | trace=- span=- parent=- | Observability profile=dev: OTLP endpoint=http://localhost:4317, console=False, sensitive=False
+2026-06-16 15:30:49,728 | INFO     | mesh.system      | trace=- span=- parent=- | httpx instrumentation enabled (A2A trace propagation active).
+2026-06-16 15:31:19,236 | INFO     | mesh.system      | trace=- span=- parent=- | Logging configured (service=agent_mesh_cli, level=INFO, file=data/logs/agent_mesh.log, json=False)
+2026-06-16 15:31:19,852 | INFO     | mesh.system      | trace=- span=- parent=- | Observability profile=dev: OTLP endpoint=http://localhost:4317, console=False, sensitive=False
+2026-06-16 15:31:19,981 | INFO     | mesh.system      | trace=- span=- parent=- | httpx instrumentation enabled (A2A trace propagation active).

@@ -10,16 +10,13 @@ project_root = str(pathlib.Path(__file__).resolve().parent)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-# Activate the Agent Framework SDK's built-in OpenTelemetry instrumentation.
-# This auto-traces agent.run(), @tool calls, and LLM get_response() across all
-# nodes. Reads standard OTEL_EXPORTER_OTLP_* env vars; set
-# ENABLE_CONSOLE_EXPORTERS=true to print spans to stdout during development.
-# For App Insights: replace with configure_azure_monitor(connection_string=...).
-try:
-    from agent_framework.observability import configure_otel_providers
-    configure_otel_providers()
-except Exception:
-    pass
+# Activate the Agent Framework SDK's built-in OpenTelemetry instrumentation +
+# centralized logging via the single mesh setup point. This auto-traces
+# agent.run(), @tool calls, LLM get_response(), and workflow execution across the
+# orchestrator. Exporter wiring is driven by OBS_PROFILE (dev=OTLP/console,
+# prod=Azure Monitor). See src/observability/setup.py and .env.example.
+from src.observability import setup_observability
+setup_observability(service_name="agent_mesh_cli")
 
 from src.config import Config
 from src.utils.console_logger import AgentLogger
@@ -71,6 +68,14 @@ async def main():
     AgentLogger.print_system_info(
         "Tip: start the mesh first in another terminal with 'python launch_mesh.py'."
     )
+
+    # Surface an unhealthy LLM backend up front: otherwise answers will look like
+    # the request is being echoed back (agents fall back to the input on failure).
+    ok, msg = Config.check_ollama()
+    if not ok:
+        AgentLogger.print_error(msg)
+    else:
+        AgentLogger.print_system_info(msg)
 
     while True:
         try:

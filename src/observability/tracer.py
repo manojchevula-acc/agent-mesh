@@ -1,30 +1,23 @@
 # -*- coding: utf-8 -*-
-"""Observability - mesh-specific tracing using the Microsoft Agent Framework SDK.
+"""Legacy mesh event helpers — OPTIONAL JSONL debug sink (off by default).
 
-The Agent Framework SDK's built-in observability (agent_framework.observability)
-auto-instruments the following WITHOUT any code changes:
-  - agent.run() calls         -> AgentTelemetryLayer (span + tokens + model)
-  - @tool function executions -> get_function_span() (span per tool call)
-  - LLM get_response() calls  -> ChatTelemetryLayer  (span per LLM call)
-  - MCP tool calls            -> create_mcp_client_span()
+As of the Workflow migration, end-to-end telemetry is owned by Microsoft Agent
+Framework-native instrumentation, so this module is no longer the source of
+truth and is DISABLED by default (``Config.ENABLE_TRACE_JSONL=false``):
 
-To activate, call configure_otel_providers() at startup (run.py / a2a_server.py).
-For App Insights: configure_azure_monitor(connection_string=...) from
-  azure-monitor-opentelemetry (replaces configure_otel_providers).
+  - Orchestration flow  -> Workflow spans: ``workflow.run`` / ``executor.process``
+                           / ``edge_group.process`` (src/mesh/workflow.py)
+  - Agent invocations   -> ``invoke_agent`` (AgentTelemetryLayer)
+  - LLM calls           -> ``chat`` (ChatTelemetryLayer)
+  - @tool / MCP calls   -> ``execute_tool`` / MCP client spans
+  - A2A hops            -> propagated W3C trace context (src/a2a/clients.py),
+                           continued server-side (src/a2a/hosting.py)
+  - Logs                -> centralized, trace-correlated (src/observability/logging_config.py)
 
-This module handles ONLY mesh-specific events the SDK does NOT cover:
-  SYSTEM_FLOW  - orchestrator pipeline steps (start, routing, complete, blocked)
-  A2A_CALL     - outbound HTTP hops between agent nodes
-  ACCESS_CTRL  - RBAC gate decisions
-  COMPLIANCE   - compliance agent verdicts
-  GUARDRAIL    - deterministic input/output filter results
-  PAYMENT_GATE - human-in-the-loop approval gate
-
-Each event is:
-  1. Emitted as an OTel span via the SDK's get_tracer() so it appears in the
-     distributed trace tree alongside the SDK's agent/tool spans.
-  2. Written to data/trace_log.jsonl for local debugging.
-  3. Routed through _send_to_app_insights() -- no-op until App Insights is wired.
+To avoid DUPLICATE telemetry, this module no longer emits OpenTelemetry spans.
+When ``ENABLE_TRACE_JSONL=true`` it writes structured events to
+``data/trace_log.jsonl`` only — purely for offline inspection. Prefer the OTel
+backend (Aspire/Jaeger/App Insights) for real observability.
 """
 from __future__ import annotations
 
@@ -155,12 +148,16 @@ def _write_local(event: dict) -> None:
 
 
 def emit(event: TraceEvent) -> None:
+    """Writes the event to the optional JSONL debug sink.
+
+    No-op unless ``Config.ENABLE_TRACE_JSONL`` is set. Deliberately does NOT emit
+    an OpenTelemetry span: the Workflow/Agent layers already own the trace tree,
+    so emitting here would duplicate telemetry.
+    """
+    if not Config.ENABLE_TRACE_JSONL:
+        return
     d = asdict(event)
     _write_local(d)
-    _send_to_app_insights(d)
-    _otel_span(event.name, {**event.attributes, "trace_id": event.trace_id or "",
-                             "status": event.status, "duration_ms": event.duration_ms or 0},
-               event.status, event.error)
 
 
 # -- Typed emitters � mesh-specific layers only --------------------------------

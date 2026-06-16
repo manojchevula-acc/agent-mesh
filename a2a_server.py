@@ -18,16 +18,16 @@ project_root = str(pathlib.Path(__file__).resolve().parent)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-# Activate the Agent Framework SDK's built-in OpenTelemetry instrumentation
-# for this agent node process. Reads OTEL_EXPORTER_OTLP_* env vars.
-# For App Insights: replace with configure_azure_monitor(connection_string=...).
-try:
-    from agent_framework.observability import configure_otel_providers
-    configure_otel_providers()
-except Exception:
-    pass
+import sys
+import argparse
+import pathlib
+
+project_root = str(pathlib.Path(__file__).resolve().parent)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 from src.config import Config
+from src.observability import setup_observability
 from src.agents.node_registry import build_node, NODE_NAMES
 from src.a2a.hosting import build_agent_card, serve
 
@@ -38,7 +38,22 @@ def main():
     parser.add_argument("--port", type=int, default=None, help="Override the port (defaults to registry).")
     args = parser.parse_args()
 
+    # Activate framework-native OpenTelemetry + centralized logging for THIS node
+    # process, with a per-node service name so each node is a distinct service in
+    # the distributed trace tree. Exporter wiring is driven by OBS_PROFILE.
+    setup_observability(service_name=f"agent_mesh_{args.agent}")
+
     Config.validate()
+
+    # # Fail fast if the LLM backend is unavailable: without it every agent.run
+    # # falls back to echoing the prompt, which is confusing to debug at runtime.
+    ok, msg = Config.check_ollama()
+    if not ok:
+        import logging
+        logging.getLogger("mesh.system").error("Node '%s' startup blocked: %s", args.agent, msg)
+        print(f"[mesh] ERROR: {msg}")
+        sys.exit(1)
+    print(f"[mesh] {msg}")
 
     port = args.port or Config.AGENT_PORTS[args.agent]
     agent, public_name, description = build_node(args.agent)

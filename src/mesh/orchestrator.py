@@ -1,23 +1,26 @@
 """Mesh client orchestrator.
 
-Drives a single user request across the distributed agent mesh, talking to each
-node over A2A. Enforces defense-in-depth guardrails and role-based access:
+Drives a single user request across the distributed agent mesh using a
+Microsoft Agent Framework **Workflow** (see ``src/mesh/workflow.py``). The
+workflow graph enforces defense-in-depth guardrails and role-based access:
 
   1. Deterministic input screen  (hard gate: injection / PII / destructive)
   2. Router node (A2A)           -> domain classification
   3. Role-based access control   (e.g. finance = leadership only)
   4. Compliance node (A2A)       -> semantic safety review (hard gate)
-  5. Domain node (A2A)           -> the actual answer (may consult Policy node)
-  6. Deterministic output redaction (PII)
+  5. Payment approval gate       -> human-in-the-loop for outbound payments
+  6. Domain node (A2A)           -> the actual answer
+  7. Deterministic output redaction (PII)
 
-Every hop is a real agent-to-agent call to an isolated port, and is recorded by
-each node's AuditMiddleware.
+Each stage is a workflow executor, so the framework emits native ``workflow.run``
+/ ``executor.process`` spans and auto-propagates trace context between hops. A
+root ``mesh.request`` span ties the whole request together; the A2A client
+carries the context across process boundaries so every node joins one trace.
+
+The public surface (``handle_request`` + ``MeshResult``) and the ``ask_remote``
+seam are preserved for the offline test suite.
 """
 import sys
-import json
-import re
-import time
-import uuid
 import pathlib
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional
@@ -27,15 +30,14 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from src.config import Config
-from src.auth.identity_provider import User, Role
-from src.agents.gateway_agent import parse_domain
-from src.guardrails.deterministic_filters import screen_input, redact_pii
+from src.auth.identity_provider import User
+from src.guardrails.deterministic_filters import screen_input, redact_pii  # re-exported for tests/back-compat
 from src.a2a.clients import ask_remote
 from src.utils.console_logger import AgentLogger
-from src.observability import tracer
+from src.observability import get_logger, CAT_SYSTEM
+from src.mesh.workflow import MeshState, build_mesh_workflow
 
-# Requests that imply moving money -> require a deterministic human approval gate.
-_PAYMENT_RE = re.compile(r"\b(pay|payment|payout|remit|transfer|wire|disburse)\b", re.IGNORECASE)
+_log = get_logger(CAT_SYSTEM)
 
 
 def _cli_approver(prompt: str) -> bool:
@@ -47,17 +49,6 @@ def _cli_approver(prompt: str) -> bool:
         return False
 
 
-def _load_role_access() -> dict:
-    try:
-        with open(Config.POLICIES_FILE, "r", encoding="utf-8") as f:
-            return json.load(f).get("role_access", {})
-    except Exception:
-        return {}
-
-
-_ROLE_ACCESS = _load_role_access()
-
-
 @dataclass
 class MeshResult:
     answer: str
@@ -67,112 +58,95 @@ class MeshResult:
     trail: List[str] = field(default_factory=list)
 
 
-def _allowed(domain: str, role: Role) -> tuple[bool, str]:
-    rule = _ROLE_ACCESS.get(domain)
-    if not rule:
-        return True, ""
-    allowed_roles = rule.get("allowed_roles", [])
-    if role.value in allowed_roles:
-        return True, ""
-    return False, rule.get("denial_message", f"Access denied: {domain} is restricted.")
-
-
 async def handle_request(user: User, query: str, approver: Callable[[str], bool] = _cli_approver) -> MeshResult:
-    """Runs one request through the full mesh pipeline."""
-    trail: List[str] = []
-    trace_id = uuid.uuid4().hex  # correlates all trace events for this single request
+    """Runs one request through the full mesh workflow.
 
-    tracer.trace_flow_step("request_start", "SUCCESS", 0,
-        {"username": user.username, "role": user.role.value, "query_length": len(query)},
-        trace_id=trace_id)
+    Opens a root ``mesh.request`` span so every downstream executor / agent / A2A
+    span nests under one coherent distributed trace, then maps the workflow's
+    terminal :class:`MeshState` to a :class:`MeshResult`.
+    """
+    session_id = f"sess_{user.username}"
+    AgentLogger.print_agent_header("Mesh", "Dispatching request through the workflow graph")
 
-    # 1. Deterministic input guardrail (hard gate, pre-routing)
-    AgentLogger.print_agent_header("Guardrails", "Deterministic input screen (injection/PII/destructive)")
-    t0 = time.perf_counter()
-    screen = screen_input(query)
-    tracer.trace_guardrail(query, screen.allowed, screen.categories,
-        int((time.perf_counter() - t0) * 1000), trace_id=trace_id)
-    if not screen.allowed:
-        AgentLogger.print_agent_response("Guardrails", f"BLOCKED: {screen.reason}")
-        trail.append(f"guardrail_block:{','.join(screen.categories)}")
-        tracer.trace_flow_step("request_blocked", "BLOCK", 0,
-            {"stage": "input_guardrail", "reason": screen.reason[:120]}, trace_id=trace_id)
-        return MeshResult(
-            answer=f"Request blocked by security guardrails ({', '.join(screen.categories)}).",
-            blocked=True, block_stage="input_guardrail", trail=trail,
-        )
-    AgentLogger.print_agent_response("Guardrails", "PASSED")
-    trail.append("guardrail_pass")
+    initial = MeshState(
+        user_name=user.username,
+        role=user.role.value,
+        query=query,
+        session_id=session_id,
+    )
 
-    # 2. Router node (A2A)
-    AgentLogger.print_agent_header("GatewayAgent", "Routing via A2A (:%d)" % Config.AGENT_PORTS["gateway"])
-    t0 = time.perf_counter()
-    router_text = await ask_remote("gateway", query, trace_id=trace_id)
-    domain = parse_domain(router_text)
-    tracer.trace_flow_step("routing", "SUCCESS", int((time.perf_counter() - t0) * 1000),
-        {"domain": domain, "router_raw": router_text[:60]}, trace_id=trace_id)
-    AgentLogger.print_agent_response("GatewayAgent", f"domain = {domain}")
-    trail.append(f"route:{domain}")
+    # Build the workflow fresh per request, passing the (possibly patched at test
+    # time) module-level ``ask_remote`` so the A2A seam is honoured.
+    workflow = build_mesh_workflow(ask=ask_remote, approver=approver)
 
-    # 3. Role-based access control
-    ok, denial = _allowed(domain, user.role)
-    tracer.trace_access_control(domain, user.role.value, ok, denial or "OK", trace_id=trace_id)
-    if not ok:
-        AgentLogger.print_agent_header("AccessControl", f"DENY {user.role.value} -> {domain}")
-        AgentLogger.print_agent_response("AccessControl", denial)
-        trail.append(f"access_denied:{domain}")
-        tracer.trace_flow_step("request_blocked", "BLOCK", 0,
-            {"stage": "access_control", "domain": domain, "role": user.role.value}, trace_id=trace_id)
-        return MeshResult(answer=denial, domain=domain, blocked=True, block_stage="access_control", trail=trail)
-    trail.append(f"access_ok:{domain}")
+    # Root the whole request in a single span (framework-native tracer). All
+    # workflow/executor/agent/A2A spans become children of this one.
+    span_cm = _root_span(user, query, session_id)
+    with span_cm:
+        _log.info("Request start user=%s role=%s query_len=%d",
+                  user.username, user.role.value, len(query),
+                  extra={"user": user.username, "session_id": session_id})
+        events = await workflow.run(initial)
 
-    # 4. Compliance node (A2A) — semantic safety review (hard gate)
-    AgentLogger.print_agent_header("ComplianceAgent", "Semantic safety review via A2A (:%d)" % Config.AGENT_PORTS["compliance"])
-    t0 = time.perf_counter()
-    compliance_text = await ask_remote("compliance", f"Review this request for safety: '{query}'", trace_id=trace_id)
-    tracer.trace_compliance(query, compliance_text, int((time.perf_counter() - t0) * 1000), trace_id=trace_id)
-    AgentLogger.print_agent_response("ComplianceAgent", compliance_text)
-    if "compliance_failed" in compliance_text.lower():
-        trail.append("compliance_failed")
-        tracer.trace_flow_step("request_blocked", "BLOCK", 0,
-            {"stage": "compliance", "verdict": compliance_text[:120]}, trace_id=trace_id)
-        return MeshResult(
-            answer="Request blocked by the Compliance agent (semantic safety review).",
-            domain=domain, blocked=True, block_stage="compliance", trail=trail,
-        )
-    trail.append("compliance_pass")
+    final = _final_state(events)
+    if final is None:
+        _log.error("Workflow produced no output", extra={"user": user.username})
+        return MeshResult(answer="Internal error: no workflow output.", blocked=True,
+                          block_stage="internal_error", trail=["no_output"])
 
-    # 4b. Deterministic payment approval gate (human-in-the-loop; works over A2A)
-    if domain == "finance" and _PAYMENT_RE.search(query):
-        AgentLogger.print_agent_header("ApprovalGate", "Outbound payment requires human approval")
-        approved = approver("Approve this outbound finance payment?")
-        tracer.trace_payment_gate(approved, trace_id=trace_id)
-        if not approved:
-            AgentLogger.print_agent_response("ApprovalGate", "DENIED by operator")
-            trail.append("payment_denied")
-            tracer.trace_flow_step("request_blocked", "BLOCK", 0,
-                {"stage": "approval"}, trace_id=trace_id)
-            return MeshResult(
-                answer="Payment was not approved by the operator.",
-                domain=domain, blocked=True, block_stage="approval", trail=trail,
-            )
-        AgentLogger.print_agent_response("ApprovalGate", "APPROVED by operator")
-        trail.append("payment_approved")
+    if final.blocked:
+        AgentLogger.print_agent_response("Mesh", f"[{final.block_stage}] {final.answer}")
+    else:
+        AgentLogger.print_agent_response(final.domain or "Mesh", final.answer)
 
-    # 5. Domain node (A2A) — the actual answer
-    AgentLogger.print_agent_header(domain, "Handling request via A2A (:%d)" % Config.AGENT_PORTS[domain])
-    t0 = time.perf_counter()
-    answer = await ask_remote(domain, query, trace_id=trace_id)
-    tracer.trace_flow_step("domain_answer", "SUCCESS", int((time.perf_counter() - t0) * 1000),
-        {"domain": domain}, trace_id=trace_id)
-    trail.append(f"domain_answer:{domain}")
+    return MeshResult(
+        answer=final.answer,
+        domain=final.domain,
+        blocked=final.blocked,
+        block_stage=final.block_stage,
+        trail=final.trail,
+    )
 
-    # 6. Deterministic output redaction
-    safe_answer = redact_pii(answer)
-    AgentLogger.print_agent_response(domain, safe_answer)
-    trail.append("output_redacted")
 
-    tracer.trace_flow_step("request_complete", "SUCCESS", 0,
-        {"domain": domain, "answer_length": len(safe_answer),
-         "trail": " -> ".join(trail)}, trace_id=trace_id)
-    return MeshResult(answer=safe_answer, domain=domain, trail=trail)
+def _root_span(user: User, query: str, session_id: str):
+    """Returns a context manager for the root ``mesh.request`` span.
+
+    Falls back to a no-op context manager if OpenTelemetry is unavailable.
+    """
+    try:
+        from agent_framework.observability import get_tracer
+        from opentelemetry.trace import SpanKind
+
+        cm = get_tracer().start_as_current_span("mesh.request", kind=SpanKind.CLIENT)
+
+        class _Wrapped:
+            def __enter__(self):
+                self._span = cm.__enter__()
+                try:
+                    self._span.set_attribute("mesh.user", user.username)
+                    self._span.set_attribute("mesh.role", user.role.value)
+                    self._span.set_attribute("session.id", session_id)
+                    self._span.set_attribute("mesh.query_length", len(query))
+                except Exception:
+                    pass
+                return self._span
+
+            def __exit__(self, *exc):
+                return cm.__exit__(*exc)
+
+        return _Wrapped()
+    except Exception:
+        import contextlib
+        return contextlib.nullcontext()
+
+
+def _final_state(events) -> Optional[MeshState]:
+    """Extracts the terminal MeshState from workflow run events."""
+    try:
+        outputs = events.get_outputs()
+        for out in reversed(outputs):
+            if isinstance(out, MeshState):
+                return out
+    except Exception:
+        pass
+    return None

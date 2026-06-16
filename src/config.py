@@ -15,6 +15,35 @@ class Config:
     TRACE_LOG_FILE: str = os.getenv("TRACE_LOG_FILE", "data/trace_log.jsonl")  # structured trace events for all mesh layers
     CONVERSATION_STORE_DIR: str = os.getenv("CONVERSATION_STORE_DIR", "data/conversations")
 
+    # ----------------------------------------------------------------------
+    # Observability (Microsoft Agent Framework-native OpenTelemetry + logging)
+    # ----------------------------------------------------------------------
+    # OBS_PROFILE selects the exporter wiring:
+    #   "dev"  -> console + OTLP (Aspire/Jaeger at OTEL_EXPORTER_OTLP_ENDPOINT)
+    #   "prod" -> Azure Monitor / Application Insights (requires connection string)
+    #   "off"  -> file logging only, no OTel providers
+    OBS_PROFILE: str = os.getenv("OBS_PROFILE", "dev")
+
+    # Agent Framework reads these standard env vars in configure_otel_providers().
+    # We surface them here so a single .env drives both the SDK and our logging.
+    ENABLE_INSTRUMENTATION: bool = os.getenv("ENABLE_INSTRUMENTATION", "true").lower() in ("1", "true", "yes")
+    ENABLE_SENSITIVE_DATA: bool = os.getenv("ENABLE_SENSITIVE_DATA", "false").lower() in ("1", "true", "yes")
+    ENABLE_CONSOLE_EXPORTERS: bool = os.getenv("ENABLE_CONSOLE_EXPORTERS", "false").lower() in ("1", "true", "yes")
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+    OTEL_SERVICE_NAME: str = os.getenv("OTEL_SERVICE_NAME", "agent_mesh")
+    APPLICATIONINSIGHTS_CONNECTION_STRING: str = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING", "")
+
+    # Centralized application logging (durable, rotating, trace-correlated).
+    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
+    LOG_FILE: str = os.getenv("LOG_FILE", "data/logs/agent_mesh.log")
+    LOG_JSON: bool = os.getenv("LOG_JSON", "false").lower() in ("1", "true", "yes")
+    LOG_MAX_BYTES: int = int(os.getenv("LOG_MAX_BYTES", str(10 * 1024 * 1024)))  # 10 MB
+    LOG_BACKUP_COUNT: int = int(os.getenv("LOG_BACKUP_COUNT", "5"))
+
+    # Keep the legacy JSONL trace sink? Off by default now that workflow/agent
+    # spans cover the same ground (avoids duplicate telemetry).
+    ENABLE_TRACE_JSONL: bool = os.getenv("ENABLE_TRACE_JSONL", "false").lower() in ("1", "true", "yes")
+
     # Mesh networking: each agent is hosted as an isolated A2A server on its own port.
     A2A_HOST: str = os.getenv("A2A_HOST", "127.0.0.1")
 
@@ -43,3 +72,41 @@ class Config:
             raise ValueError("Invalid Configuration: OLLAMA_HOST is required.")
         if not cls.OLLAMA_MODEL:
             raise ValueError("Invalid Configuration: OLLAMA_MODEL is required.")
+
+    @classmethod
+    def check_ollama(cls, timeout: float = 3.0) -> tuple[bool, str]:
+        """Fast health check for the Ollama backend.
+
+        Returns ``(ok, message)``. ``ok`` is False if Ollama is unreachable or the
+        configured model is not pulled — either of which makes every mesh agent
+        silently fall back to echoing the request (no real LLM answer). Callers
+        should surface ``message`` clearly so the failure is obvious at startup
+        instead of showing up as an "echo" at query time.
+        """
+        import json as _json
+        import urllib.request as _urlreq
+        import urllib.error as _urlerr
+
+        url = cls.OLLAMA_HOST.rstrip("/") + "/api/tags"
+        try:
+            with _urlreq.urlopen(url, timeout=timeout) as resp:
+                data = _json.loads(resp.read().decode("utf-8", errors="replace"))
+        except (_urlerr.URLError, OSError) as e:
+            return False, (
+                f"Ollama is not reachable at {cls.OLLAMA_HOST} ({e}). "
+                f"Start it (e.g. 'ollama serve') and pull the model "
+                f"('ollama pull {cls.OLLAMA_MODEL}'). Without it, agents cannot "
+                f"answer and requests will appear to echo the prompt."
+            )
+        except Exception as e:  # malformed response, etc.
+            return False, f"Ollama health check failed at {cls.OLLAMA_HOST} ({e})."
+
+        models = [m.get("name", "") for m in data.get("models", [])]
+        base = cls.OLLAMA_MODEL.split(":")[0]
+        if not any(name == cls.OLLAMA_MODEL or name.split(":")[0] == base for name in models):
+            available = ", ".join(models) or "<none>"
+            return False, (
+                f"Ollama is running but model '{cls.OLLAMA_MODEL}' is not pulled. "
+                f"Run 'ollama pull {cls.OLLAMA_MODEL}'. Available: {available}."
+            )
+        return True, f"Ollama OK at {cls.OLLAMA_HOST} (model '{cls.OLLAMA_MODEL}')."
