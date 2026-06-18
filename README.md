@@ -1,4 +1,4 @@
-# Role-Aware Enterprise Assistant — Distributed A2A Agent Mesh
+#### Distributed A2A Agent Mesh
 ### Microsoft Agent Framework Python SDK Reference Demo
 
 A reference demonstration of a **distributed agent-to-agent (A2A) mesh** built on the **Microsoft Agent Framework Python SDK**. Each agent runs as its own A2A server on an isolated port and communicates with the others over the A2A protocol. Domain agents use framework tool-calling (MCP-ready) and a native human-in-the-loop approval gate.
