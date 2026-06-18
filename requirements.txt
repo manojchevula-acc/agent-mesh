@@ -4,4 +4,19 @@ pydantic>=2.0.0
 typing-extensions>=4.0.0
 openai>=1.0.0
 agent-framework-ollama>=1.0.0b0
+agent-framework-a2a>=1.0.0b0
+uvicorn>=0.30.0
+starlette>=0.37.0
+# OpenTelemetry SDK -- required by agent_framework.observability.configure_otel_providers()
+# and for the mesh-specific spans emitted via get_tracer() in tracer.py.
+opentelemetry-api>=1.20.0
+opentelemetry-sdk>=1.20.0
+# OTLP exporter (dev): export traces/metrics/logs to Aspire Dashboard, Jaeger, Grafana, etc.
+opentelemetry-exporter-otlp-proto-grpc>=1.20.0
+# httpx instrumentation: propagates W3C trace context across A2A hops (traceparent).
+opentelemetry-instrumentation-httpx>=0.40b0
+# Azure Application Insights (prod): OBS_PROFILE=prod uses configure_azure_monitor().
+azure-monitor-opentelemetry>=1.0.0
+# DevUI (dev-only): Docker-free live trace + agent visualization. Install with --pre.
+agent-framework-devui>=1.0.0b0
 
