@@ -53,6 +53,7 @@ def _cli_approver(prompt: str) -> bool:
 class MeshResult:
     answer: str
     domain: Optional[str] = None
+    domains: List[str] = field(default_factory=list)
     blocked: bool = False
     block_stage: Optional[str] = None
     trail: List[str] = field(default_factory=list)
@@ -97,11 +98,13 @@ async def handle_request(user: User, query: str, approver: Callable[[str], bool]
     if final.blocked:
         AgentLogger.print_agent_response("Mesh", f"[{final.block_stage}] {final.answer}")
     else:
-        AgentLogger.print_agent_response(final.domain or "Mesh", final.answer)
+        domain_label = ", ".join(final.domains) if final.domains else (final.domain or "Mesh")
+        AgentLogger.print_agent_response(domain_label, final.answer)
 
     return MeshResult(
         answer=final.answer,
         domain=final.domain,
+        domains=final.domains,
         blocked=final.blocked,
         block_stage=final.block_stage,
         trail=final.trail,

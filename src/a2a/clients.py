@@ -18,6 +18,8 @@ import sys
 import time
 import pathlib
 
+import httpx
+
 # Ensure project root is in sys.path
 project_root = str(pathlib.Path(__file__).resolve().parents[2])
 if project_root not in sys.path:
@@ -42,6 +44,7 @@ def get_remote_agent(name: str) -> A2AAgent:
         name=name,
         url=Config.agent_url(name),
         supported_protocol_bindings=["JSONRPC"],
+        timeout=httpx.Timeout(connect=10.0, read=Config.A2A_TIMEOUT, write=10.0, pool=5.0),
     )
 
 

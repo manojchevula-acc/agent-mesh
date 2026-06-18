@@ -75,6 +75,10 @@ class Config:
         "compliance": int(os.getenv("PORT_COMPLIANCE", "8015")),
     }
 
+    # Timeout (seconds) for A2A calls. LLM responses can be slow under parallel load;
+    # 180 s covers 3 sequential Ollama completions (~30-60 s each) with headroom.
+    A2A_TIMEOUT: float = float(os.getenv("A2A_TIMEOUT", "180.0"))
+
     @classmethod
     def agent_url(cls, name: str) -> str:
         """Returns the base A2A URL for a named agent node."""

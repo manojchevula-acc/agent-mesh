@@ -9,7 +9,7 @@ framework emits native observability spans for the whole orchestration:
       └─ executor.process access_control
       └─ executor.process compliance      ──(A2A)──► invoke_agent ComplianceAgent
       └─ executor.process payment_gate     (human-in-the-loop, finance payments)
-      └─ executor.process domain           ──(A2A)──► invoke_agent <DomainAgent>
+      └─ executor.process domain           ──(A2A, parallel)──► invoke_agent <DomainAgent(s)>
       └─ executor.process output_redaction
 
 Each hop is an ``executor.process`` span; ``WorkflowContext.send_message``
@@ -23,11 +23,16 @@ Design notes
   forwards (``ctx.send_message``) to proceed or yields (``ctx.yield_output``) to
   terminate early (blocked). This keeps the graph linear and type-safe while
   preserving the exact defense-in-depth stage order.
+- Multi-domain queries: the Gateway can return more than one domain. The
+  ``AccessControlExecutor`` filters to only the domains the user's role permits.
+  ``DomainExecutor`` fans out to all allowed domains in parallel (asyncio.gather)
+  and merges the answers into a single response.
 - A2A-calling executors use an injected ``ask`` callable so the offline test
   suite can patch the transport at the ``orchestrator.ask_remote`` seam.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import sys
@@ -45,7 +50,7 @@ from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
 
 from src.config import Config
 from src.guardrails.deterministic_filters import screen_input, redact_pii
-from src.agents.gateway_agent import parse_domain
+from src.agents.gateway_agent import parse_domains
 from src.observability import get_logger, CAT_WORKFLOW, CAT_APPROVALS
 
 _log = get_logger(CAT_WORKFLOW)
@@ -87,6 +92,9 @@ class MeshState:
     role: str
     query: str
     session_id: str = "default_session"
+    # domains: all domains resolved by the gateway (may be more than one for multi-topic queries).
+    # domain:  primary domain (first in domains); kept for single-domain compat and logging.
+    domains: List[str] = field(default_factory=list)
     domain: Optional[str] = None
     router_raw: str = ""
     compliance_verdict: str = ""
@@ -161,9 +169,10 @@ class RouterExecutor(Executor):
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState]) -> None:
         router_text = await self._ask("gateway", state.query)
         state.router_raw = router_text
-        state.domain = parse_domain(router_text)
-        state.trail.append(f"route:{state.domain}")
-        _log.info("Routed to domain=%s", state.domain,
+        state.domains = parse_domains(router_text)
+        state.domain = state.domains[0]
+        state.trail.append(f"route:{','.join(state.domains)}")
+        _log.info("Routed to domains=%s", state.domains,
                   extra={"domain": state.domain, "user": state.user_name})
         await ctx.send_message(state)
 
@@ -173,19 +182,38 @@ class AccessControlExecutor(Executor):
 
     @handler
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
-        ok, denial = _allowed(state.domain or "", state.role)
-        if not ok:
+        allowed, denied = [], []
+        for d in state.domains:
+            ok, msg = _allowed(d, state.role)
+            if ok:
+                allowed.append(d)
+            else:
+                denied.append((d, msg))
+
+        if not allowed:
+            # Every requested domain is restricted for this role — block entirely.
             state.blocked = True
             state.block_stage = "access_control"
-            state.answer = denial
-            state.trail.append(f"access_denied:{state.domain}")
-            _log.warning("Access DENY role=%s domain=%s", state.role, state.domain,
+            state.answer = denied[0][1]
+            state.trail.append(f"access_denied:{','.join(d for d, _ in denied)}")
+            _log.warning("Access DENY role=%s domains=%s", state.role, [d for d, _ in denied],
                          extra={"domain": state.domain, "user": state.user_name, "status": "DENY"})
             await ctx.yield_output(state)
             return
-        state.trail.append(f"access_ok:{state.domain}")
-        _log.info("Access OK role=%s domain=%s", state.role, state.domain,
-                  extra={"domain": state.domain, "user": state.user_name, "status": "PASS"})
+
+        # Partial access: serve only the domains this role can reach.
+        for d in allowed:
+            state.trail.append(f"access_ok:{d}")
+        for d, _ in denied:
+            state.trail.append(f"access_partial_deny:{d}")
+
+        state.domains = allowed
+        state.domain = allowed[0]
+        _log.info(
+            "Access OK role=%s domains=%s%s", state.role, allowed,
+            f" (partial deny: {[d for d, _ in denied]})" if denied else "",
+            extra={"domain": state.domain, "user": state.user_name, "status": "PASS"},
+        )
         await ctx.send_message(state)
 
 
@@ -228,7 +256,7 @@ class PaymentApprovalExecutor(Executor):
 
     @handler
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
-        is_payment = state.domain == "finance" and bool(_PAYMENT_RE.search(state.query))
+        is_payment = "finance" in state.domains and bool(_PAYMENT_RE.search(state.query))
         if not is_payment:
             await ctx.send_message(state)
             return
@@ -260,11 +288,32 @@ class DomainExecutor(Executor):
 
     @handler
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState]) -> None:
-        answer = await self._ask(state.domain or "", state.query)
-        state.answer = answer
-        state.trail.append(f"domain_answer:{state.domain}")
-        _log.info("Domain answer received domain=%s (%d chars)", state.domain, len(answer or ""),
-                  extra={"domain": state.domain, "status": "SUCCESS"})
+        if len(state.domains) == 1:
+            answer = await self._ask(state.domains[0], state.query)
+            state.answer = answer
+            state.trail.append(f"domain_answer:{state.domains[0]}")
+            _log.info("Domain answer domain=%s (%d chars)", state.domains[0], len(answer or ""),
+                      extra={"domain": state.domain, "status": "SUCCESS"})
+        else:
+            # Multi-domain: fan out to all allowed domain agents in parallel.
+            results = await asyncio.gather(
+                *[self._ask(d, state.query) for d in state.domains],
+                return_exceptions=True,
+            )
+            sections = []
+            for domain, result in zip(state.domains, results):
+                label = domain.replace("_", " ").title()
+                if isinstance(result, Exception):
+                    _log.warning("Domain %s error: %s", domain, result,
+                                 extra={"domain": domain, "status": "ERROR"})
+                    sections.append(f"### {label}\n*(Unable to retrieve — {result})*")
+                else:
+                    sections.append(f"### {label}\n{result}")
+                state.trail.append(f"domain_answer:{domain}")
+            state.answer = "\n\n".join(sections)
+            _log.info("Multi-domain answer domains=%s (%d chars)", state.domains, len(state.answer),
+                      extra={"domain": state.domain, "status": "SUCCESS"})
+
         await ctx.send_message(state)
 
 
@@ -275,7 +324,8 @@ class OutputRedactionExecutor(Executor):
     async def run(self, state: MeshState, ctx: WorkflowContext[Never, MeshState]) -> None:
         state.answer = redact_pii(state.answer)
         state.trail.append("output_redacted")
-        _log.info("Request complete domain=%s trail=%s", state.domain, " -> ".join(state.trail),
+        _log.info("Request complete domains=%s trail=%s", state.domains or [state.domain],
+                  " -> ".join(state.trail),
                   extra={"domain": state.domain, "status": "SUCCESS"})
         await ctx.yield_output(state)
 
@@ -304,7 +354,7 @@ def build_mesh_workflow(ask: AskRemote, approver: Approver):
         WorkflowBuilder(
             start_executor=guardrail,
             name="agent_mesh_pipeline",
-            description="Guardrail -> route -> access -> compliance -> approval -> domain -> redact",
+            description="Guardrail -> route -> access -> compliance -> approval -> domain(s) -> redact",
             # Every executor that can yield a terminal output (block points + final).
             output_from=[guardrail, access, compliance, payment, redact],
         )
@@ -349,7 +399,7 @@ def build_devui_workflow(ask: AskRemote, approver: Approver, user_name: str, rol
         WorkflowBuilder(
             start_executor=entry,
             name="agent_mesh_pipeline",
-            description="DevUI entry -> guardrail -> route -> access -> compliance -> approval -> domain -> redact",
+            description="DevUI entry -> guardrail -> route -> access -> compliance -> approval -> domain(s) -> redact",
             output_from=[guardrail, access, compliance, payment, redact],
         )
         .add_edge(entry, guardrail)
