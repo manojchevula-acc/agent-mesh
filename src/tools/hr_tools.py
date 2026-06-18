@@ -44,4 +44,18 @@ def get_hr_policy(topic: str) -> str:
     return policies.get(key, f"No specific HR policy found for '{topic}'. Contact People Ops.")
 
 
-HR_TOOLS = [get_leave_balance, get_benefits_summary, get_hr_policy]
+# HR is the system of record for headcount — other domains consult HR for it.
+_HEADCOUNT = {"engineering": 35, "marketing": 12, "operations": 21}
+
+
+@tool(description="Get the current employee headcount for a department.")
+def get_headcount(department: str) -> str:
+    """Returns the headcount for a department (hardcoded demo data)."""
+    key = (department or "").strip().lower()
+    count = _HEADCOUNT.get(key)
+    if count is None:
+        return f"No headcount record found for department '{department}'."
+    return f"The {key.title()} department currently has {count} employees."
+
+
+HR_TOOLS = [get_leave_balance, get_benefits_summary, get_hr_policy, get_headcount]

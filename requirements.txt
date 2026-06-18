@@ -13,6 +13,8 @@ opentelemetry-api>=1.20.0
 opentelemetry-sdk>=1.20.0
 # OTLP exporter (dev): export traces/metrics/logs to Aspire Dashboard, Jaeger, Grafana, etc.
 opentelemetry-exporter-otlp-proto-grpc>=1.20.0
+# OTLP/HTTP exporter (grafana profile): Grafana Cloud requires HTTP transport, not gRPC.
+opentelemetry-exporter-otlp-proto-http>=1.20.0
 # httpx instrumentation: propagates W3C trace context across A2A hops (traceparent).
 opentelemetry-instrumentation-httpx>=0.40b0
 # Azure Application Insights (prod): OBS_PROFILE=prod uses configure_azure_monitor().
