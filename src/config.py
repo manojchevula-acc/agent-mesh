@@ -33,6 +33,11 @@ class Config:
     OTEL_SERVICE_NAME: str = os.getenv("OTEL_SERVICE_NAME", "agent_mesh")
     APPLICATIONINSIGHTS_CONNECTION_STRING: str = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING", "")
 
+    # Grafana Cloud OTLP (OBS_PROFILE=grafana)
+    GRAFANA_OTLP_ENDPOINT: str = os.getenv("GRAFANA_OTLP_ENDPOINT", "")
+    GRAFANA_INSTANCE_ID: str = os.getenv("GRAFANA_INSTANCE_ID", "")
+    GRAFANA_API_TOKEN: str = os.getenv("GRAFANA_API_TOKEN", "")
+
     # Centralized application logging (durable, rotating, trace-correlated).
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
     LOG_FILE: str = os.getenv("LOG_FILE", "data/logs/agent_mesh.log")
