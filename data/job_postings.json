@@ -1,0 +1,64 @@
+{
+  "postings": [
+    {
+      "id": "ENG-2041",
+      "title": "Senior Backend Engineer",
+      "department": "Engineering",
+      "location": "Seattle, WA (Hybrid)",
+      "level": "L5",
+      "skills": ["Python", "Distributed Systems", "Azure", "Kubernetes"],
+      "open_to": "all_employees",
+      "description": "Build and scale the core agent orchestration platform. 5+ years backend experience."
+    },
+    {
+      "id": "DATA-1187",
+      "title": "Data Scientist, Forecasting",
+      "department": "Data & Analytics",
+      "location": "Remote (US)",
+      "level": "L4",
+      "skills": ["Python", "ML", "Time Series", "SQL"],
+      "open_to": "all_employees",
+      "description": "Develop demand-forecasting models for finance and supply chain teams."
+    },
+    {
+      "id": "HR-0342",
+      "title": "People Operations Partner",
+      "department": "Human Resources",
+      "location": "Austin, TX (On-site)",
+      "level": "L4",
+      "skills": ["Employee Relations", "HRIS", "Onboarding"],
+      "open_to": "all_employees",
+      "description": "Support employee lifecycle programs and partner with department leads."
+    },
+    {
+      "id": "FIN-0508",
+      "title": "Financial Planning Analyst",
+      "department": "Finance",
+      "location": "New York, NY (Hybrid)",
+      "level": "L4",
+      "skills": ["FP&A", "Excel", "SQL", "Budgeting"],
+      "open_to": "all_employees",
+      "description": "Own quarterly budgeting cycles and variance analysis for business units."
+    },
+    {
+      "id": "PM-2210",
+      "title": "Product Manager, Platform",
+      "department": "Product",
+      "location": "Seattle, WA (Hybrid)",
+      "level": "L5",
+      "skills": ["Product Strategy", "Roadmapping", "APIs"],
+      "open_to": "all_employees",
+      "description": "Define the roadmap for the internal multi-agent platform."
+    },
+    {
+      "id": "SEC-0099",
+      "title": "Security Engineer, AppSec",
+      "department": "Security",
+      "location": "Remote (US)",
+      "level": "L5",
+      "skills": ["AppSec", "Threat Modeling", "Python", "OWASP"],
+      "open_to": "all_employees",
+      "description": "Harden the agent mesh against prompt injection and data exfiltration."
+    }
+  ]
+}

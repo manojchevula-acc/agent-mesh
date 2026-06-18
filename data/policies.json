@@ -1,4 +1,54 @@
 {
+  "role_access": {
+    "finance": {
+      "allowed_roles": ["leadership"],
+      "description": "Finance agent (budgets, payments, financial reports) is restricted to the leadership team.",
+      "denial_message": "Access denied: the Finance assistant is restricted to the leadership team."
+    },
+    "hr": {
+      "allowed_roles": ["employee", "hr", "leadership"],
+      "description": "HR agent answers HR questions for all employees."
+    },
+    "internal_job": {
+      "allowed_roles": ["employee", "hr", "leadership"],
+      "description": "Internal Job agent searches internal postings for all employees."
+    }
+  },
+  "domain_policies": [
+    {
+      "domain": "finance",
+      "id": "finance_access",
+      "name": "Finance Data & Action Policy",
+      "rules": {
+        "access_level": "restricted",
+        "allowed_roles": ["leadership"],
+        "payment_requires_approval": true,
+        "payment_approval_threshold_usd": 0.0
+      },
+      "guidelines": "Financial data (budgets, statements) and actions (payments, payouts) are leadership-only. Any outbound payment requires explicit human approval before execution, regardless of amount."
+    },
+    {
+      "domain": "hr",
+      "id": "hr_policy",
+      "name": "HR Self-Service Policy",
+      "rules": {
+        "access_level": "internal",
+        "allowed_roles": ["employee", "hr", "leadership"],
+        "pii_exposure_prohibited": true
+      },
+      "guidelines": "Employees may ask about leave balances, benefits, and policies. Agents must never expose another employee's personal data. Requests containing PII are blocked by compliance."
+    },
+    {
+      "domain": "internal_job",
+      "id": "job_policy",
+      "name": "Internal Mobility Policy",
+      "rules": {
+        "access_level": "internal",
+        "allowed_roles": ["employee", "hr", "leadership"]
+      },
+      "guidelines": "All employees may search and ask about internal job postings. Only postings marked open are returned. No external/confidential requisitions are exposed."
+    }
+  ],
   "policies": [
     {
       "id": "finance_folder_access",

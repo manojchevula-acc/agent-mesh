@@ -2,12 +2,31 @@ import os
 import re
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from collections.abc import Awaitable, Callable
 from typing import Any, List, Dict
 
 from agent_framework import AgentMiddleware, AgentContext
 from src.config import Config
+from src.observability import get_logger, CAT_AGENT
+
+_log = get_logger(CAT_AGENT)
+
+
+def _trace_ids() -> tuple[str, str]:
+    """Returns (trace_id, span_id) of the active span, or ('-', '-').
+
+    Lets each audit record correlate with the distributed trace emitted by the
+    SDK's AgentTelemetryLayer for the same agent run.
+    """
+    try:
+        from opentelemetry import trace
+        ctx = trace.get_current_span().get_span_context()
+        if getattr(ctx, "is_valid", False):
+            return format(ctx.trace_id, "032x"), format(ctx.span_id, "016x")
+    except Exception:
+        pass
+    return "-", "-"
 def get_message_text(msg: Any) -> str:
     if isinstance(msg, dict):
         return msg.get("text", "") or msg.get("content", "") or ""
@@ -79,7 +98,7 @@ class AuditMiddleware(AgentMiddleware):
     ) -> None:
         """Intercepts agent execution, measures latency, redacts PII, and writes to JSONL."""
         start_time = time.perf_counter()
-        timestamp = datetime.utcnow().isoformat() + "Z"
+        timestamp = datetime.now(timezone.utc).isoformat()
         
         # 1. Capture inputs prior to execution
         agent_name = getattr(context.agent, "name", "unknown_agent")
@@ -121,10 +140,14 @@ class AuditMiddleware(AgentMiddleware):
                     raw_output = str(context.result)
                     
             scrubbed_output = self._redact_pii(raw_output)
-            
-            # 4. Formulate the audit log entry
+            trace_id, span_id = _trace_ids()
+
+            # 4. Formulate the audit log entry (immutable compliance trail).
+            #    Correlated with the SDK's invoke_agent span via trace/span ids.
             log_entry = {
                 "timestamp": timestamp,
+                "trace_id": trace_id,
+                "span_id": span_id,
                 "session_id": session_id,
                 "agent_name": agent_name,
                 "inputs": scrubbed_inputs,
@@ -134,11 +157,27 @@ class AuditMiddleware(AgentMiddleware):
             }
             if error_message:
                 log_entry["error"] = error_message
-                
-            # 5. Append to JSONL audit trail file
+
+            # 5. Append to JSONL audit trail file (audit, not telemetry: the SDK's
+            #    AgentTelemetryLayer owns the agent span, so we do NOT emit one here).
             try:
                 with open(self.log_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
             except Exception:
                 # Middleware logging failures should not crash the core application flow
+                pass
+
+            # 6. Structured, trace-correlated application log line.
+            try:
+                if status == "ERROR":
+                    _log.error("agent=%s status=ERROR latency_ms=%d error=%s",
+                               agent_name, latency_ms, error_message,
+                               extra={"agent": agent_name, "session_id": session_id,
+                                      "status": status})
+                else:
+                    _log.info("agent=%s status=%s latency_ms=%d",
+                              agent_name, status, latency_ms,
+                              extra={"agent": agent_name, "session_id": session_id,
+                                     "status": status})
+            except Exception:
                 pass
