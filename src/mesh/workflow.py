@@ -38,7 +38,7 @@ import re
 import sys
 import pathlib
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable, List, Optional
+from typing import Awaitable, Callable, Dict, List, Optional
 
 from typing_extensions import Never
 
@@ -50,7 +50,7 @@ from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
 
 from src.config import Config
 from src.guardrails.deterministic_filters import screen_input, redact_pii
-from src.agents.gateway_agent import parse_domains
+from src.agents.gateway_agent import parse_domain_queries
 from src.observability import get_logger, CAT_WORKFLOW, CAT_APPROVALS
 
 _log = get_logger(CAT_WORKFLOW)
@@ -92,8 +92,12 @@ class MeshState:
     role: str
     query: str
     session_id: str = "default_session"
-    # domains: all domains resolved by the gateway (may be more than one for multi-topic queries).
-    # domain:  primary domain (first in domains); kept for single-domain compat and logging.
+    # domain_queries: per-domain sub-questions decomposed by the gateway.
+    #   Single-domain:  {"hr": full_query}
+    #   Multi-domain:   {"hr": "leave sub-q", "finance": "budget sub-q"}
+    # domains: ordered list of keys from domain_queries (preserved for access control / logging).
+    # domain:  primary domain (first); kept for single-domain compat.
+    domain_queries: Dict[str, str] = field(default_factory=dict)
     domains: List[str] = field(default_factory=list)
     domain: Optional[str] = None
     router_raw: str = ""
@@ -169,7 +173,8 @@ class RouterExecutor(Executor):
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState]) -> None:
         router_text = await self._ask("gateway", state.query)
         state.router_raw = router_text
-        state.domains = parse_domains(router_text)
+        state.domain_queries = parse_domain_queries(router_text, state.query)
+        state.domains = list(state.domain_queries.keys())
         state.domain = state.domains[0]
         state.trail.append(f"route:{','.join(state.domains)}")
         _log.info("Routed to domains=%s", state.domains,
@@ -209,6 +214,7 @@ class AccessControlExecutor(Executor):
 
         state.domains = allowed
         state.domain = allowed[0]
+        state.domain_queries = {d: state.domain_queries.get(d, state.query) for d in allowed}
         _log.info(
             "Access OK role=%s domains=%s%s", state.role, allowed,
             f" (partial deny: {[d for d, _ in denied]})" if denied else "",
@@ -289,15 +295,17 @@ class DomainExecutor(Executor):
     @handler
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState]) -> None:
         if len(state.domains) == 1:
-            answer = await self._ask(state.domains[0], state.query)
+            d = state.domains[0]
+            sub_query = state.domain_queries.get(d, state.query)
+            answer = await self._ask(d, sub_query)
             state.answer = answer
-            state.trail.append(f"domain_answer:{state.domains[0]}")
-            _log.info("Domain answer domain=%s (%d chars)", state.domains[0], len(answer or ""),
+            state.trail.append(f"domain_answer:{d}")
+            _log.info("Domain answer domain=%s (%d chars)", d, len(answer or ""),
                       extra={"domain": state.domain, "status": "SUCCESS"})
         else:
-            # Multi-domain: fan out to all allowed domain agents in parallel.
+            # Multi-domain: fan out to each domain with its specific sub-question in parallel.
             results = await asyncio.gather(
-                *[self._ask(d, state.query) for d in state.domains],
+                *[self._ask(d, state.domain_queries.get(d, state.query)) for d in state.domains],
                 return_exceptions=True,
             )
             sections = []
