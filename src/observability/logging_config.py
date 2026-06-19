@@ -36,6 +36,7 @@ CAT_A2A = "mesh.a2a"
 CAT_MCP = "mesh.mcp"
 CAT_TRANSPORT = "mesh.transport"
 CAT_APPROVALS = "mesh.approvals"
+CAT_SECURITY = "mesh.security"
 CAT_SYSTEM = "mesh.system"
 
 _CONFIGURED = False
@@ -50,22 +51,19 @@ class TraceContextFilter(logging.Filter):
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
-        trace_id = span_id = parent_span_id = "-"
+        trace_id = span_id = "-"
         try:
-            from opentelemetry import trace, baggage  # local import: optional dep
+            from opentelemetry import trace  # local import: optional dep
 
             span = trace.get_current_span()
             ctx = span.get_span_context() if span is not None else None
             if ctx is not None and getattr(ctx, "is_valid", False):
                 trace_id = format(ctx.trace_id, "032x")
                 span_id = format(ctx.span_id, "016x")
-            # parent span id is not directly exposed; surface it from baggage if set
-            parent_span_id = baggage.get_baggage("parent_span_id") or "-"
         except Exception:
             pass
         record.trace_id = trace_id
         record.span_id = span_id
-        record.parent_span_id = parent_span_id
         return True
 
 
@@ -79,7 +77,6 @@ class _JsonFormatter(logging.Formatter):
             "logger": record.name,
             "trace_id": getattr(record, "trace_id", "-"),
             "span_id": getattr(record, "span_id", "-"),
-            "parent_span_id": getattr(record, "parent_span_id", "-"),
             "msg": record.getMessage(),
         }
         # Surface common correlation extras when present.
@@ -95,7 +92,7 @@ class _JsonFormatter(logging.Formatter):
 
 _TEXT_FORMAT = (
     "%(asctime)s | %(levelname)-8s | %(name)-16s | "
-    "trace=%(trace_id)s span=%(span_id)s parent=%(parent_span_id)s | %(message)s"
+    "trace=%(trace_id)s span=%(span_id)s | %(message)s"
 )
 
 
@@ -146,7 +143,9 @@ def configure_logging(service_name: str | None = None) -> None:
             root.addHandler(console_handler)
 
         # Tame noisy third-party loggers.
-        for noisy in ("httpx", "httpcore", "uvicorn.access", "azure"):
+        # httpx at INFO so A2A transport errors are visible; httpcore/uvicorn stay at WARNING.
+        logging.getLogger("httpx").setLevel(logging.INFO)
+        for noisy in ("httpcore", "uvicorn.access", "azure"):
             logging.getLogger(noisy).setLevel(logging.WARNING)
 
         _CONFIGURED = True

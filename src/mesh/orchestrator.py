@@ -21,6 +21,7 @@ The public surface (``handle_request`` + ``MeshResult``) and the ``ask_remote``
 seam are preserved for the offline test suite.
 """
 import sys
+import time
 import pathlib
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional
@@ -80,16 +81,35 @@ async def handle_request(user: User, query: str, approver: Callable[[str], bool]
     # time) module-level ``ask_remote`` so the A2A seam is honoured.
     workflow = build_mesh_workflow(ask=ask_remote, approver=approver)
 
-    # Root the whole request in a single span (framework-native tracer). All
-    # workflow/executor/agent/A2A spans become children of this one.
-    span_cm = _root_span(user, query, session_id)
-    with span_cm:
-        _log.info("Request start user=%s role=%s query_len=%d",
-                  user.username, user.role.value, len(query),
-                  extra={"user": user.username, "session_id": session_id})
-        events = await workflow.run(initial)
+    from src.observability import record_request
 
-    final = _final_state(events)
+    t0 = time.perf_counter()
+    final = None
+    try:
+        # Root the whole request in a single span (framework-native tracer). All
+        # workflow/executor/agent/A2A spans become children of this one.
+        # _final_state is extracted INSIDE the span so we can annotate it with
+        # domain/blocked/block_stage before it closes and set the correct status.
+        with _root_span(user, query, session_id) as _span:
+            _log.info("Request start user=%s role=%s query_len=%d",
+                      user.username, user.role.value, len(query),
+                      extra={"user": user.username, "session_id": session_id})
+            events = await workflow.run(initial)
+            final = _final_state(events)
+            if final is not None:
+                _annotate_span(_span, final)
+    finally:
+        duration_ms = (time.perf_counter() - t0) * 1000
+        _domain = (final.domain or "unknown") if final else "unknown"
+        _status = "error" if final is None else ("blocked" if final.blocked else "success")
+        record_request(
+            domain=_domain,
+            role=user.role.value,
+            status=_status,
+            duration_ms=duration_ms,
+            block_stage=(final.block_stage if final else None),
+        )
+
     if final is None:
         _log.error("Workflow produced no output", extra={"user": user.username})
         return MeshResult(answer="Internal error: no workflow output.", blocked=True,
@@ -141,6 +161,27 @@ def _root_span(user: User, query: str, session_id: str):
     except Exception:
         import contextlib
         return contextlib.nullcontext()
+
+
+def _annotate_span(span, final: "MeshState") -> None:
+    """Sets final-state attributes on the root span and ERROR status if blocked.
+
+    Called inside the ``with _root_span(...) as span:`` block so attributes
+    land on the span before it is finalized and exported.
+    """
+    try:
+        from opentelemetry.trace import StatusCode
+        span.set_attribute("mesh.blocked", final.blocked)
+        if final.domain:
+            span.set_attribute("mesh.domain", final.domain)
+        if final.block_stage:
+            span.set_attribute("mesh.block_stage", final.block_stage)
+        if final.blocked:
+            span.set_status(StatusCode.ERROR, f"blocked:{final.block_stage}")
+        else:
+            span.set_status(StatusCode.OK)
+    except Exception:
+        pass
 
 
 def _final_state(events) -> Optional[MeshState]:
