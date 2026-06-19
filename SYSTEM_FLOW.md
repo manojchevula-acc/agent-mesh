@@ -131,7 +131,7 @@ agent-mesh/
 ├── src/
 │   ├── config.py                   # Env config + AGENT_PORTS registry + A2A_TIMEOUT + GRAFANA_*
 │   ├── a2a/
-│   │   ├── hosting.py              # build_agent_card() / serve() + trace-context middleware
+│   │   ├── hosting.py              # build_agent_card() / serve() + TraceContextMiddleware + GET /health
 │   │   └── clients.py             # get_remote_agent() / ask_remote() (+ httpx.Timeout)
 │   ├── mesh/
 │   │   ├── orchestrator.py        # handle_request() + MeshResult + root span
@@ -158,14 +158,17 @@ agent-mesh/
 │   ├── middleware/audit_middleware.py
 │   ├── observability/
 │   │   ├── setup.py               # setup_observability() + dev/grafana/prod/off profiles
-│   │   └── logging_config.py      # trace-correlated rotating logs
+│   │   ├── metrics.py             # custom OTel counters + histograms (all record_*() helpers)
+│   │   ├── tracer.py              # legacy JSONL debug sink (off by default; ENABLE_TRACE_JSONL)
+│   │   └── logging_config.py      # trace-correlated rotating logs + named CAT_* loggers
 │   ├── memory/session_store.py
 │   └── utils/console_logger.py
 └── data/
-    ├── policies.json              # role access + domain policies
+    ├── policies.json              # role access + domain policies + tool_access + UAE/FAB regulations
     ├── job_postings.json          # internal postings KB
-    ├── audit_trail.jsonl          # per-hop audit log
-    └── logs/agent_mesh.log        # application logs
+    ├── audit_trail.jsonl          # per-agent audit log (append-only JSONL)
+    ├── grafana_dashboard.json     # pre-built Grafana dashboard for all mesh metrics
+    └── logs/agent_mesh.log        # application logs (rotating, trace-correlated)
 ```
 
 ---
@@ -265,7 +268,7 @@ def build_mesh_workflow(ask: AskRemote, approver: Approver):
 
 **Files:** [deterministic_filters.py](src/guardrails/deterministic_filters.py), `InputGuardrailExecutor` in [workflow.py](src/mesh/workflow.py).
 
-**What:** the raw query is scanned against three regex banks — **prompt injection**, **PII**, **destructive intent**. Any match → immediate block; **no LLM is ever called**.
+**What:** the raw query is scanned against **four** regex banks — **prompt injection**, **PII**, **destructive intent**, and **toxicity**. Any match → immediate block; **no LLM is ever called**.
 
 **Why:** cannot be bypassed by clever prompting (pure regex), runs in milliseconds before any expensive A2A/LLM call, and is the first line of defense.
 
@@ -274,6 +277,9 @@ def build_mesh_workflow(ask: AskRemote, approver: Approver):
 | Prompt Injection | `ignore\s+(all\s+)?(previous\|prior\|above)\s+(instructions\|prompts\|rules)` | Prevent jailbreaks |
 | PII | `\b\d{3}-\d{2}-\d{4}\b` (SSN) | Block data leakage |
 | Destructive | `\b(delete\|drop\|wipe)\b.*\b(table\|records?)\b` | Prevent harmful commands |
+| Toxicity | `\b(hate\|despise)\b.*\b(all\|every)\b.*\b(group\|race\|religion)\b` | Block hate speech and harassment |
+
+The `toxicity` category (`_TOXICITY_PATTERNS`) covers hate speech, ethnic slurs, sexual harassment, explicit violence threats, and white-supremacist content — 9 regex patterns checked via `detect_toxicity()`. A block on any category emits `mesh.guardrail.block{category=...}` counter and appends `guardrail_block:<categories>` to the trail.
 
 ```python
 class InputGuardrailExecutor(Executor):
@@ -464,19 +470,26 @@ Domain agents answer using their `@tool` functions (real data, not hallucinated)
 
 ---
 
-### Stage 7 — Output Redaction (deterministic)
+### Stage 7 — Output Redaction + Hallucination Heuristic (deterministic)
 
 **Files:** `redact_pii()` in [deterministic_filters.py](src/guardrails/deterministic_filters.py), `OutputRedactionExecutor` in [workflow.py](src/mesh/workflow.py).
 
-**What:** the merged answer is scanned for PII (email/SSN/credit-card/phone); matches are replaced with tokens like `[REDACTED_EMAIL]`. Terminal node — yields the final answer.
+**What:** two deterministic checks run on the final answer before it is returned:
 
-**Why:** even if an LLM accidentally emits PII, it's scrubbed before the user sees it. Same regex engine as input screening — a final deterministic safety net.
+1. **PII redaction** — scans for email/SSN/credit-card/phone; replaces matches with tokens like `[REDACTED_EMAIL]`.
+2. **Hallucination heuristic** — `_HALLUCINATION_INDICATORS` regex tests for speculation phrases (`"I'm not sure"`, `"I don't have access"`, `"this may not be accurate"`, etc.). A match does **not** block the response — it logs a `WARNING` to `mesh.security`, emits `mesh.hallucination.suspected{domain, indicator}` counter, and appends `hallucination_suspected` to the trail. This flags the response for model-risk review per the FAB AI/Model Risk Policy.
+
+**Why:** PII redaction is a last-resort safety net even if the LLM leaks data. The hallucination heuristic operationalizes the UAE Central Bank / FAB model risk requirement to log AI speculation events for auditors.
 
 ```python
 class OutputRedactionExecutor(Executor):
     @handler
     async def run(self, state, ctx):
         state.answer = redact_pii(state.answer)
+        match = _HALLUCINATION_INDICATORS.search(state.answer or "")
+        if match:
+            record_hallucination_suspected(domain=state.domain, indicator="speculation_phrase")
+            state.trail.append("hallucination_suspected")
         state.trail.append("output_redacted")
         await ctx.yield_output(state)   # workflow ends here with the answer
 ```
@@ -634,33 +647,342 @@ Key knobs: `OLLAMA_HOST`/`OLLAMA_MODEL`; `AGENT_PORTS` registry + `agent_url()`;
 
 ## 9. Observability
 
-Framework-first: the Microsoft Agent Framework SDK auto-emits native spans and metrics; we add custom spans only where the framework has none (the orchestrator root span + deterministic gates).
+The mesh follows a **framework-first** principle: the Microsoft Agent Framework SDK auto-emits agent, LLM, and tool spans plus `gen_ai.*` metrics. We add only mesh-specific instruments that the SDK has no visibility into — orchestration gates, security events, FinOps, memory, and human-in-the-loop.
 
-**Spans:** `mesh.request` (root) → `executor.process` per stage → `invoke_agent <name>` / `chat <model>` / `execute_tool <fn>` across A2A hops.
-**Metrics:** `gen_ai.client.operation.duration`, `gen_ai.client.token.usage`, `agent_framework.function.invocation.duration`.
-**Logs:** trace-correlated rotating file logs ([logging_config.py](src/observability/logging_config.py)) + per-hop audit trail ([audit_middleware.py](src/middleware/audit_middleware.py)).
+---
+
+### 9.0 Observability Architecture — Visual Overview
+
+Each pipeline stage emits signals (metrics, spans, logs) that map to one of three enterprise observability tenants. Read the diagram top-to-bottom: the root span wraps the pipeline; each stage box lists the metrics/spans it emits; the three coloured subgraphs show which tenant those signals serve; all signals flow into the telemetry backends at the bottom.
+
+```mermaid
+flowchart TD
+    ROOT(["🔗 ROOT SPAN — mesh.request  SpanKind.CLIENT\nattributes: mesh.user · mesh.role · session.id · mesh.query_length · mesh.blocked · mesh.domain\nemitted by: orchestrator.py  _root_span()"])
+
+    %% ── DECISION PARAMETERS (blue) ────────────────────────────────────────
+    subgraph DEC["🔵  DECISION PARAMETERS"]
+        direction TB
+        S2["② Router — Gateway A2A :8010\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📊 mesh.router.domains histogram  {role}  — plan decomposition depth\n📊 mesh.router.fallback counter  {role}  — LLM output unparseable\n📊 mesh.a2a.duration histogram  {node=gateway, status}\n🔍 Spans: executor.process router → invoke_agent GatewayAgent → chat llama3.2"]
+        S6["⑥ Domain Agents — parallel A2A fan-out\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📊 mesh.a2a.duration  {node: finance|hr|internal_job, status}\n📊 mesh.a2a.error  {node}\n📊 mesh.memory.messages · mesh.memory.context_chars  — context-window depth\n🔍 SDK auto: gen_ai.client.token.usage · gen_ai.client.operation.duration\n🔍 SDK auto: agent_framework.function.invocation.duration\n🔍 Spans: invoke_agent → chat → execute_tool  (per tool call)\n🔍 Peer hops: invoke_agent PolicyAgent / HRAgent  (A2A collaboration)"]
+        ORCH["handle_request() — Orchestrator root\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📊 mesh.request counter  {domain · role · status}\n📊 mesh.request.duration histogram  {domain · role · status}"]
+    end
+
+    %% ── COMPLIANCE / SECURITY (orange) ────────────────────────────────────
+    subgraph SEC["🟠  COMPLIANCE / GOVERNANCE / SECURITY PARAMETERS"]
+        direction TB
+        S1["① Input Guardrail — deterministic_filters.py  (no LLM)\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📊 mesh.guardrail.block  {category · role}\n   category: prompt_injection | pii | destructive_intent | toxicity\n📊 mesh.request.blocked  {stage=input_guardrail · role}"]
+        S3["③ Access Control — RBAC  (no LLM)\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📊 mesh.access_denied  {domain · role}\n📊 mesh.request.blocked  {stage=access_control · role}"]
+        S4["④ Compliance — LLM semantic review  A2A :8015\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📊 mesh.compliance.fail  {domain}\n📊 mesh.request.blocked  {stage=compliance · role}"]
+        S7["⑦ Output Redaction + Hallucination Heuristic\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📊 mesh.hallucination.suspected  {domain · indicator=speculation_phrase}\n🔒 PII → [REDACTED_EMAIL|SSN|CREDIT_CARD|PHONE]"]
+        AUDIT["AuditMiddleware — every agent invocation\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📁 audit_trail.jsonl  (append-only JSONL)\n   timestamp · trace_id · span_id · session_id · agent_name\n   inputs (PII-redacted) · output (PII-redacted) · status\n   latency_ms · model · estimated_input_tokens\n   estimated_output_tokens · estimated_cost_usd\n📜 policies.json regulatory rules:\n   UAE AML/CFT · CBUAE Data Governance · FAB Payment Controls\n   UAE PDPL · FAB AI/Model Risk\n📊 mesh.tool_access  {tool · role · outcome: allowed|denied}"]
+    end
+
+    %% ── PERFORMANCE PARAMETERS (green) ────────────────────────────────────
+    subgraph PERF["🟢  PERFORMANCE PARAMETERS"]
+        direction TB
+        S5["⑤ Payment Gate — Human-in-the-Loop\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📊 mesh.payment_gate  {outcome: approved|denied}\n📊 mesh.approval.wait_ms histogram  {outcome}  — operator decision latency"]
+        HEALTH["GET /health — every A2A node  (hosting.py)\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\nJSON: status · uptime_seconds · model · service\nUsed by Grafana synthetic monitors for availability tracking"]
+        FIN["AuditMiddleware — FinOps & Cost\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📊 mesh.token.usage counter  {call_type: a2a|tool · direction: input|output · model}\n📊 mesh.cost.estimated_usd histogram  {domain · call_type}\n   cost = tokens × Config.COST_PER_1K_*_TOKENS"]
+    end
+
+    %% ── TELEMETRY BACKENDS ─────────────────────────────────────────────────
+    subgraph BE["Telemetry Backends  (OBS_PROFILE = grafana | dev | prod | off)"]
+        direction LR
+        TEMPO["🔷 Grafana Tempo\nDistributed Traces\nservice.name = agent_mesh_*\nFull span tree per request"]
+        MIMIR["📊 Grafana Mimir / Prometheus\nAll mesh.* metrics\nP90: histogram_quantile(0.90 ...)\nQPS: rate(mesh.request[1m])\nDashboard: data/grafana_dashboard.json"]
+        LOKI["📋 Grafana Loki\n9 trace-correlated loggers\nmesh.security · mesh.approvals\nmesh.agent · mesh.workflow · ...\nJSON logs optional: LOG_JSON=true"]
+    end
+
+    %% ── FLOW ───────────────────────────────────────────────────────────────
+    ROOT --> S1 --> S2 --> S3 --> S4 --> S5 --> S6 --> S7
+    S6 --> AUDIT & FIN
+    S6 --> HEALTH
+
+    DEC --> MIMIR & TEMPO
+    SEC --> MIMIR & LOKI
+    PERF --> MIMIR
+    ROOT --> TEMPO
+    AUDIT --> LOKI
+    ORCH --> MIMIR
+```
+
+---
+
+All three signals (traces, metrics, logs) carry the same `trace_id`/`span_id` so any alert, metric anomaly, or audit record can be drilled into a full distributed trace in one click.
+
+---
+
+### 9.1 Architecture Principle
 
 ```
-2026-06-16 15:57:38 | INFO | mesh.agent | trace=5c46…9540 span=df0c…8148 | agent=GatewayAgent status=SUCCESS latency_ms=16418
+┌─────────────────────────────────────────────────────────────┐
+│  Microsoft Agent Framework SDK (auto-instrumented)          │
+│  invoke_agent | chat | execute_tool | workflow.run          │
+│  gen_ai.client.operation.duration | gen_ai.client.token.usage│
+└───────────────────────────┬─────────────────────────────────┘
+                            │ extends / adds context to
+┌───────────────────────────▼─────────────────────────────────┐
+│  Mesh Application Layer (src/observability/)                │
+│  mesh.request root span | 9 custom counters | 6 histograms  │
+│  9 named loggers | append-only audit trail JSONL            │
+│  GET /health on every A2A node                              │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### Profiles — `OBS_PROFILE` ([setup.py](src/observability/setup.py))
+---
+
+### 9.2 Trace Span Inventory (complete tree)
+
+The full distributed trace for one request, across ALL processes:
+
+```
+mesh.request  [SpanKind.CLIENT]  ← orchestrator root (orchestrator.py _root_span)
+  executor.process input_guardrail
+  executor.process router
+    invoke_agent GatewayAgent         ← A2A hop to :8010
+      chat llama3.2
+  executor.process access_control
+  executor.process compliance
+    invoke_agent ComplianceAgent      ← A2A hop to :8015
+      chat llama3.2
+  executor.process payment_gate
+  executor.process domain
+    invoke_agent <DomainAgent(s)>     ← A2A hop(s), parallel for multi-domain
+      chat llama3.2
+      execute_tool get_budget_report  ← one span per @tool call
+      execute_tool get_department_headcount
+        invoke_agent HRAgent          ← peer A2A hop (agent-to-agent)
+          execute_tool get_headcount
+      execute_tool consult_policy
+        invoke_agent PolicyAgent      ← peer A2A hop
+  executor.process output_redaction
+```
+
+**Root span attributes** (`mesh.request`): `mesh.user`, `mesh.role`, `session.id`, `mesh.query_length`, `mesh.blocked`, `mesh.domain`, `mesh.block_stage`.
+
+**Cross-process trace propagation:** `setup_observability()` enables OTel httpx instrumentation, which injects W3C `traceparent`/`tracestate` onto every outbound httpx request made by `A2AAgent`. The receiving node's `TraceContextMiddleware` (in `hosting.py`) extracts and attaches the context, making every remote agent's spans children of the caller's span — one coherent trace across all 6 processes.
+
+---
+
+### 9.3 Complete Metrics Catalog
+
+All custom metrics live in [src/observability/metrics.py](src/observability/metrics.py) and are exposed via `record_*()` helper functions imported from `src/observability/__init__.py`. Instruments are created lazily (safe to import before `setup_observability()`). Every helper is `try/except`-wrapped — observability failures never crash the app.
+
+Prometheus names in Grafana Mimir follow `{meter_name}_{metric_name}_{type}` (dots → underscores).
+
+---
+
+#### Decision Parameter Metrics
+
+| Metric | Prom name | Type | Attributes | Emitted by | Observability Tenant |
+|--------|-----------|------|-----------|------------|---------------------|
+| `mesh.request` | `agent_mesh_mesh_request_total` | Counter | `domain`, `role`, `status` | `handle_request()` | Data — generated output |
+| `mesh.request.duration` | `agent_mesh_mesh_request_duration_ms_*` | Histogram | `domain`, `role`, `status` | `handle_request()` | Data — end-to-end latency |
+| `mesh.router.domains` | `agent_mesh_mesh_router_domains_*` | Histogram | `role` | `RouterExecutor` | Planner Agent — plan step count |
+| `mesh.router.fallback` | `agent_mesh_mesh_router_fallback_total` | Counter | `role` | `RouterExecutor` | Planner Agent — keyword fallback (unparseable LLM output) |
+| `mesh.a2a.duration` | `agent_mesh_mesh_a2a_duration_ms_*` | Histogram | `node`, `status` | `ask_remote()` | A2A — agent handoff latency |
+| `mesh.a2a.error` | `agent_mesh_mesh_a2a_error_total` | Counter | `node` | `ask_remote()` | A2A — transport failures |
+| `mesh.memory.messages` | `agent_mesh_mesh_memory_messages_*` | Histogram | — | `session_store.append_message` | Memory — context depth |
+| `mesh.memory.context_chars` | `agent_mesh_mesh_memory_context_chars_*` | Histogram | — | `session_store.append_message` | Memory — context-window size proxy |
+| `gen_ai.client.operation.duration` | *(framework)* | Histogram | `model` | SDK auto | Tools/Agent — LLM call latency |
+| `gen_ai.client.token.usage` | *(framework)* | Counter | `model` | SDK auto | Tools/Agent — token counts per model |
+| `agent_framework.function.invocation.duration` | *(framework)* | Histogram | `fn` | SDK auto | Tools — tool execution duration |
+
+**Reading `mesh.router.domains`:** a histogram value of 1 = single-domain request (normal); 2+ = multi-domain decomposition (Gateway split the query). `mesh.router.fallback` spikes indicate the LLM is producing unexpected output formats — a model quality signal.
+
+---
+
+#### Compliance / Governance / Security Metrics
+
+| Metric | Prom name | Type | Attributes | Emitted by | Observability Tenant |
+|--------|-----------|------|-----------|------------|---------------------|
+| `mesh.guardrail.block` | `agent_mesh_mesh_guardrail_block_total` | Counter | `category`, `role` | `InputGuardrailExecutor` | Safety — injection / PII / destructive / toxicity blocks |
+| `mesh.request.blocked` | `agent_mesh_mesh_request_blocked_total` | Counter | `stage`, `role` | `handle_request()` | Security — blocks by pipeline stage |
+| `mesh.access_denied` | `agent_mesh_mesh_access_denied_total` | Counter | `domain`, `role` | `AccessControlExecutor` | Agent access — RBAC denials |
+| `mesh.compliance.fail` | `agent_mesh_mesh_compliance_fail_total` | Counter | `domain` | `ComplianceExecutor` | Compliance — semantic gate failures |
+| `mesh.hallucination.suspected` | `agent_mesh_mesh_hallucination_suspected_total` | Counter | `domain`, `indicator` | `OutputRedactionExecutor` | Safety — hallucination heuristic triggers |
+| `mesh.tool_access` | `agent_mesh_mesh_tool_access_total` | Counter | `tool`, `role`, `outcome` | (policy enforcement layer) | Tools — authorization decisions |
+
+**`mesh.guardrail.block` categories:** `prompt_injection`, `pii`, `destructive_intent`, `toxicity`. Each block increments once per matched category, so a single request can increment multiple categories.
+
+**`mesh.hallucination.suspected` indicator values:** currently `"speculation_phrase"` (regex match of `_HALLUCINATION_INDICATORS`). A counter increase flags responses for model-risk review per the FAB AI/Model Risk Policy in `data/policies.json`.
+
+---
+
+#### Performance Parameter Metrics
+
+| Metric | Prom name | Type | Attributes | Emitted by | Observability Tenant |
+|--------|-----------|------|-----------|------------|---------------------|
+| `mesh.request.duration` | `agent_mesh_mesh_request_duration_ms_*` | Histogram | `domain`, `role`, `status` | `handle_request()` | System Health — P90 latency |
+| `mesh.request` (rate) | `agent_mesh_mesh_request_total` | Counter | `domain`, `role`, `status` | `handle_request()` | System Health — queries/min |
+| `mesh.a2a.duration` | `agent_mesh_mesh_a2a_duration_ms_*` | Histogram | `node`, `status` | `ask_remote()` | Reliability — per-node latency |
+| `mesh.payment_gate` | `agent_mesh_mesh_payment_gate_total` | Counter | `outcome` | `PaymentApprovalExecutor` | Human-in-Loop — approval outcomes |
+| `mesh.approval.wait_ms` | `agent_mesh_mesh_approval_wait_ms_*` | Histogram | `outcome` | `PaymentApprovalExecutor` | Human-in-Loop — approval wait time |
+| `mesh.token.usage` | `agent_mesh_mesh_token_usage_total` | Counter | `call_type`, `direction`, `model` | `AuditMiddleware` | FinOps — token usage (A2A vs Tool2Tool) |
+| `mesh.cost.estimated_usd` | `agent_mesh_mesh_cost_estimated_usd_*` | Histogram | `domain`, `call_type` | `AuditMiddleware` | Cost — estimated per-request USD |
+
+**FinOps details:** `call_type` is `"a2a"` for each agent invocation (LLM call via A2A) and `"tool"` for direct tool-call paths. `direction` is `"input"` or `"output"`. Token counts are estimated as `len(text) // 4` (4 chars ≈ 1 token) since Ollama doesn't surface raw counts directly. Cost = `tokens / 1000 × Config.COST_PER_1K_{INPUT|OUTPUT}_TOKENS` — defaults to 0 for self-hosted Ollama, configurable via `.env` for cloud models.
+
+**P90 latency in Grafana:** `histogram_quantile(0.90, rate(agent_mesh_mesh_request_duration_ms_bucket[5m]))`.
+
+---
+
+### 9.4 Logging System
+
+**Source:** [src/observability/logging_config.py](src/observability/logging_config.py)
+
+All loggers use `TraceContextFilter`, which stamps every record with `trace_id`, `span_id`, `parent_span_id` from the active OTel span. This means any log line can be cross-referenced with a Tempo trace.
+
+**Sample log line:**
+```
+2026-06-19 10:22:05 | INFO | mesh.agent | trace=5c46…9540 span=df0c…8148 | agent=FinanceAgent status=SUCCESS latency_ms=18432
+```
+
+| Logger constant | Logger name | Used for |
+|----------------|------------|---------|
+| `CAT_AGENT` | `mesh.agent` | Agent invocation start/end, AuditMiddleware records |
+| `CAT_WORKFLOW` | `mesh.workflow` | Pipeline stage pass/block decisions, routing results |
+| `CAT_TOOLS` | `mesh.tools` | Tool call entry/exit |
+| `CAT_A2A` | `mesh.a2a` | A2A call success/error, hop duration |
+| `CAT_MCP` | `mesh.mcp` | MCP tool calls (reserved for future MCP integration) |
+| `CAT_TRANSPORT` | `mesh.transport` | HTTP transport events |
+| `CAT_APPROVALS` | `mesh.approvals` | Payment approval prompts, approval wait time, decisions |
+| `CAT_SECURITY` | `mesh.security` | Guardrail blocks, RBAC denials, compliance failures, hallucination triggers |
+| `CAT_SYSTEM` | `mesh.system` | Startup, shutdown, orchestrator root |
+
+**Sinks:**
+- **Rotating file** — `data/logs/agent_mesh.log` (default 10 MB, 5 backups).
+- **Console** — at `Config.LOG_LEVEL` (default INFO).
+- **Grafana Loki** — when `OBS_PROFILE=grafana`, a `LoggingHandler` forwards all records to Loki via OTLP/HTTP.
+- **Optional JSON** — set `LOG_JSON=true` to emit structured JSON per line (machine-parseable for SIEM ingestion).
+
+---
+
+### 9.5 Audit Trail Schema (`data/audit_trail.jsonl`)
+
+Written by `AuditMiddleware` (in [src/middleware/audit_middleware.py](src/middleware/audit_middleware.py)). **Append-only JSONL** — one record per agent invocation. PII is redacted before writing. Immutable compliance trail per UAE CBUAE Data Governance Standard (7-year retention requirement).
+
+```json
+{
+  "timestamp":               "2026-06-19T10:22:05.413Z",
+  "trace_id":                "5c46a3b2d1e8f09c4a71b6d3e5f8a2c9",
+  "span_id":                 "df0c8148a3b21e94",
+  "session_id":              "sess_alice",
+  "agent_name":              "FinanceAgent",
+  "inputs":                  ["what is the engineering budget?"],
+  "output":                  "The FY26 engineering budget is $4.2M ...",
+  "status":                  "SUCCESS",
+  "latency_ms":              18432,
+  "model":                   "llama3.2",
+  "estimated_input_tokens":  42,
+  "estimated_output_tokens": 185,
+  "estimated_cost_usd":      0.0
+}
+```
+
+| Field | Source | Notes |
+|-------|--------|-------|
+| `trace_id` / `span_id` | Active OTel span | Links to Tempo trace |
+| `inputs` | `context.messages` | PII-redacted before writing |
+| `output` | `context.result` | PII-redacted before writing |
+| `model` | `Config.OLLAMA_MODEL` | Model version at invocation time |
+| `estimated_input_tokens` | `len(input) // 4` | 4 chars ≈ 1 token heuristic |
+| `estimated_output_tokens` | `len(output) // 4` | Same heuristic |
+| `estimated_cost_usd` | tokens × pricing config | 0 for self-hosted Ollama |
+
+---
+
+### 9.6 Health Endpoint (Availability Monitoring)
+
+Every A2A node exposes `GET /health` — added to `build_starlette_app()` in [hosting.py](src/a2a/hosting.py).
+
+```bash
+curl http://localhost:8011/health   # Finance node
+```
+```json
+{
+  "status":         "ok",
+  "node":           "127.0.0.1",
+  "uptime_seconds": 312.4,
+  "model":          "llama3.2",
+  "service":        "agent_mesh"
+}
+```
+
+`uptime_seconds` is computed from `_NODE_START_TIME` (set at module import), reflecting the process lifetime. Use with Grafana synthetic monitoring or a simple `while True; curl /health` loop to track node availability across the mesh.
+
+---
+
+### 9.7 OTel Profiles — `OBS_PROFILE` ([setup.py](src/observability/setup.py))
 
 | Profile | Wiring |
 |---------|--------|
-| `dev` (default) | `configure_otel_providers()` — console + OTLP/gRPC (e.g. Aspire/Jaeger at `OTEL_EXPORTER_OTLP_ENDPOINT`) |
+| `dev` (default) | `configure_otel_providers()` — console + OTLP/gRPC (Aspire/Jaeger at `OTEL_EXPORTER_OTLP_ENDPOINT`) |
 | `grafana` | OTLP/**HTTP** → Grafana Cloud: **Tempo** (traces) + **Mimir** (metrics) + **Loki** (logs), Basic auth |
 | `prod` | Azure Monitor / Application Insights + `enable_instrumentation()` |
-| `off` | File logging only, no OTel providers |
+| `off` | File logging only; no OTel providers |
 
-```python
-profile = (Config.OBS_PROFILE or "dev").lower()
-if profile == "prod":      _setup_prod(log)
-elif profile == "grafana": _setup_grafana(log)
-else:                      _setup_dev(log)
-```
+**Grafana Cloud** (`_setup_grafana`): builds Basic auth from `GRAFANA_INSTANCE_ID:GRAFANA_API_TOKEN`, wires OTLP/HTTP exporters to `<GRAFANA_OTLP_ENDPOINT>/v1/{traces,metrics,logs}`, and attaches a `LoggingHandler` so `mesh.*` logs flow to Loki. Falls back to `_setup_dev` if any credential is missing (never crashes). Metrics export on a ~60s interval; restart the mesh after `.env` changes.
 
-**Grafana Cloud** (`_setup_grafana`): builds Basic auth from `GRAFANA_INSTANCE_ID:GRAFANA_API_TOKEN`, then wires OTLP/HTTP exporters to `<GRAFANA_OTLP_ENDPOINT>/v1/{traces,metrics,logs}` and attaches a `LoggingHandler` to the root logger so all `mesh.*` logs flow to Loki. Falls back to `_setup_dev` if any credential is missing (never crashes the app). Requires `opentelemetry-exporter-otlp-proto-http`. After a run, explore in Grafana: **Tempo** (traces, `service.name = agent_mesh_*`), **Prometheus/Mimir** (`gen_ai_client_*`), **Loki** (`{service_name=~"agent_mesh.*"}`). Metrics export on a ~60s interval; restart the mesh after changing `.env`.
+After a run, explore in Grafana: **Tempo** (`service.name = agent_mesh_*`) → **Prometheus/Mimir** (`agent_mesh_mesh_*`) → **Loki** (`{service_name=~"agent_mesh.*"}`). Import `data/grafana_dashboard.json` for a pre-built dashboard covering all 24 metric panels.
+
+---
+
+### 9.8 Observability Tenant Coverage Map
+
+The three pillars from the enterprise observability framework, mapped to concrete instruments:
+
+#### Decision Parameters
+
+| Concept | What's measured | Instrument | Status |
+|---------|----------------|-----------|--------|
+| **Data** — sources queried, generated output | Request count + output captured in audit trail | `mesh.request` counter; `audit_trail.jsonl` output field | ✅ |
+| **Data** — retrieval relevance | *(no retrieval ranking layer yet)* | — | ❌ |
+| **Tools** — call success/error rate | Tool span status via framework + A2A error counter | `execute_tool` spans (SDK); `mesh.a2a.error` | ✅ |
+| **Tools** — tool output | Tool output in audit trail (PII-redacted) | `audit_trail.jsonl` output field | ✅ |
+| **Planner Agent** — reasoning / plan steps | Number of domains resolved per request | `mesh.router.domains` histogram | ✅ |
+| **Planner Agent** — plan fallback | Keyword fallback used when LLM output unparseable | `mesh.router.fallback` counter | ✅ |
+| **Agent** — decision traces | Full span tree per request | `mesh.request` → all child spans | ✅ |
+| **Agent** — confidence scores | *(requires LLM to emit logprobs — not available in Ollama)* | — | ❌ |
+| **A2A** — agent handoff latency | Per-hop A2A call duration | `mesh.a2a.duration` histogram | ✅ |
+| **A2A** — transport errors | Per-node A2A failures | `mesh.a2a.error` counter | ✅ |
+| **Memory** — context depth | Message count per session | `mesh.memory.messages` histogram | ✅ |
+| **Memory** — context-window size | Total chars across session history | `mesh.memory.context_chars` histogram | ✅ |
+
+#### Compliance / Governance / Security Parameters
+
+| Concept | What's measured | Instrument | Status |
+|---------|----------------|-----------|--------|
+| **Data** — PII masking | PII detected + redacted in inputs and outputs | `mesh.guardrail.block{category=pii}`; `[REDACTED_*]` tokens in audit | ✅ |
+| **Data** — data lineage | Trace IDs link every audit record to its distributed trace | `trace_id` / `span_id` in `audit_trail.jsonl` | ⚠️ (via traces) |
+| **Tools** — tool access scope | Per-tool role authorization rules | `tool_access` block in `policies.json`; `mesh.tool_access` counter | ⚠️ (policy defined; not yet a hard pipeline gate) |
+| **Agent** — agent access | Domain-level RBAC denials | `mesh.access_denied` counter + `mesh.security` log | ✅ |
+| **Agent** — actions outside guardrails | Semantic compliance review failures | `mesh.compliance.fail` counter | ✅ |
+| **Safety** — harmful-query refusal | Prompt injection + destructive intent detection | `mesh.guardrail.block{category=prompt_injection/destructive_intent}` | ✅ |
+| **Safety** — hate/toxicity detection | Toxic content (hate speech, harassment, threats) | `mesh.guardrail.block{category=toxicity}` | ✅ |
+| **Safety** — hallucination detection | Output speculation phrase heuristic | `mesh.hallucination.suspected` counter; `mesh.security` WARNING log | ✅ |
+| **Policy** — corporate policies | Policy advisor agent + `policies.json` | `consult_policy` tool → PolicyAgent A2A | ✅ |
+| **Policy** — UAE/FAB regulations | 5 regulatory rules in `policies.json` | `regulatory_compliance` block (AML/CFT, PDPL, FAB Payment Controls, CBUAE Data Governance, FAB AI/Model Risk) | ✅ |
+| **Audit** — immutable audit trail | Append-only JSONL per agent invocation | `data/audit_trail.jsonl` | ✅ |
+| **Audit** — prompt-injection detection | Regex + LLM semantic layers | `mesh.guardrail.block{category=prompt_injection}` + `mesh.compliance.fail` | ✅ |
+
+#### Performance Parameters
+
+| Concept | What's measured | Instrument | Status |
+|---------|----------------|-----------|--------|
+| **System Health** — latency (P90) | End-to-end request duration | `mesh.request.duration` histogram → P90 via Grafana `histogram_quantile` | ✅ |
+| **System Health** — queries/min | Request throughput | `rate(mesh.request[1m])` in Grafana | ✅ |
+| **System Health** — availability | Node uptime and reachability | `GET /health` endpoint on all 6 nodes | ✅ |
+| **System Health** — load balancing | *(single-instance per node; no LB layer)* | — | ❌ |
+| **Reliability** — task success rate | Request outcome by domain/role | `mesh.request{status="success"}` / total | ✅ |
+| **Reliability** — error/failure rate | Blocked + error outcomes | `mesh.request{status="blocked\|error"}` | ✅ |
+| **Human-in-Loop** — approval outcomes | Payment gate approve vs deny | `mesh.payment_gate{outcome=approved/denied}` | ✅ |
+| **Human-in-Loop** — approval wait time | Time from prompt display to decision | `mesh.approval.wait_ms` histogram | ✅ |
+| **Human-in-Loop** — escalation rate | *(single-level gate only; no multi-level escalation)* | — | ❌ |
+| **FinOps** — token usage by call type | Estimated tokens per A2A / Tool2Tool call | `mesh.token.usage{call_type, direction, model}` | ✅ |
+| **FinOps** — model used | Model name on every span and audit record | `model` attr in `audit_trail.jsonl`; `chat <model>` spans | ✅ |
+| **Cost** — estimated per-request cost | Token counts × pricing table | `mesh.cost.estimated_usd` histogram; `estimated_cost_usd` in audit | ✅ |
+| **Efficiency** — ROI / productivity saved | *(requires business KPI integration — out of scope)* | — | ❌ |
 
 ---
 
@@ -715,13 +1037,13 @@ guardrail_block:prompt_injection
 
 | Stage | Type | Bypass-resistant | Catches |
 |-------|------|------------------|---------|
-| 1. Input Guardrail | Deterministic regex | ✅ (no LLM) | Injection, PII input, destructive commands |
+| 1. Input Guardrail | Deterministic regex | ✅ (no LLM) | Injection, PII input, destructive commands, **hate/toxicity** |
 | 2. Routing | LLM classification | — | Classification only |
 | 3. Access Control | Role-based policy | ✅ (no LLM) | Unauthorized domain access (partial-aware) |
 | 4. Compliance | LLM semantic review | ⚠️ partial | Subtle/contextual threats |
 | 5. Payment Gate | Human approval | ✅ (requires human) | Unauthorized payments |
 | 6. Domain Agent | LLM + tools | — | Business logic |
-| 7. Output Redaction | Deterministic regex | ✅ (no LLM) | Accidental PII leakage |
+| 7. Output Redaction + Hallucination | Deterministic regex | ✅ (no LLM) | Accidental PII leakage; **hallucination speculation phrases** |
 
 **Key properties:** fail-closed; 4 deterministic gates (1,3,5,7) + 2 semantic gates (4,6); least privilege (finance = leadership); full audit trail with PII redaction.
 
@@ -731,11 +1053,11 @@ guardrail_block:prompt_injection
 
 ## 12. What's Real vs Mocked & Roadmap
 
-**Real:** Agent Framework agents; A2A client/server hosting on isolated ports; local LLM via `OllamaChatClient`; framework tool-calling; deterministic guardrails; multi-domain routing + parallel fan-out; agent-to-agent collaboration; file-based audit logging; OpenTelemetry tracing/metrics/logging (dev/grafana/prod); offline test suite.
+**Real:** Agent Framework agents; A2A client/server hosting on isolated ports; local LLM via `OllamaChatClient`; framework tool-calling; deterministic guardrails (injection, PII, destructive, **toxicity**); multi-domain routing + parallel fan-out; agent-to-agent collaboration; file-based audit logging; OpenTelemetry tracing/metrics/logging (dev/grafana/prod); full metrics catalog (19 custom instruments); **hallucination heuristic** on all outputs; **approval wait-time** measurement; **per-request cost estimation**; `GET /health` on every A2A node; **FAB/UAE regulatory policy rules** in `policies.json`; **per-tool authorization policy** in `policies.json`; offline test suite.
 
-**Mocked:** tool results are hardcoded (`src/tools/*`, MCP-ready); identity is a mock provider (`src/auth`); the payment tool simulates queuing.
+**Mocked/Policy-only:** tool results are hardcoded (`src/tools/*`, MCP-ready); identity is a mock provider (`src/auth`); the payment tool simulates queuing; `mesh.tool_access` metric is defined but tool-level authorization is declared in policy only — not yet enforced as a hard pipeline gate.
 
-**Roadmap:** replace hardcoded `@tool` responses with a real **MCP server** (`MCPStreamableHTTPTool`); real identity provider with persisted approver identity; database-backed session store; tamper-evident audit log; cross-process hop-count propagation for deeper collaboration safety.
+**Roadmap:** replace hardcoded `@tool` responses with a real **MCP server** (`MCPStreamableHTTPTool`); real identity provider with persisted approver identity; database-backed session store; tamper-evident audit log (hash chaining); cross-process hop-count propagation for deeper collaboration safety; per-tool RBAC gate in the pipeline (currently policy-declared only); NLP-based toxicity classifier to replace regex patterns; live token counts from Ollama API instead of character estimates.
 
 ---
 
@@ -776,11 +1098,13 @@ guardrail_block:prompt_injection
 | [launch_mesh.py](launch_mesh.py) | Spawns all A2A server processes |
 | [a2a_server.py](a2a_server.py) | Generic A2A server for any agent |
 | [devui_app.py](devui_app.py) | Single-process DevUI tracing |
-| [clients.py](src/a2a/clients.py) | `ask_remote()` + `A2A_TIMEOUT` |
-| [hosting.py](src/a2a/hosting.py) | A2A hosting + trace propagation |
+| [clients.py](src/a2a/clients.py) | `ask_remote()` + `A2A_TIMEOUT` + `record_a2a_call()` |
+| [hosting.py](src/a2a/hosting.py) | A2A hosting + `TraceContextMiddleware` + `GET /health` |
 | [identity_provider.py](src/auth/identity_provider.py) | Mock SSO, `login()`, `Role` |
-| [config.py](src/config.py) | Config, ports, `A2A_TIMEOUT`, `GRAFANA_*` |
-| [setup.py](src/observability/setup.py) | `setup_observability()` + profiles |
+| [config.py](src/config.py) | Config, ports, `A2A_TIMEOUT`, `GRAFANA_*`, `COST_PER_1K_*_TOKENS` |
+| [setup.py](src/observability/setup.py) | `setup_observability()` + dev/grafana/prod/off profiles |
+| [metrics.py](src/observability/metrics.py) | All `record_*()` helpers — 19 custom OTel instruments |
+| [tracer.py](src/observability/tracer.py) | Legacy JSONL trace sink (off by default; `ENABLE_TRACE_JSONL`) |
 
 ### Data
 | File | Purpose |
@@ -825,4 +1149,4 @@ python -m unittest test_agent_mesh.py
 
 ---
 
-*Consolidated study guide — kept in sync with the codebase. Last updated 2026-06-18.*
+*Consolidated study guide — kept in sync with the codebase. Last updated 2026-06-19.*

@@ -36,6 +36,7 @@ import asyncio
 import json
 import re
 import sys
+import time
 import pathlib
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Dict, List, Optional
@@ -178,12 +179,23 @@ class RouterExecutor(Executor):
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState]) -> None:
         router_text = await self._ask("gateway", state.query)
         state.router_raw = router_text
-        state.domain_queries = parse_domain_queries(router_text, state.query)
+        # Detect whether keyword fallback resolved the domain (parse_domain_queries
+        # returns a fallback when the LLM output had no valid domain token).
+        parsed = parse_domain_queries(router_text, state.query)
+        tl = (router_text or "").lower()
+        fallback_used = not any(d in tl for d in ("finance", "hr", "internal_job"))
+        state.domain_queries = parsed
         state.domains = list(state.domain_queries.keys())
         state.domain = state.domains[0]
         state.trail.append(f"route:{','.join(state.domains)}")
-        _log.info("Routed to domains=%s", state.domains,
+        _log.info("Routed to domains=%s fallback=%s", state.domains, fallback_used,
                   extra={"domain": state.domain, "user": state.user_name})
+        from src.observability import record_routing
+        record_routing(
+            domains_count=len(state.domains),
+            fallback_used=fallback_used,
+            role=state.role,
+        )
         await ctx.send_message(state)
 
 
@@ -287,22 +299,26 @@ class PaymentApprovalExecutor(Executor):
 
         _approval_log.info("Outbound payment requires human approval",
                            extra={"user": state.user_name, "domain": "finance"})
+        _t_prompt = time.perf_counter()
         approved = self._approver("Approve this outbound finance payment?")
+        wait_ms = (time.perf_counter() - _t_prompt) * 1000
+        from src.observability import record_payment_gate, record_approval_wait
+        record_approval_wait(wait_ms=wait_ms, approved=approved)
         if not approved:
             state.blocked = True
             state.block_stage = "approval"
             state.answer = "Payment was not approved by the operator."
             state.trail.append("payment_denied")
-            _approval_log.warning("Payment DENIED by operator",
+            _approval_log.warning("Payment DENIED by operator (waited %.0f ms)",
+                                  wait_ms,
                                   extra={"user": state.user_name, "status": "DENY"})
-            from src.observability import record_payment_gate
             record_payment_gate(approved=False)
             await ctx.yield_output(state)
             return
         state.trail.append("payment_approved")
-        _approval_log.info("Payment APPROVED by operator",
+        _approval_log.info("Payment APPROVED by operator (waited %.0f ms)",
+                           wait_ms,
                            extra={"user": state.user_name, "status": "APPROVE"})
-        from src.observability import record_payment_gate
         record_payment_gate(approved=True)
         await ctx.send_message(state)
 
@@ -347,12 +363,37 @@ class DomainExecutor(Executor):
         await ctx.send_message(state)
 
 
+# Phrases that suggest the LLM is speculating rather than grounding its answer.
+_HALLUCINATION_INDICATORS = re.compile(
+    r"\b(i('m| am) not (sure|certain|aware)|i don'?t (know|have (access|information))|"
+    r"as (of|far as) (my|i) know|i (cannot|can'?t) (confirm|verify|access)|"
+    r"i (believe|think|assume) (but|though) (i'?m|i am) not|"
+    r"this (may|might|could) (not )?be (accurate|correct|up.?to.?date)|"
+    r"(please|you should) (verify|confirm|check) (this|with))\b",
+    re.IGNORECASE,
+)
+
+
 class OutputRedactionExecutor(Executor):
-    """Deterministic output redaction (PII). Terminal node — yields the answer."""
+    """Deterministic output redaction (PII) + hallucination heuristic. Terminal node."""
 
     @handler
     async def run(self, state: MeshState, ctx: WorkflowContext[Never, MeshState]) -> None:
         state.answer = redact_pii(state.answer)
+
+        # Heuristic hallucination check: flag responses that contain speculation phrases.
+        match = _HALLUCINATION_INDICATORS.search(state.answer or "")
+        if match:
+            indicator = "speculation_phrase"
+            _security_log.warning(
+                "Hallucination heuristic triggered domain=%s indicator=%s matched=%r",
+                state.domain, indicator, match.group(0)[:60],
+                extra={"domain": state.domain, "event_type": "hallucination_suspected"},
+            )
+            from src.observability import record_hallucination_suspected
+            record_hallucination_suspected(domain=state.domain or "unknown", indicator=indicator)
+            state.trail.append("hallucination_suspected")
+
         state.trail.append("output_redacted")
         _log.info("Request complete domains=%s trail=%s", state.domains or [state.domain],
                   " -> ".join(state.trail),

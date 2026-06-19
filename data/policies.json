@@ -49,6 +49,118 @@
       "guidelines": "All employees may search and ask about internal job postings. Only postings marked open are returned. No external/confidential requisitions are exposed."
     }
   ],
+  "tool_access": {
+    "issue_payment": {
+      "allowed_roles": ["leadership"],
+      "description": "Outbound payment issuance is restricted to leadership; always requires human approval.",
+      "denial_message": "Tool 'issue_payment' is restricted to the leadership team."
+    },
+    "get_financial_summary": {
+      "allowed_roles": ["leadership"],
+      "description": "Company-wide financial summary is leadership-only.",
+      "denial_message": "Tool 'get_financial_summary' is restricted to the leadership team."
+    },
+    "get_budget_report": {
+      "allowed_roles": ["leadership"],
+      "description": "Department budget reports are leadership-only.",
+      "denial_message": "Tool 'get_budget_report' is restricted to the leadership team."
+    },
+    "get_leave_balance": {
+      "allowed_roles": ["employee", "hr", "leadership"],
+      "description": "Leave balance is available to all employees (own data only)."
+    },
+    "get_benefits_summary": {
+      "allowed_roles": ["employee", "hr", "leadership"],
+      "description": "Benefits summary is available to all employees."
+    },
+    "get_hr_policy": {
+      "allowed_roles": ["employee", "hr", "leadership"],
+      "description": "HR policy lookup is available to all employees."
+    },
+    "get_headcount": {
+      "allowed_roles": ["hr", "leadership"],
+      "description": "Headcount data is restricted to HR and leadership.",
+      "denial_message": "Tool 'get_headcount' is restricted to HR and leadership roles."
+    },
+    "search_job_postings": {
+      "allowed_roles": ["employee", "hr", "leadership"],
+      "description": "Internal job postings are available to all employees."
+    },
+    "get_posting_details": {
+      "allowed_roles": ["employee", "hr", "leadership"],
+      "description": "Job posting details are available to all employees."
+    },
+    "consult_policy": {
+      "allowed_roles": ["employee", "hr", "leadership"],
+      "description": "Policy consultation is available to all employees."
+    }
+  },
+  "regulatory_compliance": {
+    "jurisdiction": "UAE",
+    "framework": "FAB (First Abu Dhabi Bank) Internal Policies & UAE Central Bank Regulations",
+    "policies": [
+      {
+        "id": "uae_aml_cft",
+        "name": "UAE AML/CFT Compliance",
+        "regulation": "UAE Federal Decree-Law No. 20 of 2018 on Anti-Money Laundering",
+        "rules": {
+          "transaction_screening_required": true,
+          "suspicious_activity_reporting": true,
+          "kyc_verification_required": true,
+          "threshold_reporting_aed": 40000
+        },
+        "guidelines": "All payment transactions must be screened against AML/CFT watchlists. Transactions at or above AED 40,000 (approx USD 10,900) require enhanced due diligence and must be flagged for compliance review. Suspicious activity must be reported to the UAE Financial Intelligence Unit (FIU) via the goAML portal."
+      },
+      {
+        "id": "uae_central_bank_data_governance",
+        "name": "UAE Central Bank Data Governance Standards",
+        "regulation": "CBUAE Guidance on Data Governance for Licensed Financial Institutions (2021)",
+        "rules": {
+          "data_residency_uae": true,
+          "pii_classification_required": true,
+          "data_retention_years": 7,
+          "audit_trail_immutable": true
+        },
+        "guidelines": "Customer and transactional data must reside on UAE-based infrastructure or approved sovereign cloud regions. PII must be classified and masked before logging. Audit trails are immutable and must be retained for a minimum of 7 years to support regulatory examination."
+      },
+      {
+        "id": "fab_payment_controls",
+        "name": "FAB Outbound Payment Controls",
+        "regulation": "FAB Internal Payment Policy v3.2",
+        "rules": {
+          "dual_approval_above_aed": 50000,
+          "same_day_cutoff_gst": "14:00",
+          "beneficiary_whitelist_check": true,
+          "sanctions_screening_required": true
+        },
+        "guidelines": "Outbound payments above AED 50,000 require dual approval (initiator + authoriser). Payments submitted after 14:00 GST will be processed the next banking day. All beneficiaries must be pre-verified against the FAB approved beneficiary list. OFAC, UN, and EU sanctions screening is mandatory for every payment instruction."
+      },
+      {
+        "id": "uae_pdpl",
+        "name": "UAE Personal Data Protection Law",
+        "regulation": "UAE Federal Decree-Law No. 45 of 2021 on Personal Data Protection",
+        "rules": {
+          "consent_required_for_processing": true,
+          "right_to_erasure": true,
+          "cross_border_transfer_restricted": true,
+          "breach_notification_hours": 72
+        },
+        "guidelines": "Personal data may only be processed with documented consent or a lawful basis. Data subjects have the right to request erasure. Cross-border data transfers outside the UAE require TDRA approval or an adequacy determination. Data breaches must be notified to the TDRA within 72 hours of discovery."
+      },
+      {
+        "id": "fab_model_risk",
+        "name": "FAB AI/Model Risk Management Policy",
+        "regulation": "FAB Model Risk Management Framework (2023) aligned with UAE CBUAE AI Guidance",
+        "rules": {
+          "ai_output_human_review_required": true,
+          "model_explainability_required": true,
+          "bias_assessment_required": true,
+          "hallucination_flag_and_log": true
+        },
+        "guidelines": "All AI-generated recommendations or decisions affecting customers or finances must undergo human review before execution. Models must produce explainable outputs. Bias and fairness assessments are required at deployment and annually thereafter. Hallucination events (detected by heuristic or LLM-judge) must be logged to the audit trail for model risk review."
+      }
+    ]
+  },
   "policies": [
     {
       "id": "finance_folder_access",

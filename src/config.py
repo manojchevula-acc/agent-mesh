@@ -50,6 +50,14 @@ class Config:
     ENABLE_TRACE_JSONL: bool = os.getenv("ENABLE_TRACE_JSONL", "false").lower() in ("1", "true", "yes")
 
     # ----------------------------------------------------------------------
+    # FinOps / Cost tracking
+    # Estimated LLM serving cost per 1,000 tokens. For Ollama (self-hosted)
+    # these default to $0 but can be overridden for cloud-hosted models.
+    # ----------------------------------------------------------------------
+    COST_PER_1K_INPUT_TOKENS: float = float(os.getenv("COST_PER_1K_INPUT_TOKENS", "0.0"))
+    COST_PER_1K_OUTPUT_TOKENS: float = float(os.getenv("COST_PER_1K_OUTPUT_TOKENS", "0.0"))
+
+    # ----------------------------------------------------------------------
     # DevUI (Microsoft Agent Framework dev tool) — Docker-free live trace viewer
     # ----------------------------------------------------------------------
     # ``devui_app.py`` runs the whole mesh in ONE process so DevUI can capture the

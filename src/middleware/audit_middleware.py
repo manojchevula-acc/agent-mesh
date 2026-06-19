@@ -10,6 +10,19 @@ from agent_framework import AgentMiddleware, AgentContext
 from src.config import Config
 from src.observability import get_logger, CAT_AGENT
 
+
+def _estimate_tokens(text: str) -> int:
+    """Estimates token count as len(text) // 4 (standard ~4 chars/token heuristic)."""
+    return max(0, len(text or "") // 4)
+
+
+def _estimate_cost(input_tokens: int, output_tokens: int) -> float:
+    """Computes estimated USD cost from token counts using the pricing config."""
+    return (
+        input_tokens  / 1000.0 * Config.COST_PER_1K_INPUT_TOKENS +
+        output_tokens / 1000.0 * Config.COST_PER_1K_OUTPUT_TOKENS
+    )
+
 _log = get_logger(CAT_AGENT)
 
 
@@ -144,6 +157,10 @@ class AuditMiddleware(AgentMiddleware):
 
             # 4. Formulate the audit log entry (immutable compliance trail).
             #    Correlated with the SDK's invoke_agent span via trace/span ids.
+            input_text = " ".join(scrubbed_inputs)
+            estimated_input_tokens  = _estimate_tokens(input_text)
+            estimated_output_tokens = _estimate_tokens(scrubbed_output)
+            estimated_cost_usd      = _estimate_cost(estimated_input_tokens, estimated_output_tokens)
             log_entry = {
                 "timestamp": timestamp,
                 "trace_id": trace_id,
@@ -153,10 +170,33 @@ class AuditMiddleware(AgentMiddleware):
                 "inputs": scrubbed_inputs,
                 "output": scrubbed_output,
                 "status": status,
-                "latency_ms": latency_ms
+                "latency_ms": latency_ms,
+                "model": Config.OLLAMA_MODEL,
+                "estimated_input_tokens": estimated_input_tokens,
+                "estimated_output_tokens": estimated_output_tokens,
+                "estimated_cost_usd": estimated_cost_usd,
             }
             if error_message:
                 log_entry["error"] = error_message
+
+            # Emit FinOps metrics for this agent invocation (a2a call type since each
+            # agent is reached via A2A; tool calls within the agent are already tracked
+            # by the SDK's execute_tool span).
+            try:
+                from src.observability import record_token_usage, record_cost
+                record_token_usage(
+                    call_type="a2a",
+                    estimated_input_tokens=estimated_input_tokens,
+                    estimated_output_tokens=estimated_output_tokens,
+                    model=Config.OLLAMA_MODEL,
+                )
+                record_cost(
+                    estimated_usd=estimated_cost_usd,
+                    domain="unknown",
+                    call_type="a2a",
+                )
+            except Exception:
+                pass
 
             # 5. Append to JSONL audit trail file (audit, not telemetry: the SDK's
             #    AgentTelemetryLayer owns the agent span, so we do NOT emit one here).

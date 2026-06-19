@@ -23,6 +23,15 @@ Prometheus metric names in Grafana Mimir (dots → underscores, meter-name prefi
   agent_mesh_mesh_payment_gate_total
   agent_mesh_mesh_a2a_duration_ms_bucket  / _sum / _count
   agent_mesh_mesh_a2a_error_total
+  agent_mesh_mesh_router_domains_total
+  agent_mesh_mesh_router_fallback_total
+  agent_mesh_mesh_memory_messages_bucket / _sum / _count
+  agent_mesh_mesh_memory_context_chars_bucket / _sum / _count
+  agent_mesh_mesh_approval_wait_ms_bucket / _sum / _count
+  agent_mesh_mesh_token_usage_total
+  agent_mesh_mesh_cost_estimated_usd_bucket / _sum / _count
+  agent_mesh_mesh_hallucination_suspected_total
+  agent_mesh_mesh_tool_access_total
 """
 from __future__ import annotations
 
@@ -221,5 +230,195 @@ def record_a2a_call(
                 "mesh.a2a.error", "{error}",
                 "A2A transport errors by target node",
             ).add(1, {"node": node})
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Decision Parameter metrics
+# ---------------------------------------------------------------------------
+
+def record_routing(
+    *,
+    domains_count: int,
+    fallback_used: bool,
+    role: str,
+) -> None:
+    """Records Gateway routing result — domain decomposition metrics.
+
+    Covers the 'Planner Agent — reasoning logic, no. of plan steps' Decision Parameter.
+
+    Args:
+        domains_count: Number of domains resolved (1 = single-domain, 2+ = multi-domain).
+        fallback_used: True when the keyword-based fallback resolved the domain (LLM gave no valid token).
+        role:          User role at routing time.
+    """
+    try:
+        _histogram(
+            "mesh.router.domains", "{domain}",
+            "Number of domains resolved per request by the Gateway router",
+        ).record(domains_count, {"role": role})
+        if fallback_used:
+            _counter(
+                "mesh.router.fallback", "{fallback}",
+                "Requests where Gateway keyword fallback resolved the domain (LLM output was unparseable)",
+            ).add(1, {"role": role})
+    except Exception:
+        pass
+
+
+def record_memory_usage(
+    *,
+    messages_count: int,
+    context_chars: int,
+) -> None:
+    """Records memory / context-window usage after each message append.
+
+    Covers the 'Memory — context-window usage, memory recall accuracy' Decision Parameter.
+
+    Args:
+        messages_count: Total messages in the session history (proxy for context depth).
+        context_chars:  Total characters across all session messages (proxy for token usage).
+    """
+    try:
+        _histogram(
+            "mesh.memory.messages", "{message}",
+            "Session message count at each append (context depth proxy)",
+        ).record(messages_count)
+        _histogram(
+            "mesh.memory.context_chars", "char",
+            "Total session context characters at each append (token-count proxy)",
+        ).record(context_chars)
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Performance Parameter metrics
+# ---------------------------------------------------------------------------
+
+def record_approval_wait(
+    *,
+    wait_ms: float,
+    approved: bool,
+) -> None:
+    """Records how long a human approver took to respond to a payment gate prompt.
+
+    Covers the 'Human-in-Loop — approval wait time' Performance Parameter.
+
+    Args:
+        wait_ms:  Wall-clock duration from prompt display to decision in milliseconds.
+        approved: Whether the payment was approved (used to slice wait time by outcome).
+    """
+    try:
+        _histogram(
+            "mesh.approval.wait_ms", "ms",
+            "Time from payment approval prompt to human decision in milliseconds",
+        ).record(wait_ms, {"outcome": "approved" if approved else "denied"})
+    except Exception:
+        pass
+
+
+def record_token_usage(
+    *,
+    call_type: str,
+    estimated_input_tokens: int,
+    estimated_output_tokens: int,
+    model: str,
+) -> None:
+    """Records estimated token consumption broken down by call type.
+
+    Covers the 'FinOps — token usage (A2A & Tool2Tool), model used' Performance Parameter.
+    Token counts are estimated as len(text) // 4 (standard ~4 chars per token heuristic)
+    when the SDK does not expose raw counts directly.
+
+    Args:
+        call_type:               One of ``"a2a"``, ``"tool"``, ``"direct"`` — distinguishes
+                                 A2A inter-agent calls from Tool2Tool (tool calls within agent).
+        estimated_input_tokens:  Estimated prompt/input token count.
+        estimated_output_tokens: Estimated completion/output token count.
+        model:                   Model identifier (e.g. ``"llama3.2"``).
+    """
+    try:
+        ctr = _counter(
+            "mesh.token.usage", "{token}",
+            "Estimated token consumption by call type, direction and model",
+        )
+        ctr.add(estimated_input_tokens,  {"call_type": call_type, "direction": "input",  "model": model})
+        ctr.add(estimated_output_tokens, {"call_type": call_type, "direction": "output", "model": model})
+    except Exception:
+        pass
+
+
+def record_cost(
+    *,
+    estimated_usd: float,
+    domain: str,
+    call_type: str,
+) -> None:
+    """Records estimated per-request serving cost in USD.
+
+    Covers the 'Cost — serving endpoint & data-storage cost, cost per request' Performance Parameter.
+
+    Args:
+        estimated_usd: Computed from token counts × pricing table in ``Config``.
+        domain:        Primary domain of the request.
+        call_type:     ``"a2a"``, ``"tool"``, or ``"direct"``.
+    """
+    try:
+        _histogram(
+            "mesh.cost.estimated_usd", "usd",
+            "Estimated per-request LLM serving cost in USD",
+        ).record(estimated_usd, {"domain": domain or "unknown", "call_type": call_type})
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Compliance / Safety metrics
+# ---------------------------------------------------------------------------
+
+def record_hallucination_suspected(
+    *,
+    domain: str,
+    indicator: str,
+) -> None:
+    """Records when a response heuristic suspects hallucination in output.
+
+    Covers the 'Safety — hallucination checks' Compliance Parameter.
+
+    Args:
+        domain:    Domain that produced the suspicious output.
+        indicator: Short label for the matched heuristic (e.g. ``"speculation_phrase"``).
+    """
+    try:
+        _counter(
+            "mesh.hallucination.suspected", "{event}",
+            "Responses flagged by heuristic hallucination detector by domain and indicator",
+        ).add(1, {"domain": domain or "unknown", "indicator": indicator})
+    except Exception:
+        pass
+
+
+def record_tool_access(
+    *,
+    tool_name: str,
+    role: str,
+    allowed: bool,
+) -> None:
+    """Records a tool-level authorization decision.
+
+    Covers the 'Tools — tool access scope, authorization' Compliance Parameter.
+
+    Args:
+        tool_name: Name of the tool being invoked (e.g. ``"issue_payment"``).
+        role:      User role requesting the tool.
+        allowed:   Whether the tool call is authorized under policy.
+    """
+    try:
+        _counter(
+            "mesh.tool_access", "{access}",
+            "Tool-level authorization decisions (allowed vs denied) by tool and role",
+        ).add(1, {"tool": tool_name, "role": role, "outcome": "allowed" if allowed else "denied"})
     except Exception:
         pass
