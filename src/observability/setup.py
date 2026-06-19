@@ -152,8 +152,8 @@ def _setup_grafana(log: logging.Logger) -> None:
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
     from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
-    from opentelemetry.sdk.metrics import MeterProvider
-    from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+    from opentelemetry.sdk.metrics import MeterProvider, Histogram as _Histogram
+    from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader, AggregationTemporality
     from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
     from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
     from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
@@ -177,6 +177,8 @@ def _setup_grafana(log: logging.Logger) -> None:
     # Metrics → Grafana Mimir
     # export_timeout_millis must be < export_interval_millis to avoid deadline
     # exhaustion that produces a negative connect-timeout in urllib3.
+    # Force CUMULATIVE temporality for histograms: OTel SDK ≥ 1.20 defaults
+    # histograms to DELTA, which breaks Prometheus rate() queries in Mimir.
     meter_provider = MeterProvider(
         resource=resource,
         metric_readers=[PeriodicExportingMetricReader(
@@ -184,6 +186,7 @@ def _setup_grafana(log: logging.Logger) -> None:
                 endpoint=base + "/v1/metrics",
                 headers=headers,
                 timeout=30,
+                preferred_temporality={_Histogram: AggregationTemporality.CUMULATIVE},
             ),
             export_interval_millis=60_000,
             export_timeout_millis=25_000,
