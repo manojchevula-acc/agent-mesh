@@ -166,15 +166,27 @@ def _setup_grafana(log: logging.Logger) -> None:
     # Traces → Grafana Tempo
     tracer_provider = TracerProvider(resource=resource)
     tracer_provider.add_span_processor(
-        BatchSpanProcessor(OTLPSpanExporter(endpoint=base + "/v1/traces", headers=headers))
+        BatchSpanProcessor(OTLPSpanExporter(
+            endpoint=base + "/v1/traces",
+            headers=headers,
+            timeout=30,
+        ))
     )
     _trace.set_tracer_provider(tracer_provider)
 
     # Metrics → Grafana Mimir
+    # export_timeout_millis must be < export_interval_millis to avoid deadline
+    # exhaustion that produces a negative connect-timeout in urllib3.
     meter_provider = MeterProvider(
         resource=resource,
         metric_readers=[PeriodicExportingMetricReader(
-            OTLPMetricExporter(endpoint=base + "/v1/metrics", headers=headers)
+            OTLPMetricExporter(
+                endpoint=base + "/v1/metrics",
+                headers=headers,
+                timeout=30,
+            ),
+            export_interval_millis=60_000,
+            export_timeout_millis=25_000,
         )],
     )
     _metrics.set_meter_provider(meter_provider)
@@ -182,7 +194,11 @@ def _setup_grafana(log: logging.Logger) -> None:
     # Logs → Grafana Loki (attaches to root logger so all mesh loggers flow through)
     logger_provider = LoggerProvider(resource=resource)
     logger_provider.add_log_record_processor(
-        BatchLogRecordProcessor(OTLPLogExporter(endpoint=base + "/v1/logs", headers=headers))
+        BatchLogRecordProcessor(OTLPLogExporter(
+            endpoint=base + "/v1/logs",
+            headers=headers,
+            timeout=30,
+        ))
     )
     set_logger_provider(logger_provider)
     logging.getLogger().addHandler(

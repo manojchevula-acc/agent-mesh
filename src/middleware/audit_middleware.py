@@ -172,6 +172,7 @@ class AuditMiddleware(AgentMiddleware):
                 if status == "ERROR":
                     _log.error("agent=%s status=ERROR latency_ms=%d error=%s",
                                agent_name, latency_ms, error_message,
+                               exc_info=True,
                                extra={"agent": agent_name, "session_id": session_id,
                                       "status": status})
                 else:

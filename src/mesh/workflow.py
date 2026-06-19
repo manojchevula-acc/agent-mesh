@@ -51,10 +51,11 @@ from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
 from src.config import Config
 from src.guardrails.deterministic_filters import screen_input, redact_pii
 from src.agents.gateway_agent import parse_domain_queries
-from src.observability import get_logger, CAT_WORKFLOW, CAT_APPROVALS
+from src.observability import get_logger, CAT_WORKFLOW, CAT_APPROVALS, CAT_SECURITY
 
 _log = get_logger(CAT_WORKFLOW)
 _approval_log = get_logger(CAT_APPROVALS)
+_security_log = get_logger(CAT_SECURITY)
 
 # Requests that imply moving money -> require a deterministic human approval gate.
 _PAYMENT_RE = re.compile(r"\b(pay|payment|payout|remit|transfer|wire|disburse)\b", re.IGNORECASE)
@@ -153,8 +154,12 @@ class InputGuardrailExecutor(Executor):
                 f"Request blocked by security guardrails ({', '.join(screen.categories)})."
             )
             state.trail.append(f"guardrail_block:{','.join(screen.categories)}")
-            _log.warning("Input guardrail BLOCK: %s", screen.reason[:160],
-                         extra={"user": state.user_name, "status": "BLOCK"})
+            _security_log.warning("Input guardrail BLOCK: %s", screen.reason[:160],
+                                  extra={"event_type": "guardrail_block",
+                                         "categories": ",".join(screen.categories),
+                                         "user": state.user_name, "status": "BLOCK"})
+            from src.observability import record_guardrail
+            record_guardrail(categories=screen.categories, role=state.role)
             await ctx.yield_output(state)
             return
         state.trail.append("guardrail_pass")
@@ -201,8 +206,14 @@ class AccessControlExecutor(Executor):
             state.block_stage = "access_control"
             state.answer = denied[0][1]
             state.trail.append(f"access_denied:{','.join(d for d, _ in denied)}")
-            _log.warning("Access DENY role=%s domains=%s", state.role, [d for d, _ in denied],
-                         extra={"domain": state.domain, "user": state.user_name, "status": "DENY"})
+            _security_log.warning("Access DENY role=%s domains=%s", state.role, [d for d, _ in denied],
+                                  extra={"event_type": "rbac_deny", "role": state.role,
+                                         "denied_domains": ",".join(d for d, _ in denied),
+                                         "domain": state.domain, "user": state.user_name,
+                                         "status": "DENY"})
+            from src.observability import record_access_denied
+            for d, _ in denied:
+                record_access_denied(domain=d, role=state.role)
             await ctx.yield_output(state)
             return
 
@@ -211,6 +222,10 @@ class AccessControlExecutor(Executor):
             state.trail.append(f"access_ok:{d}")
         for d, _ in denied:
             state.trail.append(f"access_partial_deny:{d}")
+        if denied:
+            from src.observability import record_access_denied
+            for d, _ in denied:
+                record_access_denied(domain=d, role=state.role)
 
         state.domains = allowed
         state.domain = allowed[0]
@@ -239,8 +254,11 @@ class ComplianceExecutor(Executor):
             state.block_stage = "compliance"
             state.answer = "Request blocked by the Compliance agent (semantic safety review)."
             state.trail.append("compliance_failed")
-            _log.warning("Compliance FAIL: %s", verdict[:160],
-                         extra={"domain": state.domain, "status": "FAIL"})
+            _security_log.warning("Compliance FAIL: %s", verdict[:160],
+                                  extra={"event_type": "compliance_block",
+                                         "domain": state.domain, "status": "FAIL"})
+            from src.observability import record_compliance
+            record_compliance(domain=state.domain or "unknown")
             await ctx.yield_output(state)
             return
         state.trail.append("compliance_pass")
@@ -277,11 +295,15 @@ class PaymentApprovalExecutor(Executor):
             state.trail.append("payment_denied")
             _approval_log.warning("Payment DENIED by operator",
                                   extra={"user": state.user_name, "status": "DENY"})
+            from src.observability import record_payment_gate
+            record_payment_gate(approved=False)
             await ctx.yield_output(state)
             return
         state.trail.append("payment_approved")
         _approval_log.info("Payment APPROVED by operator",
                            extra={"user": state.user_name, "status": "APPROVE"})
+        from src.observability import record_payment_gate
+        record_payment_gate(approved=True)
         await ctx.send_message(state)
 
 
