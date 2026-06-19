@@ -50,6 +50,18 @@ class FileSessionStore:
         })
         self.save_session(session_id, history)
 
+        # Emit memory usage metrics: message depth and total context chars as
+        # proxies for context-window consumption and memory recall load.
+        try:
+            from src.observability import record_memory_usage
+            total_chars = sum(len(m.get("content", "")) for m in history)
+            record_memory_usage(
+                messages_count=len(history),
+                context_chars=total_chars,
+            )
+        except Exception:
+            pass
+
     def get_context_summary(self, session_id: str) -> str:
         """Helper to generate a clean string representation of conversation history."""
         history = self.load_session(session_id)
