@@ -4,6 +4,7 @@ Wraps an ``agent_framework`` Agent as an isolated A2A-protocol HTTP server so th
 node can be reached by other agents over the network. Uses the version-correct
 hosting pattern for the installed ``a2a`` SDK (Starlette + JSON-RPC routes).
 """
+import contextlib
 import sys
 import pathlib
 
@@ -108,6 +109,22 @@ async def _health_endpoint(request: Request) -> JSONResponse:
     })
 
 
+@contextlib.asynccontextmanager
+async def _node_lifespan(app):
+    """Flush pending OTel telemetry when an A2A node shuts down.
+
+    Each node runs its own TracerProvider/MeterProvider (service_name =
+    agent_mesh_<node>). Without an explicit flush, spans and metrics recorded
+    in the last export window are lost when the process exits.
+    """
+    yield
+    try:
+        from src.observability import flush_observability
+        flush_observability()
+    except Exception:
+        pass
+
+
 def build_starlette_app(agent, card: AgentCard) -> Starlette:
     """Wraps an agent_framework Agent into a Starlette A2A application.
 
@@ -121,6 +138,7 @@ def build_starlette_app(agent, card: AgentCard) -> Starlette:
         agent_card=card,
     )
     return Starlette(
+        lifespan=_node_lifespan,
         middleware=[Middleware(TraceContextMiddleware)],
         routes=[
             Route("/health", _health_endpoint, methods=["GET"]),

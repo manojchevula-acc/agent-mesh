@@ -20,7 +20,7 @@ from src.observability.logging_config import (
     configure_logging,
     get_logger,
 )
-from src.observability.setup import setup_observability
+from src.observability.setup import setup_observability, flush_observability
 from src.observability.metrics import (
     record_request,
     record_guardrail,
@@ -39,6 +39,7 @@ from src.observability.metrics import (
 
 __all__ = [
     "setup_observability",
+    "flush_observability",
     "configure_logging",
     "get_logger",
     "CAT_AGENT",

@@ -37,6 +37,9 @@ class Config:
     GRAFANA_OTLP_ENDPOINT: str = os.getenv("GRAFANA_OTLP_ENDPOINT", "")
     GRAFANA_INSTANCE_ID: str = os.getenv("GRAFANA_INSTANCE_ID", "")
     GRAFANA_API_TOKEN: str = os.getenv("GRAFANA_API_TOKEN", "")
+    # Metrics export interval in ms. 15 s makes metrics appear in Grafana quickly
+    # during development. Raise to 60000 in production to reduce write traffic.
+    GRAFANA_EXPORT_INTERVAL_MS: int = int(os.getenv("GRAFANA_EXPORT_INTERVAL_MS", "15000"))
 
     # Centralized application logging (durable, rotating, trace-correlated).
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
