@@ -1,0 +1,96 @@
+# Default values for all config keys.
+# These mirror the Pydantic defaults; the YAML layer can override defaults and is
+# itself overridden by environment variables / .env.
+service_name: gernas-rag
+service_version: "1.0.0"
+environment: development
+debug: false
+log_level: INFO
+
+api_host: 0.0.0.0
+api_port: 8000
+api_workers: 1
+jwt_algorithm: RS256
+cors_origins:
+  - "*"
+
+redis_url: redis://localhost:6379
+redis_cache_ttl_seconds: 900
+redis_enabled: true
+
+embedding:
+  provider: bgem3
+  model_name: BAAI/bge-m3
+  device: cpu
+  use_fp16: true
+  batch_size: 32
+  max_length: 512
+  dense_dim: 1024
+  return_sparse: true
+  normalize_embeddings: true
+
+vectordb:
+  provider: qdrant
+  collection_name: fab_gernas_docs
+  qdrant_url: http://localhost:6333
+  qdrant_prefer_grpc: false
+  qdrant_path:   # null = use qdrant_url; set to e.g. ./qdrant_storage for embedded local
+  milvus_host: localhost
+  milvus_port: 19530
+  chroma_path: ./chroma_db
+  chroma_port: 8001
+  dense_vector_size: 1024
+  distance_metric: cosine
+  replication_factor: 1
+  on_disk_payload: true
+
+llm:
+  provider: groq
+  model_name: llama-3.1-70b-versatile
+  temperature: 0.0
+  max_tokens: 2048
+  timeout_seconds: 30
+  hf_model_id: mistralai/Mistral-7B-Instruct-v0.2
+  hf_device: cpu
+
+chunking:
+  strategy: hierarchical
+  extraction_strategy: auto
+  chunk_size: 400
+  chunk_overlap: 64
+  min_chunk_size: 80
+  max_chunk_size: 600
+  enable_parent_chunks: true
+  parent_chunk_size: 1500
+  unstructured_strategy: hi_res
+  infer_table_structure: true
+
+retrieval:
+  dense_top_k: 40
+  sparse_top_k: 40
+  rrf_k: 60
+  pre_rerank_top_k: 20
+  final_top_k: 5
+  freshness_penalty_enabled: true
+  freshness_max_age_days: 180
+  freshness_max_penalty: 0.3
+  include_parent_chunks: true
+  dense_weight: 0.6
+  sparse_weight: 0.4
+
+ingestion:
+  docs_path: ./docs
+  batch_size: 32
+  max_concurrent_documents: 3
+  supported_extensions:
+    - .pdf
+    - .docx
+
+evaluation:
+  judge_provider: groq                 # 'groq' | 'ollama' | 'openai'
+  judge_model: llama-3.1-8b-instant   # small/fast model for RAGAS judge; higher free-tier TPM
+  judge_base_url:                      # for ollama use http://localhost:11434/v1 ; ignored by groq
+  judge_api_key:                       # ollama ignores this; OpenAI SDK needs a non-empty string (e.g. "ollama")
+  max_context_chars: 6000              # truncate contexts before sending to judge (too small drops the supporting table row -> recall/faithfulness collapse; override via RAG__EVALUATION__MAX_CONTEXT_CHARS)
+  top_k: 3                             # chunks per test question during eval
+  embeddings_model: sentence-transformers/all-MiniLM-L6-v2  # fallback if embedder not passed in

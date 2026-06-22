@@ -1,0 +1,6 @@
+# Local overrides (gitignored). Put developer-machine-specific overrides here.
+# Example:
+# debug: true
+# log_level: DEBUG
+# embedding:
+#   device: mps

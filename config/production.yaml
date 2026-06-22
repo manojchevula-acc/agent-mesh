@@ -1,0 +1,21 @@
+# Production config. Secrets must come from environment variables, never committed here.
+environment: production
+debug: false
+log_level: INFO
+
+cors_origins:
+  - https://gernas.fab.ae
+
+redis_cache_ttl_seconds: 900
+redis_enabled: true
+
+embedding:
+  device: cuda
+  use_fp16: true
+
+vectordb:
+  on_disk_payload: true
+  replication_factor: 2
+
+retrieval:
+  freshness_penalty_enabled: true
