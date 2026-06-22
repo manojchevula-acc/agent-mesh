@@ -1,0 +1,61 @@
+deal_id,deal_date,customer_id,product_id,product_type,currency,tenor,requested_amount,funding_cost_pct,standard_margin_pct,risk_premium_pct,relationship_discount_pct,recommended_price_pct,final_approved_price_pct,expected_margin_pct,deal_outcome,sales_channel,customer_segment,risk_category,internal_rating,product_name,pricing_method,max_discount_allowed_pct,min_margin_pct,min_expected_margin_pct,max_relationship_discount_pct,rwa_risk_weight_pct,price_below_policy_floor,margin_below_min,discount_exceeds_policy,policy_compliant
+DEAL001,2025-03-16,CUST011,PROD002,Loan,AED,60M,67600000,6.0,2.1,0.45,0.22,8.33,8.33,1.98,Won,Relationship Manager,SME,Medium,BBB,Term Loan,Floating,0.6,2.45,0.75,0.25,75,False,False,False,True
+DEAL002,2025-02-08,CUST012,PROD008,Deposit,AED,1M,187300000,5.05,0.25,0.95,0.05,6.2,6.0,-1.05,Won,Relationship Manager,Corporate,High,BB,Corporate Deposit,Fixed,0.25,0.7,0.1,0.45,100,False,True,False,False
+DEAL003,2026-03-11,CUST014,PROD004,Trade Finance,AED,1M,6200000,5.05,1.5,0.45,0.08,6.92,6.92,1.52,Won,Relationship Manager,SME,Medium,BBB-,Invoice Discounting,Floating,0.5,1.75,0.75,0.25,75,False,False,False,True
+DEAL004,2025-03-05,CUST019,PROD006,Loan,USD,24M,65000000,5.3,2.25,0.45,0.2,7.8,7.6,1.95,Won,API Quote,SME,Medium,BBB,USD Term Loan,Floating,0.6,2.45,0.75,0.25,75,False,False,False,True
+DEAL005,2025-10-24,CUST002,PROD002,Loan,AED,12M,58000000,5.55,2.1,0.1,0.45,7.3,7.25,1.35,Won,API Quote,Corporate,Low,A,Term Loan,Floating,0.6,2.0,0.75,0.45,50,False,False,False,True
+DEAL006,2025-04-16,CUST005,PROD008,Deposit,AED,1M,117900000,5.05,0.25,0.1,0.4,5.0,4.9,0.05,Won,Digital Upload,Corporate,Low,A-,Corporate Deposit,Fixed,0.25,0.2,0.1,0.45,50,False,True,False,False
+DEAL007,2025-07-30,CUST012,PROD001,Loan,AED,1M,29300000,5.05,1.8,0.95,0.05,7.75,7.75,2.35,Won,API Quote,Corporate,High,BB,Working Capital Loan,Floating,0.75,2.5,0.75,0.45,100,False,False,False,True
+DEAL008,2026-04-10,CUST018,PROD005,Loan,AED,6M,24000000,5.4,2.4,0.45,0.38,7.87,7.67,1.92,Won,Branch,Corporate,Medium,BBB+,Overdraft Facility,Floating,0.8,2.2,0.75,0.45,75,False,False,False,True
+DEAL009,2025-03-25,CUST010,PROD002,Loan,AED,24M,72500000,5.7,2.1,0.45,0.18,8.07,8.02,1.97,Won,Branch,SME,Medium,BBB-,Term Loan,Floating,0.6,2.45,0.75,0.25,75,False,False,False,True
+DEAL010,2025-10-22,CUST017,PROD007,Treasury,USD,6M,18700000,5.08,0.6,0.95,0.08,6.55,6.4,0.97,Won,Relationship Manager,Corporate,High,BB+,FX Forward Facility,Fixed,0.35,1.1,0.75,0.45,100,False,False,False,True
+DEAL011,2025-06-05,CUST004,PROD005,Loan,AED,12M,8600000,5.55,2.4,0.45,0.2,8.2,8.1,2.2,Won,API Quote,SME,Medium,BBB-,Overdraft Facility,Floating,0.8,2.45,0.75,0.25,75,False,False,False,True
+DEAL012,2025-11-18,CUST014,PROD001,Loan,AED,1M,39600000,5.05,1.8,0.45,0.08,7.22,7.02,1.62,Won,Branch,SME,Medium,BBB-,Working Capital Loan,Floating,0.75,2.45,0.75,0.25,75,False,False,False,True
+DEAL013,2025-04-06,CUST012,PROD008,Deposit,AED,12M,119700000,5.55,0.25,0.95,0.05,6.7,6.55,-1.1,Won,Branch,Corporate,High,BB,Corporate Deposit,Fixed,0.25,0.7,0.1,0.45,100,False,True,False,False
+DEAL014,2026-04-02,CUST016,PROD001,Loan,AED,1M,37900000,5.05,1.8,0.1,0.45,6.5,6.4,1.0,Won,Branch,Corporate,Low,A,Working Capital Loan,Floating,0.75,2.0,0.75,0.45,50,False,False,False,True
+DEAL015,2025-06-22,CUST013,PROD008,Deposit,AED,6M,5600000,5.4,0.25,0.1,0.35,5.5,5.35,-0.05,Lost,Relationship Manager,SME,Low,A-,Corporate Deposit,Fixed,0.25,0.45,0.1,0.25,50,False,True,True,False
+DEAL016,2025-05-13,CUST016,PROD001,Loan,AED,3M,39800000,5.25,1.8,0.1,0.45,6.7,6.6,1.0,Won,Digital Upload,Corporate,Low,A,Working Capital Loan,Floating,0.75,2.0,0.75,0.45,50,False,False,False,True
+DEAL017,2026-04-05,CUST013,PROD004,Trade Finance,AED,3M,2100000,5.25,1.5,0.1,0.35,6.6,6.55,0.95,Won,API Quote,SME,Low,A-,Invoice Discounting,Floating,0.5,1.55,0.75,0.25,50,False,False,True,False
+DEAL018,2025-10-13,CUST018,PROD003,Trade Finance,AED,3M,21100000,5.25,1.25,0.45,0.38,6.57,6.42,0.82,Won,API Quote,Corporate,Medium,BBB+,Trade Finance LC,Fixed,0.5,1.5,0.75,0.45,75,False,False,False,True
+DEAL019,2025-06-30,CUST012,PROD005,Loan,AED,3M,7900000,5.25,2.4,0.95,0.05,8.55,8.55,2.95,Won,Digital Upload,Corporate,High,BB,Overdraft Facility,Floating,0.8,2.5,0.75,0.45,100,False,False,False,True
+DEAL020,2025-07-06,CUST008,PROD006,Loan,USD,12M,50100000,5.15,2.25,0.45,0.35,7.5,7.3,1.8,Won,Branch,Corporate,Medium,BBB+,USD Term Loan,Floating,0.6,2.2,0.75,0.45,75,False,False,False,True
+DEAL021,2026-01-14,CUST010,PROD001,Loan,AED,3M,21900000,5.25,1.8,0.45,0.18,7.32,7.12,1.52,Won,Branch,SME,Medium,BBB-,Working Capital Loan,Floating,0.75,2.45,0.75,0.25,75,False,False,False,True
+DEAL022,2026-02-06,CUST005,PROD008,Deposit,AED,1M,94500000,5.05,0.25,0.1,0.4,5.0,4.8,0.15,Won,API Quote,Corporate,Low,A-,Corporate Deposit,Fixed,0.25,0.2,0.1,0.45,50,False,False,False,True
+DEAL023,2025-03-05,CUST013,PROD004,Trade Finance,AED,1M,12400000,5.05,1.5,0.1,0.35,6.4,6.25,0.85,Won,Digital Upload,SME,Low,A-,Invoice Discounting,Floating,0.5,1.55,0.75,0.25,50,False,False,True,False
+DEAL024,2025-12-15,CUST003,PROD002,Loan,AED,60M,17600000,6.0,2.1,0.45,0.3,8.25,8.25,1.9,Won,Relationship Manager,Corporate,Medium,BBB+,Term Loan,Floating,0.6,2.2,0.75,0.45,75,False,False,False,True
+DEAL025,2026-01-08,CUST004,PROD001,Loan,AED,3M,27900000,5.25,1.8,0.45,0.2,7.3,7.3,1.7,Won,Relationship Manager,SME,Medium,BBB-,Working Capital Loan,Floating,0.75,2.45,0.75,0.25,75,False,False,False,True
+DEAL026,2025-12-22,CUST003,PROD002,Loan,AED,60M,16200000,6.0,2.1,0.45,0.3,8.25,8.15,1.8,Won,Branch,Corporate,Medium,BBB+,Term Loan,Floating,0.6,2.2,0.75,0.45,75,False,False,False,True
+DEAL027,2026-04-23,CUST016,PROD001,Loan,AED,1M,43900000,5.05,1.8,0.1,0.45,6.5,6.35,0.95,Won,API Quote,Corporate,Low,A,Working Capital Loan,Floating,0.75,2.0,0.75,0.45,50,False,False,False,True
+DEAL028,2025-09-29,CUST016,PROD003,Trade Finance,AED,3M,3800000,5.25,1.25,0.1,0.45,6.15,6.15,0.55,Lost,API Quote,Corporate,Low,A,Trade Finance LC,Fixed,0.5,1.3,0.75,0.45,50,False,True,False,False
+DEAL029,2025-05-31,CUST006,PROD008,Deposit,AED,1M,43000000,5.05,0.25,0.95,0.1,6.15,5.95,-1.0,Lost,Relationship Manager,Corporate,High,BB+,Corporate Deposit,Fixed,0.25,0.7,0.1,0.45,100,False,True,False,False
+DEAL030,2026-01-11,CUST017,PROD007,Treasury,USD,1M,17900000,4.95,0.6,0.95,0.08,6.42,6.32,1.02,Won,Digital Upload,Corporate,High,BB+,FX Forward Facility,Fixed,0.35,1.1,0.75,0.45,100,False,False,False,True
+DEAL031,2025-07-19,CUST012,PROD002,Loan,AED,36M,66100000,5.85,2.1,0.95,0.05,8.85,8.8,2.6,Won,Digital Upload,Corporate,High,BB,Term Loan,Floating,0.6,2.5,0.75,0.45,100,False,False,False,True
+DEAL032,2025-12-31,CUST013,PROD008,Deposit,AED,3M,41900000,5.25,0.25,0.1,0.35,5.35,5.15,-0.0,Lost,Relationship Manager,SME,Low,A-,Corporate Deposit,Fixed,0.25,0.45,0.1,0.25,50,False,True,True,False
+DEAL033,2025-12-19,CUST001,PROD003,Trade Finance,AED,6M,6800000,5.4,1.25,0.45,0.25,6.85,6.8,1.05,Won,API Quote,SME,Medium,BBB,Trade Finance LC,Fixed,0.5,1.75,0.75,0.25,75,False,False,False,True
+DEAL034,2025-08-21,CUST012,PROD003,Trade Finance,AED,3M,5800000,5.25,1.25,0.95,0.05,7.4,7.4,1.8,Won,API Quote,Corporate,High,BB,Trade Finance LC,Fixed,0.5,1.8,0.75,0.45,100,False,False,False,True
+DEAL035,2025-01-02,CUST007,PROD003,Trade Finance,AED,3M,12500000,5.25,1.25,0.45,0.1,6.85,6.65,1.05,Won,API Quote,SME,Medium,BBB,Trade Finance LC,Fixed,0.5,1.75,0.75,0.25,75,False,False,False,True
+DEAL036,2025-07-24,CUST012,PROD001,Loan,AED,1M,47000000,5.05,1.8,0.95,0.05,7.75,7.6,2.2,Won,API Quote,Corporate,High,BB,Working Capital Loan,Floating,0.75,2.5,0.75,0.45,100,False,False,False,True
+DEAL037,2026-04-20,CUST006,PROD005,Loan,AED,6M,4600000,5.4,2.4,0.95,0.1,8.65,8.5,2.75,Won,API Quote,Corporate,High,BB+,Overdraft Facility,Floating,0.8,2.5,0.75,0.45,100,False,False,False,True
+DEAL038,2025-06-04,CUST003,PROD002,Loan,AED,24M,14000000,5.7,2.1,0.45,0.3,7.95,7.95,1.9,Won,API Quote,Corporate,Medium,BBB+,Term Loan,Floating,0.6,2.2,0.75,0.45,75,False,False,False,True
+DEAL039,2025-05-15,CUST005,PROD008,Deposit,AED,12M,135600000,5.55,0.25,0.1,0.4,5.5,5.4,0.05,Won,Relationship Manager,Corporate,Low,A-,Corporate Deposit,Fixed,0.25,0.2,0.1,0.45,50,False,True,False,False
+DEAL040,2025-07-19,CUST001,PROD008,Deposit,AED,1M,108800000,5.05,0.25,0.45,0.25,5.5,5.45,-0.5,Lost,Digital Upload,SME,Medium,BBB,Corporate Deposit,Fixed,0.25,0.65,0.1,0.25,75,False,True,False,False
+DEAL041,2025-09-04,CUST001,PROD003,Trade Finance,AED,3M,7600000,5.25,1.25,0.45,0.25,6.7,6.5,0.9,Won,Branch,SME,Medium,BBB,Trade Finance LC,Fixed,0.5,1.75,0.75,0.25,75,False,False,False,True
+DEAL042,2026-03-07,CUST009,PROD007,Treasury,USD,3M,1600000,5.0,0.6,0.1,0.35,5.35,5.25,-0.1,Lost,Digital Upload,Corporate,Low,A,FX Forward Facility,Fixed,0.35,0.6,0.75,0.45,50,False,True,False,False
+DEAL043,2025-07-07,CUST018,PROD002,Loan,AED,12M,90300000,5.55,2.1,0.45,0.38,7.72,7.57,1.67,Won,Relationship Manager,Corporate,Medium,BBB+,Term Loan,Floating,0.6,2.2,0.75,0.45,75,False,False,False,True
+DEAL044,2025-05-04,CUST005,PROD002,Loan,AED,24M,49400000,5.7,2.1,0.1,0.4,7.5,7.3,1.25,Won,Relationship Manager,Corporate,Low,A-,Term Loan,Floating,0.6,2.0,0.75,0.45,50,False,False,False,True
+DEAL045,2025-09-12,CUST011,PROD008,Deposit,AED,12M,161600000,5.55,0.25,0.45,0.22,6.03,6.03,-0.58,Won,Digital Upload,SME,Medium,BBB,Corporate Deposit,Fixed,0.25,0.65,0.1,0.25,75,False,True,False,False
+DEAL046,2025-01-29,CUST009,PROD006,Loan,USD,12M,52400000,5.15,2.25,0.1,0.35,7.15,7.0,1.5,Won,Relationship Manager,Corporate,Low,A,USD Term Loan,Floating,0.6,2.0,0.75,0.45,50,False,False,False,True
+DEAL047,2026-05-05,CUST015,PROD007,Treasury,USD,3M,17800000,5.0,0.6,0.1,0.3,5.45,5.35,-0.0,Lost,Digital Upload,SME,Low,A-,FX Forward Facility,Fixed,0.35,0.85,0.75,0.25,50,False,True,True,False
+DEAL048,2026-03-03,CUST017,PROD007,Treasury,USD,3M,11500000,5.0,0.6,0.95,0.08,6.47,6.42,1.07,Won,Relationship Manager,Corporate,High,BB+,FX Forward Facility,Fixed,0.35,1.1,0.75,0.45,100,False,False,False,True
+DEAL049,2026-03-15,CUST013,PROD004,Trade Finance,AED,3M,1900000,5.25,1.5,0.1,0.35,6.6,6.55,0.95,Won,Relationship Manager,SME,Low,A-,Invoice Discounting,Floating,0.5,1.55,0.75,0.25,50,False,False,True,False
+DEAL050,2026-01-10,CUST007,PROD008,Deposit,AED,6M,161500000,5.4,0.25,0.45,0.1,6.0,6.0,-0.7,Won,Digital Upload,SME,Medium,BBB,Corporate Deposit,Fixed,0.25,0.65,0.1,0.25,75,False,True,False,False
+DEAL051,2026-02-12,CUST009,PROD006,Loan,USD,60M,22900000,5.55,2.25,0.1,0.35,7.55,7.55,1.65,Won,API Quote,Corporate,Low,A,USD Term Loan,Floating,0.6,2.0,0.75,0.45,50,False,False,False,True
+DEAL052,2026-02-18,CUST006,PROD002,Loan,AED,24M,73300000,5.7,2.1,0.95,0.1,8.65,8.5,2.45,Won,Branch,Corporate,High,BB+,Term Loan,Floating,0.6,2.5,0.75,0.45,100,False,False,False,True
+DEAL053,2026-01-10,CUST014,PROD002,Loan,AED,36M,33600000,5.85,2.1,0.45,0.08,8.32,8.32,2.12,Won,Relationship Manager,SME,Medium,BBB-,Term Loan,Floating,0.6,2.45,0.75,0.25,75,False,False,False,True
+DEAL054,2026-01-29,CUST011,PROD005,Loan,AED,12M,22700000,5.55,2.4,0.45,0.22,8.18,8.18,2.28,Won,Branch,SME,Medium,BBB,Overdraft Facility,Floating,0.8,2.45,0.75,0.25,75,False,False,False,True
+DEAL055,2025-04-18,CUST017,PROD007,Treasury,USD,1M,2900000,4.95,0.6,0.95,0.08,6.42,6.37,1.07,Won,Relationship Manager,Corporate,High,BB+,FX Forward Facility,Fixed,0.35,1.1,0.75,0.45,100,False,False,False,True
+DEAL056,2025-05-13,CUST009,PROD007,Treasury,USD,1M,20000000,4.95,0.6,0.1,0.35,5.3,5.25,-0.05,Lost,API Quote,Corporate,Low,A,FX Forward Facility,Fixed,0.35,0.6,0.75,0.45,50,False,True,False,False
+DEAL057,2025-12-01,CUST009,PROD007,Treasury,USD,3M,13800000,5.0,0.6,0.1,0.35,5.35,5.15,-0.2,Lost,Relationship Manager,Corporate,Low,A,FX Forward Facility,Fixed,0.35,0.6,0.75,0.45,50,False,True,False,False
+DEAL058,2025-10-03,CUST009,PROD006,Loan,USD,24M,44000000,5.3,2.25,0.1,0.35,7.3,7.3,1.65,Won,Relationship Manager,Corporate,Low,A,USD Term Loan,Floating,0.6,2.0,0.75,0.45,50,False,False,False,True
+DEAL059,2025-03-10,CUST003,PROD003,Trade Finance,AED,3M,15700000,5.25,1.25,0.45,0.3,6.65,6.6,1.0,Won,Branch,Corporate,Medium,BBB+,Trade Finance LC,Fixed,0.5,1.5,0.75,0.45,75,False,False,False,True
+DEAL060,2026-03-04,CUST004,PROD004,Trade Finance,AED,1M,8700000,5.05,1.5,0.45,0.2,6.8,6.6,1.2,Won,Branch,SME,Medium,BBB-,Invoice Discounting,Floating,0.5,1.75,0.75,0.25,75,False,False,False,True
