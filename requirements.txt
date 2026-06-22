@@ -17,6 +17,9 @@ opentelemetry-exporter-otlp-proto-grpc>=1.20.0
 opentelemetry-exporter-otlp-proto-http>=1.20.0
 # httpx instrumentation: propagates W3C trace context across A2A hops (traceparent).
 opentelemetry-instrumentation-httpx>=0.40b0
+# Starlette ASGI instrumentation: adds HTTP-level spans (method, path, status, latency)
+# to api_server.py so Grafana Tempo shows the full trace from HTTP layer down.
+opentelemetry-instrumentation-starlette>=0.40b0
 # Azure Application Insights (prod): OBS_PROFILE=prod uses configure_azure_monitor().
 azure-monitor-opentelemetry>=1.0.0
 # DevUI (dev-only): Docker-free live trace + agent visualization. Install with --pre.

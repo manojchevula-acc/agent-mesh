@@ -1,0 +1,41 @@
+import { Navigate, Route, Routes } from "react-router-dom";
+import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
+import { AppLayout } from "@/components/layout/AppLayout";
+import { HomePage } from "@/pages/HomePage";
+import { LoginPage } from "@/pages/LoginPage";
+import { SignupPage } from "@/pages/SignupPage";
+import ChatPage from "@/pages/ChatPage";
+import MeshStatusPage from "@/pages/MeshStatusPage";
+import { EmptyState } from "@/components/ui/EmptyState";
+
+export default function App() {
+  return (
+    <Routes>
+      {/* Public */}
+      <Route path="/" element={<HomePage />} />
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/signup" element={<SignupPage />} />
+
+      {/* Authenticated app */}
+      <Route element={<ProtectedRoute />}>
+        <Route path="/app" element={<AppLayout />}>
+          <Route index element={<Navigate to="/app/chat" replace />} />
+          <Route path="chat" element={<ChatPage />} />
+          <Route path="mesh-status" element={<MeshStatusPage />} />
+        </Route>
+      </Route>
+
+      <Route
+        path="*"
+        element={
+          <div className="flex min-h-screen items-center justify-center bg-canvas p-8">
+            <EmptyState
+              title="Page not found"
+              description="The page you're looking for doesn't exist."
+            />
+          </div>
+        }
+      />
+    </Routes>
+  );
+}

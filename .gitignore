@@ -3,15 +3,19 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Environment variables
+# Environment variables — never commit real credentials
 .env
 
-# Virtual environment
+# Virtual environments
 .venv/
+.venv313/
 venv/
 ENV/
 
-# Data outputs and local logs
+# Data outputs and local logs (runtime artefacts, not source)
 data/audit_trail.jsonl
+data/audit_trail.json
 data/conversations/
+data/logs/
 data/audit_trail_test.jsonl
+data/trace_log.jsonl
