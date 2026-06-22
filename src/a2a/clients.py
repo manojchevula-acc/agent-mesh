@@ -80,6 +80,15 @@ async def ask_remote(
             _log.info("A2A call node=%s ok (%d ms, %d chars)",
                       name, duration_ms, len(result or ""),
                       extra={"node": name, "status": "SUCCESS"})
+        try:
+            from src.observability import record_a2a_call
+            record_a2a_call(
+                node=name,
+                duration_ms=float(duration_ms),
+                status="error" if error else "success",
+            )
+        except Exception:
+            pass
         # Optional legacy JSONL sink (off by default; workflow/agent spans cover this).
         if Config.ENABLE_TRACE_JSONL:
             try:

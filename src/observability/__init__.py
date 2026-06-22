@@ -12,6 +12,7 @@ from src.observability.logging_config import (
     CAT_AGENT,
     CAT_APPROVALS,
     CAT_MCP,
+    CAT_SECURITY,
     CAT_SYSTEM,
     CAT_TOOLS,
     CAT_TRANSPORT,
@@ -19,10 +20,26 @@ from src.observability.logging_config import (
     configure_logging,
     get_logger,
 )
-from src.observability.setup import setup_observability
+from src.observability.setup import setup_observability, flush_observability
+from src.observability.metrics import (
+    record_request,
+    record_guardrail,
+    record_access_denied,
+    record_compliance,
+    record_payment_gate,
+    record_a2a_call,
+    record_routing,
+    record_memory_usage,
+    record_approval_wait,
+    record_token_usage,
+    record_cost,
+    record_hallucination_suspected,
+    record_tool_access,
+)
 
 __all__ = [
     "setup_observability",
+    "flush_observability",
     "configure_logging",
     "get_logger",
     "CAT_AGENT",
@@ -32,5 +49,19 @@ __all__ = [
     "CAT_MCP",
     "CAT_TRANSPORT",
     "CAT_APPROVALS",
+    "CAT_SECURITY",
     "CAT_SYSTEM",
+    "record_request",
+    "record_guardrail",
+    "record_access_denied",
+    "record_compliance",
+    "record_payment_gate",
+    "record_a2a_call",
+    "record_routing",
+    "record_memory_usage",
+    "record_approval_wait",
+    "record_token_usage",
+    "record_cost",
+    "record_hallucination_suspected",
+    "record_tool_access",
 ]

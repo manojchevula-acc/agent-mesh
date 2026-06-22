@@ -38,6 +38,18 @@ _PII_PATTERNS = {
     "PHONE": r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b",
 }
 
+_TOXICITY_PATTERNS = [
+    r"\b(kill|murder|massacre|slaughter|genocide)\b.*\b(people|group|race|religion|community)\b",
+    r"\b(hate|despise|loathe)\b.*\b(all|every)\b.*\b(muslim|jew|christian|hindu|black|white|asian|arab|immigrant)\b",
+    r"\b(racial(ly)?|ethnic)\s+slur\b",
+    r"\b(n[i1]gg[ae]r|ch[i1]nk|sp[i1]c|k[i1]ke|f[a4]gg[o0]t)\b",
+    r"\bsex(ual)?\s+(harass|assault|abuse|exploit)\b",
+    r"\b(rape|molest|grope)\b",
+    r"\bchild\s+(porn|abuse|exploit|molest)\b",
+    r"\b(threaten|threat(en)?)\b.*\b(bomb|attack|shoot|stab|blow\s+up)\b",
+    r"\b(white\s+supremac|neo.?nazi|white\s+power|racial\s+purity)\b",
+]
+
 _DESTRUCTIVE_PATTERNS = [
     r"\b(delete|drop|truncate|wipe|erase|destroy|purge)\b.*\b(table|database|db|records?|files?|accounts?|data|users?)\b",
     r"\brm\s+-rf\b",
@@ -52,6 +64,7 @@ _DESTRUCTIVE_PATTERNS = [
 _INJECTION_RE = [re.compile(p, re.IGNORECASE) for p in _INJECTION_PATTERNS]
 _PII_RE = {label: re.compile(p) for label, p in _PII_PATTERNS.items()}
 _DESTRUCTIVE_RE = [re.compile(p, re.IGNORECASE) for p in _DESTRUCTIVE_PATTERNS]
+_TOXICITY_RE = [re.compile(p, re.IGNORECASE) for p in _TOXICITY_PATTERNS]
 
 
 @dataclass
@@ -85,6 +98,13 @@ def detect_destructive_intent(text: str) -> List[str]:
     return [f"destructive_intent: matched '{r.pattern}'" for r in _DESTRUCTIVE_RE if r.search(text)]
 
 
+def detect_toxicity(text: str) -> List[str]:
+    """Detects hate speech, harassment, and toxic content."""
+    if not text:
+        return []
+    return [f"toxicity: matched '{r.pattern}'" for r in _TOXICITY_RE if r.search(text)]
+
+
 def redact_pii(text: str) -> str:
     """Replaces PII spans with category tokens. Used on outputs/logs."""
     if not text or not isinstance(text, str):
@@ -96,13 +116,14 @@ def redact_pii(text: str) -> str:
 
 
 def screen_input(text: str) -> GuardrailResult:
-    """Hard gate for incoming user requests. Blocks injection / PII / destructive."""
+    """Hard gate for incoming user requests. Blocks injection / PII / destructive / toxicity."""
     violations: List[str] = []
     categories: List[str] = []
 
     inj = detect_prompt_injection(text)
     pii = detect_pii(text)
     destr = detect_destructive_intent(text)
+    tox = detect_toxicity(text)
 
     if inj:
         categories.append("prompt_injection")
@@ -113,5 +134,8 @@ def screen_input(text: str) -> GuardrailResult:
     if destr:
         categories.append("destructive_intent")
         violations.extend(destr)
+    if tox:
+        categories.append("toxicity")
+        violations.extend(tox)
 
     return GuardrailResult(allowed=not violations, violations=violations, categories=categories)

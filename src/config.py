@@ -33,6 +33,14 @@ class Config:
     OTEL_SERVICE_NAME: str = os.getenv("OTEL_SERVICE_NAME", "agent_mesh")
     APPLICATIONINSIGHTS_CONNECTION_STRING: str = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING", "")
 
+    # Grafana Cloud OTLP (OBS_PROFILE=grafana)
+    GRAFANA_OTLP_ENDPOINT: str = os.getenv("GRAFANA_OTLP_ENDPOINT", "")
+    GRAFANA_INSTANCE_ID: str = os.getenv("GRAFANA_INSTANCE_ID", "")
+    GRAFANA_API_TOKEN: str = os.getenv("GRAFANA_API_TOKEN", "")
+    # Metrics export interval in ms. 15 s makes metrics appear in Grafana quickly
+    # during development. Raise to 60000 in production to reduce write traffic.
+    GRAFANA_EXPORT_INTERVAL_MS: int = int(os.getenv("GRAFANA_EXPORT_INTERVAL_MS", "15000"))
+
     # Centralized application logging (durable, rotating, trace-correlated).
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
     LOG_FILE: str = os.getenv("LOG_FILE", "data/logs/agent_mesh.log")
@@ -43,6 +51,14 @@ class Config:
     # Keep the legacy JSONL trace sink? Off by default now that workflow/agent
     # spans cover the same ground (avoids duplicate telemetry).
     ENABLE_TRACE_JSONL: bool = os.getenv("ENABLE_TRACE_JSONL", "false").lower() in ("1", "true", "yes")
+
+    # ----------------------------------------------------------------------
+    # FinOps / Cost tracking
+    # Estimated LLM serving cost per 1,000 tokens. For Ollama (self-hosted)
+    # these default to $0 but can be overridden for cloud-hosted models.
+    # ----------------------------------------------------------------------
+    COST_PER_1K_INPUT_TOKENS: float = float(os.getenv("COST_PER_1K_INPUT_TOKENS", "0.0"))
+    COST_PER_1K_OUTPUT_TOKENS: float = float(os.getenv("COST_PER_1K_OUTPUT_TOKENS", "0.0"))
 
     # ----------------------------------------------------------------------
     # DevUI (Microsoft Agent Framework dev tool) — Docker-free live trace viewer

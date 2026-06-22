@@ -36,6 +36,7 @@ import asyncio
 import json
 import re
 import sys
+import time
 import pathlib
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Dict, List, Optional
@@ -51,10 +52,11 @@ from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
 from src.config import Config
 from src.guardrails.deterministic_filters import screen_input, redact_pii
 from src.agents.gateway_agent import parse_domain_queries
-from src.observability import get_logger, CAT_WORKFLOW, CAT_APPROVALS
+from src.observability import get_logger, CAT_WORKFLOW, CAT_APPROVALS, CAT_SECURITY
 
 _log = get_logger(CAT_WORKFLOW)
 _approval_log = get_logger(CAT_APPROVALS)
+_security_log = get_logger(CAT_SECURITY)
 
 # Requests that imply moving money -> require a deterministic human approval gate.
 _PAYMENT_RE = re.compile(r"\b(pay|payment|payout|remit|transfer|wire|disburse)\b", re.IGNORECASE)
@@ -153,8 +155,12 @@ class InputGuardrailExecutor(Executor):
                 f"Request blocked by security guardrails ({', '.join(screen.categories)})."
             )
             state.trail.append(f"guardrail_block:{','.join(screen.categories)}")
-            _log.warning("Input guardrail BLOCK: %s", screen.reason[:160],
-                         extra={"user": state.user_name, "status": "BLOCK"})
+            _security_log.warning("Input guardrail BLOCK: %s", screen.reason[:160],
+                                  extra={"event_type": "guardrail_block",
+                                         "categories": ",".join(screen.categories),
+                                         "user": state.user_name, "status": "BLOCK"})
+            from src.observability import record_guardrail
+            record_guardrail(categories=screen.categories, role=state.role)
             await ctx.yield_output(state)
             return
         state.trail.append("guardrail_pass")
@@ -173,12 +179,23 @@ class RouterExecutor(Executor):
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState]) -> None:
         router_text = await self._ask("gateway", state.query)
         state.router_raw = router_text
-        state.domain_queries = parse_domain_queries(router_text, state.query)
+        # Detect whether keyword fallback resolved the domain (parse_domain_queries
+        # returns a fallback when the LLM output had no valid domain token).
+        parsed = parse_domain_queries(router_text, state.query)
+        tl = (router_text or "").lower()
+        fallback_used = not any(d in tl for d in ("finance", "hr", "internal_job"))
+        state.domain_queries = parsed
         state.domains = list(state.domain_queries.keys())
         state.domain = state.domains[0]
         state.trail.append(f"route:{','.join(state.domains)}")
-        _log.info("Routed to domains=%s", state.domains,
+        _log.info("Routed to domains=%s fallback=%s", state.domains, fallback_used,
                   extra={"domain": state.domain, "user": state.user_name})
+        from src.observability import record_routing
+        record_routing(
+            domains_count=len(state.domains),
+            fallback_used=fallback_used,
+            role=state.role,
+        )
         await ctx.send_message(state)
 
 
@@ -201,8 +218,14 @@ class AccessControlExecutor(Executor):
             state.block_stage = "access_control"
             state.answer = denied[0][1]
             state.trail.append(f"access_denied:{','.join(d for d, _ in denied)}")
-            _log.warning("Access DENY role=%s domains=%s", state.role, [d for d, _ in denied],
-                         extra={"domain": state.domain, "user": state.user_name, "status": "DENY"})
+            _security_log.warning("Access DENY role=%s domains=%s", state.role, [d for d, _ in denied],
+                                  extra={"event_type": "rbac_deny", "role": state.role,
+                                         "denied_domains": ",".join(d for d, _ in denied),
+                                         "domain": state.domain, "user": state.user_name,
+                                         "status": "DENY"})
+            from src.observability import record_access_denied
+            for d, _ in denied:
+                record_access_denied(domain=d, role=state.role)
             await ctx.yield_output(state)
             return
 
@@ -211,6 +234,10 @@ class AccessControlExecutor(Executor):
             state.trail.append(f"access_ok:{d}")
         for d, _ in denied:
             state.trail.append(f"access_partial_deny:{d}")
+        if denied:
+            from src.observability import record_access_denied
+            for d, _ in denied:
+                record_access_denied(domain=d, role=state.role)
 
         state.domains = allowed
         state.domain = allowed[0]
@@ -239,8 +266,11 @@ class ComplianceExecutor(Executor):
             state.block_stage = "compliance"
             state.answer = "Request blocked by the Compliance agent (semantic safety review)."
             state.trail.append("compliance_failed")
-            _log.warning("Compliance FAIL: %s", verdict[:160],
-                         extra={"domain": state.domain, "status": "FAIL"})
+            _security_log.warning("Compliance FAIL: %s", verdict[:160],
+                                  extra={"event_type": "compliance_block",
+                                         "domain": state.domain, "status": "FAIL"})
+            from src.observability import record_compliance
+            record_compliance(domain=state.domain or "unknown")
             await ctx.yield_output(state)
             return
         state.trail.append("compliance_pass")
@@ -269,19 +299,27 @@ class PaymentApprovalExecutor(Executor):
 
         _approval_log.info("Outbound payment requires human approval",
                            extra={"user": state.user_name, "domain": "finance"})
+        _t_prompt = time.perf_counter()
         approved = self._approver("Approve this outbound finance payment?")
+        wait_ms = (time.perf_counter() - _t_prompt) * 1000
+        from src.observability import record_payment_gate, record_approval_wait
+        record_approval_wait(wait_ms=wait_ms, approved=approved)
         if not approved:
             state.blocked = True
             state.block_stage = "approval"
             state.answer = "Payment was not approved by the operator."
             state.trail.append("payment_denied")
-            _approval_log.warning("Payment DENIED by operator",
+            _approval_log.warning("Payment DENIED by operator (waited %.0f ms)",
+                                  wait_ms,
                                   extra={"user": state.user_name, "status": "DENY"})
+            record_payment_gate(approved=False)
             await ctx.yield_output(state)
             return
         state.trail.append("payment_approved")
-        _approval_log.info("Payment APPROVED by operator",
+        _approval_log.info("Payment APPROVED by operator (waited %.0f ms)",
+                           wait_ms,
                            extra={"user": state.user_name, "status": "APPROVE"})
+        record_payment_gate(approved=True)
         await ctx.send_message(state)
 
 
@@ -325,12 +363,37 @@ class DomainExecutor(Executor):
         await ctx.send_message(state)
 
 
+# Phrases that suggest the LLM is speculating rather than grounding its answer.
+_HALLUCINATION_INDICATORS = re.compile(
+    r"\b(i('m| am) not (sure|certain|aware)|i don'?t (know|have (access|information))|"
+    r"as (of|far as) (my|i) know|i (cannot|can'?t) (confirm|verify|access)|"
+    r"i (believe|think|assume) (but|though) (i'?m|i am) not|"
+    r"this (may|might|could) (not )?be (accurate|correct|up.?to.?date)|"
+    r"(please|you should) (verify|confirm|check) (this|with))\b",
+    re.IGNORECASE,
+)
+
+
 class OutputRedactionExecutor(Executor):
-    """Deterministic output redaction (PII). Terminal node — yields the answer."""
+    """Deterministic output redaction (PII) + hallucination heuristic. Terminal node."""
 
     @handler
     async def run(self, state: MeshState, ctx: WorkflowContext[Never, MeshState]) -> None:
         state.answer = redact_pii(state.answer)
+
+        # Heuristic hallucination check: flag responses that contain speculation phrases.
+        match = _HALLUCINATION_INDICATORS.search(state.answer or "")
+        if match:
+            indicator = "speculation_phrase"
+            _security_log.warning(
+                "Hallucination heuristic triggered domain=%s indicator=%s matched=%r",
+                state.domain, indicator, match.group(0)[:60],
+                extra={"domain": state.domain, "event_type": "hallucination_suspected"},
+            )
+            from src.observability import record_hallucination_suspected
+            record_hallucination_suspected(domain=state.domain or "unknown", indicator=indicator)
+            state.trail.append("hallucination_suspected")
+
         state.trail.append("output_redacted")
         _log.info("Request complete domains=%s trail=%s", state.domains or [state.domain],
                   " -> ".join(state.trail),

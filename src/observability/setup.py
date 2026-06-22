@@ -13,9 +13,10 @@ Plus GenAI metrics: ``gen_ai.client.operation.duration``,
 ``gen_ai.client.token.usage``, ``agent_framework.function.invocation.duration``.
 
 Exporter wiring is selected by ``Config.OBS_PROFILE``:
-  - ``dev``  -> ``configure_otel_providers()`` (console + OTLP, e.g. Aspire/Jaeger)
-  - ``prod`` -> ``configure_azure_monitor(...)`` + ``enable_instrumentation()``
-  - ``off``  -> file logging only (no OTel providers)
+  - ``dev``     -> ``configure_otel_providers()`` (console + OTLP, e.g. Aspire/Jaeger)
+  - ``grafana`` -> Grafana Cloud OTLP/HTTP (Tempo + Mimir + Loki) with Basic auth
+  - ``prod``    -> ``configure_azure_monitor(...)`` + ``enable_instrumentation()``
+  - ``off``     -> file logging only (no OTel providers)
 
 Framework-first: we rely on the SDK's built-in instrumentation rather than a
 parallel custom tracing model. Custom spans are added only where the framework
@@ -31,6 +32,12 @@ from src.observability.logging_config import CAT_SYSTEM, configure_logging
 
 _INITIALIZED = False
 
+# Module-level provider references populated by _setup_grafana().
+# Used by flush_observability() to force-flush pending telemetry on shutdown.
+_tracer_provider = None
+_meter_provider = None
+_logger_provider = None
+
 
 def _set_otel_env() -> None:
     """Mirror Config values into the standard OTel env vars the SDK reads."""
@@ -43,6 +50,22 @@ def _set_otel_env() -> None:
         os.environ.setdefault("ENABLE_SENSITIVE_DATA", "true")
     if Config.ENABLE_CONSOLE_EXPORTERS:
         os.environ.setdefault("ENABLE_CONSOLE_EXPORTERS", "true")
+
+
+def flush_observability(timeout_ms: int = 5000) -> None:
+    """Force-flush pending spans, metrics, and logs to the configured exporter.
+
+    Call this before process shutdown to avoid losing telemetry that hasn't
+    been exported yet. The Grafana metrics reader exports every
+    ``GRAFANA_EXPORT_INTERVAL_MS`` (default 15 s); without an explicit flush,
+    any metrics recorded in the final window are silently dropped on exit.
+    """
+    for provider in (_tracer_provider, _meter_provider, _logger_provider):
+        if provider is not None:
+            try:
+                provider.force_flush(timeout_millis=timeout_ms)
+            except Exception:
+                pass
 
 
 def setup_observability(service_name: str | None = None) -> None:
@@ -75,6 +98,8 @@ def setup_observability(service_name: str | None = None) -> None:
     try:
         if profile == "prod":
             _setup_prod(log)
+        elif profile == "grafana":
+            _setup_grafana(log)
         else:
             _setup_dev(log)
     except Exception as exc:  # never crash the app on telemetry setup
@@ -113,6 +138,113 @@ def _setup_dev(log: logging.Logger) -> None:
         "Observability profile=dev: OTLP endpoint=%s, console=%s, sensitive=%s",
         Config.OTEL_EXPORTER_OTLP_ENDPOINT, Config.ENABLE_CONSOLE_EXPORTERS,
         Config.ENABLE_SENSITIVE_DATA,
+    )
+
+
+def _setup_grafana(log: logging.Logger) -> None:
+    """Grafana Cloud: OTLP/HTTP → Tempo (traces), Mimir (metrics), Loki (logs).
+
+    Auth: Basic base64(GRAFANA_INSTANCE_ID:GRAFANA_API_TOKEN)
+    Falls back to _setup_dev() if any credential is missing.
+    """
+    global _tracer_provider, _meter_provider, _logger_provider
+
+    import base64
+
+    endpoint = Config.GRAFANA_OTLP_ENDPOINT
+    instance_id = Config.GRAFANA_INSTANCE_ID
+    api_token = Config.GRAFANA_API_TOKEN
+
+    if not endpoint or not instance_id or not api_token:
+        log.warning(
+            "OBS_PROFILE=grafana but credentials incomplete "
+            "(GRAFANA_OTLP_ENDPOINT=%r, GRAFANA_INSTANCE_ID=%r, GRAFANA_API_TOKEN=%s); "
+            "falling back to OTLP/console providers.",
+            endpoint or "<unset>",
+            instance_id or "<unset>",
+            "***" if api_token else "<unset>",
+        )
+        _setup_dev(log)
+        return
+
+    raw = f"{instance_id}:{api_token}".encode("utf-8")
+    auth_value = "Basic " + base64.b64encode(raw).decode("ascii")
+    headers = {"Authorization": auth_value}
+    base = endpoint.rstrip("/")
+
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+    from opentelemetry.sdk.metrics import MeterProvider, Histogram as _Histogram
+    from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader, AggregationTemporality
+    from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+    from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+    from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+    from opentelemetry import trace as _trace, metrics as _metrics
+    from opentelemetry._logs import set_logger_provider
+    from agent_framework.observability import create_resource, enable_instrumentation
+
+    resource = create_resource()
+
+    # Traces → Grafana Tempo
+    tracer_provider = TracerProvider(resource=resource)
+    tracer_provider.add_span_processor(
+        BatchSpanProcessor(OTLPSpanExporter(
+            endpoint=base + "/v1/traces",
+            headers=headers,
+            timeout=30,
+        ))
+    )
+    _trace.set_tracer_provider(tracer_provider)
+    _tracer_provider = tracer_provider
+
+    # Metrics → Grafana Mimir
+    # export_timeout_millis must be < export_interval_millis to avoid deadline
+    # exhaustion that produces a negative connect-timeout in urllib3.
+    # Force CUMULATIVE temporality for histograms: OTel SDK ≥ 1.20 defaults
+    # histograms to DELTA, which breaks Prometheus rate() queries in Mimir.
+    # GRAFANA_EXPORT_INTERVAL_MS defaults to 15 s (was 60 s) so metrics appear
+    # in Grafana quickly during development and are not lost on short sessions.
+    export_interval = Config.GRAFANA_EXPORT_INTERVAL_MS
+    export_timeout = min(export_interval - 5_000, 25_000)
+    meter_provider = MeterProvider(
+        resource=resource,
+        metric_readers=[PeriodicExportingMetricReader(
+            OTLPMetricExporter(
+                endpoint=base + "/v1/metrics",
+                headers=headers,
+                timeout=30,
+                preferred_temporality={_Histogram: AggregationTemporality.CUMULATIVE},
+            ),
+            export_interval_millis=export_interval,
+            export_timeout_millis=export_timeout,
+        )],
+    )
+    _metrics.set_meter_provider(meter_provider)
+    _meter_provider = meter_provider
+
+    # Logs → Grafana Loki (attaches to root logger so all mesh loggers flow through)
+    logger_provider = LoggerProvider(resource=resource)
+    logger_provider.add_log_record_processor(
+        BatchLogRecordProcessor(OTLPLogExporter(
+            endpoint=base + "/v1/logs",
+            headers=headers,
+            timeout=30,
+        ))
+    )
+    set_logger_provider(logger_provider)
+    logging.getLogger().addHandler(
+        LoggingHandler(level=logging.DEBUG, logger_provider=logger_provider)
+    )
+    _logger_provider = logger_provider
+
+    enable_instrumentation(enable_sensitive_data=Config.ENABLE_SENSITIVE_DATA)
+    log.info(
+        "Observability profile=grafana: OTLP/HTTP → %s (Tempo + Mimir + Loki), "
+        "metrics interval=%ds.",
+        endpoint,
+        export_interval // 1000,
     )
 
 

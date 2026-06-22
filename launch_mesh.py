@@ -23,6 +23,7 @@ from src.agents.node_registry import NODE_NAMES
 
 # Start shared services (policy, compliance) first, then specialists, then gateway.
 START_ORDER = ["policy", "compliance", "finance", "hr", "internal_job", "gateway"]
+# START_ORDER = ["policy", "compliance", "hr", "gateway"]
 
 
 def main():
