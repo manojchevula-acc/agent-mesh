@@ -1,0 +1,21 @@
+customer_id,customer_name,customer_segment,industry,region,preferred_currency,risk_category,internal_rating,relationship_tenure_years,relationship_status,relationship_discount_pct,annual_revenue_aed,debt_to_equity_ratio,credit_score,existing_exposure_aed
+CUST001,Al Noor Trading LLC,SME,Trading,Dubai,AED,Medium,BBB,5,Existing,0.25,18000000,0.42,690,3500000
+CUST002,Falcon Steel Industries,Corporate,Manufacturing,Abu Dhabi,AED,Low,A,9,Strategic,0.45,145000000,0.38,760,25000000
+CUST003,Gulf Star Logistics,Corporate,Logistics,Dubai,AED,Medium,BBB+,7,Existing,0.30,82000000,0.48,720,16000000
+CUST004,Oasis Retail Group,SME,Retail,Sharjah,AED,Medium,BBB-,4,Existing,0.20,32000000,0.55,670,6500000
+CUST005,Emirates Healthcare Services,Corporate,Healthcare,Abu Dhabi,AED,Low,A-,8,Strategic,0.40,210000000,0.34,775,40000000
+CUST006,Desert Sands Construction,Corporate,Construction,Dubai,AED,High,BB+,6,Existing,0.10,120000000,0.66,630,30000000
+CUST007,Pearl Foods Distribution,SME,FMCG,Ajman,AED,Medium,BBB,3,New,0.10,22000000,0.46,680,4200000
+CUST008,Blue Wave Shipping,Corporate,Shipping,Dubai,USD,Medium,BBB+,10,Strategic,0.35,98000000,0.52,715,18000000
+CUST009,Green Energy MEA,Corporate,Energy,Abu Dhabi,USD,Low,A,5,Existing,0.35,300000000,0.31,790,50000000
+CUST010,Metro Auto Parts LLC,SME,Automotive,Dubai,AED,Medium,BBB-,4,Existing,0.18,27000000,0.50,665,5200000
+CUST011,Royal Hospitality LLC,SME,Hospitality,Ras Al Khaimah,AED,Medium,BBB,6,Existing,0.22,41000000,0.47,700,8000000
+CUST012,Skyline Real Estate,Corporate,Real Estate,Dubai,AED,High,BB,8,Existing,0.05,180000000,0.72,610,45000000
+CUST013,Union Pharma Trading,SME,Pharma Trading,Sharjah,AED,Low,A-,5,Strategic,0.35,52000000,0.36,750,9000000
+CUST014,Arabian Textiles,SME,Manufacturing,Ajman,AED,Medium,BBB-,2,New,0.08,19000000,0.58,650,3800000
+CUST015,Prime Tech Solutions,SME,Technology,Dubai,USD,Low,A-,3,Existing,0.30,65000000,0.28,780,7000000
+CUST016,Capital Education Group,Corporate,Education,Abu Dhabi,AED,Low,A,11,Strategic,0.45,155000000,0.29,800,22000000
+CUST017,Red Dune Mining,Corporate,Mining,Fujairah,USD,High,BB+,6,Existing,0.08,240000000,0.69,625,60000000
+CUST018,Lulu Fresh Markets,Corporate,Retail,Dubai,AED,Medium,BBB+,12,Strategic,0.38,260000000,0.44,735,35000000
+CUST019,Coastal Marine Services,SME,Marine Services,Abu Dhabi,USD,Medium,BBB,5,Existing,0.20,44000000,0.53,690,10000000
+CUST020,Nile General Supplies,SME,Wholesale,Sharjah,AED,High,BB,1,New,0.00,12000000,0.74,590,2500000

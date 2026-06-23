@@ -1,0 +1,25 @@
+policy_id,customer_segment,product_type,risk_category,min_margin_pct,risk_premium_pct,max_relationship_discount_pct,approval_required_if_discount_above_pct,min_expected_margin_pct,rwa_risk_weight_pct,status
+POL001,SME,Loan,Low,2.25,0.10,0.25,0.20,0.75,50,Active
+POL002,SME,Loan,Medium,2.45,0.45,0.25,0.20,0.75,75,Active
+POL003,SME,Loan,High,2.75,0.95,0.25,0.20,0.75,100,Active
+POL004,SME,Trade Finance,Low,1.55,0.10,0.25,0.20,0.75,50,Active
+POL005,SME,Trade Finance,Medium,1.75,0.45,0.25,0.20,0.75,75,Active
+POL006,SME,Trade Finance,High,2.05,0.95,0.25,0.20,0.75,100,Active
+POL007,SME,Treasury,Low,0.85,0.10,0.25,0.20,0.75,50,Active
+POL008,SME,Treasury,Medium,1.05,0.45,0.25,0.20,0.75,75,Active
+POL009,SME,Treasury,High,1.35,0.95,0.25,0.20,0.75,100,Active
+POL010,SME,Deposit,Low,0.45,0.10,0.25,0.20,0.10,50,Active
+POL011,SME,Deposit,Medium,0.65,0.45,0.25,0.20,0.10,75,Active
+POL012,SME,Deposit,High,0.95,0.95,0.25,0.20,0.10,100,Active
+POL013,Corporate,Loan,Low,2.00,0.10,0.45,0.30,0.75,50,Active
+POL014,Corporate,Loan,Medium,2.20,0.45,0.45,0.30,0.75,75,Active
+POL015,Corporate,Loan,High,2.50,0.95,0.45,0.30,0.75,100,Active
+POL016,Corporate,Trade Finance,Low,1.30,0.10,0.45,0.30,0.75,50,Active
+POL017,Corporate,Trade Finance,Medium,1.50,0.45,0.45,0.30,0.75,75,Active
+POL018,Corporate,Trade Finance,High,1.80,0.95,0.45,0.30,0.75,100,Active
+POL019,Corporate,Treasury,Low,0.60,0.10,0.45,0.30,0.75,50,Active
+POL020,Corporate,Treasury,Medium,0.80,0.45,0.45,0.30,0.75,75,Active
+POL021,Corporate,Treasury,High,1.10,0.95,0.45,0.30,0.75,100,Active
+POL022,Corporate,Deposit,Low,0.20,0.10,0.45,0.30,0.10,50,Active
+POL023,Corporate,Deposit,Medium,0.40,0.45,0.45,0.30,0.10,75,Active
+POL024,Corporate,Deposit,High,0.70,0.95,0.45,0.30,0.10,100,Active
