@@ -1,10 +1,13 @@
-# Architectural Design — Distributed A2A Agent Mesh
+# Architectural Design — FAB Pricing Assistant Mesh
 
-The FAB Pricing Assistant Mesh: a distributed multi-agent system where each agent
-is an isolated A2A server. AgentMesh orchestrates a request through safety gates
-and a gateway router to one specialist; a **Price Assist** coordinator composes
-answers across a structured-data agent and an unstructured-document agent, which
-consume two independent services over **MCP**.
+A distributed multi-agent system where each agent is an isolated A2A server.
+The mesh routes requests through deterministic safety gates and role-based access
+control to a single primary coordinator — **PriceAssistAgent** — which internally
+classifies intent and delegates to specialist agents over A2A. Those agents consume
+two independent backing services over **MCP**.
+
+> GatewayAgent and PolicyAgent have been removed in AgentMesh 15.0.6.2026.
+> Intent routing and policy knowledge are now handled by PriceAssistAgent directly.
 
 ---
 
@@ -12,97 +15,191 @@ consume two independent services over **MCP**.
 
 ```mermaid
 graph TD
-    User([👤 User]) --> Auth[Mock Auth<br/>role: employee/hr/leadership]
-    Auth --> Run[run.py / api_server.py]
-    Run --> Orch[Orchestrator<br/>src/mesh/orchestrator.py]
+    User(["👤 User\n(FAB banking role)"])
+    FE["React Frontend\n:5173"]
+    API["REST API Server\napi_server.py :8000"]
+    Orch["Orchestrator\nsrc/mesh/orchestrator.py"]
 
-    subgraph Guardrails (deterministic)
-        Screen[Input screen<br/>injection / PII / destructive]
-        Redact[Output redaction]
+    subgraph PIPE ["Pipeline — workflow.py"]
+        direction TB
+        Screen["① Input Guardrail\nregex · injection / PII / destructive"]
+        RBAC["② RBAC Validation\n7 FAB banking roles (deterministic)"]
+        Comp["③ Compliance Agent\nA2A :8015 · LLM semantic gate"]
+        Dom["④ Domain\nA2A → PriceAssist :8018"]
+        Redact["⑤ Output Redaction\nPII scrub (deterministic)"]
     end
 
-    Orch --> Screen
-    Screen -->|A2A :8015| Compliance[Compliance Agent]
-    Compliance -->|A2A :8010| Gateway[Gateway / Router]
+    BLOCK(["❌ Blocked"])
+    ANS(["✅ Answer"])
 
-    Gateway -->|price| Price[Price Assist :8018]
-    Gateway -->|data| Data[Data Agent :8016]
-    Gateway -->|rag| Rag[RAG Agent :8017]
-    Gateway -->|policy| Policy[Policy Agent :8014]
+    User --> FE --> API --> Orch --> Screen
+    Screen -->|BLOCK| BLOCK
+    Screen -->|PASS| RBAC
+    RBAC -->|BLOCK| BLOCK
+    RBAC -->|PASS| Comp
+    Comp -->|FAIL| BLOCK
+    Comp -->|PASS| Dom
+    Dom --> Redact --> ANS
 
-    Price -. A2A .-> Data
-    Price -. A2A .-> Rag
-    Data -. MCP/HTTP .-> DL[(DataLayer :9100<br/>MySQL semantic views)]
-    Rag -. MCP/HTTP .-> RG[(RAG :9000 → :8000<br/>Qdrant + rerank)]
-    Policy --> PKB[(policies.json)]
+    subgraph COORD ["PriceAssistAgent :8018 (primary orchestrator)"]
+        direction LR
+        PA_LLM["LLM\nintent classification"]
+        QSD["query_structured_data"]
+        QKB["query_knowledge_base"]
+        PA_LLM -->|"data query"| QSD
+        PA_LLM -->|"knowledge query"| QKB
+        PA_LLM -->|"hybrid: both"| QSD
+        PA_LLM -->|"hybrid: both"| QKB
+    end
 
-    Price --> Redact
-    Data --> Redact
-    Rag --> Redact
-    Policy --> Redact
+    Dom -->|A2A| PA_LLM
 
-    Gateway & Price & Data & Rag & Policy & Compliance -.->|AuditMiddleware| Log[(audit_trail.jsonl)]
+    DA["DataAgent :8016\nthin MCP client"]
+    RA["RAGAgent :8017\nthin MCP client"]
+
+    QSD -->|A2A| DA
+    QKB -->|A2A| RA
+
+    DA -. "MCP/HTTP" .-> DL[("DataLayer :9100\nMySQL fab_semantic\n5 SQL-view tools")]
+    RA -. "MCP/HTTP" .-> RG[("RAG MCP :9000\n→ REST :8000\nQdrant · BGE-M3 · rerank")]
+
+    Comp -->|AuditMiddleware| Log[("data/logs/\nagent_mesh.log")]
+    DA -->|OTel spans| Log
+    RA -->|OTel spans| Log
 ```
 
 ---
 
 ## Component Topology
 
-Six A2A nodes (own process + port):
+**4 A2A nodes** (own process + port):
 
-1. **Gateway / Router (8010)** — LLM classifier → `price | data | rag | policy`. Does not answer.
-2. **Compliance Agent (8015)** — semantic safety gate.
-3. **Policy Agent (8014)** — corporate rules from `policies.json`.
-4. **Data Agent (8016)** — thin; consumes DataLayer over MCP (structured).
-5. **RAG Agent (8017)** — thin; consumes RAG over MCP (unstructured).
-6. **Price Assist (8018)** — coordinator; delegates to Data & RAG over A2A and synthesizes.
+| # | Node | Port | Role |
+|---|------|------|------|
+| 1 | `compliance` | 8015 | Semantic safety gate — LLM reviews each query; replies `COMPLIANCE_PASSED` / `COMPLIANCE_FAILED`. |
+| 2 | `data_agent` | 8016 | Thin MCP client → DataLayer service (5 SQL-view tools over MySQL). |
+| 3 | `rag_agent` | 8017 | Thin MCP client → RAG service (`search_documents`). |
+| 4 | `price_assist` | 8018 | **Primary coordinator** — intent classification + delegation to data/RAG peers + answer synthesis. |
 
-Backing services run independently: **DataLayer** FastMCP `:9100`, **RAG** MCP `:9000` → REST `:8000`.
+**Backing services** (independent processes):
 
-Hosting: `A2AExecutor` + Starlette/uvicorn (`src/a2a/hosting.py`); MCP-backed nodes open their MCP session for the node lifetime (`a2a_server.py`). Calls use `A2AAgent` (`src/a2a/clients.py`).
+| Service | Port | Interface |
+|---------|------|-----------|
+| DataLayer-as-a-Service | 9100 | MCP/HTTP — FastMCP + MySQL `fab_semantic` |
+| RAG-as-a-Service (MCP) | 9000 | MCP/HTTP — wraps REST /api/v1/retrieve |
+| RAG-as-a-Service (REST) | 8000 | FastAPI — retrieve, ingest, evaluate |
 
 ---
 
 ## Communication Boundaries
 
-| Boundary | Mechanism |
-|----------|-----------|
-| Orchestrator ↔ agents | A2A (JSONRPC/HTTP) |
-| Price Assist ↔ Data/RAG agents | A2A peer delegation (agent-as-tool; depth-guarded, soft-fail) |
-| Data/RAG agents ↔ services | MCP (streamable HTTP; tools auto-discovered) |
+| Boundary | Mechanism | Why |
+|----------|-----------|-----|
+| REST API / DevUI ↔ orchestrator | Function call (in-process) | Same process; no serialisation overhead. |
+| Orchestrator ↔ agents | **A2A** (JSONRPC/HTTP) | Isolated processes; W3C trace propagation; audit middleware. |
+| PriceAssist ↔ Data/RAG agents | **A2A peer delegation** | Agent-as-tool pattern; depth-guarded (max 2); soft-fail on outage. |
+| Data/RAG agents ↔ services | **MCP** (streamable HTTP) | Tools auto-discovered at connect time — agents stay thin; services evolve independently. |
 
 ---
 
 ## Data Flow & Execution Sequence
 
-For "Is CUST001's loan price compliant with policy?":
+### Hybrid query: `"Is CUST001's loan price compliant with policy?"`
 
-1. **Login** → role recorded for audit.
-2. **Input screen** → passes (no injection/PII/destructive).
-3. **Compliance (A2A → 8015)** → `COMPLIANCE_PASSED`.
-4. **Router (A2A → 8010)** → domain `price` → node `price_assist`.
-5. **Price Assist (A2A → 8018)** → calls `query_structured_data` (A2A → data_agent → DataLayer: approved price/margin) **and** `query_policy_documents` (A2A → rag_agent → RAG: pricing floor), compares, answers.
-6. **Output redaction** → PII scrubbed; answer returned.
-7. **Audit** → each hop recorded.
+```
+1. User → REST API (POST /api/query)
+2. Input Guardrail      PASS  (no injection/PII/destructive pattern)
+3. RBAC Validation      PASS  (e.g. role=compliance_officer)
+4. ComplianceAgent      PASS  → "COMPLIANCE_PASSED: query is safe"
+5. PriceAssistAgent     receives query
+   └─ intent: HYBRID (compliance check needs data + policy)
+   ├─ query_structured_data("pricing recommendation for CUST001")
+   │    → DataAgent → MCP pricing_recommendation("CUST001")
+   │    → returns: current_rate, policy_floor, compliance_flag per deal
+   └─ query_knowledge_base("pricing floor and rules for BB-rated AED loan")
+        → RAGAgent → MCP search_documents(query=...)
+        → returns: policy clauses with source + clause_reference
+   └─ LLM synthesis: compare current_rate vs policy_floor → COMPLIANT / NON-COMPLIANT
+6. Output Redaction     PII scrubbed from answer
+7. MeshResult returned  {answer, blocked=false, trail=[...]}
+```
 
-A prompt-injection/destructive request is blocked at step 2; an unsafe request at step 3. If a downstream agent/service is offline, the domain hop **soft-fails** to an "unavailable" answer instead of crashing.
+### Pure data query: `"Margin analysis for CUST003"`
+
+```
+Guardrail PASS → RBAC PASS → Compliance PASS
+→ PriceAssistAgent [intent=data]
+    → query_structured_data → DataAgent → margin_analysis("CUST003")
+→ Output Redaction → Answer
+```
+
+### Blocked: prompt injection
+
+```
+Input Guardrail BLOCK:prompt_injection → immediate answer, no LLM called
+```
+
+### Blocked: unrecognised role
+
+```
+Guardrail PASS → RBAC BLOCK:external_vendor → immediate answer, no LLM called
+```
 
 ---
 
-## Security Model (Defense in Depth)
+## Security Model (Defence in Depth)
 
-- **Layer 1 — Deterministic filters**: regex gates before any LLM and again on output.
-- **Layer 2 — Compliance agent**: semantic review over A2A (fails closed).
-- **Layer 3 — Graceful degradation**: A2A/MCP hops soft-fail; depth guard bounds peer delegation.
-- **Observability**: per-hop audit + one distributed trace spanning A2A and MCP hops.
+```mermaid
+graph LR
+    A["① Input Guardrail\nDeterministic regex\nFail-closed · no LLM"]
+    B["② RBAC Validation\nRole whitelist (7 roles)\nFail-closed · no LLM"]
+    C["③ Compliance Agent\nLLM semantic review\nFail-closed · A2A"]
+    D["④ Domain Agents\nLLM + MCP/A2A tools\nSoft-fail on outage"]
+    E["⑤ Output Redaction\nDeterministic regex\nFail-closed · no LLM"]
+
+    A --> B --> C --> D --> E
+```
+
+- **Layers 1, 2, 5** are deterministic (regex/whitelist) — cannot be bypassed by prompt manipulation.
+- **Layer 3** is LLM-based but fails closed — a failed/ambiguous review blocks the request.
+- **Layer 4** soft-fails — an unavailable downstream service produces a graceful "unavailable" answer rather than a crash or 500.
+- **Depth guard** on peer delegation caps recursion at 2 levels, preventing runaway agent chains.
+
+---
+
+## PriceAssistAgent Intent Routing (prompt-driven)
+
+```mermaid
+flowchart TD
+    Q["User query"]
+    CLS{"LLM intent\nclassification"}
+    D["query_structured_data\nA2A → DataAgent → DataLayer MCP"]
+    K["query_knowledge_base\nA2A → RAGAgent → RAG MCP"]
+    SYNTH["LLM synthesis\n(answer + citations)"]
+
+    Q --> CLS
+    CLS -->|"customer ID + data field\n(margin, RWA, 360, pricing)"| D --> SYNTH
+    CLS -->|"policy/rule/procedure\nno customer ID"| K --> SYNTH
+    CLS -->|"compliance check or\npricing recommendation"| D
+    CLS -->|"compliance check or\npricing recommendation"| K
+    D --> SYNTH
+    K --> SYNTH
+    CLS -->|"product features\nprocess questions"| K
+```
 
 ---
 
 ## Microsoft Agent Framework Capabilities Demonstrated
 
-1. **A2A protocol** — agents hosted/consumed across isolated ports.
-2. **MCP tool consumption** — `MCPStreamableHTTPTool` auto-discovers external service tools.
-3. **Agent-as-tool** — the Price Assist coordinator calls peer agents as tools.
-4. **Workflow orchestration** — typed `WorkflowBuilder` pipeline with native spans.
-5. **Agent middleware** — audit + redaction.
-6. **Local LLM** — `OllamaChatClient`.
+| Capability | Where used |
+|-----------|-----------|
+| **A2A protocol** | All inter-agent calls (orchestrator ↔ compliance/price_assist; price_assist ↔ data/rag) |
+| **MCP tool consumption** | `MCPStreamableHTTPTool` in DataAgent + RAGAgent; tools auto-discovered at connect |
+| **Agent-as-tool** | PriceAssistAgent calls peer agents as tools via `COORDINATION_TOOLS` |
+| **Workflow orchestration** | Typed `WorkflowBuilder` pipeline with 5 executors; native OTel spans per stage |
+| **Agent middleware** | `TraceContextMiddleware` (W3C trace propagation); audit logging |
+| **Multiple LLM providers** | Anthropic / Groq / OpenAI / Ollama via `agent_factory.py` |
+
+---
+
+*AgentMesh 15.0.6.2026 — Last updated 2026-06-24.*
