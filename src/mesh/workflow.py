@@ -5,40 +5,34 @@ framework emits native observability spans for the whole orchestration:
 
     workflow.run
       └─ executor.process input_guardrail
-      └─ executor.process router          ──(A2A)──► invoke_agent GatewayAgent
-      └─ executor.process access_control
+      └─ executor.process rbac_validation
       └─ executor.process compliance      ──(A2A)──► invoke_agent ComplianceAgent
-      └─ executor.process payment_gate     (human-in-the-loop, finance payments)
-      └─ executor.process domain           ──(A2A, parallel)──► invoke_agent <DomainAgent(s)>
+      └─ executor.process domain           ──(A2A)──► invoke_agent PriceAssistAgent
       └─ executor.process output_redaction
 
-Each hop is an ``executor.process`` span; ``WorkflowContext.send_message``
-auto-propagates trace context between executors, and the A2A client propagates
-it across process boundaries (see ``src/a2a/clients.py``). This replaces the old
-hand-rolled, custom-JSONL pipeline with framework-native telemetry.
+PriceAssistAgent is the primary FAB banking orchestrator. It receives ALL requests
+after the security/RBAC/compliance pipeline, classifies intent internally, and
+delegates to DataAgent (→ DataLayer MCP) or RAGAgent (→ RAG MCP) as needed.
 
 Design notes
 ------------
 - A single :class:`MeshState` message flows through the graph. Each gate either
   forwards (``ctx.send_message``) to proceed or yields (``ctx.yield_output``) to
-  terminate early (blocked). This keeps the graph linear and type-safe while
-  preserving the exact defense-in-depth stage order.
-- Multi-domain queries: the Gateway can return more than one domain. The
-  ``AccessControlExecutor`` filters to only the domains the user's role permits.
-  ``DomainExecutor`` fans out to all allowed domains in parallel (asyncio.gather)
-  and merges the answers into a single response.
+  terminate early (blocked).
+- RBACValidationExecutor enforces FAB banking roles. All seven defined roles are
+  permitted to proceed; unrecognised roles are blocked.
+- The gateway routing step has been removed. Intent classification (data /
+  knowledge / hybrid) now lives entirely inside PriceAssistAgent's LLM prompt,
+  keeping the orchestration graph lean and reducing inter-service round-trips.
 - A2A-calling executors use an injected ``ask`` callable so the offline test
   suite can patch the transport at the ``orchestrator.ask_remote`` seam.
 """
 from __future__ import annotations
 
-import asyncio
-import json
-import re
 import sys
 import pathlib
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable, Dict, List, Optional
+from typing import Awaitable, Callable, List, Optional
 
 from typing_extensions import Never
 
@@ -48,41 +42,17 @@ if project_root not in sys.path:
 
 from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
 
-from src.config import Config
 from src.guardrails.deterministic_filters import screen_input, redact_pii
-from src.agents.gateway_agent import parse_domain_queries
-from src.observability import get_logger, CAT_WORKFLOW, CAT_APPROVALS
+from src.auth.identity_provider import BankingRole
+from src.observability import get_logger, CAT_WORKFLOW
 
 _log = get_logger(CAT_WORKFLOW)
-_approval_log = get_logger(CAT_APPROVALS)
 
-# Requests that imply moving money -> require a deterministic human approval gate.
-_PAYMENT_RE = re.compile(r"\b(pay|payment|payout|remit|transfer|wire|disburse)\b", re.IGNORECASE)
-
-# Type aliases for the injected dependencies.
+# Type alias for the injected dependency.
 AskRemote = Callable[..., Awaitable[str]]
-Approver = Callable[[str], bool]
 
-
-def _load_role_access() -> dict:
-    try:
-        with open(Config.POLICIES_FILE, "r", encoding="utf-8") as f:
-            return json.load(f).get("role_access", {})
-    except Exception:
-        return {}
-
-
-_ROLE_ACCESS = _load_role_access()
-
-
-def _allowed(domain: str, role: str) -> tuple[bool, str]:
-    """Returns (allowed, denial_message) for a (domain, role) pair."""
-    rule = _ROLE_ACCESS.get(domain)
-    if not rule:
-        return True, ""
-    if role in rule.get("allowed_roles", []):
-        return True, ""
-    return False, rule.get("denial_message", f"Access denied: {domain} is restricted.")
+# Set of all valid FAB banking role string values — used by RBACValidationExecutor.
+_ALLOWED_ROLES = {r.value for r in BankingRole}
 
 
 @dataclass
@@ -92,15 +62,6 @@ class MeshState:
     role: str
     query: str
     session_id: str = "default_session"
-    # domain_queries: per-domain sub-questions decomposed by the gateway.
-    #   Single-domain:  {"hr": full_query}
-    #   Multi-domain:   {"hr": "leave sub-q", "finance": "budget sub-q"}
-    # domains: ordered list of keys from domain_queries (preserved for access control / logging).
-    # domain:  primary domain (first); kept for single-domain compat.
-    domain_queries: Dict[str, str] = field(default_factory=dict)
-    domains: List[str] = field(default_factory=list)
-    domain: Optional[str] = None
-    router_raw: str = ""
     compliance_verdict: str = ""
     answer: str = ""
     blocked: bool = False
@@ -117,8 +78,7 @@ class DevUIEntryExecutor(Executor):
     DevUI invokes a workflow with a plain ``str`` (the user's chat input), but the
     mesh pipeline flows a :class:`MeshState`. This executor adapts the text into a
     ``MeshState`` stamped with the DevUI session's identity (user/role), then hands
-    off to the normal guardrail stage. It exists only for the single-process DevUI
-    entrypoint; the distributed orchestrator seeds ``MeshState`` itself.
+    off to the normal guardrail stage.
     """
 
     def __init__(self, user_name: str, role: str, id: str = "devui_entry") -> None:
@@ -141,7 +101,7 @@ class DevUIEntryExecutor(Executor):
 
 
 class InputGuardrailExecutor(Executor):
-    """Deterministic input screen (hard gate, pre-routing). Workflow start node."""
+    """Deterministic input screen (hard gate, pre-review). Workflow start node."""
 
     @handler
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
@@ -162,64 +122,33 @@ class InputGuardrailExecutor(Executor):
         await ctx.send_message(state)
 
 
-class RouterExecutor(Executor):
-    """Routes the request to a domain via the Gateway node over A2A."""
+class RBACValidationExecutor(Executor):
+    """Role-based access control gate — enforces FAB banking roles.
 
-    def __init__(self, ask: AskRemote, id: str = "router") -> None:
-        super().__init__(id=id)
-        self._ask = ask
-
-    @handler
-    async def run(self, state: MeshState, ctx: WorkflowContext[MeshState]) -> None:
-        router_text = await self._ask("gateway", state.query)
-        state.router_raw = router_text
-        state.domain_queries = parse_domain_queries(router_text, state.query)
-        state.domains = list(state.domain_queries.keys())
-        state.domain = state.domains[0]
-        state.trail.append(f"route:{','.join(state.domains)}")
-        _log.info("Routed to domains=%s", state.domains,
-                  extra={"domain": state.domain, "user": state.user_name})
-        await ctx.send_message(state)
-
-
-class AccessControlExecutor(Executor):
-    """Role-based access control gate (e.g. finance = leadership only)."""
+    All seven defined FAB banking roles are permitted to proceed. Requests
+    carrying an unrecognised role string are blocked here with an explicit
+    message. Granular data-level enforcement (e.g. a CUSTOMER role may only
+    query their own account) is handled at the domain agent layer.
+    """
 
     @handler
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
-        allowed, denied = [], []
-        for d in state.domains:
-            ok, msg = _allowed(d, state.role)
-            if ok:
-                allowed.append(d)
-            else:
-                denied.append((d, msg))
-
-        if not allowed:
-            # Every requested domain is restricted for this role — block entirely.
+        if state.role not in _ALLOWED_ROLES:
             state.blocked = True
-            state.block_stage = "access_control"
-            state.answer = denied[0][1]
-            state.trail.append(f"access_denied:{','.join(d for d, _ in denied)}")
-            _log.warning("Access DENY role=%s domains=%s", state.role, [d for d, _ in denied],
-                         extra={"domain": state.domain, "user": state.user_name, "status": "DENY"})
+            state.block_stage = "rbac_validation"
+            state.answer = (
+                f"Access denied: role '{state.role}' is not a recognised FAB banking role. "
+                "Please authenticate with valid FAB credentials."
+            )
+            state.trail.append(f"rbac_block:{state.role}")
+            _log.warning("RBAC BLOCK: unrecognised role=%s user=%s",
+                         state.role, state.user_name,
+                         extra={"user": state.user_name, "status": "BLOCK"})
             await ctx.yield_output(state)
             return
-
-        # Partial access: serve only the domains this role can reach.
-        for d in allowed:
-            state.trail.append(f"access_ok:{d}")
-        for d, _ in denied:
-            state.trail.append(f"access_partial_deny:{d}")
-
-        state.domains = allowed
-        state.domain = allowed[0]
-        state.domain_queries = {d: state.domain_queries.get(d, state.query) for d in allowed}
-        _log.info(
-            "Access OK role=%s domains=%s%s", state.role, allowed,
-            f" (partial deny: {[d for d, _ in denied]})" if denied else "",
-            extra={"domain": state.domain, "user": state.user_name, "status": "PASS"},
-        )
+        state.trail.append(f"rbac_pass:{state.role}")
+        _log.info("RBAC PASS role=%s", state.role,
+                  extra={"user": state.user_name, "status": "PASS"})
         await ctx.send_message(state)
 
 
@@ -240,53 +169,22 @@ class ComplianceExecutor(Executor):
             state.answer = "Request blocked by the Compliance agent (semantic safety review)."
             state.trail.append("compliance_failed")
             _log.warning("Compliance FAIL: %s", verdict[:160],
-                         extra={"domain": state.domain, "status": "FAIL"})
+                         extra={"user": state.user_name, "status": "FAIL"})
             await ctx.yield_output(state)
             return
         state.trail.append("compliance_pass")
-        _log.info("Compliance PASS", extra={"domain": state.domain, "status": "PASS"})
-        await ctx.send_message(state)
-
-
-class PaymentApprovalExecutor(Executor):
-    """Deterministic human-in-the-loop gate for outbound finance payments.
-
-    Runs in the orchestrator process, so it can drive an interactive approver
-    even across the A2A boundary (the remote Finance agent never sees approval
-    content). Non-payment requests pass straight through.
-    """
-
-    def __init__(self, approver: Approver, id: str = "payment_gate") -> None:
-        super().__init__(id=id)
-        self._approver = approver
-
-    @handler
-    async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
-        is_payment = "finance" in state.domains and bool(_PAYMENT_RE.search(state.query))
-        if not is_payment:
-            await ctx.send_message(state)
-            return
-
-        _approval_log.info("Outbound payment requires human approval",
-                           extra={"user": state.user_name, "domain": "finance"})
-        approved = self._approver("Approve this outbound finance payment?")
-        if not approved:
-            state.blocked = True
-            state.block_stage = "approval"
-            state.answer = "Payment was not approved by the operator."
-            state.trail.append("payment_denied")
-            _approval_log.warning("Payment DENIED by operator",
-                                  extra={"user": state.user_name, "status": "DENY"})
-            await ctx.yield_output(state)
-            return
-        state.trail.append("payment_approved")
-        _approval_log.info("Payment APPROVED by operator",
-                           extra={"user": state.user_name, "status": "APPROVE"})
+        _log.info("Compliance PASS", extra={"user": state.user_name, "status": "PASS"})
         await ctx.send_message(state)
 
 
 class DomainExecutor(Executor):
-    """Dispatches the request to the resolved domain node over A2A."""
+    """Dispatches the request to the PriceAssistAgent — the primary FAB banking orchestrator.
+
+    PriceAssistAgent handles intent classification internally and delegates to
+    DataAgent (→ DataLayer MCP, structured data) or RAGAgent (→ RAG MCP, knowledge
+    retrieval) as appropriate. A failed hop degrades gracefully into an error
+    answer rather than crashing the workflow.
+    """
 
     def __init__(self, ask: AskRemote, id: str = "domain") -> None:
         super().__init__(id=id)
@@ -294,34 +192,18 @@ class DomainExecutor(Executor):
 
     @handler
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState]) -> None:
-        if len(state.domains) == 1:
-            d = state.domains[0]
-            sub_query = state.domain_queries.get(d, state.query)
-            answer = await self._ask(d, sub_query)
-            state.answer = answer
-            state.trail.append(f"domain_answer:{d}")
-            _log.info("Domain answer domain=%s (%d chars)", d, len(answer or ""),
-                      extra={"domain": state.domain, "status": "SUCCESS"})
+        try:
+            answer = await self._ask("price_assist", state.query)
+        except Exception as exc:
+            answer = f"The banking assistant is currently unavailable ({exc})."
+            state.trail.append("domain_error:price_assist")
+            _log.warning("Domain hop failed node=price_assist: %s", exc,
+                         extra={"status": "ERROR"})
         else:
-            # Multi-domain: fan out to each domain with its specific sub-question in parallel.
-            results = await asyncio.gather(
-                *[self._ask(d, state.domain_queries.get(d, state.query)) for d in state.domains],
-                return_exceptions=True,
-            )
-            sections = []
-            for domain, result in zip(state.domains, results):
-                label = domain.replace("_", " ").title()
-                if isinstance(result, Exception):
-                    _log.warning("Domain %s error: %s", domain, result,
-                                 extra={"domain": domain, "status": "ERROR"})
-                    sections.append(f"### {label}\n*(Unable to retrieve — {result})*")
-                else:
-                    sections.append(f"### {label}\n{result}")
-                state.trail.append(f"domain_answer:{domain}")
-            state.answer = "\n\n".join(sections)
-            _log.info("Multi-domain answer domains=%s (%d chars)", state.domains, len(state.answer),
-                      extra={"domain": state.domain, "status": "SUCCESS"})
-
+            state.trail.append("domain_answer:price_assist")
+            _log.info("Domain answer (%d chars)", len(answer or ""),
+                      extra={"status": "SUCCESS"})
+        state.answer = answer
         await ctx.send_message(state)
 
 
@@ -332,29 +214,25 @@ class OutputRedactionExecutor(Executor):
     async def run(self, state: MeshState, ctx: WorkflowContext[Never, MeshState]) -> None:
         state.answer = redact_pii(state.answer)
         state.trail.append("output_redacted")
-        _log.info("Request complete domains=%s trail=%s", state.domains or [state.domain],
-                  " -> ".join(state.trail),
-                  extra={"domain": state.domain, "status": "SUCCESS"})
+        _log.info("Request complete trail=%s", " -> ".join(state.trail),
+                  extra={"user": state.user_name, "status": "SUCCESS"})
         await ctx.yield_output(state)
 
 
-def build_mesh_workflow(ask: AskRemote, approver: Approver):
+def build_mesh_workflow(ask: AskRemote):
     """Builds the mesh orchestration workflow.
 
     Args:
         ask: async callable ``(node, prompt, **kwargs) -> str`` used for A2A hops.
              The orchestrator passes its module-level ``ask_remote`` so the
              offline test suite can patch the transport.
-        approver: sync callable ``(prompt) -> bool`` for the payment HITL gate.
 
     Returns:
         An immutable, reusable ``Workflow`` instance.
     """
     guardrail = InputGuardrailExecutor(id="input_guardrail")
-    router = RouterExecutor(ask, id="router")
-    access = AccessControlExecutor(id="access_control")
+    rbac = RBACValidationExecutor(id="rbac_validation")
     compliance = ComplianceExecutor(ask, id="compliance")
-    payment = PaymentApprovalExecutor(approver, id="payment_gate")
     domain = DomainExecutor(ask, id="domain")
     redact = OutputRedactionExecutor(id="output_redaction")
 
@@ -362,44 +240,28 @@ def build_mesh_workflow(ask: AskRemote, approver: Approver):
         WorkflowBuilder(
             start_executor=guardrail,
             name="agent_mesh_pipeline",
-            description="Guardrail -> route -> access -> compliance -> approval -> domain(s) -> redact",
-            # Every executor that can yield a terminal output (block points + final).
-            output_from=[guardrail, access, compliance, payment, redact],
+            description="Guardrail -> RBAC -> compliance -> price_assist -> redact",
+            output_from=[guardrail, rbac, compliance, redact],
         )
-        .add_edge(guardrail, router)
-        .add_edge(router, access)
-        .add_edge(access, compliance)
-        .add_edge(compliance, payment)
-        .add_edge(payment, domain)
+        .add_edge(guardrail, rbac)
+        .add_edge(rbac, compliance)
+        .add_edge(compliance, domain)
         .add_edge(domain, redact)
         .build()
     )
 
 
-def build_devui_workflow(ask: AskRemote, approver: Approver, user_name: str, role: str):
+def build_devui_workflow(ask: AskRemote, user_name: str, role: str):
     """Builds the mesh workflow for the DevUI single-process entrypoint.
 
     Identical pipeline to :func:`build_mesh_workflow`, but prepended with a
     :class:`DevUIEntryExecutor` so the graph accepts the plain ``str`` that DevUI
-    sends and stamps it with the configured ``user_name`` / ``role``. The injected
-    ``ask`` here is an in-process adapter (calls each node agent directly), which
-    keeps the entire trace tree in one process so DevUI can visualize it.
-
-    Args:
-        ask: async ``(node, prompt, **kwargs) -> str`` transport (in-process for DevUI).
-        approver: sync ``(prompt) -> bool`` for the payment HITL gate.
-        user_name: identity stamped on every DevUI request.
-        role: role used for access-control decisions in DevUI.
-
-    Returns:
-        An immutable, reusable ``Workflow`` instance whose input is ``str``.
+    sends and stamps it with the configured ``user_name`` / ``role``.
     """
     entry = DevUIEntryExecutor(user_name, role, id="devui_entry")
     guardrail = InputGuardrailExecutor(id="input_guardrail")
-    router = RouterExecutor(ask, id="router")
-    access = AccessControlExecutor(id="access_control")
+    rbac = RBACValidationExecutor(id="rbac_validation")
     compliance = ComplianceExecutor(ask, id="compliance")
-    payment = PaymentApprovalExecutor(approver, id="payment_gate")
     domain = DomainExecutor(ask, id="domain")
     redact = OutputRedactionExecutor(id="output_redaction")
 
@@ -407,15 +269,13 @@ def build_devui_workflow(ask: AskRemote, approver: Approver, user_name: str, rol
         WorkflowBuilder(
             start_executor=entry,
             name="agent_mesh_pipeline",
-            description="DevUI entry -> guardrail -> route -> access -> compliance -> approval -> domain(s) -> redact",
-            output_from=[guardrail, access, compliance, payment, redact],
+            description="DevUI entry -> guardrail -> RBAC -> compliance -> price_assist -> redact",
+            output_from=[guardrail, rbac, compliance, redact],
         )
         .add_edge(entry, guardrail)
-        .add_edge(guardrail, router)
-        .add_edge(router, access)
-        .add_edge(access, compliance)
-        .add_edge(compliance, payment)
-        .add_edge(payment, domain)
+        .add_edge(guardrail, rbac)
+        .add_edge(rbac, compliance)
+        .add_edge(compliance, domain)
         .add_edge(domain, redact)
         .build()
     )

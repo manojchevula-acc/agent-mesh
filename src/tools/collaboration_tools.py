@@ -1,24 +1,16 @@
-"""Cross-domain collaboration tools (genuine agent-to-agent consultation).
+"""Cross-agent collaboration tools (agent-to-agent peer delegation).
 
-These let one domain agent reach a *peer* domain agent over A2A during its own
-reasoning — the hybrid pattern: the orchestrator still owns the front-door
-security gates, but agents may delegate to each other for true data dependencies
-(e.g. Finance needs HR's headcount to compute a per-employee budget).
+These let the Price Assist coordinator reach its peer domain agents over A2A
+during its own reasoning. The coordinator's LLM decides which peer(s) to call:
 
-This mirrors ``consult_policy`` in ``governance_tools.py`` but adds two safeguards
-that matter once agents call *each other* (rather than a leaf service like Policy):
+  - query_structured_data  -> Data Agent  -> DataLayer service (structured SQL data)
+  - query_knowledge_base   -> RAG Agent   -> RAG service (banking knowledge documents)
 
-1. Depth guard — a ContextVar bounds nested delegation so a misbehaving chain
-   (A -> B -> A -> ...) cannot recurse without limit. NOTE: a ContextVar only
-   bounds delegation *within a single process* (e.g. the DevUI single-process
-   run, or nested tool calls in one agent). Across separate A2A server processes
-   the counter does not propagate; bounding true cross-process cycles requires
-   carrying a hop count in the request itself. For this prototype no peer grants
-   a tool that calls back, so cross-process cycles cannot form.
-2. Restricted-domain note — if a peer call targets an access-controlled domain
-   (e.g. finance), it should be re-checked against ``_allowed`` from the mesh
-   workflow before the hop. The example below only consults HR (open to all),
-   so no re-check is needed here.
+Two safeguards:
+1. Depth guard — a ContextVar bounds nested delegation within a single process so
+   a misbehaving chain cannot recurse without limit.
+2. Soft-fail — a failed hop returns an error STRING rather than raising, so the
+   coordinator can tell the user a source is unavailable instead of crashing.
 """
 import sys
 import pathlib
@@ -31,29 +23,45 @@ if project_root not in sys.path:
 from agent_framework import tool
 from src.a2a.clients import ask_remote
 
-# Bounds nested peer delegation within a single process (see module docstring).
+# Bounds nested peer delegation within a single process.
 _peer_depth: contextvars.ContextVar[int] = contextvars.ContextVar("peer_call_depth", default=0)
 _MAX_PEER_DEPTH = 2
 
 
-@tool(description="Consult the HR agent for the current headcount of a department.")
-async def get_department_headcount(department: str) -> str:
-    """Agent-to-agent hop: the Finance agent asks the HR agent (over A2A) for a
-    department's headcount, e.g. to compute a per-employee budget."""
+async def _consult_peer(node: str, question: str, unavailable_label: str) -> str:
     depth = _peer_depth.get()
     if depth >= _MAX_PEER_DEPTH:
         return "PEER_LIMIT: delegation depth exceeded; aborting to prevent loops."
     token = _peer_depth.set(depth + 1)
     try:
-        return await ask_remote(
-            "hr",
-            f"How many employees are in the {department} department? "
-            f"Use your headcount tool and reply with just the number and department.",
-        )
+        return await ask_remote(node, question)
     except Exception as e:
-        return f"HR_UNAVAILABLE: could not reach the HR agent ({e})."
+        return f"{unavailable_label}: could not reach the {node} agent ({e})."
     finally:
         _peer_depth.reset(token)
 
 
-COLLABORATION_TOOLS = [get_department_headcount]
+@tool(description=(
+    "Query FAB structured banking data via the Data Agent: customer profiles, deal "
+    "pricing, margins, profitability, and RWA/capital (DataLayer). Use for any "
+    "numeric or record lookup about a customer or deal (e.g. CUST001's recommended "
+    "price, margin analysis, profitability tier, RWA impact)."
+))
+async def query_structured_data(question: str) -> str:
+    """Agent-to-agent hop: Price Assist asks the Data Agent (over A2A)."""
+    return await _consult_peer("data_agent", question, "DATA_UNAVAILABLE")
+
+
+@tool(description=(
+    "Query FAB banking knowledge via the RAG Agent: pricing floors and ceilings, "
+    "fee schedules, credit/regulatory policy, product guidelines, FAQs, operational "
+    "procedures, AML/KYC rules, concentration limits, model risk policy "
+    "(RAG-as-a-Service knowledge base). Use to retrieve the rule or benchmark that "
+    "a price or action must comply with."
+))
+async def query_knowledge_base(question: str) -> str:
+    """Agent-to-agent hop: Price Assist asks the RAG Agent (over A2A)."""
+    return await _consult_peer("rag_agent", question, "RAG_UNAVAILABLE")
+
+
+COORDINATION_TOOLS = [query_structured_data, query_knowledge_base]

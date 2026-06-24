@@ -1,7 +1,15 @@
-"""Launch the full agent mesh — one isolated process (and port) per node.
+"""Launch the agent mesh — one isolated process (and port) per node.
 
-Spawns all six nodes (gateway, finance, hr, internal_job, policy, compliance) as
-separate A2A servers, then waits. Ctrl+C tears them all down.
+Spawns the four mesh nodes as separate A2A servers, then waits. Ctrl+C tears
+them all down. Start the external MCP services first:
+  - DataLayer-as-a-Service (port 9100)
+  - RAG-as-a-Service MCP server (port 9000)
+
+Node start order (AgentMesh 15.0.6.2026):
+  compliance   -> semantic safety guardrail
+  data_agent   -> structured data via DataLayer MCP
+  rag_agent    -> banking knowledge via RAG MCP
+  price_assist -> primary FAB banking orchestrator (started last)
 
 Usage: python launch_mesh.py
 """
@@ -21,8 +29,8 @@ if project_root not in sys.path:
 from src.config import Config
 from src.agents.node_registry import NODE_NAMES
 
-# Start shared services (policy, compliance) first, then specialists, then gateway.
-START_ORDER = ["policy", "compliance", "finance", "hr", "internal_job", "gateway"]
+# Start specialist agents first, then the primary orchestrator last.
+START_ORDER = ["compliance", "data_agent", "rag_agent", "price_assist"]
 
 
 def main():

@@ -1,24 +1,229 @@
-agent-framework>=1.0.0
-python-dotenv>=1.0.0
-pydantic>=2.0.0
-typing-extensions>=4.0.0
-openai>=1.0.0
-agent-framework-ollama>=1.0.0b0
-agent-framework-a2a>=1.0.0b0
-uvicorn>=0.30.0
-starlette>=0.37.0
-# OpenTelemetry SDK -- required by agent_framework.observability.configure_otel_providers()
-# and for the mesh-specific spans emitted via get_tracer() in tracer.py.
-opentelemetry-api>=1.20.0
-opentelemetry-sdk>=1.20.0
-# OTLP exporter (dev): export traces/metrics/logs to Aspire Dashboard, Jaeger, Grafana, etc.
-opentelemetry-exporter-otlp-proto-grpc>=1.20.0
-# OTLP/HTTP exporter (grafana profile): Grafana Cloud requires HTTP transport, not gRPC.
-opentelemetry-exporter-otlp-proto-http>=1.20.0
-# httpx instrumentation: propagates W3C trace context across A2A hops (traceparent).
-opentelemetry-instrumentation-httpx>=0.40b0
-# Azure Application Insights (prod): OBS_PROFILE=prod uses configure_azure_monitor().
-azure-monitor-opentelemetry>=1.0.0
-# DevUI (dev-only): Docker-free live trace + agent visualization. Install with --pre.
-agent-framework-devui>=1.0.0b0
+# =============================================================================
+# AgentMesh 15.0.6.2026 — Unified Requirements
+# Covers: agent-mesh / datalayer-as-service / rag-as-a-service
+# Python: 3.13+   (confirmed against .venv313 installed package versions)
+# Install: create venv at a SHORT path to avoid Windows MAX_PATH (260 char) limit,
+#   then install with --pre (required for agent-framework-* pre-release builds):
+#
+#   py -3.13 -m venv C:\fab-venv
+#   C:\fab-venv\Scripts\pip install --pre -r requirements.txt
+# =============================================================================
 
+# -----------------------------------------------------------------------------
+# Microsoft Agent Framework (MAF) — core + extensions
+# Versions pinned to what is already installed in agent-mesh/.venv313
+# -----------------------------------------------------------------------------
+agent-framework>=1.9.0
+agent-framework-core>=1.9.0
+agent-framework-a2a>=1.0.0b260604
+agent-framework-ollama>=1.0.0b260521
+agent-framework-devui>=1.0.0b260528
+agent-framework-openai>=1.8.2
+agent-framework-anthropic>=1.0.0b260618
+agent-framework-foundry>=1.8.2
+agent-framework-orchestrations>=1.0.0
+agent-framework-declarative>=1.0.0rc2
+a2a-sdk>=1.1.0
+
+# -----------------------------------------------------------------------------
+# FastAPI / ASGI stack
+# -----------------------------------------------------------------------------
+fastapi>=0.133.0
+uvicorn[standard]>=0.49.0
+starlette>=1.3.1
+sse-starlette>=3.4.5
+python-multipart>=0.0.32
+
+# -----------------------------------------------------------------------------
+# Pydantic (data validation — used by MAF, FastAPI, and all agents)
+# -----------------------------------------------------------------------------
+pydantic>=2.13.4
+pydantic-settings>=2.14.2
+
+# -----------------------------------------------------------------------------
+# LLM clients
+# -----------------------------------------------------------------------------
+anthropic>=0.80.0
+openai>=2.43.0
+ollama>=0.5.3
+groq>=1.5.0
+
+# -----------------------------------------------------------------------------
+# MCP (Model Context Protocol) — consumed by DataAgent and RAGAgent
+# -----------------------------------------------------------------------------
+mcp[cli]>=1.28.0
+
+# -----------------------------------------------------------------------------
+# OpenTelemetry observability stack
+# Instrumentation versions track the SDK minor (0.63b1 = SDK 1.42.x)
+# -----------------------------------------------------------------------------
+opentelemetry-api>=1.42.1
+opentelemetry-sdk>=1.42.1
+opentelemetry-proto>=1.42.1
+opentelemetry-semantic-conventions>=0.63b1
+opentelemetry-exporter-otlp-proto-grpc>=1.42.1
+opentelemetry-exporter-otlp-proto-http>=1.42.1
+opentelemetry-exporter-otlp-proto-common>=1.42.1
+opentelemetry-instrumentation>=0.63b1
+opentelemetry-instrumentation-fastapi>=0.63b1
+opentelemetry-instrumentation-httpx>=0.63b1
+opentelemetry-instrumentation-asgi>=0.63b1
+opentelemetry-instrumentation-starlette>=0.63b1
+opentelemetry-instrumentation-logging>=0.61b0
+opentelemetry-resource-detector-azure>=0.1.5
+# Azure Monitor / Application Insights (OBS_PROFILE=prod)
+azure-monitor-opentelemetry>=1.8.2
+azure-monitor-opentelemetry-exporter>=1.0.0b45
+
+# -----------------------------------------------------------------------------
+# Azure SDK (identity, AI services)
+# -----------------------------------------------------------------------------
+azure-identity>=1.25.3
+azure-core>=1.41.0
+azure-core-tracing-opentelemetry>=1.0.0b13
+azure-ai-inference>=1.0.0b9
+azure-ai-projects>=2.2.0
+azure-search-documents>=11.7.0b2
+
+# -----------------------------------------------------------------------------
+# Machine learning — embeddings, transformers, retrieval
+# Python 3.13 requires torch>=2.5.0; venv ships 2.12.1
+# -----------------------------------------------------------------------------
+torch>=2.5.0
+torchvision>=0.20.0
+transformers>=5.12.1
+tokenizers>=0.22.2
+sentence-transformers>=3.3.0
+FlagEmbedding>=1.4.0
+accelerate>=1.14.0
+safetensors>=0.8.0
+peft>=0.19.1
+huggingface-hub>=1.20.1
+scikit-learn>=1.9.0
+scipy>=1.18.0
+
+# -----------------------------------------------------------------------------
+# Vector databases
+# -----------------------------------------------------------------------------
+qdrant-client>=1.18.0
+# pymilvus and chromadb are optional backends in RAG-as-a-Service
+pymilvus>=2.4.0
+chromadb>=0.5.0
+
+# -----------------------------------------------------------------------------
+# Data processing
+# -----------------------------------------------------------------------------
+pandas>=3.0.3
+numpy>=2.5.0
+sqlalchemy>=2.0.51
+pyarrow>=24.0.0
+
+# -----------------------------------------------------------------------------
+# Database drivers (datalayer-as-service)
+# -----------------------------------------------------------------------------
+# pymysql is a pure-Python MySQL client (Python 3.13 compatible)
+pymysql>=1.1.0
+
+# -----------------------------------------------------------------------------
+# Document extraction (RAG-as-a-Service ingestion pipeline)
+# docling ships Python 3.13 wheels as of 2.x; pymupdf (fitz) now PyMuPDF 1.24+
+# -----------------------------------------------------------------------------
+docling>=2.105.0
+docling-core>=2.83.1
+pypdfium2>=5.10.1
+python-docx>=1.2.0
+python-pptx>=1.0.2
+openpyxl>=3.1.5
+lxml>=6.1.1
+beautifulsoup4>=4.15.0
+pillow>=12.2.0
+# unstructured[pdf,docx] — heavy optional; install separately if needed:
+# unstructured[pdf,docx]>=0.14.0
+
+# -----------------------------------------------------------------------------
+# Text chunking / LangChain utilities
+# -----------------------------------------------------------------------------
+langchain-core>=1.4.8
+langchain-text-splitters>=1.1.2
+langchain-protocol>=0.0.18
+
+# -----------------------------------------------------------------------------
+# RAG evaluation
+# -----------------------------------------------------------------------------
+datasets>=5.0.0
+ragas>=0.1.14
+
+# -----------------------------------------------------------------------------
+# Caching (Redis)
+# -----------------------------------------------------------------------------
+redis>=7.1.1
+redisvl>=0.15.0
+
+# -----------------------------------------------------------------------------
+# HTTP and async networking
+# -----------------------------------------------------------------------------
+httpx>=0.28.1
+httpx-sse>=0.4.3
+aiohttp>=3.14.1
+requests>=2.34.2
+anyio>=4.14.0
+
+# -----------------------------------------------------------------------------
+# Logging and observability utilities
+# -----------------------------------------------------------------------------
+structlog>=26.1.0
+python-json-logger>=4.1.0
+colorlog>=6.10.1
+rich>=15.0.0
+colorama==0.4.6
+
+# -----------------------------------------------------------------------------
+# Configuration and environment
+# -----------------------------------------------------------------------------
+python-dotenv>=1.2.2
+pyyaml>=6.0.3
+omegaconf>=2.3.1
+
+# -----------------------------------------------------------------------------
+# Auth / JWT
+# -----------------------------------------------------------------------------
+pyjwt>=2.13.0
+cryptography>=49.0.0
+# python-jose[cryptography]>=3.3.0  # optional — use pyjwt instead for Py 3.13 compat
+
+# -----------------------------------------------------------------------------
+# CLI and UI utilities
+# -----------------------------------------------------------------------------
+click>=8.4.1
+typer>=0.24.2
+tabulate>=0.10.0
+prompt-toolkit>=3.0.52
+# Streamlit dashboard for DataLayer-as-a-Service
+streamlit>=1.30.0
+
+# -----------------------------------------------------------------------------
+# Serialisation / data formats
+# -----------------------------------------------------------------------------
+orjson>=3.11.9
+jsonschema>=4.26.0
+jsonpath-ng>=1.8.0
+
+# -----------------------------------------------------------------------------
+# General utilities
+# -----------------------------------------------------------------------------
+tenacity>=9.1.4
+backoff>=2.2.1
+python-dateutil>=2.9.0
+tqdm>=4.68.3
+typing-extensions>=4.15.0
+packaging>=26.2
+psutil>=7.2.2
+faker>=40.23.0
+regex>=2026.5.9
+
+# -----------------------------------------------------------------------------
+# Testing
+# -----------------------------------------------------------------------------
+pytest>=9.0.3
+pytest-asyncio>=0.23.0
+pytest-cov>=5.0.0
