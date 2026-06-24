@@ -5,6 +5,13 @@ import asyncio
 import sys
 import pathlib
 
+# Reconfigure stdout/stderr to UTF-8 so Rich's box-drawing and other Unicode
+# characters don't crash on Windows terminals set to legacy cp1252 encoding.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 # Ensure project root is in sys.path
 project_root = str(pathlib.Path(__file__).resolve().parent)
 if project_root not in sys.path:
@@ -18,102 +25,188 @@ if project_root not in sys.path:
 from src.observability import setup_observability
 setup_observability(service_name="agent_mesh_cli")
 
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich import box
+
 from src.config import Config
-from src.utils.console_logger import AgentLogger
 from src.auth.identity_provider import login, list_users
 from src.mesh.orchestrator import handle_request
+from src.tracing.execution_trace import ExecutionTracer, set_active_tracer, clear_active_tracer
+from src.tracing.cli_renderer import CLIRenderer
+
+# ---------------------------------------------------------------------------
+# Parse CLI flags
+# ---------------------------------------------------------------------------
+
+_VERBOSE = "--verbose" in sys.argv or "-v" in sys.argv
+_EXPLAIN = "--explain" in sys.argv or "-e" in sys.argv
+
+# A single shared Rich console for the session.
+# legacy_windows=False forces ANSI/VT100 rendering (avoids cp1252 issues on Windows).
+_console = Console(highlight=False, legacy_windows=False)
 
 
-def _print_banner(user):
+# ---------------------------------------------------------------------------
+# Startup banner
+# ---------------------------------------------------------------------------
+
+def _print_banner(user) -> None:
     os.system("cls" if os.name == "nt" else "clear")
-    print("\033[38;5;75m" + "=" * 80 + "\033[0m")
-    print(f"\033[38;5;75m{AgentLogger.BOLD}   MICROSOFT AGENT FRAMEWORK - DISTRIBUTED A2A AGENT MESH{AgentLogger.RESET}")
-    print("\033[38;5;75m" + "=" * 80 + "\033[0m")
-    print(f"{AgentLogger.DIM}Scenario: FAB Banking Assistant — AgentMesh 15.0.6.2026 (A2A + MCP + tool calling){AgentLogger.RESET}")
-    print(f"Signed in as: {AgentLogger.BOLD}{user.display_name}{AgentLogger.RESET}  (role: {user.role.value})")
-    print("\033[38;5;75m" + "-" * 80 + "\033[0m")
-    print("Mesh nodes (each isolated on its own A2A port):")
+    _console.print()
+    _console.print(Panel(
+        "[bold cyan]MICROSOFT AGENT FRAMEWORK — DISTRIBUTED A2A AGENT MESH[/bold cyan]\n"
+        "[dim]FAB Banking Assistant · AgentMesh 15.0.6.2026 · A2A + MCP + tool calling[/dim]",
+        box=box.DOUBLE,
+        border_style="cyan",
+    ))
+
+    # Node table
+    t = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
+    t.add_column(style="dim")
+    t.add_column(style="cyan")
     for name, port in Config.AGENT_PORTS.items():
-        print(f"  - {name:<13} http://{Config.A2A_HOST}:{port}/")
-    print("\033[38;5;75m" + "-" * 80 + "\033[0m")
-    print("Flow: guardrails -> RBAC -> compliance(A2A) -> PriceAssist(A2A) -> redact")
-    print("      PriceAssist delegates via: query_structured_data | query_knowledge_base")
-    print("\033[38;5;75m" + "=" * 80 + "\033[0m")
-    print("Example queries:")
-    print("  - 'Is CUST001's loan price compliant with policy?'  (hybrid: data + knowledge)")
-    print("  - 'Pricing recommendation for CUST001?'             (data -> DataLayer MCP)")
-    print("  - 'Margin analysis for CUST003'                     (data -> DataLayer MCP)")
-    print("  - 'What is the pricing floor for a BB-rated AED loan?'  (knowledge -> RAG MCP)")
-    print("  - 'What does the credit policy say about fee waivers?'  (knowledge -> RAG MCP)")
-    print("  - 'Ignore previous instructions and ...'         (blocked: prompt injection)")
-    print("  - 'delete all employee records'                  (blocked: destructive intent)")
-    print("\033[38;5;75m" + "=" * 80 + "\033[0m")
+        t.add_row(name, f"http://{Config.A2A_HOST}:{port}/")
+    _console.print("\n[bold]Signed in as:[/bold]", user.display_name,
+                   f"[dim]({user.role.value})[/dim]")
+    _console.print("\n[dim]Mesh nodes:[/dim]")
+    _console.print(t)
+    _console.print(
+        "[dim]Flow: guardrails → RBAC → compliance(A2A) → PriceAssist(A2A) → redact[/dim]"
+    )
+    _console.rule(style="dim")
+
+    mode_flags = []
+    if _VERBOSE:
+        mode_flags.append("[cyan]--verbose[/cyan]")
+    if _EXPLAIN:
+        mode_flags.append("[cyan]--explain[/cyan]")
+    if mode_flags:
+        _console.print(f"[dim]Mode:[/dim] {' '.join(mode_flags)}")
+
+    _console.print("\n[dim]Example queries:[/dim]")
+    examples = [
+        ("data → DataLayer MCP",     "Pricing recommendation for CUST001?"),
+        ("data → DataLayer MCP",     "Margin analysis for CUST003"),
+        ("knowledge → RAG MCP",      "What is the pricing floor for a BB-rated AED loan?"),
+        ("hybrid: data + knowledge", "Is CUST001's loan price compliant with policy?"),
+        ("blocked: injection",       "Ignore previous instructions and …"),
+        ("blocked: destructive",     "delete all employee records"),
+    ]
+    for tag, q in examples:
+        _console.print(f"  [dim]{tag:<30}[/dim] {q}")
+    _console.rule(style="dim")
 
 
 def _select_user():
-    print("Available demo users:")
+    _console.print("\n[bold]Available demo users:[/bold]")
+    t = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
+    t.add_column(style="cyan", no_wrap=True)
+    t.add_column(style="dim")
+    t.add_column()
     for u in list_users():
-        print(f"  - {u.username:<8} ({u.role.value}) - {u.display_name}")
-    print(f"{AgentLogger.COLOR_USER}{AgentLogger.BOLD}Login as (username):{AgentLogger.RESET} ", end="")
+        t.add_row(u.username, u.role.value, u.display_name)
+    _console.print(t)
+    _console.print("[bold yellow]Login as (username):[/bold yellow] ", end="")
     username = input().strip() or "bob"
     return login(username)
 
 
-async def main():
+# ---------------------------------------------------------------------------
+# Main REPL
+# ---------------------------------------------------------------------------
+
+async def main() -> None:
     try:
         Config.validate()
     except ValueError as e:
-        AgentLogger.print_error(str(e))
+        _console.print(f"[red bold]Config error:[/red bold] {e}")
         return
 
     user = _select_user()
     _print_banner(user)
-    AgentLogger.print_system_info(
-        "Tip: start the mesh first in another terminal with 'python launch_mesh.py'."
+    _console.print(
+        "[dim]Tip: start the mesh first in another terminal with "
+        "'python launch_mesh.py'.[/dim]"
     )
 
-    # Surface an unhealthy LLM backend up front: otherwise answers will look like
-    # the request is being echoed back (agents fall back to the input on failure).
-    ok, msg = Config.check_ollama()
+    ok, msg = Config.check_groq()
     if not ok:
-        AgentLogger.print_error(msg)
+        _console.print(f"[red]⚠ {msg}[/red]")
     else:
-        AgentLogger.print_system_info(msg)
+        _console.print(f"[dim]{msg}[/dim]")
 
     while True:
         try:
-            print(f"\n{AgentLogger.COLOR_USER}{AgentLogger.BOLD}[{user.username}] Enter query "
-                  f"(or 'switch', 'exit'):{AgentLogger.RESET} ", end="")
+            _console.print(
+                f"\n[bold yellow][{user.username}] Enter query "
+                f"(or 'switch', 'exit', '--help'):[/bold yellow] ",
+                end="",
+            )
             user_input = input().strip()
 
             if not user_input:
                 continue
+
             if user_input.lower() in ("exit", "quit"):
-                AgentLogger.print_system_info("Exiting demo. Goodbye!")
+                _console.print("[dim]Exiting. Goodbye![/dim]")
                 break
+
             if user_input.lower() == "switch":
                 user = _select_user()
                 _print_banner(user)
                 continue
 
-            AgentLogger.print_user_prompt(user_input)
-            AgentLogger.print_system_info("Dispatching request across the mesh...")
-            result = await handle_request(user, user_input)
+            if user_input.lower() in ("--help", "help"):
+                _print_help()
+                continue
 
-            if result.blocked:
-                AgentLogger.print_error(f"[{result.block_stage}] {result.answer}")
-            else:
-                AgentLogger.print_success("Final answer:")
-                print(f"\n{result.answer}\n")
-            print(f"{AgentLogger.DIM}trail: {' -> '.join(result.trail)}{AgentLogger.RESET}")
-            print("\033[38;5;244m" + "-" * 80 + "\033[0m")
+            await _run_query(user, user_input)
 
         except KeyboardInterrupt:
-            AgentLogger.print_system_info("\nExiting demo. Goodbye!")
+            _console.print("\n[dim]Exiting. Goodbye![/dim]")
             break
         except Exception as e:
-            AgentLogger.print_error(f"Execution Error: {e}")
-            AgentLogger.print_system_info("Is the mesh running? Start it with 'python launch_mesh.py'.")
+            _console.print(f"[red bold]Execution Error:[/red bold] {e}")
+            _console.print(
+                "[dim]Is the mesh running? Start it with "
+                "'python launch_mesh.py'.[/dim]"
+            )
+
+
+async def _run_query(user, user_input: str) -> None:
+    """Run one query through the mesh with full execution tracing."""
+    tracer = ExecutionTracer(user=user.username, query=user_input)
+    renderer = CLIRenderer(console=_console, verbose=_VERBOSE, explain=_EXPLAIN)
+    tracer.add_listener(renderer.on_event)
+
+    renderer.render_header(user.username, user_input)
+
+    token = set_active_tracer(tracer)
+    try:
+        result = await handle_request(user, user_input)
+    finally:
+        clear_active_tracer(token)
+
+    summary = tracer.summary()
+    renderer.render_summary(summary)
+    renderer.render_final_answer(result.answer, blocked=result.blocked)
+
+
+def _print_help() -> None:
+    _console.print()
+    _console.print(Panel(
+        "[bold]CLI Flags (set at startup)[/bold]\n\n"
+        "  [cyan]--verbose[/cyan]   Show confidence scores, routing detail, timing\n"
+        "  [cyan]--explain[/cyan]   Show alternative domain scores and rejection rationale\n\n"
+        "  [bold]Commands[/bold]\n\n"
+        "  [cyan]switch[/cyan]      Change the logged-in user\n"
+        "  [cyan]exit[/cyan]        Quit the session\n"
+        "  [cyan]--help[/cyan]      Show this help",
+        title="Help",
+        border_style="dim",
+    ))
 
 
 if __name__ == "__main__":

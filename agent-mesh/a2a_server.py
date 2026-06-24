@@ -94,9 +94,9 @@ def main():
 
     Config.validate()
 
-    # # Fail fast if the LLM backend is unavailable: without it every agent.run
-    # # falls back to echoing the prompt, which is confusing to debug at runtime.
-    ok, msg = Config.check_ollama()
+    # Fail fast if Groq is not configured: without an API key every agent.run
+    # will return a 401, which is confusing to debug at query time.
+    ok, msg = Config.check_groq()
     if not ok:
         import logging
         logging.getLogger("mesh.system").error("Node '%s' startup blocked: %s", args.agent, msg)

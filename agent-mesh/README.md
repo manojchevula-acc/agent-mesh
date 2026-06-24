@@ -85,7 +85,7 @@ agent-mesh/
 python -m venv .venv && .venv\Scripts\Activate.ps1   # (or: source .venv/bin/activate)
 pip install -r requirements.txt
 ```
-Requires Python 3.10+, a running **Ollama** (`ollama pull llama3.2`), and the A2A/MCP extras in `requirements.txt`. The two backing services have their own repos/deps.
+Requires Python 3.10+, a running **Ollama** (`ollama pull llama3.1:8b`), and the A2A/MCP extras in `requirements.txt`. The two backing services have their own repos/deps.
 
 ---
 
