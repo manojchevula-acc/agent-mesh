@@ -1,17 +1,18 @@
-import React from "react";
 import { RefreshCw, Activity, AlertCircle, CheckCircle2, Clock } from "lucide-react";
 import { useMeshStatus } from "@/hooks/useMeshStatus";
 import { Card, CardHeader, CardBody } from "@/components/ui/Card";
-import { Spinner } from "@/components/ui/Spinner";
+import { CenteredSpinner } from "@/components/ui/Spinner";
 import { Badge } from "@/components/ui/Badge";
 import { Metric } from "@/components/ui/Metric";
 import { cn } from "@/lib/utils";
 import type { NodeHealth } from "@/types/mesh";
 
-// Node descriptions matching the mesh topology in SYSTEM_FLOW.md
+// Node descriptions matching the 4-node topology in SYSTEM_FLOW.md (AgentMesh 15.0.6.2026)
 const NODE_INFO: Record<string, { label: string; description: string }> = {
-  policy:       { label: "Policy",       description: "Policy responder — resolves which corporate rules apply and answers the request" },
-  compliance:   { label: "Compliance",   description: "Semantic safety guardrail — reviews all requests for policy violations" },
+  compliance:   { label: "Compliance",    description: "Semantic safety guardrail — LLM-based review; replies COMPLIANCE_PASSED / COMPLIANCE_FAILED" },
+  data_agent:   { label: "Data Agent",    description: "Thin MCP client → DataLayer-as-a-Service (customer_360, pricing, margin, RWA tools)" },
+  rag_agent:    { label: "RAG Agent",     description: "Thin MCP client → RAG-as-a-Service (search_documents — policy & regulatory knowledge)" },
+  price_assist: { label: "Price Assist",  description: "Primary FAB banking coordinator — intent classification, delegates to Data & RAG agents" },
 };
 
 export default function MeshStatusPage() {
@@ -71,9 +72,7 @@ export default function MeshStatusPage() {
 
       {/* Node cards */}
       {isLoading ? (
-        <div className="flex items-center justify-center py-16">
-          <Spinner label="Checking node health…" />
-        </div>
+        <CenteredSpinner label="Checking node health…" />
       ) : isError ? (
         <div className="flex items-center gap-3 text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-xl p-4">
           <AlertCircle className="h-5 w-5 shrink-0" />

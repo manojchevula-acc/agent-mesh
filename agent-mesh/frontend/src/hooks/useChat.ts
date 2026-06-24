@@ -55,7 +55,7 @@ export function useChat({ username }: UseChatOptions) {
         )
       );
     },
-    onError: (error: Error, _vars, ctx) => {
+    onError: (_error: Error, _vars, ctx) => {
       if (!ctx) return;
       setMessages((prev) =>
         prev.map((msg) =>
@@ -67,8 +67,6 @@ export function useChat({ username }: UseChatOptions) {
                 isLoading: false,
                 result: {
                   answer: "",
-                  domain: null,
-                  domains: [],
                   blocked: true,
                   block_stage: "api_error",
                   trail: [],

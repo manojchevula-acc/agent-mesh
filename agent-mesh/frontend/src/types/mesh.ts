@@ -1,7 +1,15 @@
 // TypeScript types mirroring the Python MeshResult dataclass and related
 // models in src/mesh/orchestrator.py and src/auth/identity_provider.py.
 
-export type Role = "employee" | "hr" | "leadership";
+export type Role =
+  | "customer"
+  | "relationship_manager"
+  | "branch_operations_officer"
+  | "credit_officer"
+  | "compliance_officer"
+  | "operations_manager"
+  | "platform_administrator";
+
 export type MeshStatus = "success" | "blocked" | "error";
 
 export interface MeshUser {

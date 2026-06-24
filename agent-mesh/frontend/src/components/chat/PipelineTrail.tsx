@@ -1,20 +1,17 @@
-import React from "react";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // Maps raw trail stage names to human-readable labels.
 const STAGE_LABELS: Record<string, string> = {
-  guardrail_pass: "Guardrail ✓",
-  guardrail_block: "Guardrail ✗",
-  router: "Router",
-  access_ok: "Access ✓",
-  access_denied: "Access ✗",
-  compliance_pass: "Compliance ✓",
+  guardrail_pass:    "Guardrail ✓",
+  guardrail_block:   "Guardrail ✗",
+  rbac_pass:         "RBAC ✓",
+  rbac_block:        "RBAC ✗",
+  compliance_pass:   "Compliance ✓",
   compliance_failed: "Compliance ✗",
-  payment_approved: "Payment ✓",
-  payment_denied: "Payment ✗",
-  domain_answer: "Answer",
-  output_redacted: "Redacted",
+  domain_answer:     "Answer ✓",
+  domain_error:      "Answer ✗",
+  output_redacted:   "Redacted",
 };
 
 function labelFor(step: string): string {
@@ -41,8 +38,6 @@ interface PipelineTrailProps {
 
 export default function PipelineTrail({
   trail,
-  blocked = false,
-  blockStage,
 }: PipelineTrailProps) {
   if (!trail.length) return null;
 
@@ -54,7 +49,7 @@ export default function PipelineTrail({
         const isError = isErrorStep(step);
 
         return (
-          <React.Fragment key={`${step}-${i}`}>
+          <span key={`${step}-${i}`} className="inline-flex items-center gap-0.5">
             <span
               className={cn(
                 "inline-flex items-center text-xs px-1.5 py-0.5 rounded",
@@ -68,7 +63,7 @@ export default function PipelineTrail({
             {!isLast && (
               <ChevronRight className="h-3 w-3 text-faint flex-shrink-0" />
             )}
-          </React.Fragment>
+          </span>
         );
       })}
     </div>
