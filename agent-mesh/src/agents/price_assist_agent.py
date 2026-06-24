@@ -23,6 +23,7 @@ if project_root not in sys.path:
 
 from agent_framework import Agent
 from src.agents.agent_factory import create_demo_agent
+from src.config import Config
 from src.tools.collaboration_tools import COORDINATION_TOOLS
 
 PRICE_ASSIST_INSTRUCTIONS = """
@@ -103,4 +104,6 @@ def get_price_assist_agent(log_path: str = None) -> Agent:
         instructions=PRICE_ASSIST_INSTRUCTIONS,
         tools=COORDINATION_TOOLS,
         log_path=log_path,
+        model=Config.PRICE_ASSIST_MODEL,
+        api_key=Config.PRICE_ASSIST_API_KEY,
     )

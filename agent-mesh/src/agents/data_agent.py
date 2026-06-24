@@ -17,6 +17,7 @@ if project_root not in sys.path:
 
 from agent_framework import Agent
 from src.agents.agent_factory import create_demo_agent
+from src.config import Config
 from src.integrations.mcp_clients import make_datalayer_mcp_tool
 
 DATA_INSTRUCTIONS = """
@@ -69,4 +70,6 @@ def get_data_agent(log_path: str = None, mcp_tool=None) -> Agent:
         instructions=DATA_INSTRUCTIONS,
         tools=[tool],
         log_path=log_path,
+        model=Config.DATA_AGENT_MODEL,
+        api_key=Config.DATA_AGENT_API_KEY,
     )
