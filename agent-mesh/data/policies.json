@@ -1,0 +1,152 @@
+{
+  "_comment": "FAB banking policies reference document (AgentMesh 15.0.6.2026). Documents the RBAC model and banking policy boundaries. For live regulatory and product policy content, ingest authoritative documents into RAG-as-a-Service.",
+  "bank": "First Abu Dhabi Bank (FAB)",
+  "version": "15.0.6.2026",
+  "rbac_model": {
+    "description": "FAB AgentMesh role-based access control model",
+    "roles": [
+      {
+        "name": "customer",
+        "description": "Bank customer — retail or corporate",
+        "access": [
+          "Own account information and transaction history",
+          "Own deal and pricing information",
+          "Public product information and FAQs",
+          "Public regulatory disclosures"
+        ],
+        "restrictions": [
+          "Cannot access other customers data",
+          "Cannot access internal pricing benchmarks",
+          "Cannot access internal margin or profitability analytics"
+        ]
+      },
+      {
+        "name": "relationship_manager",
+        "description": "FAB Relationship Manager — manages customer portfolios",
+        "access": [
+          "Customer 360 profiles for managed portfolio",
+          "Deal pricing recommendations and compliance flags",
+          "Profitability and margin analysis for managed accounts",
+          "Product documentation and fee schedules",
+          "Customer support workflows"
+        ],
+        "restrictions": [
+          "Cannot access customers outside managed portfolio without approval",
+          "Cannot override pricing policy floors without Credit Officer sign-off"
+        ]
+      },
+      {
+        "name": "branch_operations_officer",
+        "description": "FAB Branch Operations Officer — handles day-to-day branch operations",
+        "access": [
+          "Operational transaction processing",
+          "Service request workflows",
+          "Internal operational procedures",
+          "Branch performance metrics"
+        ],
+        "restrictions": [
+          "Cannot approve credit facilities",
+          "Cannot access credit risk or RWA analytics"
+        ]
+      },
+      {
+        "name": "credit_officer",
+        "description": "FAB Credit Officer — credit risk and loan approval",
+        "access": [
+          "Full customer 360 including credit history",
+          "RWA impact and Basel III capital metrics",
+          "Margin analysis and profitability tiers",
+          "Credit policy documentation",
+          "Loan workflow approval and restructuring"
+        ],
+        "restrictions": [
+          "Cannot modify pricing policy floors without Risk Committee approval",
+          "Cannot access HR or platform administration functions"
+        ]
+      },
+      {
+        "name": "compliance_officer",
+        "description": "FAB Compliance Officer — regulatory compliance and audit",
+        "access": [
+          "Full regulatory documentation",
+          "AML and KYC policy and procedures",
+          "Compliance reports and audit trails",
+          "Pricing compliance flags across all customers",
+          "Concentration limit reports"
+        ],
+        "restrictions": [
+          "Read-only access to customer data — cannot modify records"
+        ]
+      },
+      {
+        "name": "operations_manager",
+        "description": "FAB Operations Manager — operational oversight and reporting",
+        "access": [
+          "Operational dashboards and KPIs",
+          "Cross-branch performance reporting",
+          "Service request analytics",
+          "Resource utilisation metrics"
+        ],
+        "restrictions": [
+          "Cannot access individual customer account details",
+          "Cannot access credit risk analytics"
+        ]
+      },
+      {
+        "name": "platform_administrator",
+        "description": "FAB Platform Administrator — full AgentMesh platform access",
+        "access": [
+          "Agent administration and lifecycle management",
+          "Workflow configuration and monitoring",
+          "MCP server configuration",
+          "Observability dashboards and trace logs",
+          "RBAC configuration",
+          "All banking data and knowledge for platform operations"
+        ],
+        "restrictions": []
+      }
+    ]
+  },
+  "pricing_policy_boundaries": {
+    "description": "High-level pricing governance rules. Detailed floors and ceilings are maintained as documents in RAG-as-a-Service.",
+    "rules": [
+      {
+        "name": "Pricing Floor Compliance",
+        "guideline": "All approved deal prices must be at or above the product-specific pricing floor set by the Risk Committee. Deals priced below the floor are flagged as non-compliant and require Credit Officer sign-off.",
+        "applies_to": ["relationship_manager", "credit_officer"]
+      },
+      {
+        "name": "Margin Adequacy",
+        "guideline": "Net margin on all deals must exceed the minimum margin threshold after accounting for funding cost, risk premium, and relationship discount. Deals below minimum margin require escalation.",
+        "applies_to": ["relationship_manager", "credit_officer"]
+      },
+      {
+        "name": "Discount Cap",
+        "guideline": "Relationship discounts are capped at the policy-defined maximum. Discounts exceeding the cap trigger a compliance flag and require senior approval.",
+        "applies_to": ["relationship_manager", "credit_officer"]
+      },
+      {
+        "name": "RWA Capital Adequacy",
+        "guideline": "All deals must be evaluated for RWA-weighted capital impact under Basel III. Return on RWA must meet the minimum hurdle rate defined by the Finance Committee.",
+        "applies_to": ["credit_officer", "compliance_officer"]
+      }
+    ]
+  },
+  "data_privacy": {
+    "description": "Customer data handling requirements under UAE data protection regulations",
+    "rules": [
+      {
+        "name": "Customer Data Isolation",
+        "guideline": "Customer-role users may only query their own account data. Cross-customer data access requires Relationship Manager or higher role."
+      },
+      {
+        "name": "PII Redaction",
+        "guideline": "All responses are automatically screened for PII (email, phone, Emirates ID, credit card numbers) before delivery. Detected PII is replaced with REDACTED tokens."
+      },
+      {
+        "name": "Audit Trail",
+        "guideline": "Every query, agent hop, and tool call is recorded in the audit trail with user identity, role, timestamp, and outcome. Audit logs are retained per UAE Central Bank regulatory requirements."
+      }
+    ]
+  }
+}

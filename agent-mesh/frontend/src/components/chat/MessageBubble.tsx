@@ -1,0 +1,167 @@
+import React, { useEffect, useState } from "react";
+import { cn } from "@/lib/utils";
+import { Markdown } from "@/components/ui/Markdown";
+import PipelineTrail from "./PipelineTrail";
+import SecurityBadge from "./SecurityBadge";
+import type { ChatMessage } from "@/types/mesh";
+
+// Cycles through pipeline stages shown during loading
+const LOADING_STAGES = [
+  { label: "Running input guardrails…",     delay: 0 },
+  { label: "Routing query to agents…",      delay: 1800 },
+  { label: "Checking access control…",      delay: 3600 },
+  { label: "Verifying compliance…",         delay: 5400 },
+  { label: "Querying domain agents…",       delay: 7200 },
+  { label: "Waiting for response…",         delay: 9500 },
+  { label: "Redacting output…",             delay: 12000 },
+];
+
+function ThinkingIndicator() {
+  const [stageIdx, setStageIdx] = useState(0);
+  const [visible, setVisible] = useState(true);
+
+  useEffect(() => {
+    let i = 0;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+
+    LOADING_STAGES.forEach((stage, idx) => {
+      if (idx === 0) return;
+      timers.push(
+        setTimeout(() => {
+          setVisible(false);
+          setTimeout(() => {
+            setStageIdx(idx);
+            i = idx;
+            setVisible(true);
+          }, 200);
+        }, stage.delay),
+      );
+    });
+
+    return () => timers.forEach(clearTimeout);
+  }, []);
+
+  const stage = LOADING_STAGES[stageIdx];
+
+  return (
+    <div className="flex items-center gap-2.5 py-1 text-muted">
+      {/* Three-dot pulse */}
+      <span className="flex items-center gap-1">
+        {[0, 1, 2].map((i) => (
+          <span
+            key={i}
+            className="h-2 w-2 rounded-full bg-brand-400 dark:bg-brand-500"
+            style={{
+              animation: `pulse 1.2s ease-in-out ${i * 0.2}s infinite`,
+            }}
+          />
+        ))}
+      </span>
+      <span
+        className={cn(
+          "text-sm transition-opacity duration-200",
+          visible ? "opacity-100" : "opacity-0",
+        )}
+      >
+        {stage.label}
+      </span>
+    </div>
+  );
+}
+
+interface MessageBubbleProps {
+  message: ChatMessage;
+}
+
+function formatTime(date: Date): string {
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+export default function MessageBubble({ message }: MessageBubbleProps) {
+  const isUser = message.role === "user";
+
+  if (isUser) {
+    return (
+      <div className="flex justify-end mb-4">
+        <div className="max-w-[75%]">
+          <div
+            className={cn(
+              "rounded-2xl rounded-tr-sm px-4 py-3",
+              "bg-brand-600 text-white shadow-sm"
+            )}
+          >
+            <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+              {message.content}
+            </p>
+          </div>
+          <p className="text-xs text-muted mt-1 text-right pr-1">
+            {formatTime(message.timestamp)}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // Assistant message
+  const result = message.result;
+  const isBlocked = result?.blocked ?? false;
+
+  return (
+    <div className="flex justify-start mb-4">
+      <div className="max-w-[80%] w-full">
+        {/* Bubble */}
+        <div
+          className={cn(
+            "rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm",
+            isBlocked
+              ? "bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800"
+              : "bg-surface border border-line"
+          )}
+        >
+          {message.isLoading ? (
+            <ThinkingIndicator />
+          ) : (
+            <>
+              {/* Security blocked indicator */}
+              {isBlocked && result && (
+                <SecurityBadge blockStage={result.block_stage} />
+              )}
+
+              {/* Answer text */}
+              {message.content && (
+                <div className="text-sm leading-relaxed prose-sm">
+                  <Markdown>{message.content}</Markdown>
+                </div>
+              )}
+
+              {/* Domain routing chips */}
+              {result && !isBlocked && result.domains.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-3">
+                  {result.domains.map((d) => (
+                    <span
+                      key={d}
+                      className="inline-flex items-center text-xs px-2 py-0.5 rounded-full bg-brand-100 dark:bg-brand-900/40 text-brand-700 dark:text-brand-300 font-medium"
+                    >
+                      {d}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* Pipeline trail */}
+              {result && result.trail.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-line">
+                  <PipelineTrail trail={result.trail} blocked={isBlocked} blockStage={result.block_stage} />
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <p className="text-xs text-muted mt-1 pl-1">
+          {formatTime(message.timestamp)}
+        </p>
+      </div>
+    </div>
+  );
+}
