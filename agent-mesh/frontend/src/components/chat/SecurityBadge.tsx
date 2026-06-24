@@ -1,4 +1,3 @@
-import React from "react";
 import { ShieldAlert } from "lucide-react";
 
 const STAGE_DESCRIPTIONS: Record<string, { title: string; detail: string }> = {
@@ -6,9 +5,9 @@ const STAGE_DESCRIPTIONS: Record<string, { title: string; detail: string }> = {
     title: "Input blocked by guardrail",
     detail: "The request matched a deterministic security pattern (prompt injection, PII, destructive intent, or toxicity).",
   },
-  role_based: {
+  rbac_validation: {
     title: "Access denied",
-    detail: "Your role does not have permission to access this domain. Leadership-only domains require the leadership role.",
+    detail: "Your role is not a recognised FAB banking role. Please authenticate with valid FAB credentials.",
   },
   compliance: {
     title: "Blocked by compliance",

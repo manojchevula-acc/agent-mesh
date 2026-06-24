@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Markdown } from "@/components/ui/Markdown";
 import PipelineTrail from "./PipelineTrail";
@@ -21,7 +21,6 @@ function ThinkingIndicator() {
   const [visible, setVisible] = useState(true);
 
   useEffect(() => {
-    let i = 0;
     const timers: ReturnType<typeof setTimeout>[] = [];
 
     LOADING_STAGES.forEach((stage, idx) => {
@@ -31,7 +30,6 @@ function ThinkingIndicator() {
           setVisible(false);
           setTimeout(() => {
             setStageIdx(idx);
-            i = idx;
             setVisible(true);
           }, 200);
         }, stage.delay),
@@ -134,19 +132,19 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
                 </div>
               )}
 
-              {/* Domain routing chips */}
-              {result && !isBlocked && result.domains.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mt-3">
-                  {result.domains.map((d) => (
-                    <span
-                      key={d}
-                      className="inline-flex items-center text-xs px-2 py-0.5 rounded-full bg-brand-100 dark:bg-brand-900/40 text-brand-700 dark:text-brand-300 font-medium"
-                    >
-                      {d}
+              {/* Intent chip derived from trail (e.g. domain_answer:price_assist) */}
+              {result && !isBlocked && result.trail.length > 0 && (() => {
+                const domainStep = result.trail.find((t) => t.startsWith("domain_answer:"));
+                const node = domainStep?.split(":")[1];
+                if (!node) return null;
+                return (
+                  <div className="flex flex-wrap gap-1.5 mt-3">
+                    <span className="inline-flex items-center text-xs px-2 py-0.5 rounded-full bg-brand-100 dark:bg-brand-900/40 text-brand-700 dark:text-brand-300 font-medium">
+                      {node.replace(/_/g, " ")}
                     </span>
-                  ))}
-                </div>
-              )}
+                  </div>
+                );
+              })()}
 
               {/* Pipeline trail */}
               {result && result.trail.length > 0 && (

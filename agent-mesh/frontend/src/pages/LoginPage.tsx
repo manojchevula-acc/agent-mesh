@@ -10,36 +10,36 @@ import { cn } from "@/lib/utils";
 const DEMO_USERS = [
   {
     username: "alice",
-    display_name: "Alice (CFO)",
-    role: "leadership",
-    description: "Leadership role — identity stamped on each request",
-    icon: ShieldCheck,
+    display_name: "Alice Al-Mansoori",
+    role: "relationship_manager",
+    description: "Relationship Manager — customer data & pricing queries",
+    icon: Briefcase,
     color: "text-amber-600 dark:text-amber-400",
     bg: "bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800",
   },
   {
+    username: "bob",
+    display_name: "Bob Bennett",
+    role: "credit_officer",
+    description: "Credit Officer — deal compliance & margin analysis",
+    icon: ShieldCheck,
+    color: "text-blue-600 dark:text-blue-400",
+    bg: "bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800",
+  },
+  {
     username: "carol",
-    display_name: "Carol (HR Partner)",
-    role: "hr",
-    description: "HR role — identity stamped on each request",
+    display_name: "Carol Chen",
+    role: "compliance_officer",
+    description: "Compliance Officer — policy checks & regulatory queries",
     icon: Users,
     color: "text-teal-600 dark:text-teal-400",
     bg: "bg-teal-50 dark:bg-teal-900/20 border-teal-200 dark:border-teal-800",
   },
   {
-    username: "bob",
-    display_name: "Bob (Engineer)",
-    role: "employee",
-    description: "Employee role — identity stamped on each request",
-    icon: Briefcase,
-    color: "text-slate-600 dark:text-slate-400",
-    bg: "bg-slate-50 dark:bg-slate-900/20 border-slate-200 dark:border-slate-700",
-  },
-  {
     username: "dave",
-    display_name: "Dave (Analyst)",
-    role: "employee",
-    description: "Employee role — identity stamped on each request",
+    display_name: "Dave Dawson",
+    role: "branch_operations_officer",
+    description: "Branch Operations Officer — operational queries",
     icon: User,
     color: "text-slate-600 dark:text-slate-400",
     bg: "bg-slate-50 dark:bg-slate-900/20 border-slate-200 dark:border-slate-700",
@@ -123,11 +123,12 @@ export function LoginPage() {
                   <p className="text-xs text-muted truncate">{u.description}</p>
                 </div>
                 <span className={cn("ml-auto text-xs font-medium px-2 py-0.5 rounded-full shrink-0",
-                  u.role === "leadership" ? "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
-                  : u.role === "hr" ? "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300"
+                  u.color.includes("amber") ? "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+                  : u.color.includes("blue") ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300"
+                  : u.color.includes("teal") ? "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300"
                   : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
                 )}>
-                  {u.role}
+                  {u.role.replace(/_/g, " ")}
                 </span>
               </button>
             );
@@ -150,7 +151,7 @@ export function LoginPage() {
             type="text"
             value={customUsername}
             onChange={(e) => setCustomUsername(e.target.value)}
-            placeholder="any username (defaults to employee role)"
+            placeholder="any username (defaults to customer role)"
             className="flex-1 h-10 rounded-lg border border-line bg-surface px-3 text-sm text-fg placeholder:text-faint focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
             disabled={submitting !== null}
           />
@@ -165,7 +166,7 @@ export function LoginPage() {
         </form>
 
         <p className="text-xs text-muted text-center">
-          Unknown usernames are treated as <strong>employee</strong> role.
+          Unknown usernames are treated as <strong>customer</strong> role.
         </p>
       </div>
     </AuthLayout>

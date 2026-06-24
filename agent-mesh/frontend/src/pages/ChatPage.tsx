@@ -9,7 +9,7 @@ import { SAMPLE_QUERIES } from "@/config/constants";
 
 export default function ChatPage() {
   const { user } = useAuth();
-  const username = (user as any)?.username ?? "bob";
+  const username = user?.username ?? "bob";
 
   const { messages, sendMessage, clearChat, isLoading } = useChat({ username });
 
@@ -50,9 +50,9 @@ export default function ChatPage() {
           {user && (
             <span className="text-xs text-muted ml-1">
               — signed in as{" "}
-              <span className="font-medium text-fg">{(user as any).display_name ?? user.name}</span>
-              {(user as any).role && (
-                <RoleBadge role={(user as any).role} />
+              <span className="font-medium text-fg">{user.display_name}</span>
+              {user.role && (
+                <RoleBadge role={user.role} />
               )}
             </span>
           )}
@@ -118,9 +118,13 @@ export default function ChatPage() {
 // ── Role badge ──────────────────────────────────────────────────────────────
 
 const ROLE_COLORS: Record<string, string> = {
-  leadership: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
-  hr: "bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300",
-  employee: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
+  relationship_manager:       "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+  credit_officer:             "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
+  compliance_officer:         "bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300",
+  branch_operations_officer:  "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
+  operations_manager:         "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300",
+  platform_administrator:     "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300",
+  customer:                   "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300",
 };
 
 function RoleBadge({ role }: { role: string }) {
@@ -128,10 +132,10 @@ function RoleBadge({ role }: { role: string }) {
     <span
       className={cn(
         "inline-flex items-center ml-1.5 px-1.5 py-0.5 rounded text-xs font-medium",
-        ROLE_COLORS[role] ?? ROLE_COLORS.employee
+        ROLE_COLORS[role] ?? "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
       )}
     >
-      {role}
+      {role.replace(/_/g, " ")}
     </span>
   );
 }
@@ -148,10 +152,10 @@ function EmptyState({ onSampleClick }: EmptyStateProps) {
       <div className="w-16 h-16 rounded-2xl bg-brand-100 dark:bg-brand-900/30 flex items-center justify-center mb-4">
         <Bot className="h-8 w-8 text-brand-600 dark:text-brand-400" />
       </div>
-      <h2 className="text-lg font-semibold text-fg mb-1">Safety &amp; Governance Assistant</h2>
+      <h2 className="text-lg font-semibold text-fg mb-1">FAB Pricing Assistant</h2>
       <p className="text-sm text-muted max-w-sm mb-8">
-        Queries are screened through a 4-stage pipeline: guardrails → compliance →
-        policy → redaction.
+        Queries flow through a 5-stage pipeline: guardrail → RBAC → compliance →
+        PriceAssist (data + knowledge) → redaction.
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-lg">
         {SAMPLE_QUERIES.map((item) => (
