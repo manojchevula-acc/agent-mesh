@@ -1,0 +1,130 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Semantic theme tokens — light. RGB triplets so Tailwind's <alpha-value> works. */
+  :root {
+    --canvas: 248 250 252; /* slate-50 */
+    --surface: 255 255 255; /* white */
+    --surface-2: 248 250 252; /* slate-50 */
+    --line: 226 232 240; /* slate-200 */
+    --fg: 15 23 42; /* slate-900 */
+    --muted: 100 116 139; /* slate-500 */
+    --faint: 148 163 184; /* slate-400 */
+    color-scheme: light;
+  }
+
+  .dark {
+    --canvas: 3 7 18; /* near-black slate */
+    --surface: 15 23 42; /* slate-900 */
+    --surface-2: 30 41 59; /* slate-800 */
+    --line: 51 65 85; /* slate-700 */
+    --fg: 241 245 249; /* slate-100 */
+    --muted: 148 163 184; /* slate-400 */
+    --faint: 100 116 139; /* slate-500 */
+    color-scheme: dark;
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    @apply bg-canvas text-fg font-sans transition-colors duration-300;
+  }
+
+  *:focus-visible {
+    @apply outline-none ring-2 ring-brand-500/60 ring-offset-2;
+    --tw-ring-offset-color: rgb(var(--canvas));
+  }
+}
+
+@layer components {
+  /* Animated brand gradient text. */
+  .text-gradient {
+    @apply bg-gradient-to-r from-brand-600 via-accent-500 to-brand-500 bg-clip-text text-transparent;
+    background-size: 200% auto;
+  }
+  .dark .text-gradient {
+    @apply from-brand-300 via-accent-300 to-brand-200;
+  }
+
+  /* Frosted-glass panel. */
+  .glass {
+    @apply border border-white/40 bg-white/70 backdrop-blur-xl;
+  }
+  .dark .glass {
+    @apply border-white/10 bg-white/5;
+  }
+
+  /* Markdown rendering for answers and chunk text. */
+  .prose-rag {
+    @apply text-[0.95rem] leading-7 text-fg/85;
+  }
+  .prose-rag p {
+    @apply my-2;
+  }
+  .prose-rag ul {
+    @apply my-2 list-disc pl-5;
+  }
+  .prose-rag ol {
+    @apply my-2 list-decimal pl-5;
+  }
+  .prose-rag li {
+    @apply my-1;
+  }
+  .prose-rag strong {
+    @apply font-semibold text-fg;
+  }
+  .prose-rag h1,
+  .prose-rag h2,
+  .prose-rag h3 {
+    @apply mt-3 mb-1 font-semibold text-fg;
+  }
+  .prose-rag code {
+    @apply rounded bg-surface-2 px-1 py-0.5 font-mono text-[0.85em];
+  }
+  .prose-rag a {
+    @apply text-brand-600 underline underline-offset-2 dark:text-brand-300;
+  }
+  .prose-rag table {
+    @apply my-2 w-full border-collapse text-sm;
+  }
+  .prose-rag th,
+  .prose-rag td {
+    @apply border border-line px-2 py-1 text-left;
+  }
+  .prose-rag th {
+    @apply bg-surface-2 font-semibold;
+  }
+}
+
+/* Thinking dots pulse for the chat loading indicator. */
+@keyframes pulse {
+  0%, 80%, 100% { transform: scale(0.7); opacity: 0.4; }
+  40%            { transform: scale(1);   opacity: 1;   }
+}
+
+/* Thin, theme-aware scrollbars. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  @apply rounded-full bg-faint/50;
+}
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-faint;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

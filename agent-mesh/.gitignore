@@ -1,0 +1,17 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment variables
+.env
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# Data outputs and local logs
+data/audit_trail.jsonl
+data/conversations/
+data/audit_trail_test.jsonl
