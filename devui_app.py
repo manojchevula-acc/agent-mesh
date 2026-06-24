@@ -14,8 +14,7 @@ one process**: the orchestration workflow calls each node agent directly via an
 in-process adapter instead of over A2A. DevUI then captures the full trace tree:
 
     workflow.run
-      └─ executor.process input_guardrail / router / access_control / compliance
-                          / payment_gate / domain / output_redaction
+      └─ executor.process input_guardrail / compliance / policy / output_redaction
             └─ invoke_agent <Node>  └─ chat <model>  └─ execute_tool <fn>
 
 The distributed A2A mesh (``launch_mesh.py`` + ``run.py``) is unchanged; this is a
@@ -88,16 +87,6 @@ def _make_local_ask(agents: dict):
     return local_ask
 
 
-def _devui_approver(_prompt: str) -> bool:
-    """Payment HITL approver for DevUI: auto-deny.
-
-    The CLI ``input()`` approver would block the DevUI server thread indefinitely,
-    so outbound-payment requests are denied by default here. Use the regular CLI
-    (``python run.py``) to exercise interactive payment approvals.
-    """
-    return False
-
-
 def main() -> None:
     Config.validate()
 
@@ -113,7 +102,6 @@ def main() -> None:
     agents = _build_agents()
     workflow = build_devui_workflow(
         ask=_make_local_ask(agents),
-        approver=_devui_approver,
         user_name=Config.DEVUI_USER,
         role=Config.DEVUI_ROLE,
     )
@@ -130,7 +118,6 @@ def main() -> None:
     print(f"  Identity:   user={Config.DEVUI_USER} role={Config.DEVUI_ROLE}")
     print(f"  Entities:   agent_mesh_pipeline (workflow) + {len(agents)} agents "
           f"({', '.join(NODE_NAMES)})")
-    print("  Payments:   auto-denied in DevUI (use run.py for interactive approval)")
     print("-" * 72)
 
     serve(

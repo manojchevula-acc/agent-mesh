@@ -10,7 +10,6 @@ class Config:
     
     # Storage and paths
     POLICIES_FILE: str = os.getenv("POLICIES_FILE", "data/policies.json")
-    JOB_POSTINGS_FILE: str = os.getenv("JOB_POSTINGS_FILE", "data/job_postings.json")
     AUDIT_LOG_FILE: str = os.getenv("AUDIT_LOG_FILE", "data/audit_trail.jsonl")
     TRACE_LOG_FILE: str = os.getenv("TRACE_LOG_FILE", "data/trace_log.jsonl")  # structured trace events for all mesh layers
     CONVERSATION_STORE_DIR: str = os.getenv("CONVERSATION_STORE_DIR", "data/conversations")
@@ -57,10 +56,9 @@ class Config:
     # is a development-only sample app; do not expose it as a production surface.
     DEVUI_HOST: str = os.getenv("DEVUI_HOST", "127.0.0.1")
     DEVUI_PORT: int = int(os.getenv("DEVUI_PORT", "8090"))
-    # Identity stamped on DevUI requests. Default role is leadership so the finance
-    # domain isn't access-blocked, letting you exercise every node from the UI.
+    # Identity stamped on DevUI requests (used for audit logging on each hop).
     DEVUI_USER: str = os.getenv("DEVUI_USER", "devui")
-    DEVUI_ROLE: str = os.getenv("DEVUI_ROLE", "leadership")
+    DEVUI_ROLE: str = os.getenv("DEVUI_ROLE", "platform_administrator")
     DEVUI_AUTO_OPEN: bool = os.getenv("DEVUI_AUTO_OPEN", "true").lower() in ("1", "true", "yes")
     # No-auth is only honoured on loopback hosts by DevUI itself.
     DEVUI_NO_AUTH: bool = os.getenv("DEVUI_NO_AUTH", "true").lower() in ("1", "true", "yes")
@@ -68,17 +66,31 @@ class Config:
     # Mesh networking: each agent is hosted as an isolated A2A server on its own port.
     A2A_HOST: str = os.getenv("A2A_HOST", "127.0.0.1")
 
-    # name -> port. The gateway is the single front-door; the rest are specialist nodes.
-    # NOTE: ports chosen to avoid Windows excluded/reserved ranges (e.g. 8005 is
-    # commonly reserved by WinNAT/Hyper-V). Override via PORT_* env vars if needed.
+    # name -> port. Each agent is hosted as an isolated A2A node.
+    # AgentMesh 15.0.6.2026: GatewayAgent and PolicyAgent removed.
+    # PriceAssistAgent is the primary orchestrator; DataAgent and RAGAgent are
+    # thin MCP clients. NOTE: ports chosen to avoid Windows reserved ranges.
+    # Override via PORT_* env vars if needed.
     AGENT_PORTS: dict[str, int] = {
-        "gateway": int(os.getenv("PORT_GATEWAY", "8010")),
-        "finance": int(os.getenv("PORT_FINANCE", "8011")),
-        "hr": int(os.getenv("PORT_HR", "8012")),
-        "internal_job": int(os.getenv("PORT_INTERNAL_JOB", "8013")),
-        "policy": int(os.getenv("PORT_POLICY", "8014")),
-        "compliance": int(os.getenv("PORT_COMPLIANCE", "8015")),
+        "compliance":  int(os.getenv("PORT_COMPLIANCE",  "8015")),
+        "data_agent":  int(os.getenv("PORT_DATA_AGENT",  "8016")),
+        "rag_agent":   int(os.getenv("PORT_RAG_AGENT",   "8017")),
+        "price_assist": int(os.getenv("PORT_PRICE_ASSIST", "8018")),
     }
+
+    # ----------------------------------------------------------------------
+    # External services consumed by domain agents over MCP (streamable HTTP).
+    # These services run independently on their own ports/processes; the mesh
+    # agents are thin clients that consume the services' MCP tool surface.
+    #   - DataLayer-as-a-Service: FastMCP server (5 SQL-view tools).
+    #   - RAG-as-a-Service: MCP server (search_documents) wrapping its REST API.
+    # ----------------------------------------------------------------------
+    DATALAYER_MCP_URL: str = os.getenv("DATALAYER_MCP_URL", "http://127.0.0.1:9100/mcp")
+    RAG_MCP_URL: str = os.getenv("RAG_MCP_URL", "http://127.0.0.1:9000/mcp")
+    # Optional API key if the RAG MCP server is configured to require one.
+    RAG_API_KEY: str = os.getenv("RAG_API_KEY", "")
+    # Timeout (seconds) for an MCP tool request to an external service.
+    MCP_REQUEST_TIMEOUT: int = int(os.getenv("MCP_REQUEST_TIMEOUT", "120"))
 
     # Timeout (seconds) for A2A calls. LLM responses can be slow under parallel load;
     # 180 s covers 3 sequential Ollama completions (~30-60 s each) with headroom.

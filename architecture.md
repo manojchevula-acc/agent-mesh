@@ -1,8 +1,10 @@
 # Architectural Design — Distributed A2A Agent Mesh
 
-This document describes the architecture of the Role-Aware Enterprise Assistant: a
-distributed multi-agent mesh where each agent is an isolated A2A server and
-agents communicate over the Agent-to-Agent (A2A) protocol.
+The FAB Pricing Assistant Mesh: a distributed multi-agent system where each agent
+is an isolated A2A server. AgentMesh orchestrates a request through safety gates
+and a gateway router to one specialist; a **Price Assist** coordinator composes
+answers across a structured-data agent and an unstructured-document agent, which
+consume two independent services over **MCP**.
 
 ---
 
@@ -11,8 +13,8 @@ agents communicate over the Agent-to-Agent (A2A) protocol.
 ```mermaid
 graph TD
     User([👤 User]) --> Auth[Mock Auth<br/>role: employee/hr/leadership]
-    Auth --> Run[run.py client]
-    Run --> Orch[Mesh Orchestrator<br/>src/mesh/orchestrator.py]
+    Auth --> Run[run.py / api_server.py]
+    Run --> Orch[Orchestrator<br/>src/mesh/orchestrator.py]
 
     subgraph Guardrails (deterministic)
         Screen[Input screen<br/>injection / PII / destructive]
@@ -20,89 +22,87 @@ graph TD
     end
 
     Orch --> Screen
-    Screen -->|A2A :8010| Gateway[Gateway / Router]
-    Orch --> AC{Role access<br/>control}
-    Orch -->|A2A :8015| Compliance[Compliance Agent]
+    Screen -->|A2A :8015| Compliance[Compliance Agent]
+    Compliance -->|A2A :8010| Gateway[Gateway / Router]
 
-    subgraph Domain Nodes
-        Finance[Finance :8011<br/>leadership-only]
-        HR[HR :8012]
-        Job[Internal Job :8013]
-    end
+    Gateway -->|price| Price[Price Assist :8018]
+    Gateway -->|data| Data[Data Agent :8016]
+    Gateway -->|rag| Rag[RAG Agent :8017]
+    Gateway -->|policy| Policy[Policy Agent :8014]
 
-    AC --> Finance
-    AC --> HR
-    AC --> Job
-
-    Finance -->|@tool + approval| FTools[finance_tools]
-    HR -->|@tool| HTools[hr_tools]
-    Job -->|@tool| JTools[job_tools]
-    Finance -.->|consult_policy A2A :8014| Policy[Policy Agent]
-    HR -.->|consult_policy A2A :8014| Policy
-    Job -.->|consult_policy A2A :8014| Policy
-
-    JTools --> KB[(job_postings.json)]
+    Price -. A2A .-> Data
+    Price -. A2A .-> Rag
+    Data -. MCP/HTTP .-> DL[(DataLayer :9100<br/>MySQL semantic views)]
+    Rag -. MCP/HTTP .-> RG[(RAG :9000 → :8000<br/>Qdrant + rerank)]
     Policy --> PKB[(policies.json)]
-    Job --> Redact
-    HR --> Redact
-    Finance --> Redact
 
-    Gateway & Finance & HR & Job & Policy & Compliance -.->|AuditMiddleware| Log[(audit_trail.jsonl)]
+    Price --> Redact
+    Data --> Redact
+    Rag --> Redact
+    Policy --> Redact
+
+    Gateway & Price & Data & Rag & Policy & Compliance -.->|AuditMiddleware| Log[(audit_trail.jsonl)]
 ```
 
 ---
 
 ## Component Topology
 
-Six independent nodes, each hosted as an isolated A2A server (own process + port):
+Six A2A nodes (own process + port):
 
-1. **Gateway / Router (8010)** — LLM classifier mapping a request to a domain. Does not answer.
-2. **Finance Agent (8011)** — leadership-only; budgets, summaries, approval-gated payments.
-3. **HR Agent (8012)** — leave, benefits, HR policies for all employees.
-4. **Internal Job Agent (8013)** — searches internal postings from `job_postings.json`.
-5. **Policy Agent (8014)** — shared advisor; loads rules from `policies.json`.
-6. **Compliance Agent (8015)** — shared semantic guardrail (injection / leakage / harm).
+1. **Gateway / Router (8010)** — LLM classifier → `price | data | rag | policy`. Does not answer.
+2. **Compliance Agent (8015)** — semantic safety gate.
+3. **Policy Agent (8014)** — corporate rules from `policies.json`.
+4. **Data Agent (8016)** — thin; consumes DataLayer over MCP (structured).
+5. **RAG Agent (8017)** — thin; consumes RAG over MCP (unstructured).
+6. **Price Assist (8018)** — coordinator; delegates to Data & RAG over A2A and synthesizes.
 
-Hosting uses `A2AExecutor` + Starlette/uvicorn (`src/a2a/hosting.py`); clients use
-`A2AAgent` (`src/a2a/clients.py`). The orchestrator (`src/mesh/orchestrator.py`)
-coordinates the hops; it is invoked by the `run.py` client.
+Backing services run independently: **DataLayer** FastMCP `:9100`, **RAG** MCP `:9000` → REST `:8000`.
+
+Hosting: `A2AExecutor` + Starlette/uvicorn (`src/a2a/hosting.py`); MCP-backed nodes open their MCP session for the node lifetime (`a2a_server.py`). Calls use `A2AAgent` (`src/a2a/clients.py`).
+
+---
+
+## Communication Boundaries
+
+| Boundary | Mechanism |
+|----------|-----------|
+| Orchestrator ↔ agents | A2A (JSONRPC/HTTP) |
+| Price Assist ↔ Data/RAG agents | A2A peer delegation (agent-as-tool; depth-guarded, soft-fail) |
+| Data/RAG agents ↔ services | MCP (streamable HTTP; tools auto-discovered) |
 
 ---
 
 ## Data Flow & Execution Sequence
 
-For a finance request from a leadership user ("What's the engineering budget?"):
+For "Is CUST001's loan price compliant with policy?":
 
-1. **Login**: mock auth resolves the user to role `leadership`.
-2. **Input screen**: deterministic regex gate passes (no injection/PII/destructive).
-3. **Route (A2A → 8010)**: Gateway classifies → `finance`.
-4. **Access control**: `finance` requires `leadership` → allowed.
-5. **Compliance (A2A → 8015)**: semantic review → `COMPLIANCE_PASSED`.
-6. **Finance (A2A → 8011)**: agent calls `get_budget_report` (tool) and answers; may
-   call `consult_policy` (A2A → 8014) for applicable rules.
-7. **Output redaction**: PII scrubbed; answer returned to the user.
-8. **Audit**: every hop is recorded to `audit_trail.jsonl` by each node's middleware.
+1. **Login** → role recorded for audit.
+2. **Input screen** → passes (no injection/PII/destructive).
+3. **Compliance (A2A → 8015)** → `COMPLIANCE_PASSED`.
+4. **Router (A2A → 8010)** → domain `price` → node `price_assist`.
+5. **Price Assist (A2A → 8018)** → calls `query_structured_data` (A2A → data_agent → DataLayer: approved price/margin) **and** `query_policy_documents` (A2A → rag_agent → RAG: pricing floor), compares, answers.
+6. **Output redaction** → PII scrubbed; answer returned.
+7. **Audit** → each hop recorded.
 
-The same employee asking the finance question is **denied at step 4**. A prompt-injection
-or destructive request is **blocked at step 2** before any agent is contacted.
+A prompt-injection/destructive request is blocked at step 2; an unsafe request at step 3. If a downstream agent/service is offline, the domain hop **soft-fails** to an "unavailable" answer instead of crashing.
 
 ---
 
 ## Security Model (Defense in Depth)
 
-- **Layer 1 — Deterministic filters** (`src/guardrails/deterministic_filters.py`):
-  hard regex gates that run before any LLM sees input and again on output.
-- **Layer 2 — Compliance agent**: semantic safety review over A2A.
-- **Access control**: role-gated domains from `policies.json`.
-- **Approval gate**: native `approval_mode="always_require"` on outbound payments.
-- **Observability**: per-hop audit logging with PII redaction.
+- **Layer 1 — Deterministic filters**: regex gates before any LLM and again on output.
+- **Layer 2 — Compliance agent**: semantic review over A2A (fails closed).
+- **Layer 3 — Graceful degradation**: A2A/MCP hops soft-fail; depth guard bounds peer delegation.
+- **Observability**: per-hop audit + one distributed trace spanning A2A and MCP hops.
 
 ---
 
 ## Microsoft Agent Framework Capabilities Demonstrated
 
-1. **A2A protocol** — agents hosted and consumed across isolated ports.
-2. **Tool calling** — `@tool` functions (MCP-ready).
-3. **Native human-in-the-loop** — approval-gated payment tool.
-4. **Agent middleware** — audit + redaction pipeline.
-5. **Local LLM** — `OllamaChatClient`.
+1. **A2A protocol** — agents hosted/consumed across isolated ports.
+2. **MCP tool consumption** — `MCPStreamableHTTPTool` auto-discovers external service tools.
+3. **Agent-as-tool** — the Price Assist coordinator calls peer agents as tools.
+4. **Workflow orchestration** — typed `WorkflowBuilder` pipeline with native spans.
+5. **Agent middleware** — audit + redaction.
+6. **Local LLM** — `OllamaChatClient`.

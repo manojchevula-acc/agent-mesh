@@ -2,15 +2,12 @@
 
 Drives a single user request across the distributed agent mesh using a
 Microsoft Agent Framework **Workflow** (see ``src/mesh/workflow.py``). The
-workflow graph enforces defense-in-depth guardrails and role-based access:
+workflow graph enforces a defense-in-depth safety/governance pipeline:
 
   1. Deterministic input screen  (hard gate: injection / PII / destructive)
-  2. Router node (A2A)           -> domain classification
-  3. Role-based access control   (e.g. finance = leadership only)
-  4. Compliance node (A2A)       -> semantic safety review (hard gate)
-  5. Payment approval gate       -> human-in-the-loop for outbound payments
-  6. Domain node (A2A)           -> the actual answer
-  7. Deterministic output redaction (PII)
+  2. Compliance node (A2A)       -> semantic safety review (hard gate)
+  3. Policy node (A2A)           -> resolves the corporate rules that apply
+  4. Deterministic output redaction (PII)
 
 Each stage is a workflow executor, so the framework emits native ``workflow.run``
 / ``executor.process`` spans and auto-propagates trace context between hops. A
@@ -23,7 +20,7 @@ seam are preserved for the offline test suite.
 import sys
 import pathlib
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional
+from typing import List, Optional
 
 project_root = str(pathlib.Path(__file__).resolve().parents[2])
 if project_root not in sys.path:
@@ -40,26 +37,15 @@ from src.mesh.workflow import MeshState, build_mesh_workflow
 _log = get_logger(CAT_SYSTEM)
 
 
-def _cli_approver(prompt: str) -> bool:
-    """Default human approver: a CLI yes/no. Works across the A2A boundary because
-    it runs in the orchestrator (client) process, not inside the agent."""
-    try:
-        return input(f"\n>>> {prompt} (yes/no): ").strip().lower() in ("y", "yes")
-    except EOFError:
-        return False
-
-
 @dataclass
 class MeshResult:
     answer: str
-    domain: Optional[str] = None
-    domains: List[str] = field(default_factory=list)
     blocked: bool = False
     block_stage: Optional[str] = None
     trail: List[str] = field(default_factory=list)
 
 
-async def handle_request(user: User, query: str, approver: Callable[[str], bool] = _cli_approver) -> MeshResult:
+async def handle_request(user: User, query: str) -> MeshResult:
     """Runs one request through the full mesh workflow.
 
     Opens a root ``mesh.request`` span so every downstream executor / agent / A2A
@@ -78,7 +64,7 @@ async def handle_request(user: User, query: str, approver: Callable[[str], bool]
 
     # Build the workflow fresh per request, passing the (possibly patched at test
     # time) module-level ``ask_remote`` so the A2A seam is honoured.
-    workflow = build_mesh_workflow(ask=ask_remote, approver=approver)
+    workflow = build_mesh_workflow(ask=ask_remote)
 
     # Root the whole request in a single span (framework-native tracer). All
     # workflow/executor/agent/A2A spans become children of this one.
@@ -98,13 +84,10 @@ async def handle_request(user: User, query: str, approver: Callable[[str], bool]
     if final.blocked:
         AgentLogger.print_agent_response("Mesh", f"[{final.block_stage}] {final.answer}")
     else:
-        domain_label = ", ".join(final.domains) if final.domains else (final.domain or "Mesh")
-        AgentLogger.print_agent_response(domain_label, final.answer)
+        AgentLogger.print_agent_response("Policy", final.answer)
 
     return MeshResult(
         answer=final.answer,
-        domain=final.domain,
-        domains=final.domains,
         blocked=final.blocked,
         block_stage=final.block_stage,
         trail=final.trail,
