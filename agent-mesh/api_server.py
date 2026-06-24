@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import os
 import pathlib
 import sys
@@ -54,6 +55,7 @@ from src.auth.identity_provider import login, list_users
 from src.config import Config
 from src.mesh.orchestrator import handle_request
 from src.observability import get_logger, CAT_SYSTEM, flush_observability
+from src.tracing.execution_trace import ExecutionTracer, set_active_tracer, clear_active_tracer
 
 _log = get_logger(CAT_SYSTEM)
 _SERVER_START_TIME = time.time()
@@ -68,7 +70,7 @@ async def health(request: Request) -> JSONResponse:
         "status": "ok",
         "node": "api_server",
         "uptime_seconds": round(time.time() - _SERVER_START_TIME, 1),
-        "model": Config.OLLAMA_MODEL,
+        "model": Config.GROQ_MODEL,
         "service": "agent_mesh_api",
     })
 
@@ -106,7 +108,8 @@ async def post_query(request: Request) -> JSONResponse:
     """Submit a query to the mesh and return the MeshResult.
 
     Body: {"username": str, "query": str}
-    Response: MeshResult JSON — answer, blocked, block_stage, trail.
+    Response: MeshResult JSON — answer, blocked, block_stage, trail, plus full
+    execution summary and event stream for the UI transparency panel.
     """
     try:
         body = await request.json()
@@ -123,20 +126,37 @@ async def post_query(request: Request) -> JSONResponse:
 
     user = login(username)
 
+    tracer = ExecutionTracer(user=user.username, query=query)
+    token = set_active_tracer(tracer)
     try:
         result = await handle_request(user, query)
-        return JSONResponse({
-            "answer": result.answer,
-            "blocked": result.blocked,
-            "block_stage": result.block_stage,
-            "trail": result.trail,
-        })
     except Exception as exc:
         _log.exception("mesh query error: %s", exc)
         return JSONResponse(
             {"error": "Mesh query failed. Is the mesh running?", "detail": str(exc)},
             status_code=502,
         )
+    finally:
+        clear_active_tracer(token)
+
+    summary = tracer.summary()
+    return JSONResponse({
+        "answer": result.answer,
+        "blocked": result.blocked,
+        "block_stage": result.block_stage,
+        "trail": result.trail,
+        # Execution summary (mirrors ExecutionSummary dataclass fields)
+        "request_id": summary.request_id,
+        "domain": summary.domain,
+        "route": summary.route,
+        "execution_path": summary.execution_path,
+        "agents_invoked": summary.agents_invoked,
+        "tools_used": summary.tools_used,
+        "total_duration_ms": summary.total_duration_ms,
+        "confidence": summary.confidence,
+        # Full event stream for the UI transparency panel
+        "events": [dataclasses.asdict(e) for e in summary.events],
+    })
 
 
 async def get_mesh_status(request: Request) -> JSONResponse:
@@ -234,9 +254,9 @@ except Exception:
 def main() -> None:
     Config.validate()
 
-    ok, msg = Config.check_ollama()
+    ok, msg = Config.check_groq()
     if not ok:
-        _log.warning("Ollama not reachable at startup: %s", msg)
+        _log.warning("Groq not configured at startup: %s", msg)
         print(f"[api_server] WARNING: {msg}")
     else:
         print(f"[api_server] {msg}")

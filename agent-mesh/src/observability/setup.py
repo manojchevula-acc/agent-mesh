@@ -92,6 +92,39 @@ def setup_observability(service_name: str | None = None) -> None:
     _INITIALIZED = True
 
 
+def flush_observability() -> None:
+    """Force-flush all OTel providers so buffered spans/metrics/logs are exported.
+
+    Safe to call even if setup_observability() was never invoked or failed.
+    """
+    import logging
+    log = logging.getLogger(CAT_SYSTEM)
+
+    from opentelemetry import trace as _trace, metrics as _metrics
+
+    try:
+        tp = _trace.get_tracer_provider()
+        if hasattr(tp, "force_flush"):
+            tp.force_flush(timeout_millis=5000)
+    except Exception as exc:
+        log.debug("TracerProvider flush failed: %s", exc)
+
+    try:
+        mp = _metrics.get_meter_provider()
+        if hasattr(mp, "force_flush"):
+            mp.force_flush(timeout_millis=5000)
+    except Exception as exc:
+        log.debug("MeterProvider flush failed: %s", exc)
+
+    try:
+        from opentelemetry._logs import get_logger_provider
+        lp = get_logger_provider()
+        if hasattr(lp, "force_flush"):
+            lp.force_flush(timeout_millis=5000)
+    except Exception as exc:
+        log.debug("LoggerProvider flush failed: %s", exc)
+
+
 def _instrument_httpx(log: logging.Logger) -> None:
     """Enable OpenTelemetry httpx instrumentation for A2A trace propagation."""
     try:

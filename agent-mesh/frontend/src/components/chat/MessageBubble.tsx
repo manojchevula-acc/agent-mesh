@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 import { Markdown } from "@/components/ui/Markdown";
 import PipelineTrail from "./PipelineTrail";
 import SecurityBadge from "./SecurityBadge";
+import ExecutionPanel from "./ExecutionPanel";
 import type { ChatMessage } from "@/types/mesh";
 
 // Cycles through pipeline stages shown during loading
@@ -75,6 +76,24 @@ function formatTime(date: Date): string {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+// Route chip coloured by service type
+function RouteChip({ route }: { route: string }) {
+  const lower = route.toLowerCase();
+  let cls = "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400";
+  if (lower.includes("rag")) {
+    cls = "bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300";
+  } else if (lower.includes("data")) {
+    cls = "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300";
+  } else if (lower.includes("hybrid")) {
+    cls = "bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300";
+  }
+  return (
+    <span className={cn("inline-flex items-center text-xs px-2 py-0.5 rounded-full font-medium", cls)}>
+      {route}
+    </span>
+  );
+}
+
 export default function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === "user";
 
@@ -132,8 +151,35 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
                 </div>
               )}
 
-              {/* Intent chip derived from trail (e.g. domain_answer:price_assist) */}
-              {result && !isBlocked && result.trail.length > 0 && (() => {
+              {/* Route chip + execution meta (from tracer summary) */}
+              {result && !isBlocked && (result.route || result.domain || result.execution_path?.length) && (
+                <div className="flex flex-wrap items-center gap-1.5 mt-3">
+                  {result.route && <RouteChip route={result.route} />}
+                  {result.domain && (
+                    <span className="inline-flex items-center text-xs px-2 py-0.5 rounded-full bg-brand-100 dark:bg-brand-900/40 text-brand-700 dark:text-brand-300 font-medium">
+                      {result.domain}
+                    </span>
+                  )}
+                  {result.confidence != null && (
+                    <span className="inline-flex items-center text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-medium">
+                      {Math.round(result.confidence * 100)}% conf
+                    </span>
+                  )}
+                  {result.total_duration_ms != null && (
+                    <span className="inline-flex items-center text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-500">
+                      {(result.total_duration_ms / 1000).toFixed(1)}s
+                    </span>
+                  )}
+                  {result.execution_path && result.execution_path.length > 0 && (
+                    <span className="text-xs text-muted">
+                      {result.execution_path.join(" → ")}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* Fallback domain chip from trail when tracer data is absent */}
+              {result && !isBlocked && !result.route && !result.domain && result.trail.length > 0 && (() => {
                 const domainStep = result.trail.find((t) => t.startsWith("domain_answer:"));
                 const node = domainStep?.split(":")[1];
                 if (!node) return null;
@@ -152,6 +198,9 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
                   <PipelineTrail trail={result.trail} blocked={isBlocked} blockStage={result.block_stage} />
                 </div>
               )}
+
+              {/* Execution trace panel — collapsible, mirrors run.py CLIRenderer output */}
+              {result && <ExecutionPanel result={result} />}
             </>
           )}
         </div>

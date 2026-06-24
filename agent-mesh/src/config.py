@@ -1,12 +1,20 @@
 import os
+import pathlib
 from dotenv import load_dotenv
 
-# Load environment variables from .env
-load_dotenv()
+# Always load from agent-mesh/.env regardless of the subprocess's CWD.
+# override=True ensures the file wins over any stale shell-level env vars.
+_ENV_FILE = pathlib.Path(__file__).resolve().parents[1] / ".env"
+load_dotenv(_ENV_FILE, override=True)
 
 class Config:
-    OLLAMA_HOST: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3.2")
+    # LLM provider — Groq (OpenAI-compatible cloud inference)
+    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+    GROQ_MODEL:   str = os.getenv("GROQ_MODEL",   "llama-3.1-8b-instant")
+
+    # Ollama (local) — kept for rollback; not used when GROQ_API_KEY is set
+    # OLLAMA_HOST: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+    # OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
     
     # Storage and paths
     POLICIES_FILE: str = os.getenv("POLICIES_FILE", "data/policies.json")
@@ -92,8 +100,8 @@ class Config:
     # Timeout (seconds) for an MCP tool request to an external service.
     MCP_REQUEST_TIMEOUT: int = int(os.getenv("MCP_REQUEST_TIMEOUT", "120"))
 
-    # Timeout (seconds) for A2A calls. LLM responses can be slow under parallel load;
-    # 180 s covers 3 sequential Ollama completions (~30-60 s each) with headroom.
+    # Timeout (seconds) for A2A calls. Groq is fast (~70+ tok/s); 60 s is generous
+    # headroom for complex multi-step reasoning.
     A2A_TIMEOUT: float = float(os.getenv("A2A_TIMEOUT", "180.0"))
 
     @classmethod
@@ -105,45 +113,23 @@ class Config:
     @classmethod
     def validate(cls):
         """Validates configuration sanity."""
-        if not cls.OLLAMA_HOST:
-            raise ValueError("Invalid Configuration: OLLAMA_HOST is required.")
-        if not cls.OLLAMA_MODEL:
-            raise ValueError("Invalid Configuration: OLLAMA_MODEL is required.")
+        if not cls.GROQ_API_KEY:
+            raise ValueError("Invalid Configuration: GROQ_API_KEY is required.")
+        if not cls.GROQ_MODEL:
+            raise ValueError("Invalid Configuration: GROQ_MODEL is required.")
 
     @classmethod
-    def check_ollama(cls, timeout: float = 3.0) -> tuple[bool, str]:
-        """Fast health check for the Ollama backend.
-
-        Returns ``(ok, message)``. ``ok`` is False if Ollama is unreachable or the
-        configured model is not pulled — either of which makes every mesh agent
-        silently fall back to echoing the request (no real LLM answer). Callers
-        should surface ``message`` clearly so the failure is obvious at startup
-        instead of showing up as an "echo" at query time.
+    def check_groq(cls) -> tuple[bool, str]:
+        """Fast pre-flight check for Groq: verifies the API key is set and the
+        model name is non-empty. Does not make a network call — Groq responds
+        immediately at inference time; there is no equivalent of Ollama's /api/tags.
         """
-        import json as _json
-        import urllib.request as _urlreq
-        import urllib.error as _urlerr
-
-        url = cls.OLLAMA_HOST.rstrip("/") + "/api/tags"
-        try:
-            with _urlreq.urlopen(url, timeout=timeout) as resp:
-                data = _json.loads(resp.read().decode("utf-8", errors="replace"))
-        except (_urlerr.URLError, OSError) as e:
+        if not cls.GROQ_API_KEY:
             return False, (
-                f"Ollama is not reachable at {cls.OLLAMA_HOST} ({e}). "
-                f"Start it (e.g. 'ollama serve') and pull the model "
-                f"('ollama pull {cls.OLLAMA_MODEL}'). Without it, agents cannot "
-                f"answer and requests will appear to echo the prompt."
+                "GROQ_API_KEY is not set. Add it to agent-mesh/.env "
+                "(e.g. GROQ_API_KEY=gsk_...). Without it, all agents will fail "
+                "to connect to Groq and return errors at inference time."
             )
-        except Exception as e:  # malformed response, etc.
-            return False, f"Ollama health check failed at {cls.OLLAMA_HOST} ({e})."
-
-        models = [m.get("name", "") for m in data.get("models", [])]
-        base = cls.OLLAMA_MODEL.split(":")[0]
-        if not any(name == cls.OLLAMA_MODEL or name.split(":")[0] == base for name in models):
-            available = ", ".join(models) or "<none>"
-            return False, (
-                f"Ollama is running but model '{cls.OLLAMA_MODEL}' is not pulled. "
-                f"Run 'ollama pull {cls.OLLAMA_MODEL}'. Available: {available}."
-            )
-        return True, f"Ollama OK at {cls.OLLAMA_HOST} (model '{cls.OLLAMA_MODEL}')."
+        if not cls.GROQ_MODEL:
+            return False, "GROQ_MODEL is not set. Add it to agent-mesh/.env (e.g. GROQ_MODEL=llama-3.1-8b-instant)."
+        return True, f"Groq configured: model='{cls.GROQ_MODEL}', key=gsk_***{cls.GROQ_API_KEY[-4:]}."

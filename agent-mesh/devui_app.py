@@ -90,9 +90,8 @@ def _make_local_ask(agents: dict):
 def main() -> None:
     Config.validate()
 
-    # Fail fast if Ollama is down: otherwise every agent silently echoes the prompt
-    # and the traces would look "successful" while answers are meaningless.
-    ok, msg = Config.check_ollama()
+    # Fail fast if Groq API key is missing: otherwise agents will return 401 errors.
+    ok, msg = Config.check_groq()
     if not ok:
         _log.error("DevUI startup blocked: %s", msg)
         print(f"[devui] ERROR: {msg}")

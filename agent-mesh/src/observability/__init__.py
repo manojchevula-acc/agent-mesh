@@ -19,7 +19,7 @@ from src.observability.logging_config import (
     configure_logging,
     get_logger,
 )
-from src.observability.setup import setup_observability
+from src.observability.setup import flush_observability, setup_observability
 
 __all__ = [
     "setup_observability",
@@ -33,4 +33,5 @@ __all__ = [
     "CAT_TRANSPORT",
     "CAT_APPROVALS",
     "CAT_SYSTEM",
+    "flush_observability",
 ]

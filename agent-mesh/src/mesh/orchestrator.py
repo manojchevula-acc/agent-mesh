@@ -33,6 +33,7 @@ from src.a2a.clients import ask_remote
 from src.utils.console_logger import AgentLogger
 from src.observability import get_logger, CAT_SYSTEM
 from src.mesh.workflow import MeshState, build_mesh_workflow
+from src.tracing.execution_trace import get_active_tracer
 
 _log = get_logger(CAT_SYSTEM)
 
@@ -54,6 +55,23 @@ async def handle_request(user: User, query: str) -> MeshResult:
     """
     session_id = f"sess_{user.username}"
     AgentLogger.print_agent_header("Mesh", "Dispatching request through the workflow graph")
+
+    # Emit input_processing events to the active tracer (set by the CLI/API caller).
+    tracer = get_active_tracer()
+    if tracer:
+        tracer.add_execution_path("Coordinator")
+        tracer.emit_stage(
+            "input_processing", "started",
+            message="Processing request...",
+        )
+        tracer.emit_stage(
+            "input_processing", "completed",
+            checks=[
+                "Request received",
+                "Session identified",
+                "User context loaded",
+            ],
+        )
 
     initial = MeshState(
         user_name=user.username,
@@ -80,11 +98,6 @@ async def handle_request(user: User, query: str) -> MeshResult:
         _log.error("Workflow produced no output", extra={"user": user.username})
         return MeshResult(answer="Internal error: no workflow output.", blocked=True,
                           block_stage="internal_error", trail=["no_output"])
-
-    if final.blocked:
-        AgentLogger.print_agent_response("Mesh", f"[{final.block_stage}] {final.answer}")
-    else:
-        AgentLogger.print_agent_response("Policy", final.answer)
 
     return MeshResult(
         answer=final.answer,

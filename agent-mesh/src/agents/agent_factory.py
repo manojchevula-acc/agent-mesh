@@ -8,25 +8,26 @@ if project_root not in sys.path:
 
 from typing import Any, List, Optional
 from agent_framework import Agent, AgentMiddleware
-from agent_framework.ollama import OllamaChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 from src.config import Config
 from src.middleware.audit_middleware import AuditMiddleware
 
 def create_demo_agent(
-    name: str, 
-    instructions: str, 
+    name: str,
+    instructions: str,
     tools: Optional[List[Any]] = None,
     extra_middlewares: Optional[List[AgentMiddleware]] = None,
     log_path: str = None
 ) -> Agent:
     """
-    Creates and returns a Microsoft Agent Framework Agent powered by Ollama.
+    Creates and returns a Microsoft Agent Framework Agent powered by Groq.
     Optionally wires function/MCP/A2A tools the agent may call.
     """
-    # 1. Instantiate local Ollama client
-    client = OllamaChatClient(
-        model=Config.OLLAMA_MODEL,
-        host=Config.OLLAMA_HOST
+    # 1. Instantiate Groq client via OpenAI Chat Completions-compatible endpoint
+    client = OpenAIChatCompletionClient(
+        model=Config.GROQ_MODEL,
+        api_key=Config.GROQ_API_KEY,
+        base_url="https://api.groq.com/openai/v1",
     )
 
     # 2. Setup standard middleware (Audit trail)
