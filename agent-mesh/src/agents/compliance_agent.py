@@ -7,6 +7,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from src.agents.agent_factory import create_demo_agent
+from src.config import Config
 from agent_framework import Agent
 
 COMPLIANCE_INSTRUCTIONS = """
@@ -32,7 +33,9 @@ def get_compliance_agent(log_path: str = None) -> Agent:
     return create_demo_agent(
         name="ComplianceAgent",
         instructions=COMPLIANCE_INSTRUCTIONS,
-        log_path=log_path
+        log_path=log_path,
+        model=Config.COMPLIANCE_MODEL,
+        api_key=Config.COMPLIANCE_API_KEY,
     )
 
 agent = get_compliance_agent()

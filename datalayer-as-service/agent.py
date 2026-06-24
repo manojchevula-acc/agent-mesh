@@ -133,7 +133,7 @@ WHEN ANSWERING:
 # Agent builder
 # ---------------------------------------------------------------------------
 
-def build_agent(model: str = "llama-3.3-70b-versatile", temperature: float = 0):
+def build_agent(model: str = "qwen/qwen3.6-27b", temperature: float = 0):
     """
     Build and return a LangChain Groq agent wired with the semantic-layer tools.
 

@@ -22,7 +22,7 @@ class EvaluationConfig(BaseModel):
     # Model used by RAGAS as the LLM judge (separate from the answer-generation LLM).
     # Use a small/fast model to stay within free-tier TPM limits.
     # For Ollama use the local tag, e.g. "llama3.1:8b" or "mistral".
-    judge_model: str = "llama-3.1-8b-instant"
+    judge_model: str = "qwen/qwen3.6-27b"
 
     # Max output tokens for the judge. Faithfulness emits a per-claim verdict list
     # (one JSON object per statement in the answer), which easily exceeds 1k tokens

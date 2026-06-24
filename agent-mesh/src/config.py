@@ -10,7 +10,22 @@ load_dotenv(_ENV_FILE, override=True)
 class Config:
     # LLM provider — Groq (OpenAI-compatible cloud inference)
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
-    GROQ_MODEL:   str = os.getenv("GROQ_MODEL",   "llama-3.1-8b-instant")
+    GROQ_MODEL:   str = os.getenv("GROQ_MODEL",   "openai/gpt-oss-20b")
+
+    # Per-agent model overrides — each agent is wired to the model best suited
+    # for its task. Override individually via env vars; falls back to GROQ_MODEL.
+    COMPLIANCE_MODEL:   str = os.getenv("COMPLIANCE_MODEL",   "openai/gpt-oss-20b")
+    DATA_AGENT_MODEL:   str = os.getenv("DATA_AGENT_MODEL",   "qwen/qwen3.6-27b")
+    RAG_AGENT_MODEL:    str = os.getenv("RAG_AGENT_MODEL",    "qwen/qwen3.6-27b")
+    PRICE_ASSIST_MODEL: str = os.getenv("PRICE_ASSIST_MODEL", "openai/gpt-oss-120b")
+
+    # Per-agent API keys — spread across two keys to avoid hitting rate limits.
+    # Compliance + Data Agent use Key 1; RAG Agent + Price Assist use Key 2.
+    # All fall back to GROQ_API_KEY if the per-agent var is unset or empty.
+    COMPLIANCE_API_KEY:   str = os.getenv("COMPLIANCE_API_KEY",   "") or os.getenv("GROQ_API_KEY", "")
+    DATA_AGENT_API_KEY:   str = os.getenv("DATA_AGENT_API_KEY",   "") or os.getenv("GROQ_API_KEY", "")
+    RAG_AGENT_API_KEY:    str = os.getenv("RAG_AGENT_API_KEY",    "") or os.getenv("GROQ_API_KEY", "")
+    PRICE_ASSIST_API_KEY: str = os.getenv("PRICE_ASSIST_API_KEY", "") or os.getenv("GROQ_API_KEY", "")
 
     # Ollama (local) — kept for rollback; not used when GROQ_API_KEY is set
     # OLLAMA_HOST: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")
@@ -131,5 +146,9 @@ class Config:
                 "to connect to Groq and return errors at inference time."
             )
         if not cls.GROQ_MODEL:
-            return False, "GROQ_MODEL is not set. Add it to agent-mesh/.env (e.g. GROQ_MODEL=llama-3.1-8b-instant)."
-        return True, f"Groq configured: model='{cls.GROQ_MODEL}', key=gsk_***{cls.GROQ_API_KEY[-4:]}."
+            return False, "GROQ_MODEL is not set. Add it to agent-mesh/.env (e.g. GROQ_MODEL=openai/gpt-oss-20b)."
+        return True, (
+            f"Groq configured — key=gsk_***{cls.GROQ_API_KEY[-4:]} | "
+            f"compliance={cls.COMPLIANCE_MODEL} | data={cls.DATA_AGENT_MODEL} | "
+            f"rag={cls.RAG_AGENT_MODEL} | price_assist={cls.PRICE_ASSIST_MODEL}"
+        )

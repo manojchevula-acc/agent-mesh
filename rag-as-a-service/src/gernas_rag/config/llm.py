@@ -14,7 +14,7 @@ class LLMProvider(str, Enum):
 
 class LLMConfig(BaseModel):
     provider: str = "groq"  # 'groq' | 'anthropic' | 'huggingface' | 'openai_compat'
-    model_name: str = "llama-3.1-70b-versatile"
+    model_name: str = "openai/gpt-oss-120b"
     temperature: float = 0.0
     max_tokens: int = 2048
     timeout_seconds: int = 30

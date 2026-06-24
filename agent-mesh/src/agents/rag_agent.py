@@ -18,6 +18,7 @@ if project_root not in sys.path:
 
 from agent_framework import Agent
 from src.agents.agent_factory import create_demo_agent
+from src.config import Config
 from src.integrations.mcp_clients import make_rag_mcp_tool
 
 RAG_INSTRUCTIONS = """
@@ -52,4 +53,6 @@ def get_rag_agent(log_path: str = None, mcp_tool=None) -> Agent:
         instructions=RAG_INSTRUCTIONS,
         tools=[tool],
         log_path=log_path,
+        model=Config.RAG_AGENT_MODEL,
+        api_key=Config.RAG_AGENT_API_KEY,
     )

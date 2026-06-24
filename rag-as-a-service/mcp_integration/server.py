@@ -1,55 +1,97 @@
 """MCP server exposing GERNAS RAG retrieval as an agent tool.
 
-Run standalone over stdio (for Claude Desktop / Claude Code / the example agent):
+Run as a network service (streamable HTTP for remote agents):
 
-    python -m mcp_integration.server
+    MCP_TRANSPORT=http python -m mcp_integration.server
 
 Configuration is read from the project ``.env`` (same file the backend uses):
-    RAG_API_URL          Base URL of the RAG service. Falls back to STREAMLIT_API_BASE,
-                         then http://localhost:8000.
-    RAG_API_KEY          Value sent as ``X-API-Key``. Falls back to the backend's API_KEY.
+    MCP_HOST             Host to bind the MCP server (default: 127.0.0.1)
+    MCP_PORT             Port to bind the MCP server (default: 9000)
     RAG_GENERATE_ANSWER  Default for the tool's generate_answer flag (true/false).
+
+The retrieval pipeline (embedder → Qdrant → reranker → LLM) is initialised lazily
+on the first tool call using the same settings/config as the REST backend.  This
+makes the MCP server fully self-contained — no separate REST API process is needed.
 """
 
+import asyncio
 import os
+import sys
 from pathlib import Path
 
-import httpx
 from dotenv import load_dotenv
-from mcp.server.fastmcp import FastMCP
 
-# Load the project .env so this standalone process shares the backend's config.
+# Add src to sys.path so gernas_rag is importable from this standalone process.
+_SRC_DIR = Path(__file__).resolve().parent.parent / "src"
+if str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
+
+# Load project .env so this process shares the backend's config.
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
-# URL: prefer RAG_API_URL, else reuse the backend's STREAMLIT_API_BASE, else default.
-RAG_API_URL = (
-    os.getenv("RAG_API_URL")
-    or os.getenv("STREAMLIT_API_BASE")
-    or "http://localhost:8000"
-).rstrip("/")
-# Key: prefer RAG_API_KEY, else reuse the backend's API_KEY (the X-API-Key value).
-RAG_API_KEY = os.getenv("RAG_API_KEY") or os.getenv("API_KEY", "")
+from mcp.server.fastmcp import FastMCP  # noqa: E402 (after path setup)
 
-# Per-call ``generate_answer`` wins; this only sets the default when the caller
-# (agent) omits it. Set RAG_GENERATE_ANSWER=true in .env to default to full answers.
 DEFAULT_GENERATE_ANSWER = os.getenv("RAG_GENERATE_ANSWER", "false").lower() in {
     "1",
     "true",
     "yes",
 }
 
-# Transport: "stdio" (default — co-located clients spawn this as a subprocess) or
-# "http" (run as a network service so a remote agent connects to a URL). MCP_HOST/
-# MCP_PORT apply to http; the tool is served at http://MCP_HOST:MCP_PORT/mcp.
 MCP_TRANSPORT = os.getenv("MCP_TRANSPORT", "stdio").lower()
 MCP_HOST = os.getenv("MCP_HOST", "127.0.0.1")
 MCP_PORT = int(os.getenv("MCP_PORT", "9000"))
 
 mcp = FastMCP("gernas-rag-search", host=MCP_HOST, port=MCP_PORT)
 
+# ── Lazy pipeline singletons ───────────────────────────────────────────────────
+_pipeline = None
+_generator = None
+_init_lock = asyncio.Lock()
+_init_error: str | None = None
+
+
+async def _ensure_pipeline():
+    """Initialise the retrieval pipeline once on first use (thread-safe)."""
+    global _pipeline, _generator, _init_error
+
+    if _pipeline is not None:
+        return _pipeline, _generator
+
+    async with _init_lock:
+        # Re-check after acquiring the lock in case another coroutine initialised first.
+        if _pipeline is not None:
+            return _pipeline, _generator
+        if _init_error is not None:
+            raise RuntimeError(f"Pipeline failed to initialise: {_init_error}")
+
+        try:
+            from gernas_rag.config.settings import get_settings
+            from gernas_rag.embeddings.factory import get_embedder
+            from gernas_rag.generation.generator import ResponseGenerator
+            from gernas_rag.llm.factory import get_llm
+            from gernas_rag.retrieval.pipeline import RetrievalPipeline
+            from gernas_rag.vectordb.factory import get_vectordb
+
+            settings = get_settings()
+            embedder = get_embedder(settings.embedding)
+            vectordb = get_vectordb(settings.vectordb)
+            llm = get_llm(settings.llm)
+
+            await vectordb.create_collection(
+                settings.vectordb.collection_name, embedder.dense_dim
+            )
+
+            _pipeline = RetrievalPipeline(settings, embedder, vectordb)
+            _generator = ResponseGenerator(settings, llm)
+        except Exception as exc:
+            _init_error = str(exc)
+            raise
+
+    return _pipeline, _generator
+
 
 def _format_chunks(payload: dict) -> dict:
-    """Reshape the raw /retrieve response into a compact, citation-friendly form.
+    """Reshape a RetrieveResponse.model_dump() into a compact, citation-friendly form.
 
     The agent reads ``results`` to ground its answer; each entry carries the
     source document and clause so the model can cite ``[source · clause]``.
@@ -83,7 +125,7 @@ def _format_chunks(payload: dict) -> dict:
         "freshness_warning": payload.get("freshness_warning_global", False),
         "latency_ms": payload.get("latency_ms"),
     }
-    # Present only when the RAG service generated an answer (generate_answer=True).
+    # Present only when the RAG pipeline generated an answer (generate_answer=True).
     if payload.get("answer") is not None:
         out["answer"] = payload["answer"]
     return out
@@ -103,7 +145,7 @@ async def search_documents(
     Args:
         query: The natural-language question or topic to retrieve context for.
         top_k: How many chunks to return (1-20, default 5).
-        generate_answer: If True, the RAG service's LLM also composes a complete,
+        generate_answer: If True, the RAG pipeline's LLM also composes a complete,
             cited answer from the chunks, returned in the ``answer`` field. If
             False (default), only the chunks are returned and you should reason
             over them and cite ``[source · clause]`` yourself.
@@ -115,28 +157,23 @@ async def search_documents(
         ``{"error": <message>}``.
     """
     top_k = max(1, min(int(top_k), 20))
-    headers = {"X-API-Key": RAG_API_KEY} if RAG_API_KEY else {}
 
     try:
-        async with httpx.AsyncClient(timeout=60 if generate_answer else 30) as client:
-            response = await client.post(
-                f"{RAG_API_URL}/api/v1/retrieve",
-                json={
-                    "query": query,
-                    "top_k": top_k,
-                    "generate_answer": generate_answer,
-                },
-                headers=headers,
-            )
-            response.raise_for_status()
-            return _format_chunks(response.json())
-    except httpx.HTTPStatusError as exc:
-        return {
-            "error": f"RAG service returned {exc.response.status_code}: "
-            f"{exc.response.text[:200]}"
-        }
-    except httpx.HTTPError as exc:
-        return {"error": f"Could not reach RAG service at {RAG_API_URL}: {exc}"}
+        pipeline, generator = await _ensure_pipeline()
+
+        from gernas_rag.models.retrieval import RetrieveRequest
+
+        request = RetrieveRequest(query=query, top_k=top_k, generate_answer=False)
+        response = await pipeline.retrieve(request)
+
+        if generate_answer and response.chunks:
+            answer = await generator.generate(query, response.chunks)
+            response = response.model_copy(update={"answer": answer})
+
+        return _format_chunks(response.model_dump())
+
+    except Exception as exc:
+        return {"error": f"RAG pipeline error: {exc}"}
 
 
 if __name__ == "__main__":
@@ -146,4 +183,4 @@ if __name__ == "__main__":
     elif MCP_TRANSPORT == "sse":
         mcp.run(transport="sse")
     else:
-        mcp.run()  # stdio (default)
+        mcp.run()  # stdio (default — co-located clients spawn this as a subprocess)

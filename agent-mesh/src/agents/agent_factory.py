@@ -17,7 +17,9 @@ def create_demo_agent(
     instructions: str,
     tools: Optional[List[Any]] = None,
     extra_middlewares: Optional[List[AgentMiddleware]] = None,
-    log_path: str = None
+    log_path: str = None,
+    model: Optional[str] = None,
+    api_key: Optional[str] = None,
 ) -> Agent:
     """
     Creates and returns a Microsoft Agent Framework Agent powered by Groq.
@@ -25,8 +27,8 @@ def create_demo_agent(
     """
     # 1. Instantiate Groq client via OpenAI Chat Completions-compatible endpoint
     client = OpenAIChatCompletionClient(
-        model=Config.GROQ_MODEL,
-        api_key=Config.GROQ_API_KEY,
+        model=model or Config.GROQ_MODEL,
+        api_key=api_key or Config.GROQ_API_KEY,
         base_url="https://api.groq.com/openai/v1",
     )
 
