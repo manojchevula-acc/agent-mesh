@@ -7,7 +7,7 @@ import { config } from "./config";
  */
 export const apiClient = axios.create({
   baseURL: config.apiBaseURL,
-  timeout: 120_000, // retrieval + generation can be slow on CPU
+  timeout: 600_000, // retrieval + generation can be slow on CPU
   headers: {
     "Content-Type": "application/json",
   },

@@ -80,12 +80,12 @@ function formatTime(date: Date): string {
 function RouteChip({ route }: { route: string }) {
   const lower = route.toLowerCase();
   let cls = "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400";
-  if (lower.includes("rag")) {
+  if (lower.includes("hybrid")) {
+    cls = "bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300";
+  } else if (lower.includes("rag")) {
     cls = "bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300";
   } else if (lower.includes("data")) {
     cls = "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300";
-  } else if (lower.includes("hybrid")) {
-    cls = "bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300";
   }
   return (
     <span className={cn("inline-flex items-center text-xs px-2 py-0.5 rounded-full font-medium", cls)}>
