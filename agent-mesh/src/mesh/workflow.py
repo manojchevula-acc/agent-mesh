@@ -57,6 +57,14 @@ AskRemote = Callable[..., Awaitable[str]]
 # Set of all valid FAB banking role string values — used by RBACValidationExecutor.
 _ALLOWED_ROLES = {r.value for r in BankingRole}
 
+# Roles that bypass the LLM semantic compliance check. The deterministic guardrail
+# (layer 1) still applies to everyone — only the A2A compliance agent call is skipped.
+_COMPLIANCE_BYPASS_ROLES = {
+    "relationship_manager",
+    "platform_administrator",
+    "operations_manager",
+}
+
 
 @dataclass
 class MeshState:
@@ -210,6 +218,21 @@ class ComplianceExecutor(Executor):
     @handler
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
         tracer = get_active_tracer()
+
+        if state.role in _COMPLIANCE_BYPASS_ROLES:
+            state.compliance_verdict = "COMPLIANCE_PASSED: elevated role bypass"
+            state.trail.append(f"compliance_pass:elevated_role:{state.role}")
+            _log.info("Compliance BYPASS role=%s", state.role,
+                      extra={"user": state.user_name, "status": "PASS"})
+            if tracer:
+                tracer.emit_stage(
+                    "compliance", "completed",
+                    result="COMPLIANT",
+                    checks=[f"Elevated role '{state.role}' bypasses semantic compliance check."],
+                )
+            await ctx.send_message(state)
+            return
+
         if tracer:
             tracer.record_agent_invoked()
             tracer.emit_stage(
@@ -363,7 +386,11 @@ class DomainExecutor(Executor):
             )
             tracer.record_domain("Price Assist Agent", 0.96)
             tracer.record_route(route)
-            tracer.add_execution_path(route)
+            if route == "Data Layer + RAG (Hybrid)":
+                tracer.add_execution_path("Data Layer Service")
+                tracer.add_execution_path("RAG Service")
+            else:
+                tracer.add_execution_path(route)
 
             # domain_classification was started before the A2A call; complete it now
             tracer.emit_stage(

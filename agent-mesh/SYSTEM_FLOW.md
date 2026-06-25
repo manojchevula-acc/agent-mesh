@@ -51,7 +51,7 @@ The **Data** and **RAG** agents are *thin*: they hold no business logic. They co
                               │             │
                              MCP           MCP
                               ▼             ▼
-                        DataLayer(9100)  RAG(9000→8000)
+                        DataLayer(9100)  RAG(9000)
 ```
 
 ---
@@ -74,9 +74,8 @@ The **Data** and **RAG** agents are *thin*: they hold no business logic. They co
 | Service | Port | Interface |
 |---------|------|-----------|
 | DataLayer-as-a-Service (FastMCP) | 9100 | MCP / streamable HTTP — 5 SQL-view tools over MySQL `fab_semantic`. |
-| RAG-as-a-Service (MCP server) | 9000 | MCP / streamable HTTP — `search_documents`, wraps its own REST. |
-| RAG-as-a-Service (REST API) | 8000 | `POST /api/v1/retrieve` + ingest/evaluate endpoints. |
-| REST API Server | 8000* | Frontend-facing REST (`api_server.py`) — *different process from RAG REST*. |
+| RAG-as-a-Service (MCP server) | 9000 | MCP / streamable HTTP — `search_documents`, self-contained pipeline (Qdrant + BGE-M3 + reranker; no REST API dependency). |
+| REST API Server | 8000 | Frontend-facing REST (`api_server.py`) — login, query, mesh status. |
 | React Frontend (dev) | 5173 | Vite dev server — talks to `api_server.py`. |
 
 ### Visual Flow Diagram
@@ -123,8 +122,42 @@ flowchart TD
     T2 -->|A2A| RA["RAGAgent :8017"]
 
     DA -. "MCP/HTTP" .-> DL[("DataLayer :9100\nMySQL fab_semantic\n5 SQL-view tools")]
-    RA -. "MCP/HTTP" .-> RG[("RAG MCP :9000\n→ REST :8000\nQdrant + rerank")]
+    RA -. "MCP/HTTP" .-> RG[("RAG MCP :9000\nPipeline direct\nQdrant + rerank")]
 ```
+
+---
+
+## 2a. LLM Model & API Key Configuration
+
+Each agent is wired to the Groq model best suited for its task. Models and keys are fully overridable via environment variables; all fall back to `GROQ_MODEL` / `GROQ_API_KEY` if the per-agent vars are absent.
+
+### Per-Agent Model Assignments (agent-mesh)
+
+| Agent | Env Var | Default Model | Rationale |
+|-------|---------|---------------|-----------|
+| Compliance | `COMPLIANCE_MODEL` | `openai/gpt-oss-20b` | Fast production model — safety classification only, no tool calls |
+| Data Agent | `DATA_AGENT_MODEL` | `qwen/qwen3.6-27b` | Parallel tool use ✅ — calls 5 SQL-backed MCP tools |
+| RAG Agent | `RAG_AGENT_MODEL` | `qwen/qwen3.6-27b` | Parallel tool use ✅ — calls `search_documents` MCP tool |
+| Price Assist | `PRICE_ASSIST_MODEL` | `openai/gpt-oss-120b` | Highest capability — multi-step orchestration, A2A delegation, synthesis |
+
+### External Services Model Assignments
+
+| Service | Role | Model |
+|---------|------|-------|
+| RAG-as-a-Service (answer gen) | `RAG__LLM__MODEL_NAME` | `openai/gpt-oss-120b` |
+| RAG-as-a-Service (RAGAS judge) | `RAG__EVALUATION__JUDGE_MODEL` | `qwen/qwen3.6-27b` |
+| DataLayer-as-a-Service (tool agent) | default in `build_agent()` | `qwen/qwen3.6-27b` |
+
+### Two-Key Rate-Limit Strategy
+
+Two Groq API keys are distributed across consumers so neither key exhausts its TPM limit on a busy request. Each per-agent key falls back to `GROQ_API_KEY` if unset.
+
+| Key | Env Vars | Consumers |
+|-----|----------|-----------|
+| Key 1 | `COMPLIANCE_API_KEY`, `DATA_AGENT_API_KEY` | Compliance Agent, Data Agent (mesh) + DataLayer tool agent |
+| Key 2 | `RAG_AGENT_API_KEY`, `PRICE_ASSIST_API_KEY` | RAG Agent, Price Assist (mesh) + RAG answer gen + RAGAS judge |
+
+All config lives in `src/config.py` (agent-mesh) and in `rag-as-a-service/.env` / `datalayer-as-service/.env` for the backing services.
 
 ---
 
@@ -162,7 +195,7 @@ agent-mesh/
 │   │   └── api/mesh.ts             # typed REST client → api_server.py
 │   └── vite.config.ts
 ├── src/
-│   ├── config.py                   # AGENT_PORTS, A2A_TIMEOUT, *_MCP_URL, GRAFANA_*
+│   ├── config.py                   # AGENT_PORTS, A2A_TIMEOUT, *_MCP_URL, GRAFANA_*, per-agent GROQ models + API keys
 │   ├── a2a/
 │   │   ├── hosting.py              # build_agent_card() / serve() + TraceContextMiddleware
 │   │   └── clients.py              # get_remote_agent() / ask_remote()
@@ -172,7 +205,7 @@ agent-mesh/
 │   │   ├── orchestrator.py         # handle_request() + MeshResult + root OTel span
 │   │   └── workflow.py             # MeshState + 5 executors + WorkflowBuilder graph
 │   ├── agents/
-│   │   ├── agent_factory.py        # create_demo_agent() (LLM + audit + tools)
+│   │   ├── agent_factory.py        # create_demo_agent() — accepts per-agent model + api_key; falls back to GROQ_MODEL/GROQ_API_KEY
 │   │   ├── price_assist_agent.py   # PRIMARY coordinator — intent classify + delegate
 │   │   ├── data_agent.py           # thin: auto-discovers DataLayer MCP tools
 │   │   ├── rag_agent.py            # thin: auto-discovers RAG MCP search_documents
@@ -205,11 +238,12 @@ agent-mesh/
 cd datalayer-as-service
 MCP_TRANSPORT=http MCP_HOST=127.0.0.1 MCP_PORT=9100 python -m mcp_server.server
 
-# RAG-as-a-Service — REST API + MCP server
+# RAG-as-a-Service — MCP server only (self-contained; no separate REST API needed)
 cd rag-as-a-service
-uvicorn gernas_rag.main:app --app-dir src          # REST on :8000
 MCP_TRANSPORT=http MCP_HOST=127.0.0.1 MCP_PORT=9000 python -m mcp_integration.server
 ```
+
+> **Note:** The RAG MCP server now embeds the full retrieval pipeline (BGE-M3 embedder + Qdrant + reranker + LLM) in-process. It initialises lazily on the first `search_documents` call (~30s cold start while BGE-M3 loads). The separate `uvicorn gernas_rag.main:app` REST API process is no longer required for agent-mesh operation.
 
 ### 5.2 Launch the mesh — `launch_mesh.py`
 
@@ -480,22 +514,23 @@ FastMCP server over MySQL `fab_semantic`. Five tools (each takes a `customer_id`
 | `margin_analysis` | `fab_semantic.margin_analysis` | Per-deal margin decomposition vs treasury benchmark |
 | `rwa_impact` | `fab_semantic.rwa_impact_view` | RWA-weighted exposure + Basel III capital + return on RWA |
 
-### RAG-as-a-Service (unstructured) — MCP :9000 → REST :8000
+### RAG-as-a-Service (unstructured) — MCP :9000
 
-FastAPI retrieval engine. MCP exposes a single tool:
+Self-contained MCP server (`mcp_integration/server.py`). The full retrieval pipeline runs **inside the MCP server process** — no separate REST API required. MCP exposes a single tool:
 
 **`search_documents(query, top_k, generate_answer)`**
 
-Internally calls `POST /api/v1/retrieve` which runs:
+On the first call the pipeline initialises lazily (~30s for BGE-M3 model load), then runs:
 ```
 embed query (BAAI/bge-m3)
   → dense ANN search (Qdrant, top_k=40) + sparse BM25 (top_k=40)
   → RRF fusion (k=60) → 20 candidates
-  → cross-encoder reranking → top N
+  → cross-encoder reranking (BAAI/bge-reranker-v2-m3) → top N
   → freshness penalty (age > 180 days → max −30% score)
   → parent chunk expansion (full-context retrieval)
   → dedup by (source + first 200 chars)
   → return chunks with source, clause_reference, effective_date, score
+  → [optional] LLM answer generation (openai/gpt-oss-120b via Groq Key 2)
 ```
 
 Config knobs ([config.py](src/config.py)): `DATALAYER_MCP_URL` (default `http://127.0.0.1:9100/mcp`), `RAG_MCP_URL` (default `http://127.0.0.1:9000/mcp`), `RAG_API_KEY`, `MCP_REQUEST_TIMEOUT`.
@@ -685,7 +720,9 @@ Deterministic gates bracket the LLM stages (fail-closed). Peer/MCP hops soft-fai
 | [deterministic_filters.py](src/guardrails/deterministic_filters.py) | `screen_input()` + `redact_pii()` |
 | [clients.py](src/a2a/clients.py) | `ask_remote()` — A2A client |
 | [hosting.py](src/a2a/hosting.py) | `serve()` + `TraceContextMiddleware` + `build_agent_card()` |
-| [config.py](src/config.py) | Ports, MCP URLs, timeouts, observability knobs |
+| [config.py](src/config.py) | Ports, MCP URLs, timeouts, observability knobs; per-agent Groq models (`COMPLIANCE_MODEL`, `DATA_AGENT_MODEL`, `RAG_AGENT_MODEL`, `PRICE_ASSIST_MODEL`) and per-agent API keys (`COMPLIANCE_API_KEY` etc.) |
+| [agent_factory.py](src/agents/agent_factory.py) | `create_demo_agent()` — accepts per-agent `model` and `api_key`; falls back to shared `GROQ_MODEL` / `GROQ_API_KEY` |
+| [mcp_integration/server.py](../rag-as-a-service/mcp_integration/server.py) | RAG MCP server — self-contained; embeds `RetrievalPipeline` + `ResponseGenerator` in-process (lazy init on first call, no REST API dependency) |
 | [a2a_server.py](a2a_server.py) | Generic per-node A2A server (`--agent <name> --port N`) |
 | [launch_mesh.py](launch_mesh.py) | Spawns 4 A2A nodes in order; Ctrl+C tears down all |
 | [api_server.py](api_server.py) | REST bridge (`:8000`) — login, query, mesh status |
@@ -696,26 +733,22 @@ Deterministic gates bracket the LLM stages (fail-closed). Peer/MCP hops soft-fai
 
 ## 13. How to Run & Test
 
-### Full mesh (5 terminals)
+### Full mesh (4 terminals)
 
 ```bash
 # Terminal 1 — DataLayer MCP service
 cd datalayer-as-service
 MCP_TRANSPORT=http MCP_HOST=127.0.0.1 MCP_PORT=9100 python -m mcp_server.server
 
-# Terminal 2 — RAG REST API
-cd rag-as-a-service
-uvicorn gernas_rag.main:app --reload --app-dir src         # :8000
-
-# Terminal 3 — RAG MCP server
+# Terminal 2 — RAG MCP server (self-contained — no REST API needed; ~30s cold start)
 cd rag-as-a-service
 MCP_TRANSPORT=http MCP_HOST=127.0.0.1 MCP_PORT=9000 python -m mcp_integration.server
 
-# Terminal 4 — Agent mesh (4 A2A nodes)
+# Terminal 3 — Agent mesh (4 A2A nodes)
 cd agent-mesh
 python launch_mesh.py
 
-# Terminal 5 — REST API bridge + optional frontend
+# Terminal 4 — REST API bridge + optional frontend
 cd agent-mesh
 python api_server.py                    # :8000
 
@@ -764,4 +797,4 @@ python devui_app.py
 
 ---
 
-*Consolidated study guide — kept in sync with the codebase. Last updated 2026-06-24. AgentMesh 15.0.6.2026.*
+*Consolidated study guide — kept in sync with the codebase. Last updated 2026-06-25. AgentMesh 15.0.6.2026.*

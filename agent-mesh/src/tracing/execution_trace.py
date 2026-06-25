@@ -186,6 +186,34 @@ def infer_route_and_scores(
                # product structure questions (e.g. "interest rate components")
                "component"]
 
+    # Check query alone first — prevents answer-inflated data keywords from
+    # drowning out RAG signals when the user explicitly asked for both.
+    query_text = query.lower()
+    query_data_hits = [kw for kw in data_kw if kw in query_text]
+    query_rag_hits  = [kw for kw in rag_kw  if kw in query_text]
+
+    if query_data_hits and query_rag_hits:
+        route = "Data Layer + RAG (Hybrid)"
+        rationale = [
+            "Request requires both structured data and policy knowledge.",
+            f"Data keywords in query: {', '.join(query_data_hits[:3])}.",
+            f"Policy keywords in query: {', '.join(query_rag_hits[:3])}.",
+            "Data layer provides customer and pricing facts.",
+            "RAG provides policy context and compliance rules.",
+        ]
+        conf = 0.88
+        data_score = len(query_data_hits)
+        rag_score  = len(query_rag_hits)
+        base_price = 0.94 + min(data_score + rag_score, 3) * 0.01
+        knowledge_conf  = min(0.35, 0.06 + rag_score * 0.04)
+        compliance_conf = 0.04
+        alt_scores: Dict[str, float] = {
+            "Price Assist":      min(base_price, 0.98),
+            "Knowledge Assist":  knowledge_conf,
+            "Compliance Assist": compliance_conf,
+        }
+        return route, rationale, conf, alt_scores
+
     data_hits = [kw for kw in data_kw if kw in text]
     rag_hits  = [kw for kw in rag_kw  if kw in text]
     data_score = len(data_hits)
