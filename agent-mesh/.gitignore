@@ -15,5 +15,3 @@ ENV/
 data/audit_trail.jsonl
 data/conversations/
 data/audit_trail_test.jsonl
-CODEBASE_EXPLANATION.md
-SYSTEM_FLOW.md
