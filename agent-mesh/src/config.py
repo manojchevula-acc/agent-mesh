@@ -71,6 +71,11 @@ class Config:
     # spans cover the same ground (avoids duplicate telemetry).
     ENABLE_TRACE_JSONL: bool = os.getenv("ENABLE_TRACE_JSONL", "false").lower() in ("1", "true", "yes")
 
+    # Custom business metrics (counters + histograms) for guardrails, RBAC,
+    # compliance, routing, A2A hops, and mesh-level request outcomes.
+    # Set to false to suppress custom metric cardinality in tight environments.
+    ENABLE_BUSINESS_METRICS: bool = os.getenv("ENABLE_BUSINESS_METRICS", "true").lower() in ("1", "true", "yes")
+
     # ----------------------------------------------------------------------
     # DevUI (Microsoft Agent Framework dev tool) — Docker-free live trace viewer
     # ----------------------------------------------------------------------

@@ -140,11 +140,35 @@ def _instrument_httpx(log: logging.Logger) -> None:
         )
 
 
+def _ensure_composite_propagator() -> None:
+    """Ensure the global propagator includes both W3C TraceContext and Baggage.
+
+    The default propagator set by ``configure_otel_providers()`` may not include
+    the Baggage propagator. Setting an explicit composite propagator guarantees
+    that W3C ``baggage`` headers (carrying fab.request_id, fab.user, fab.role,
+    fab.session_id) are injected into every outbound httpx request and extracted
+    from every inbound A2A request header — for free, without touching call sites.
+    """
+    try:
+        from opentelemetry.propagate import set_global_textmap
+        from opentelemetry.propagators.composite import CompositePropagator
+        from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+        from opentelemetry.baggage.propagation import W3CBaggagePropagator
+
+        set_global_textmap(CompositePropagator([
+            TraceContextTextMapPropagator(),
+            W3CBaggagePropagator(),
+        ]))
+    except Exception:
+        pass  # non-fatal; trace propagation still works without baggage
+
+
 def _setup_dev(log: logging.Logger) -> None:
     """Dev: framework OTel providers exporting to console and/or OTLP."""
     from agent_framework.observability import configure_otel_providers
 
     configure_otel_providers(enable_sensitive_data=Config.ENABLE_SENSITIVE_DATA)
+    _ensure_composite_propagator()
     log.info(
         "Observability profile=dev: OTLP endpoint=%s, console=%s, sensitive=%s",
         Config.OTEL_EXPORTER_OTLP_ENDPOINT, Config.ENABLE_CONSOLE_EXPORTERS,
@@ -223,6 +247,7 @@ def _setup_grafana(log: logging.Logger) -> None:
     )
 
     enable_instrumentation(enable_sensitive_data=Config.ENABLE_SENSITIVE_DATA)
+    _ensure_composite_propagator()
     log.info(
         "Observability profile=grafana: OTLP/HTTP → %s (Tempo + Mimir + Loki).",
         endpoint,
@@ -250,4 +275,5 @@ def _setup_prod(log: logging.Logger) -> None:
     )
     # Activate Agent Framework's telemetry code paths on the Azure-configured providers.
     enable_instrumentation(enable_sensitive_data=Config.ENABLE_SENSITIVE_DATA)
+    _ensure_composite_propagator()
     log.info("Observability profile=prod: Azure Monitor active (live metrics on).")

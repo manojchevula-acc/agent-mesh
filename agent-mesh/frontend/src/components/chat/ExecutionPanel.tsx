@@ -52,7 +52,6 @@ function Step({ index, event }: StepProps) {
     (event.checks && event.checks.length > 0) ||
     event.result ||
     (event.rationale && event.rationale.length > 0) ||
-    event.confidence != null ||
     (event.metadata && Object.keys(event.metadata).length > 0);
 
   return (
@@ -144,31 +143,6 @@ function Step({ index, event }: StepProps) {
             </div>
           )}
 
-          {/* Confidence */}
-          {event.confidence != null && (
-            <div className="flex items-center gap-2 mt-1.5">
-              <span className="text-[10px] uppercase tracking-wider text-muted">Confidence</span>
-              <ConfBar score={event.confidence} />
-              <span className="font-medium text-fg">{Math.round(event.confidence * 100)}%</span>
-            </div>
-          )}
-
-          {/* Alt domain scores (from metadata.alt_scores) */}
-          {event.metadata?.alt_scores && typeof event.metadata.alt_scores === "object" && (
-            <div className="mt-1.5">
-              <p className="text-[10px] uppercase tracking-wider text-muted mb-1">Domain Confidence Breakdown</p>
-              {Object.entries(event.metadata.alt_scores as Record<string, number>)
-                .sort(([, a], [, b]) => b - a)
-                .map(([domain, score]) => (
-                  <div key={domain} className="flex items-center gap-2 py-0.5">
-                    <span className="w-32 truncate text-muted">{domain}</span>
-                    <ConfBar score={score} />
-                    <span className="font-medium text-fg w-8 text-right">{Math.round(score * 100)}%</span>
-                  </div>
-                ))}
-            </div>
-          )}
-
           {/* Agent handoff tree (from metadata.handoff_path) */}
           {event.stage === "agent_handoff" && Array.isArray(event.metadata?.handoff_path) && (
             <div className="mt-1.5">
@@ -202,20 +176,6 @@ function Step({ index, event }: StepProps) {
   );
 }
 
-// ── Confidence bar ───────────────────────────────────────────────────────────
-
-function ConfBar({ score }: { score: number }) {
-  const pct = Math.round(score * 100);
-  return (
-    <div className="flex-1 max-w-[80px] h-1.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
-      <div
-        className="h-full rounded-full bg-brand-500"
-        style={{ width: `${pct}%` }}
-      />
-    </div>
-  );
-}
-
 // ── Agent handoff tree ───────────────────────────────────────────────────────
 
 function HandoffTree({ path }: { path: string[] }) {
@@ -242,7 +202,6 @@ function SummaryTable({ result }: { result: MeshResult }) {
   if (result.agents_invoked != null) rows.push({ label: "Agents Invoked", value: String(result.agents_invoked) });
   if (result.tools_used != null) rows.push({ label: "Tools Used", value: String(result.tools_used) });
   if (result.total_duration_ms != null) rows.push({ label: "Total Duration", value: `${(result.total_duration_ms / 1000).toFixed(1)} s` });
-  if (result.confidence != null) rows.push({ label: "Confidence", value: `${Math.round(result.confidence * 100)}%` });
   rows.push({
     label: "Status",
     value: result.blocked ? `BLOCKED (at ${result.block_stage ?? "unknown"})` : "SUCCESS",

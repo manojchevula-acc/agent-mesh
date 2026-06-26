@@ -50,7 +50,7 @@ class TraceContextFilter(logging.Filter):
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
-        trace_id = span_id = parent_span_id = "-"
+        trace_id = span_id = parent_span_id = request_id = "-"
         try:
             from opentelemetry import trace, baggage  # local import: optional dep
 
@@ -61,11 +61,14 @@ class TraceContextFilter(logging.Filter):
                 span_id = format(ctx.span_id, "016x")
             # parent span id is not directly exposed; surface it from baggage if set
             parent_span_id = baggage.get_baggage("parent_span_id") or "-"
+            # request_id propagated as W3C baggage (set by orchestrator entry point)
+            request_id = baggage.get_baggage("fab.request_id") or "-"
         except Exception:
             pass
         record.trace_id = trace_id
         record.span_id = span_id
         record.parent_span_id = parent_span_id
+        record.request_id = request_id
         return True
 
 
@@ -80,6 +83,7 @@ class _JsonFormatter(logging.Formatter):
             "trace_id": getattr(record, "trace_id", "-"),
             "span_id": getattr(record, "span_id", "-"),
             "parent_span_id": getattr(record, "parent_span_id", "-"),
+            "request_id": getattr(record, "request_id", "-"),
             "msg": record.getMessage(),
         }
         # Surface common correlation extras when present.
@@ -95,7 +99,7 @@ class _JsonFormatter(logging.Formatter):
 
 _TEXT_FORMAT = (
     "%(asctime)s | %(levelname)-8s | %(name)-16s | "
-    "trace=%(trace_id)s span=%(span_id)s parent=%(parent_span_id)s | %(message)s"
+    "trace=%(trace_id)s span=%(span_id)s req=%(request_id)s | %(message)s"
 )
 
 

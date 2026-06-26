@@ -13,6 +13,7 @@ Two safeguards:
    coordinator can tell the user a source is unavailable instead of crashing.
 """
 import sys
+import time
 import pathlib
 import contextvars
 
@@ -33,12 +34,30 @@ async def _consult_peer(node: str, question: str, unavailable_label: str) -> str
     if depth >= _MAX_PEER_DEPTH:
         return "PEER_LIMIT: delegation depth exceeded; aborting to prevent loops."
     token = _peer_depth.set(depth + 1)
+    t0 = time.perf_counter()
+    error_occurred = False
     try:
-        return await ask_remote(node, question)
+        result = await ask_remote(node, question)
+        return result
     except Exception as e:
+        error_occurred = True
         return f"{unavailable_label}: could not reach the {node} agent ({e})."
     finally:
         _peer_depth.reset(token)
+        # Enrich the enclosing execute_tool span (created by Agent Framework for
+        # the @tool function) with peer delegation metadata so traces show which
+        # sub-agent was consulted, at what depth, and how long it took.
+        try:
+            from opentelemetry import trace
+            span = trace.get_current_span()
+            if span and span.is_recording():
+                elapsed_ms = int((time.perf_counter() - t0) * 1000)
+                span.set_attribute("peer.target_node", node)
+                span.set_attribute("peer.depth",       depth)
+                span.set_attribute("peer.result",      "ERROR" if error_occurred else "SUCCESS")
+                span.set_attribute("peer.duration_ms", elapsed_ms)
+        except Exception:
+            pass
 
 
 @tool(description=(

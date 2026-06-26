@@ -150,9 +150,9 @@ def _write_local(event: dict) -> None:
 def emit(event: TraceEvent) -> None:
     """Writes the event to the optional JSONL debug sink.
 
-    No-op unless ``Config.ENABLE_TRACE_JSONL`` is set. Deliberately does NOT emit
-    an OpenTelemetry span: the Workflow/Agent layers already own the trace tree,
-    so emitting here would duplicate telemetry.
+    No-op unless ``Config.ENABLE_TRACE_JSONL`` is set. When enabled, also emits
+    an OTel span via ``_otel_span`` so the event appears in trace backends
+    alongside the framework-native spans.
     """
     if not Config.ENABLE_TRACE_JSONL:
         return
@@ -160,7 +160,7 @@ def emit(event: TraceEvent) -> None:
     _write_local(d)
 
 
-# -- Typed emitters � mesh-specific layers only --------------------------------
+# -- Typed emitters� mesh-specific layers only --------------------------------
 
 def trace_guardrail(
     query: str, passed: bool, categories: list, duration_ms: int,
@@ -173,6 +173,14 @@ def trace_guardrail(
         attributes={"query_length": len(query), "passed": passed,
                     "blocked_categories": categories},
     ))
+    if Config.ENABLE_TRACE_JSONL:
+        _otel_span("guardrail.input_screen", {
+            "guardrail.passed":       passed,
+            "guardrail.categories":   ",".join(categories),
+            "guardrail.query_length": len(query),
+            "guardrail.duration_ms":  duration_ms,
+        }, status="PASS" if passed else "BLOCK",
+           error=None if passed else f"Blocked: {','.join(categories)}")
 
 
 def trace_a2a_call(
@@ -189,6 +197,13 @@ def trace_a2a_call(
                     "response_preview": (response or "")[:120]},
         error=error,
     ))
+    if Config.ENABLE_TRACE_JSONL:
+        _otel_span(f"a2a.call.{node}", {
+            "a2a.target_node":     node,
+            "a2a.prompt_length":   len(prompt),
+            "a2a.response_length": len(response) if response else 0,
+            "a2a.duration_ms":     duration_ms,
+        }, status=status, error=error)
 
 
 def trace_access_control(
@@ -202,6 +217,14 @@ def trace_access_control(
         attributes={"domain": domain, "user_role": role,
                     "allowed": allowed, "reason": reason},
     ))
+    if Config.ENABLE_TRACE_JSONL:
+        _otel_span(f"access_control.{domain}", {
+            "rbac.domain":  domain,
+            "rbac.role":    role,
+            "rbac.allowed": allowed,
+            "rbac.reason":  reason,
+        }, status="PASS" if allowed else "DENY",
+           error=None if allowed else reason)
 
 
 def trace_compliance(
@@ -216,6 +239,14 @@ def trace_compliance(
         attributes={"query_length": len(query), "passed": passed,
                     "verdict_preview": verdict[:120]},
     ))
+    if Config.ENABLE_TRACE_JSONL:
+        _otel_span("compliance.check", {
+            "compliance.passed":          passed,
+            "compliance.query_length":    len(query),
+            "compliance.verdict_preview": verdict[:120],
+            "compliance.duration_ms":     duration_ms,
+        }, status="PASS" if passed else "FAIL",
+           error=None if passed else verdict[:120])
 
 
 def trace_payment_gate(
@@ -228,6 +259,11 @@ def trace_payment_gate(
         trace_id=trace_id, parent_span_id=parent_span_id,
         attributes={"approved": approved},
     ))
+    if Config.ENABLE_TRACE_JSONL:
+        _otel_span("payment.gate", {
+            "payment.approved": approved,
+        }, status="APPROVE" if approved else "DENY",
+           error=None if approved else "Payment gate denied")
 
 
 def trace_flow_step(
@@ -241,3 +277,7 @@ def trace_flow_step(
         status=status, trace_id=trace_id, parent_span_id=parent_span_id,
         duration_ms=duration_ms, attributes=attrs or {}, error=error,
     ))
+    if Config.ENABLE_TRACE_JSONL:
+        span_attrs: dict = {"flow.step": step, "flow.duration_ms": duration_ms}
+        span_attrs.update({k: str(v) for k, v in (attrs or {}).items()})
+        _otel_span(f"flow.{step}", span_attrs, status=status, error=error)

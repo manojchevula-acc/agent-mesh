@@ -56,21 +56,20 @@ INTENT CLASSIFICATION — HOW TO DECIDE
 2. Pure knowledge / document query
    ("What is the pricing floor for a BB-rated AED loan?",
     "What does the credit policy say about fee waivers?",
-    "What are the KYC requirements?", "What is the concentration limit?")
+    "What are the KYC requirements?", "What is the concentration limit?", 
+    "What are the features of FAB's trade finance product?",
+    "What is the process for loan restructuring?")
+   → Call query_knowledge_base for product/procedure documentation.)
    → Call query_knowledge_base only.
+   
 
-3. Pricing decision / compliance check (HYBRID)
+3. structured data query + knowledge query (HYBRID)
    ("Is CUST001's loan price compliant with policy?",
     "What price should we offer CUST002?",
     "Pricing recommendation for CUST001")
    → Call BOTH tools: fetch the deal's figures from query_structured_data AND
      the applicable floor/rule from query_knowledge_base, then compare and
      state clearly whether the deal complies and why.
-
-4. General banking / account query
-   ("What are the features of FAB's trade finance product?",
-    "What is the process for loan restructuring?")
-   → Call query_knowledge_base for product/procedure documentation.
 
 RULES
 -----

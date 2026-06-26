@@ -29,6 +29,7 @@ Design notes
 """
 from __future__ import annotations
 
+import contextlib
 import re
 import sys
 import time
@@ -47,12 +48,84 @@ from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
 from src.guardrails.deterministic_filters import screen_input, redact_pii
 from src.auth.identity_provider import BankingRole
 from src.observability import get_logger, CAT_WORKFLOW
+from src.observability.metrics import (
+    record_guardrail,
+    record_rbac,
+    record_compliance,
+    record_domain_route,
+    record_a2a_call,
+    record_pii_hits,
+)
 from src.tracing.execution_trace import get_active_tracer, infer_route_and_scores
 
 _log = get_logger(CAT_WORKFLOW)
 
 # Type alias for the injected dependency.
 AskRemote = Callable[..., Awaitable[str]]
+
+
+# ---------------------------------------------------------------------------
+# OTel helpers — crash-safe, no-op when OTel is unavailable
+# ---------------------------------------------------------------------------
+
+def _mesh_tracer():
+    """Returns the agent_framework OTel tracer, or None if OTel is unavailable."""
+    try:
+        from agent_framework.observability import get_tracer
+        return get_tracer("agent_mesh")
+    except Exception:
+        return None
+
+
+def _set_attr(span, key: str, value) -> None:
+    """Safe span attribute setter — no-op if span is None or not recording."""
+    try:
+        if span and hasattr(span, "set_attribute"):
+            span.set_attribute(key, value if isinstance(value, (bool, int, float, str)) else str(value))
+    except Exception:
+        pass
+
+
+def _add_event(span, name: str, attrs: dict | None = None) -> None:
+    """Safe span event emitter — no-op if span is None or not recording."""
+    try:
+        if span and hasattr(span, "add_event"):
+            span.add_event(name, attributes={
+                k: (v if isinstance(v, (bool, int, float, str)) else str(v))
+                for k, v in (attrs or {}).items()
+            })
+    except Exception:
+        pass
+
+
+def _set_ok(span) -> None:
+    try:
+        if span and hasattr(span, "set_status"):
+            from opentelemetry.trace import StatusCode
+            span.set_status(StatusCode.OK)
+    except Exception:
+        pass
+
+
+def _set_error(span, description: str = "") -> None:
+    try:
+        if span and hasattr(span, "set_status"):
+            from opentelemetry.trace import StatusCode
+            span.set_status(StatusCode.ERROR, description)
+    except Exception:
+        pass
+
+
+def _span_ctx(tracer, name: str, kind_internal: bool = True):
+    """Returns a context manager: a real span or contextlib.nullcontext()."""
+    try:
+        if tracer:
+            from opentelemetry.trace import SpanKind
+            kind = SpanKind.INTERNAL if kind_internal else SpanKind.CLIENT
+            return tracer.start_as_current_span(name, kind=kind)
+    except Exception:
+        pass
+    return contextlib.nullcontext()
 
 # Set of all valid FAB banking role string values — used by RBACValidationExecutor.
 _ALLOWED_ROLES = {r.value for r in BankingRole}
@@ -120,40 +193,69 @@ class InputGuardrailExecutor(Executor):
         if tracer:
             tracer.emit_stage("guardrail", "started", message="Validating input safety...")
 
-        screen = screen_input(state.query)
+        otel = _mesh_tracer()
+        t0 = time.perf_counter()
+        with _span_ctx(otel, "fab.guardrail.input_screen", kind_internal=True) as span:
+            _set_attr(span, "guardrail.stage", "input_guardrail")
+            _set_attr(span, "guardrail.query_length", len(state.query))
+            try:
+                screen = screen_input(state.query)
+                elapsed = (time.perf_counter() - t0) * 1000
 
-        if not screen.allowed:
-            state.blocked = True
-            state.block_stage = "input_guardrail"
-            state.answer = (
-                f"Request blocked by security guardrails ({', '.join(screen.categories)})."
-            )
-            state.trail.append(f"guardrail_block:{','.join(screen.categories)}")
-            _log.warning("Input guardrail BLOCK: %s", screen.reason[:160],
-                         extra={"user": state.user_name, "status": "BLOCK"})
-            if tracer:
-                tracer.record_blocked("input_guardrail")
-                tracer.emit_stage(
-                    "guardrail", "blocked",
-                    message=screen.reason[:120],
-                    result="BLOCKED",
-                    rationale=list(screen.categories),
-                )
-            await ctx.yield_output(state)
-            return
+                if not screen.allowed:
+                    categories_str = ",".join(screen.categories)
+                    _set_attr(span, "guardrail.result", "BLOCK")
+                    _set_attr(span, "guardrail.categories", categories_str)
+                    _set_attr(span, "guardrail.violations_count", len(screen.violations))
+                    _set_attr(span, "guardrail.block_reason", screen.reason[:200])
+                    _add_event(span, "guardrail.blocked", {
+                        "categories": categories_str,
+                        "reason":     screen.reason[:200],
+                    })
+                    _set_error(span, f"Input blocked: {categories_str}")
 
-        state.trail.append("guardrail_pass")
-        _log.info("Input guardrail PASS", extra={"user": state.user_name, "status": "PASS"})
-        if tracer:
-            tracer.emit_stage(
-                "guardrail", "completed",
-                result="SAFE",
-                checks=[
-                    "Prompt injection check passed",
-                    "Safety validation passed",
-                    "Content policy validation passed",
-                ],
-            )
+                    state.blocked = True
+                    state.block_stage = "input_guardrail"
+                    state.answer = (
+                        f"Request blocked by security guardrails ({', '.join(screen.categories)})."
+                    )
+                    state.trail.append(f"guardrail_block:{categories_str}")
+                    _log.warning("Input guardrail BLOCK: %s", screen.reason[:160],
+                                 extra={"user": state.user_name, "status": "BLOCK"})
+                    if tracer:
+                        tracer.record_blocked("input_guardrail")
+                        tracer.emit_stage(
+                            "guardrail", "blocked",
+                            message=screen.reason[:120],
+                            result="BLOCKED",
+                            rationale=list(screen.categories),
+                        )
+                    record_guardrail("BLOCK", screen.categories[0] if screen.categories else "none", elapsed)
+                    await ctx.yield_output(state)
+                    return
+
+                _set_attr(span, "guardrail.result", "PASS")
+                _set_attr(span, "guardrail.categories", "none")
+                _set_attr(span, "guardrail.violations_count", 0)
+                _add_event(span, "guardrail.pass", {"checks_run": 3})
+                _set_ok(span)
+
+                state.trail.append("guardrail_pass")
+                _log.info("Input guardrail PASS", extra={"user": state.user_name, "status": "PASS"})
+                if tracer:
+                    tracer.emit_stage(
+                        "guardrail", "completed",
+                        result="SAFE",
+                        checks=[
+                            "Prompt injection check passed",
+                            "Safety validation passed",
+                            "Content policy validation passed",
+                        ],
+                    )
+                record_guardrail("PASS", "none", elapsed)
+            except Exception as exc:
+                _set_error(span, str(exc)[:200])
+                raise
         await ctx.send_message(state)
 
 
@@ -172,39 +274,62 @@ class RBACValidationExecutor(Executor):
         if tracer:
             tracer.emit_stage("rbac", "started")
 
-        if state.role not in _ALLOWED_ROLES:
-            state.blocked = True
-            state.block_stage = "rbac_validation"
-            state.answer = (
-                f"Access denied: role '{state.role}' is not a recognised FAB banking role. "
-                "Please authenticate with valid FAB credentials."
-            )
-            state.trail.append(f"rbac_block:{state.role}")
-            _log.warning("RBAC BLOCK: unrecognised role=%s user=%s",
-                         state.role, state.user_name,
-                         extra={"user": state.user_name, "status": "BLOCK"})
-            if tracer:
-                tracer.record_blocked("rbac_validation")
-                tracer.emit_stage(
-                    "rbac", "blocked",
-                    message=f"Role '{state.role}' is not a recognised FAB banking role.",
-                    result="ACCESS DENIED",
-                )
-            await ctx.yield_output(state)
-            return
+        otel = _mesh_tracer()
+        t0 = time.perf_counter()
+        with _span_ctx(otel, "fab.rbac.validate", kind_internal=True) as span:
+            _set_attr(span, "rbac.role", state.role)
+            _set_attr(span, "rbac.user", state.user_name)
+            _set_attr(span, "rbac.allowed_role_count", len(_ALLOWED_ROLES))
+            try:
+                elapsed = (time.perf_counter() - t0) * 1000
 
-        state.trail.append(f"rbac_pass:{state.role}")
-        _log.info("RBAC PASS role=%s", state.role,
-                  extra={"user": state.user_name, "status": "PASS"})
-        if tracer:
-            tracer.emit_stage(
-                "rbac", "completed",
-                result="AUTHORIZED",
-                checks=[
-                    f"Role '{state.role}' validated",
-                    "FAB banking role permissions granted",
-                ],
-            )
+                if state.role not in _ALLOWED_ROLES:
+                    _set_attr(span, "rbac.result", "BLOCK")
+                    _set_attr(span, "rbac.block_reason", f"Role '{state.role}' not in allowed set")
+                    _add_event(span, "rbac.denied", {"role": state.role, "reason": "unrecognised_role"})
+                    _set_error(span, f"RBAC block: role={state.role}")
+
+                    state.blocked = True
+                    state.block_stage = "rbac_validation"
+                    state.answer = (
+                        f"Access denied: role '{state.role}' is not a recognised FAB banking role. "
+                        "Please authenticate with valid FAB credentials."
+                    )
+                    state.trail.append(f"rbac_block:{state.role}")
+                    _log.warning("RBAC BLOCK: unrecognised role=%s user=%s",
+                                 state.role, state.user_name,
+                                 extra={"user": state.user_name, "status": "BLOCK"})
+                    if tracer:
+                        tracer.record_blocked("rbac_validation")
+                        tracer.emit_stage(
+                            "rbac", "blocked",
+                            message=f"Role '{state.role}' is not a recognised FAB banking role.",
+                            result="ACCESS DENIED",
+                        )
+                    record_rbac("BLOCK", state.role, elapsed)
+                    await ctx.yield_output(state)
+                    return
+
+                _set_attr(span, "rbac.result", "PASS")
+                _add_event(span, "rbac.authorized", {"role": state.role})
+                _set_ok(span)
+
+                state.trail.append(f"rbac_pass:{state.role}")
+                _log.info("RBAC PASS role=%s", state.role,
+                          extra={"user": state.user_name, "status": "PASS"})
+                if tracer:
+                    tracer.emit_stage(
+                        "rbac", "completed",
+                        result="AUTHORIZED",
+                        checks=[
+                            f"Role '{state.role}' validated",
+                            "FAB banking role permissions granted",
+                        ],
+                    )
+                record_rbac("PASS", state.role, elapsed)
+            except Exception as exc:
+                _set_error(span, str(exc)[:200])
+                raise
         await ctx.send_message(state)
 
 
@@ -219,59 +344,103 @@ class ComplianceExecutor(Executor):
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
         tracer = get_active_tracer()
 
-        if state.role in _COMPLIANCE_BYPASS_ROLES:
-            state.compliance_verdict = "COMPLIANCE_PASSED: elevated role bypass"
-            state.trail.append(f"compliance_pass:elevated_role:{state.role}")
-            _log.info("Compliance BYPASS role=%s", state.role,
-                      extra={"user": state.user_name, "status": "PASS"})
-            if tracer:
-                tracer.emit_stage(
-                    "compliance", "completed",
-                    result="COMPLIANT",
-                    checks=[f"Elevated role '{state.role}' bypasses semantic compliance check."],
-                )
-            await ctx.send_message(state)
-            return
+        otel = _mesh_tracer()
+        t0 = time.perf_counter()
+        with _span_ctx(otel, "fab.compliance.check", kind_internal=False) as span:
+            _set_attr(span, "compliance.role", state.role)
+            _set_attr(span, "compliance.user", state.user_name)
+            _set_attr(span, "compliance.query_length", len(state.query))
+            bypass = state.role in _COMPLIANCE_BYPASS_ROLES
+            _set_attr(span, "compliance.bypass", bypass)
+            try:
+                if bypass:
+                    elapsed = (time.perf_counter() - t0) * 1000
+                    _set_attr(span, "compliance.result", "BYPASSED")
+                    _add_event(span, "compliance.bypassed", {
+                        "role":   state.role,
+                        "reason": "elevated_role",
+                    })
+                    _set_ok(span)
 
-        if tracer:
-            tracer.record_agent_invoked()
-            tracer.emit_stage(
-                "compliance", "started",
-                message="Running semantic compliance check...",
-            )
+                    state.compliance_verdict = "COMPLIANCE_PASSED: elevated role bypass"
+                    state.trail.append(f"compliance_pass:elevated_role:{state.role}")
+                    _log.info("Compliance BYPASS role=%s", state.role,
+                              extra={"user": state.user_name, "status": "PASS"})
+                    if tracer:
+                        tracer.emit_stage(
+                            "compliance", "completed",
+                            result="COMPLIANT",
+                            checks=[f"Elevated role '{state.role}' bypasses semantic compliance check."],
+                        )
+                    record_compliance("BYPASSED", state.role, elapsed)
+                    await ctx.send_message(state)
+                    return
 
-        verdict = await self._ask("compliance", f"Review this request for safety: '{state.query}'")
-        state.compliance_verdict = verdict
+                if tracer:
+                    tracer.record_agent_invoked()
+                    tracer.emit_stage(
+                        "compliance", "started",
+                        message="Running semantic compliance check...",
+                    )
 
-        if "compliance_failed" in verdict.lower():
-            state.blocked = True
-            state.block_stage = "compliance"
-            state.answer = "Request blocked by the Compliance agent (semantic safety review)."
-            state.trail.append("compliance_failed")
-            _log.warning("Compliance FAIL: %s", verdict[:160],
-                         extra={"user": state.user_name, "status": "FAIL"})
-            if tracer:
-                tracer.record_blocked("compliance")
-                tracer.emit_stage(
-                    "compliance", "blocked",
-                    message="Request failed semantic safety review.",
-                    result="COMPLIANCE FAILED",
-                    rationale=[verdict[:120]],
-                )
-            await ctx.yield_output(state)
-            return
+                _add_event(span, "compliance.a2a_call.started", {"target": "compliance"})
+                verdict = await self._ask("compliance", f"Review this request for safety: '{state.query}'")
+                state.compliance_verdict = verdict
+                elapsed = (time.perf_counter() - t0) * 1000
 
-        state.trail.append("compliance_pass")
-        _log.info("Compliance PASS", extra={"user": state.user_name, "status": "PASS"})
-        if tracer:
-            tracer.emit_stage(
-                "compliance", "completed",
-                result="COMPLIANT",
-                checks=[
-                    "Regulatory validation passed",
-                    "Organization policy validation passed",
-                ],
-            )
+                if "compliance_failed" in verdict.lower():
+                    _set_attr(span, "compliance.result", "FAILED")
+                    _set_attr(span, "compliance.verdict", verdict[:120])
+                    _add_event(span, "compliance.a2a_call.completed", {
+                        "target":         "compliance",
+                        "result":         "FAILED",
+                        "verdict_preview": verdict[:80],
+                    })
+                    _add_event(span, "compliance.failed", {"verdict": verdict[:120]})
+                    _set_error(span, "Compliance check failed")
+
+                    state.blocked = True
+                    state.block_stage = "compliance"
+                    state.answer = "Request blocked by the Compliance agent (semantic safety review)."
+                    state.trail.append("compliance_failed")
+                    _log.warning("Compliance FAIL: %s", verdict[:160],
+                                 extra={"user": state.user_name, "status": "FAIL"})
+                    if tracer:
+                        tracer.record_blocked("compliance")
+                        tracer.emit_stage(
+                            "compliance", "blocked",
+                            message="Request failed semantic safety review.",
+                            result="COMPLIANCE FAILED",
+                            rationale=[verdict[:120]],
+                        )
+                    record_compliance("FAILED", state.role, elapsed)
+                    await ctx.yield_output(state)
+                    return
+
+                _set_attr(span, "compliance.result", "PASSED")
+                _set_attr(span, "compliance.verdict", verdict[:120])
+                _add_event(span, "compliance.a2a_call.completed", {
+                    "target":         "compliance",
+                    "result":         "PASSED",
+                    "verdict_preview": verdict[:80],
+                })
+                _set_ok(span)
+
+                state.trail.append("compliance_pass")
+                _log.info("Compliance PASS", extra={"user": state.user_name, "status": "PASS"})
+                if tracer:
+                    tracer.emit_stage(
+                        "compliance", "completed",
+                        result="COMPLIANT",
+                        checks=[
+                            "Regulatory validation passed",
+                            "Organization policy validation passed",
+                        ],
+                    )
+                record_compliance("PASSED", state.role, elapsed)
+            except Exception as exc:
+                _set_error(span, str(exc)[:200])
+                raise
         await ctx.send_message(state)
 
 
@@ -318,6 +487,9 @@ class DomainExecutor(Executor):
         tracer = get_active_tracer()
         t0 = time.perf_counter()
         failed = False
+        retry_reason = "none"
+        route = "unknown"
+        route_conf = 0.0
 
         if tracer:
             tracer.record_agent_invoked()
@@ -327,123 +499,147 @@ class DomainExecutor(Executor):
                 message="Analyzing intent...",
             )
 
-        try:
-            answer = await self._ask("price_assist", state.query)
-            if self._TOOL_CALL_RE.search(answer or ""):
-                _log.warning(
-                    "price_assist returned bare tool-call text; retrying once.",
-                    extra={"status": "RETRY"},
-                )
+        otel = _mesh_tracer()
+        with _span_ctx(otel, "fab.domain.dispatch", kind_internal=False) as span:
+            _set_attr(span, "domain.target_node", "price_assist")
+            _set_attr(span, "domain.user", state.user_name)
+            _set_attr(span, "domain.query_length", len(state.query))
+            try:
+                _add_event(span, "domain.a2a_call.started", {"target": "price_assist"})
                 answer = await self._ask("price_assist", state.query)
-            elif self._META_RESPONSE_RE.search(answer or ""):
-                # LLM acknowledged calling the tool but didn't include the data.
-                # Re-ask with an explicit reminder to output the complete result.
-                _log.warning(
-                    "price_assist returned meta-response without data; retrying once.",
-                    extra={"status": "RETRY"},
-                )
-                retry_prompt = (
-                    f"{state.query}\n\n"
-                    "IMPORTANT: Your previous response did not include the actual data. "
-                    "You MUST copy the COMPLETE raw output returned by the tool into your "
-                    "response — every field, every row, every figure. Do NOT say 'I retrieved' "
-                    "or 'I called'; just show the data."
-                )
-                answer = await self._ask("price_assist", retry_prompt)
-            elif self._HALLUCINATION_RE.search(answer or ""):
-                # LLM generated bracket-placeholder template text (e.g. [Name],
-                # [Email Address]) instead of real tool output.  Retry with an
-                # explicit instruction to use only values from the tool.
-                _log.warning(
-                    "price_assist returned hallucinated placeholder text; retrying once.",
-                    extra={"status": "RETRY"},
-                )
-                retry_prompt = (
-                    f"{state.query}\n\n"
-                    "CRITICAL: Your previous response contained placeholder text like "
-                    "[Name] or [Value] that is NOT real data. You MUST call the tool, "
-                    "then copy the EXACT values it returns — customer names, figures, "
-                    "percentages — verbatim. NEVER invent or template any field."
-                )
-                answer = await self._ask("price_assist", retry_prompt)
-        except Exception as exc:
-            answer = f"The banking assistant is currently unavailable ({exc})."
-            failed = True
-            state.trail.append("domain_error:price_assist")
-            _log.warning("Domain hop failed node=price_assist: %s", exc,
-                         extra={"status": "ERROR"})
-        else:
-            state.trail.append("domain_answer:price_assist")
-            _log.info("Domain answer (%d chars)", len(answer or ""),
-                      extra={"status": "SUCCESS"})
-
-        total_ms = int((time.perf_counter() - t0) * 1000)
-        state.answer = answer
-
-        if tracer and not failed:
-            route, route_rationale, route_conf, alt_scores = infer_route_and_scores(
-                state.query, answer
-            )
-            tracer.record_domain("Price Assist Agent", 0.96)
-            tracer.record_route(route)
-            if route == "Data Layer + RAG (Hybrid)":
-                tracer.add_execution_path("Data Layer Service")
-                tracer.add_execution_path("RAG Service")
+                if self._TOOL_CALL_RE.search(answer or ""):
+                    retry_reason = "tool_call_echo"
+                    _log.warning(
+                        "price_assist returned bare tool-call text; retrying once.",
+                        extra={"status": "RETRY"},
+                    )
+                    _add_event(span, "domain.retry", {"reason": retry_reason, "attempt": 2})
+                    answer = await self._ask("price_assist", state.query)
+                elif self._META_RESPONSE_RE.search(answer or ""):
+                    retry_reason = "meta_response"
+                    _log.warning(
+                        "price_assist returned meta-response without data; retrying once.",
+                        extra={"status": "RETRY"},
+                    )
+                    _add_event(span, "domain.retry", {"reason": retry_reason, "attempt": 2})
+                    retry_prompt = (
+                        f"{state.query}\n\n"
+                        "IMPORTANT: Your previous response did not include the actual data. "
+                        "You MUST copy the COMPLETE raw output returned by the tool into your "
+                        "response — every field, every row, every figure. Do NOT say 'I retrieved' "
+                        "or 'I called'; just show the data."
+                    )
+                    answer = await self._ask("price_assist", retry_prompt)
+                elif self._HALLUCINATION_RE.search(answer or ""):
+                    retry_reason = "hallucination"
+                    _log.warning(
+                        "price_assist returned hallucinated placeholder text; retrying once.",
+                        extra={"status": "RETRY"},
+                    )
+                    _add_event(span, "domain.retry", {"reason": retry_reason, "attempt": 2})
+                    retry_prompt = (
+                        f"{state.query}\n\n"
+                        "CRITICAL: Your previous response contained placeholder text like "
+                        "[Name] or [Value] that is NOT real data. You MUST call the tool, "
+                        "then copy the EXACT values it returns — customer names, figures, "
+                        "percentages — verbatim. NEVER invent or template any field."
+                    )
+                    answer = await self._ask("price_assist", retry_prompt)
+            except Exception as exc:
+                answer = f"The banking assistant is currently unavailable ({exc})."
+                failed = True
+                state.trail.append("domain_error:price_assist")
+                _log.warning("Domain hop failed node=price_assist: %s", exc,
+                             extra={"status": "ERROR"})
+                _add_event(span, "domain.error", {"error": str(exc)[:200]})
+                _set_error(span, str(exc)[:200])
             else:
-                tracer.add_execution_path(route)
+                state.trail.append("domain_answer:price_assist")
+                _log.info("Domain answer (%d chars)", len(answer or ""),
+                          extra={"status": "SUCCESS"})
 
-            # domain_classification was started before the A2A call; complete it now
-            tracer.emit_stage(
-                "domain_classification", "completed",
-                result="Price Assist Agent",
-                confidence=0.96,
-                checks=["Request classified to pricing domain"],
-                rationale=[
-                    "User is requesting pricing or banking information.",
-                    "Price Assist domain has highest confidence score.",
-                    "Historical routing pattern matched.",
-                ],
-                alt_scores=alt_scores,
-            )
+            total_ms = int((time.perf_counter() - t0) * 1000)
+            state.answer = answer
 
-            # Routing, handoff, retrieval, and response happened remotely inside
-            # PriceAssistAgent. Emit completed events so the CLI renders the full flow.
-            tracer.emit_stage(
-                "routing", "completed",
-                result=route,
-                confidence=route_conf,
-                checks=["Evaluated available retrieval strategies"],
-                rationale=route_rationale,
-            )
+            _set_attr(span, "domain.retry_reason", retry_reason)
+            _set_attr(span, "domain.retried", retry_reason != "none")
+            _set_attr(span, "domain.result", "ERROR" if failed else "SUCCESS")
+            _set_attr(span, "domain.answer_length", len(answer or ""))
 
-            handoff_path = [
-                "Coordinator Agent", "Price Assist Agent", route, "Response Generator"
-            ]
-            tracer.emit_stage(
-                "agent_handoff", "completed",
-                result="Handoff successful",
-                handoff_path=handoff_path,
-            )
+            if tracer and not failed:
+                route, route_rationale, route_conf, alt_scores = infer_route_and_scores(
+                    state.query, answer
+                )
+                tracer.record_domain("Price Assist Agent", 0.96)
+                tracer.record_route(route)
+                if route == "Data Layer + RAG (Hybrid)":
+                    tracer.add_execution_path("Data Layer Service")
+                    tracer.add_execution_path("RAG Service")
+                else:
+                    tracer.add_execution_path(route)
 
-            tracer.record_tool_used()
-            retrieval_ms = max(50, int(total_ms * 0.35))
-            tracer.emit_stage(
-                "data_retrieval", "completed",
-                result="Data retrieved successfully",
-                checks=["Query generated", "Query validated", "Data retrieved"],
-                duration_ms=retrieval_ms,
-                latency_ms=retrieval_ms,
-            )
+                tracer.emit_stage(
+                    "domain_classification", "completed",
+                    result="Price Assist Agent",
+                    confidence=0.96,
+                    checks=["Request classified to pricing domain"],
+                    rationale=[
+                        "User is requesting pricing or banking information.",
+                        "Price Assist domain has highest confidence score.",
+                        "Historical routing pattern matched.",
+                    ],
+                    alt_scores=alt_scores,
+                )
+                tracer.emit_stage(
+                    "routing", "completed",
+                    result=route,
+                    confidence=route_conf,
+                    checks=["Evaluated available retrieval strategies"],
+                    rationale=route_rationale,
+                )
+                handoff_path = [
+                    "Coordinator Agent", "Price Assist Agent", route, "Response Generator"
+                ]
+                tracer.emit_stage(
+                    "agent_handoff", "completed",
+                    result="Handoff successful",
+                    handoff_path=handoff_path,
+                )
+                tracer.record_tool_used()
+                retrieval_ms = max(50, int(total_ms * 0.35))
+                tracer.emit_stage(
+                    "data_retrieval", "completed",
+                    result="Data retrieved successfully",
+                    checks=["Query generated", "Query validated", "Data retrieved"],
+                    duration_ms=retrieval_ms,
+                    latency_ms=retrieval_ms,
+                )
+                tracer.emit_stage(
+                    "response_generation", "completed",
+                    result="Response generated",
+                    checks=[
+                        "Context assembled",
+                        "Response generated",
+                        "Hallucination checks passed",
+                    ],
+                )
 
-            tracer.emit_stage(
-                "response_generation", "completed",
-                result="Response generated",
-                checks=[
-                    "Context assembled",
-                    "Response generated",
-                    "Hallucination checks passed",
-                ],
-            )
+                _set_attr(span, "domain.route", route)
+                _set_attr(span, "domain.route_confidence", route_conf)
+                _add_event(span, "domain.a2a_call.completed", {
+                    "target":        "price_assist",
+                    "result":        "SUCCESS",
+                    "answer_length": len(answer or ""),
+                })
+                _add_event(span, "domain.route_inferred", {
+                    "route":      route,
+                    "confidence": route_conf,
+                })
+                _set_ok(span)
+                record_a2a_call("price_assist", "SUCCESS", float(total_ms))
+                record_domain_route(route, float(total_ms))
+            elif failed:
+                record_a2a_call("price_assist", "ERROR", float(total_ms))
 
         await ctx.send_message(state)
 
@@ -453,7 +649,29 @@ class OutputRedactionExecutor(Executor):
 
     @handler
     async def run(self, state: MeshState, ctx: WorkflowContext[Never, MeshState]) -> None:
-        state.answer = redact_pii(state.answer)
+        otel = _mesh_tracer()
+        with _span_ctx(otel, "fab.output.redact", kind_internal=True) as span:
+            original_len = len(state.answer or "")
+            _set_attr(span, "redaction.input_length", original_len)
+            try:
+                state.answer = redact_pii(state.answer)
+                output_len = len(state.answer or "")
+                pii_count = state.answer.count("[REDACTED_")
+                pii_found = original_len != output_len or pii_count > 0
+
+                _set_attr(span, "redaction.output_length", output_len)
+                _set_attr(span, "redaction.pii_found", pii_found)
+                _add_event(span, "output.redaction.completed", {
+                    "input_length":  original_len,
+                    "output_length": output_len,
+                    "pii_found":     pii_found,
+                })
+                _set_ok(span)
+                record_pii_hits(pii_count)
+            except Exception as exc:
+                _set_error(span, str(exc)[:200])
+                raise
+
         state.trail.append("output_redacted")
         _log.info("Request complete trail=%s", " -> ".join(state.trail),
                   extra={"user": state.user_name, "status": "SUCCESS"})

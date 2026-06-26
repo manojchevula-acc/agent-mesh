@@ -24,7 +24,6 @@ export interface ExecutionEvent {
   status: string;           // "started" | "completed" | "blocked" | "failed"
   message?: string;
   result?: string | null;
-  confidence?: number | null;
   rationale?: string[];
   checks?: string[];
   metadata?: Record<string, unknown>;
@@ -45,7 +44,6 @@ export interface MeshResult {
   agents_invoked?: number;
   tools_used?: number;
   total_duration_ms?: number;
-  confidence?: number | null;
   // Full step-by-step event stream for the execution transparency panel
   events?: ExecutionEvent[];
 }

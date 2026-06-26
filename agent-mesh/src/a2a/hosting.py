@@ -41,13 +41,32 @@ class TraceContextMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request, call_next):
         token = None
-        ctx = None
         try:
-            from opentelemetry import context as otel_context
+            from opentelemetry import context as otel_context, baggage, trace
             from opentelemetry.propagate import extract
 
+            # Extract both W3C traceparent AND baggage from inbound headers.
+            # The composite propagator (set by _ensure_composite_propagator) handles both.
             ctx = extract(dict(request.headers))
             token = otel_context.attach(ctx)
+
+            # Enrich the active span (created by ASGI instrumentation) with the
+            # caller's identity from propagated baggage so remote spans are queryable
+            # by request_id / user / role in Grafana Tempo.
+            try:
+                span = trace.get_current_span()
+                if span and span.is_recording():
+                    for baggage_key, span_attr in (
+                        ("fab.request_id", "fab.request_id"),
+                        ("fab.user",       "fab.inbound.user"),
+                        ("fab.role",       "fab.inbound.role"),
+                        ("fab.session_id", "fab.inbound.session_id"),
+                    ):
+                        val = baggage.get_baggage(baggage_key, context=ctx)
+                        if val:
+                            span.set_attribute(span_attr, val)
+            except Exception:
+                pass
         except Exception:
             token = None
         try:
