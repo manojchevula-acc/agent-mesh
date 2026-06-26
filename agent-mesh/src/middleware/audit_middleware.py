@@ -8,9 +8,16 @@ from typing import Any, List, Dict
 
 from agent_framework import AgentMiddleware, AgentContext
 from src.config import Config
-from src.observability import get_logger, CAT_AGENT
+from src.observability import get_logger, CAT_AGENT, CAT_MCP
 
 _log = get_logger(CAT_AGENT)
+_mcp_log = get_logger(CAT_MCP)
+
+# Maps agent name → MCP service label for metric/log attribution.
+_MCP_AGENT_SERVICE: dict[str, str] = {
+    "DataAgent": "datalayer",
+    "RAGAgent":  "rag",
+}
 
 
 def _trace_ids() -> tuple[str, str]:
@@ -142,18 +149,38 @@ class AuditMiddleware(AgentMiddleware):
             scrubbed_output = self._redact_pii(raw_output)
             trace_id, span_id = _trace_ids()
 
+            # Pull identity from W3C baggage so audit records on remote A2A nodes
+            # carry the originating user context, not just the session id.
+            request_id = "-"
+            baggage_user = "-"
+            baggage_role = "-"
+            try:
+                from opentelemetry import baggage as _baggage
+                request_id  = _baggage.get_baggage("fab.request_id") or "-"
+                baggage_user = _baggage.get_baggage("fab.user")      or "-"
+                baggage_role = _baggage.get_baggage("fab.role")      or "-"
+                if session_id == "default_session":
+                    bag_sess = _baggage.get_baggage("fab.session_id")
+                    if bag_sess:
+                        session_id = bag_sess
+            except Exception:
+                pass
+
             # 4. Formulate the audit log entry (immutable compliance trail).
             #    Correlated with the SDK's invoke_agent span via trace/span ids.
             log_entry = {
-                "timestamp": timestamp,
-                "trace_id": trace_id,
-                "span_id": span_id,
+                "timestamp":  timestamp,
+                "request_id": request_id,
+                "trace_id":   trace_id,
+                "span_id":    span_id,
                 "session_id": session_id,
+                "user":       baggage_user,
+                "role":       baggage_role,
                 "agent_name": agent_name,
-                "inputs": scrubbed_inputs,
-                "output": scrubbed_output,
-                "status": status,
-                "latency_ms": latency_ms
+                "inputs":     scrubbed_inputs,
+                "output":     scrubbed_output,
+                "status":     status,
+                "latency_ms": latency_ms,
             }
             if error_message:
                 log_entry["error"] = error_message
@@ -166,6 +193,27 @@ class AuditMiddleware(AgentMiddleware):
             except Exception:
                 # Middleware logging failures should not crash the core application flow
                 pass
+
+            # 5b. Record MCP business metrics + log line for MCP-backed agents.
+            #     The Agent Framework emits an execute_tool span per tool call (visible in
+            #     Tempo), but our custom fab.mcp.calls.total counter and mesh.mcp log
+            #     need a separate hook. AuditMiddleware runs per agent invocation which
+            #     gives us service-level granularity (datalayer / rag).
+            mcp_service = _MCP_AGENT_SERVICE.get(agent_name)
+            if mcp_service:
+                try:
+                    from src.observability.metrics import record_mcp_call
+                    record_mcp_call(
+                        service=mcp_service,
+                        tool_name="agent_invocation",
+                        result=status,
+                    )
+                    _mcp_log.info(
+                        "service=%s agent=%s status=%s latency_ms=%d req=%s",
+                        mcp_service, agent_name, status, latency_ms, request_id,
+                    )
+                except Exception:
+                    pass
 
             # 6. Structured, trace-correlated application log line.
             try:

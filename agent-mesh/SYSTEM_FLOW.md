@@ -539,46 +539,315 @@ Config knobs ([config.py](src/config.py)): `DATALAYER_MCP_URL` (default `http://
 
 ## 9. Observability
 
-Framework-first OpenTelemetry: the SDK auto-emits spans; we add the root span + pipeline stage attributes.
+AgentMesh observability has four interconnected layers: **distributed tracing** (OTel spans), **business metrics** (counters + histograms), **request identity propagation** (W3C Baggage), and **structured logging + audit trail**. All four layers share the same `request_id` and `trace_id` as correlation keys, so a single query can be followed end-to-end across every process, log line, metric bucket, and trace backend.
 
-### Span Tree (hybrid query example)
+---
+
+### 9.1 How it all fits together — one request, four signals
 
 ```
-mesh.request                       root span
-  attributes: mesh.user, mesh.role, session.id, mesh.query_length
-  │
-  ├─ executor.process input_guardrail
-  ├─ executor.process rbac_validation
-  ├─ executor.process compliance
-  │    └─ invoke_agent ComplianceAgent
-  │         └─ chat <model>
-  │
-  ├─ executor.process domain
-  │    └─ invoke_agent PriceAssistAgent
-  │         ├─ chat <model>              ← intent classification
-  │         ├─ execute_tool query_structured_data
-  │         │    └─ invoke_agent DataAgent
-  │         │         ├─ chat <model>
-  │         │         └─ execute_tool customer_360   ← MCP call to DataLayer
-  │         ├─ execute_tool query_knowledge_base
-  │         │    └─ invoke_agent RAGAgent
-  │         │         ├─ chat <model>
-  │         │         └─ execute_tool search_documents  ← MCP call to RAG
-  │         └─ chat <model>              ← answer synthesis
-  │
-  └─ executor.process output_redaction
+User query enters orchestrator
+      │
+      ├─ [W3C Baggage set]
+      │   fab.request_id = "A3F2B1C0"   ← unique per-request 8-char hex
+      │   fab.user       = "alice"
+      │   fab.role       = "credit_officer"
+      │   fab.session_id = "sess_alice"
+      │   (propagated in HTTP headers to EVERY remote agent process)
+      │
+      ├─ [OTel root span opened]
+      │   mesh.request (SpanKind.SERVER)
+      │
+      ├─ [5 pipeline stages execute — each emits its own OTel span]
+      │
+      ├─ [Business metrics recorded after each stage]
+      │   fab.guardrail.requests.total + fab.guardrail.duration
+      │   fab.rbac.requests.total      + fab.rbac.duration
+      │   ...
+      │
+      ├─ [Every log line stamped]
+      │   trace=<trace_id> span=<span_id> req=A3F2B1C0
+      │
+      └─ [Root span enriched at completion]
+          mesh.blocked = false
+          mesh.trail   = "guardrail_pass -> rbac_pass:credit_officer -> ..."
+          mesh.compliance_verdict = "COMPLIANCE_PASSED: ..."
+          + span event "mesh.request.completed"
 ```
 
-### Distributed Trace Propagation
+Result: in Grafana you can search Tempo by `fab.request_id="A3F2B1C0"` and see the full trace. Search Loki by `req=A3F2B1C0` and see every log line. Query Mimir for metric rates.
 
-- **Client side:** httpx instrumentation injects W3C `traceparent`/`tracestate` headers on every A2A hop.
-- **Server side:** `TraceContextMiddleware` (hosting.py) extracts the context from inbound request headers and attaches it for the request duration.
-- Result: all remote agents' spans become children of the calling span — one unified trace tree across processes.
+---
 
-### Log Categories
+### 9.2 Complete Span Tree (hybrid query)
+
+`[framework-native]` = emitted automatically by the Agent Framework SDK.
+`[custom]` = added by our observability overhaul code.
+
+```
+mesh.request  [custom — SpanKind.SERVER]
+│  attrs: mesh.user, mesh.role, session.id, mesh.query_length, fab.request_id
+│          mesh.blocked, mesh.block_stage, mesh.trail, mesh.compliance_verdict
+│  event: "mesh.request.completed" {blocked, block_stage, trail}
+│  baggage: fab.request_id, fab.user, fab.role, fab.session_id
+│
+└── workflow.run  [framework-native]
+    │
+    ├── executor.process input_guardrail  [framework-native]
+    │   └── fab.guardrail.input_screen  [custom — SpanKind.INTERNAL]
+    │         attrs: guardrail.stage="input_guardrail"
+    │                guardrail.query_length=<int>
+    │                guardrail.result="PASS"|"BLOCK"
+    │                guardrail.categories="prompt_injection,pii,..."
+    │                guardrail.violations_count=<int>
+    │                guardrail.block_reason=<str>        ← only if BLOCK
+    │         events: "guardrail.pass" {checks_run:3}
+    │              OR "guardrail.blocked" {categories, reason}
+    │         status: OK (pass) | ERROR (block)
+    │         metric: fab.guardrail.requests.total + fab.guardrail.duration
+    │
+    ├── executor.process rbac_validation  [framework-native]
+    │   └── fab.rbac.validate  [custom — SpanKind.INTERNAL]
+    │         attrs: rbac.role, rbac.user, rbac.allowed_role_count
+    │                rbac.result="PASS"|"BLOCK"
+    │                rbac.block_reason=<str>             ← only if BLOCK
+    │         events: "rbac.authorized" {role}
+    │              OR "rbac.denied"     {role, reason}
+    │         status: OK (pass) | ERROR (block)
+    │         metric: fab.rbac.requests.total + fab.rbac.duration
+    │
+    ├── executor.process compliance  [framework-native]
+    │   └── fab.compliance.check  [custom — SpanKind.CLIENT]
+    │         attrs: compliance.role, compliance.user, compliance.query_length
+    │                compliance.bypass=true|false
+    │                compliance.result="PASSED"|"FAILED"|"BYPASSED"
+    │                compliance.verdict=<first 120 chars of verdict>
+    │         events: "compliance.bypassed" {role, reason:"elevated_role"}
+    │              OR "compliance.a2a_call.started"   {target:"compliance"}
+    │                 "compliance.a2a_call.completed" {target, result, verdict_preview}
+    │                 "compliance.failed"             {verdict}   ← only if FAILED
+    │         status: OK (passed/bypassed) | ERROR (failed)
+    │         metric: fab.compliance.requests.total + fab.compliance.duration
+    │         │
+    │         └── [httpx instrumented — outbound to :8015]
+    │             [W3C traceparent + baggage headers injected automatically]
+    │             └── ComplianceAgent process (:8015)
+    │                 [TraceContextMiddleware extracts both headers]
+    │                 [fab.request_id, fab.inbound.user, fab.inbound.role set on span]
+    │                 ├── invoke_agent ComplianceAgent  [framework-native]
+    │                 └── chat <model>  [framework-native]
+    │                       attrs: gen_ai.model, gen_ai.usage.input_tokens,
+    │                              gen_ai.usage.output_tokens, gen_ai.operation.duration
+    │
+    ├── executor.process domain  [framework-native]
+    │   └── fab.domain.dispatch  [custom — SpanKind.CLIENT]
+    │         attrs: domain.target_node="price_assist"
+    │                domain.user, domain.query_length
+    │                domain.retry_reason="none"|"tool_call_echo"|"meta_response"|"hallucination"
+    │                domain.retried=true|false
+    │                domain.result="SUCCESS"|"ERROR"
+    │                domain.answer_length=<int>
+    │                domain.route="Data Layer Service"|"RAG Service"|"Data Layer + RAG (Hybrid)"
+    │                domain.route_confidence=<float 0-1>
+    │         events: "domain.a2a_call.started"   {target}
+    │                 "domain.retry"               {reason, attempt}   ← if retried
+    │                 "domain.a2a_call.completed"  {target, result, answer_length}
+    │                 "domain.route_inferred"      {route, confidence}
+    │                 "domain.error"               {error}             ← if failed
+    │         status: OK (success) | ERROR (failed hop)
+    │         metrics: fab.a2a.calls.total (target_node=price_assist)
+    │                  fab.a2a.duration
+    │                  fab.domain.route.total (route=<route>)
+    │                  fab.domain.duration
+    │         │
+    │         └── [httpx instrumented — outbound to :8018]
+    │             [W3C traceparent + baggage propagated]
+    │             └── PriceAssistAgent process (:8018)
+    │                 [fab.request_id, fab.inbound.user, fab.inbound.role stamped on span]
+    │                 ├── invoke_agent PriceAssistAgent  [framework-native]
+    │                 ├── chat <model>  [framework-native]  ← intent classification
+    │                 │
+    │                 ├── execute_tool query_structured_data  [framework-native]
+    │                 │     attrs: peer.target_node="data_agent"  [custom enrichment]
+    │                 │            peer.depth=<int>
+    │                 │            peer.result="SUCCESS"|"ERROR"
+    │                 │            peer.duration_ms=<int>
+    │                 │     metric: fab.a2a.calls.total (target_node=data_agent)
+    │                 │     └── [httpx — outbound to :8016]
+    │                 │         └── DataAgent process (:8016)
+    │                 │             [fab.request_id stamped on span]
+    │                 │             ├── invoke_agent DataAgent  [framework-native]
+    │                 │             ├── chat <model>  [framework-native]
+    │                 │             └── execute_tool <mcp_tool_name>  [framework-native]
+    │                 │                   e.g. customer_360, margin_analysis, etc.
+    │                 │
+    │                 ├── execute_tool query_knowledge_base  [framework-native]
+    │                 │     attrs: peer.target_node="rag_agent"  [custom enrichment]
+    │                 │            peer.depth, peer.result, peer.duration_ms
+    │                 │     metric: fab.a2a.calls.total (target_node=rag_agent)
+    │                 │     └── [httpx — outbound to :8017]
+    │                 │         └── RAGAgent process (:8017)
+    │                 │             [fab.request_id stamped on span]
+    │                 │             ├── invoke_agent RAGAgent  [framework-native]
+    │                 │             ├── chat <model>  [framework-native]
+    │                 │             └── execute_tool search_documents  [framework-native]
+    │                 │
+    │                 └── chat <model>  [framework-native]  ← answer synthesis
+    │
+    └── executor.process output_redaction  [framework-native]
+        └── fab.output.redact  [custom — SpanKind.INTERNAL]
+              attrs: redaction.input_length=<int>
+                     redaction.output_length=<int>
+                     redaction.pii_found=true|false
+              event: "output.redaction.completed" {input_length, output_length, pii_found}
+              status: OK
+              metric: fab.output.redaction.pii_hits (count of [REDACTED_*] tokens)
+```
+
+---
+
+### 9.3 W3C Baggage — cross-process identity propagation
+
+**What it is:** W3C Baggage is a standard HTTP header (`baggage: fab.request_id=A3F2B1C0, fab.user=alice, ...`) that travels alongside `traceparent`. It carries arbitrary key-value pairs that must be readable by every downstream service without any additional lookup.
+
+**Why we need it:** OTel trace IDs connect spans together, but they don't carry WHO made the request. The `ComplianceAgent` running in its own process at port 8015 has no access to the `User` object from the orchestrator's process. Baggage solves this — the identity is embedded in the HTTP request headers.
+
+**How it works in this system:**
+
+```
+Orchestrator (handle_request)
+  │
+  ├─ set_request_baggage(request_id, user, role, session_id)
+  │   → attaches to current OTel context:
+  │     baggage: fab.request_id=A3F2B1C0
+  │              fab.user=alice
+  │              fab.role=credit_officer
+  │              fab.session_id=sess_alice
+  │
+  ├─ [mesh.request span opened — inherits this context]
+  │
+  └─ [A2A call to ComplianceAgent]
+       httpx instrumentation calls opentelemetry.propagate.inject(headers)
+       → writes BOTH headers:
+         traceparent: 00-<trace_id>-<span_id>-01
+         baggage:     fab.request_id=A3F2B1C0, fab.user=alice, fab.role=credit_officer, ...
+       │
+       └─ ComplianceAgent receives HTTP request
+            TraceContextMiddleware calls extract(request.headers)
+            → restores trace context (so spans become children)
+            → restores baggage (so fab.* values are readable)
+            → sets on active span:
+                fab.request_id    = "A3F2B1C0"
+                fab.inbound.user  = "alice"
+                fab.inbound.role  = "credit_officer"
+                fab.inbound.session_id = "sess_alice"
+            AuditMiddleware reads baggage to stamp audit records:
+                request_id, user, role on every JSONL line
+```
+
+**This propagates through ALL hops automatically:**
+- Orchestrator → ComplianceAgent (port 8015)
+- Orchestrator → PriceAssistAgent (port 8018)
+- PriceAssistAgent → DataAgent (port 8016)
+- PriceAssistAgent → RAGAgent (port 8017)
+
+Every remote process sees the original user, role, and request_id without any extra code.
+
+**Key files:**
+- `src/observability/baggage.py` — `set_request_baggage()`, `detach_baggage()`, `get_request_id()` etc.
+- `src/observability/setup.py` → `_ensure_composite_propagator()` — registers the W3C Baggage propagator so `propagate.inject/extract` handles the `baggage:` header
+
+---
+
+### 9.4 Business Metrics — what gets measured
+
+All custom metrics use meter name `"agent_mesh"` and are exported via the active OTel profile (Grafana Mimir, Azure Monitor, or OTLP). They are separate from the framework's built-in GenAI metrics (`gen_ai.client.token.usage`, etc.).
+
+#### Counters (increment by 1 per event)
+
+| Metric name | Recorded after | Labels |
+|---|---|---|
+| `fab.guardrail.requests.total` | Every guardrail evaluation | `result` (PASS/BLOCK), `category` (prompt_injection/pii/destructive_intent/none), `stage` |
+| `fab.rbac.requests.total` | Every RBAC check | `result` (PASS/BLOCK), `role` |
+| `fab.compliance.requests.total` | Every compliance review | `result` (PASSED/FAILED/BYPASSED), `role` |
+| `fab.mesh.requests.total` | Every end-to-end request | `result` (SUCCESS/BLOCKED/ERROR), `block_stage` |
+| `fab.domain.route.total` | Every successful domain dispatch | `route` (Data Layer Service / RAG Service / Hybrid) |
+| `fab.a2a.calls.total` | Every A2A hop (`ask_remote`) | `target_node` (compliance/price_assist/data_agent/rag_agent), `result` |
+| `fab.mcp.calls.total` | Every MCP tool invocation | `service` (datalayer/rag), `tool_name`, `result` |
+
+#### Histograms (latency distributions in milliseconds)
+
+| Metric name | Measures | Labels |
+|---|---|---|
+| `fab.guardrail.duration` | Time for regex screen | `result` |
+| `fab.rbac.duration` | Time for role check | `result` |
+| `fab.compliance.duration` | Time for A2A compliance review (incl. LLM) | `result` |
+| `fab.domain.duration` | Time for price_assist A2A hop (incl. all sub-hops) | `route` |
+| `fab.a2a.duration` | Time per A2A hop by node | `target_node` |
+| `fab.mesh.request.duration` | Full end-to-end request wall-clock time | `result`, `block_stage` |
+| `fab.output.redaction.pii_hits` | Count of `[REDACTED_*]` tokens per request | (none) |
+
+#### Example Grafana PromQL queries
+
+```promql
+# Guardrail block rate by category (last 5 min)
+rate(fab_guardrail_requests_total{result="BLOCK"}[5m]) by (category)
+
+# RBAC denial rate by role
+rate(fab_rbac_requests_total{result="BLOCK"}[5m]) by (role)
+
+# Compliance failure rate
+rate(fab_compliance_requests_total{result="FAILED"}[5m])
+/ rate(fab_compliance_requests_total[5m])
+
+# Routing distribution
+sum(rate(fab_domain_route_total[5m])) by (route)
+
+# P95 domain dispatch latency
+histogram_quantile(0.95, sum(rate(fab_domain_duration_bucket[5m])) by (le, route))
+
+# A2A error rate by target node
+rate(fab_a2a_calls_total{result="ERROR"}[5m]) by (target_node)
+
+# Overall P99 request latency
+histogram_quantile(0.99, sum(rate(fab_mesh_request_duration_bucket[5m])) by (le))
+```
+
+**Key file:** `src/observability/metrics.py` — all instrument definitions and `record_*` helpers.
+
+**Toggle:** `ENABLE_BUSINESS_METRICS=false` disables all custom metrics without touching framework-native GenAI metrics.
+
+---
+
+### 9.5 Structured Logging with Request ID
+
+Every log line in `data/logs/agent_mesh.log` now carries four correlation fields:
+
+```
+2026-06-26 14:23:01 | INFO     | mesh.workflow    | trace=a3f2b1c0... span=7e9d... req=A3F2B1C0 | RBAC PASS role=credit_officer
+```
+
+The `req=` field comes from the W3C Baggage `fab.request_id` key, read by `TraceContextFilter` at log time. This means:
+- You can `grep req=A3F2B1C0 agent_mesh.log` to get every log line for one request.
+- Each line already has `trace=` so you can jump from log → Tempo trace in Grafana.
+
+**JSON log format** (when `LOG_JSON=true`):
+```json
+{
+  "ts": "2026-06-26T14:23:01+00:00",
+  "level": "INFO",
+  "logger": "mesh.workflow",
+  "trace_id": "a3f2b1c0d4e5f6a7b8c9d0e1f2a3b4c5",
+  "span_id": "7e9d1f2a3b4c5d6e",
+  "request_id": "A3F2B1C0",
+  "msg": "RBAC PASS role=credit_officer"
+}
+```
+
+**Log categories** (unchanged):
 
 | Category | Covers |
-|----------|--------|
+|---|---|
 | `mesh.agent` | Agent invocation and response |
 | `mesh.workflow` | Executor pass/block decisions |
 | `mesh.tools` | Tool execution (MCP, A2A) |
@@ -586,24 +855,100 @@ mesh.request                       root span
 | `mesh.mcp` | MCP client calls |
 | `mesh.transport` | HTTP transport events |
 | `mesh.approvals` | Policy/approval decisions |
-| `mesh.system` | System-level events |
+| `mesh.system` | System-level events, startup |
 
-Every log line includes `trace_id` and `span_id` injected by `TraceContextFilter`, enabling correlation with OTel traces.
+**Log file:** `data/logs/agent_mesh.log` — rotating, 10 MB per file, 5 backups.
 
-**Log file:** `data/logs/agent_mesh.log` — rotating, 10 MB max, 5 backups.
+---
 
-### Observability Profiles (`OBS_PROFILE` env var)
+### 9.6 Audit Trail
 
-| Profile | Destination |
-|---------|------------|
-| `off` | File log only (no OTel exporters) |
-| `dev` | OTLP → `localhost:4317` (Jaeger / local Grafana) |
-| `grafana` | OTLP/HTTP → Grafana Cloud (Tempo + Mimir + Loki) |
-| `prod` | Azure Monitor / Application Insights |
+`AuditMiddleware` intercepts every agent invocation (all 4 agents: Compliance, Data, RAG, PriceAssist) and writes an immutable JSONL record to `data/audit_trail.jsonl`. After the observability overhaul, each record contains:
 
-### Optional JSONL Event Sink (`ENABLE_TRACE_JSONL=true`)
+```json
+{
+  "timestamp":  "2026-06-26T14:23:01.234567+00:00",
+  "request_id": "A3F2B1C0",
+  "trace_id":   "a3f2b1c0d4e5f6a7b8c9d0e1f2a3b4c5",
+  "span_id":    "7e9d1f2a3b4c5d6e",
+  "session_id": "sess_alice",
+  "user":       "alice",
+  "role":       "credit_officer",
+  "agent_name": "ComplianceAgent",
+  "inputs":     ["Review this request for safety: '...'"],
+  "output":     "COMPLIANCE_PASSED: request is safe",
+  "status":     "SUCCESS",
+  "latency_ms": 1243
+}
+```
 
-Writes structured events to `data/trace_log.jsonl`. Event types: `SYSTEM_FLOW`, `A2A_CALL`, `ACCESS_CTRL`, `COMPLIANCE`, `GUARDRAIL`, `PAYMENT_GATE`. Status values: `PASS`, `FAIL`, `BLOCK`, `SUCCESS`, `ERROR`, `DENY`, `APPROVE`.
+Key improvements over the old format:
+- `request_id` — ties this record to a specific request across all 4 agent nodes
+- `user` / `role` — populated from W3C baggage, so remote agent nodes know the originating user even though they have no access to the orchestrator's `User` object
+- `trace_id` + `span_id` — links to the OTel span in Grafana Tempo for the same invocation
+
+PII in inputs and outputs is redacted (`[REDACTED_EMAIL]`, `[REDACTED_SSN]`) before writing.
+
+---
+
+### 9.7 Observability Profiles (`OBS_PROFILE` env var)
+
+| Profile | Traces | Metrics | Logs | When to use |
+|---|---|---|---|---|
+| `off` | ❌ | ❌ | File only | DevUI / offline dev |
+| `dev` | OTLP gRPC → `localhost:4317` | Same | File + console | Local Jaeger or Grafana Tempo |
+| `grafana` | OTLP/HTTP → Grafana Tempo | OTLP/HTTP → Grafana Mimir | OTLP/HTTP → Grafana Loki | Grafana Cloud |
+| `prod` | Azure Monitor / App Insights | Same | Same | Azure production |
+
+All profiles except `off` call `_ensure_composite_propagator()` which registers the W3C Baggage propagator so `baggage:` headers are injected and extracted correctly.
+
+**Grafana Cloud env vars (profile `grafana`):**
+```
+GRAFANA_OTLP_ENDPOINT=https://otlp-gateway-prod-ap-south-1.grafana.net/otlp
+GRAFANA_INSTANCE_ID=<numeric stack id>
+GRAFANA_API_TOKEN=<grafana api token>
+```
+
+**Enable in `.env`:**
+```
+OBS_PROFILE=grafana
+ENABLE_INSTRUMENTATION=true
+ENABLE_SENSITIVE_DATA=false   # set true in dev to capture prompts in spans
+ENABLE_BUSINESS_METRICS=true
+```
+
+---
+
+### 9.8 Optional JSONL Event Sink (`ENABLE_TRACE_JSONL=true`)
+
+Writes structured events to `data/trace_log.jsonl` for offline inspection. When enabled, each typed emitter now **dual-emits**: the event goes to the JSONL file AND as an OTel span into the active trace backend.
+
+| Event type | Typed emitter | What it captures |
+|---|---|---|
+| `GUARDRAIL` | `trace_guardrail()` | query_length, passed, blocked_categories |
+| `A2A_CALL` | `trace_a2a_call()` | target_node, prompt_length, response_preview, duration_ms |
+| `ACCESS_CTRL` | `trace_access_control()` | domain, role, allowed, reason |
+| `COMPLIANCE` | `trace_compliance()` | verdict_preview, passed, duration_ms |
+| `PAYMENT_GATE` | `trace_payment_gate()` | approved |
+| `SYSTEM_FLOW` | `trace_flow_step()` | step name, status, custom attrs |
+
+> Disabled by default (`ENABLE_TRACE_JSONL=false`) because the workflow/agent spans cover the same ground. Enable only for offline debugging.
+
+---
+
+### 9.9 Config toggles summary
+
+| Env var | Default | Effect |
+|---|---|---|
+| `OBS_PROFILE` | `dev` | Exporter wiring profile (`dev` / `grafana` / `prod` / `off`) |
+| `ENABLE_INSTRUMENTATION` | `true` | Agent Framework SDK native spans on/off |
+| `ENABLE_SENSITIVE_DATA` | `false` | Include prompt/response content in `chat` spans (dev only) |
+| `ENABLE_CONSOLE_EXPORTERS` | `false` | Print spans to stdout (dev debugging) |
+| `ENABLE_BUSINESS_METRICS` | `true` | Custom counter/histogram metrics on/off |
+| `ENABLE_TRACE_JSONL` | `false` | JSONL debug event sink + dual-emit OTel spans |
+| `LOG_LEVEL` | `INFO` | Minimum log level |
+| `LOG_JSON` | `false` | JSON log format (for Loki/log ingestion pipelines) |
+| `LOG_FILE` | `data/logs/agent_mesh.log` | Rotating log path |
 
 ---
 
