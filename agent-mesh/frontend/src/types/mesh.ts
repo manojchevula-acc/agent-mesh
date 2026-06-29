@@ -36,6 +36,9 @@ export interface MeshResult {
   blocked: boolean;
   block_stage: string | null;
   trail: string[];
+  // Conversation this turn belongs to. The first response pins it; echo it back
+  // on subsequent queries to continue the thread.
+  session_id?: string;
   // Execution summary from the tracer (api_server.py wires this)
   request_id?: string;
   domain?: string | null;
@@ -70,6 +73,19 @@ export interface NodeHealth {
 export interface QueryRequest {
   username: string;
   query: string;
+  session_id?: string;
+}
+
+// One stored conversation message (mirrors the JSONL records persisted server-side).
+export interface ConversationMessage {
+  role: "user" | "assistant";
+  content: string;
+  ts?: string;
+}
+
+export interface ConversationHistory {
+  session_id: string;
+  messages: ConversationMessage[];
 }
 
 export interface LoginRequest {

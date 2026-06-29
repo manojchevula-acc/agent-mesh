@@ -1,8 +1,28 @@
 import { apiClient } from "@/lib/apiClient";
-import type { MeshResult, MeshUser, NodeHealth } from "@/types/mesh";
+import type {
+  ConversationHistory,
+  MeshResult,
+  MeshUser,
+  NodeHealth,
+} from "@/types/mesh";
 
-export async function queryMesh(username: string, query: string): Promise<MeshResult> {
-  const { data } = await apiClient.post<MeshResult>("/api/query", { username, query });
+export async function queryMesh(
+  username: string,
+  query: string,
+  sessionId?: string,
+): Promise<MeshResult> {
+  const { data } = await apiClient.post<MeshResult>("/api/query", {
+    username,
+    query,
+    ...(sessionId ? { session_id: sessionId } : {}),
+  });
+  return data;
+}
+
+export async function getConversation(sessionId: string): Promise<ConversationHistory> {
+  const { data } = await apiClient.get<ConversationHistory>(
+    `/api/conversations/${encodeURIComponent(sessionId)}`,
+  );
   return data;
 }
 
