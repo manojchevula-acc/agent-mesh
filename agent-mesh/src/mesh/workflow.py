@@ -57,6 +57,7 @@ from src.observability.metrics import (
     record_pii_hits,
 )
 from src.tracing.execution_trace import get_active_tracer, infer_route_and_scores
+from src.memory import ConversationStore
 
 _log = get_logger(CAT_WORKFLOW)
 
@@ -151,6 +152,10 @@ class MeshState:
     blocked: bool = False
     block_stage: Optional[str] = None
     trail: List[str] = field(default_factory=list)
+    # Prior conversation turns (role/content dicts) for this session, loaded by the
+    # orchestrator. Injected into the PriceAssistAgent prompt by DomainExecutor so
+    # follow-up questions resolve in-context. Empty when memory is off / first turn.
+    conversation_history: List[dict] = field(default_factory=list)
 
 
 # --- Executors ----------------------------------------------------------------
@@ -504,9 +509,17 @@ class DomainExecutor(Executor):
             _set_attr(span, "domain.target_node", "price_assist")
             _set_attr(span, "domain.user", state.user_name)
             _set_attr(span, "domain.query_length", len(state.query))
+
+            # Prepend prior conversation turns (if any) so the PriceAssistAgent's
+            # LLM resolves follow-ups ("that deal", "its RWA") in-context. The A2A
+            # layer flattens to a single string, so history travels inline in the
+            # prompt; the bare user question is preserved on the span attr above.
+            history_block = ConversationStore.format_history_block(state.conversation_history)
+            base_prompt = f"{history_block}{state.query}" if history_block else state.query
+            _set_attr(span, "domain.history_turns", len(state.conversation_history) // 2)
             try:
                 _add_event(span, "domain.a2a_call.started", {"target": "price_assist"})
-                answer = await self._ask("price_assist", state.query)
+                answer = await self._ask("price_assist", base_prompt)
                 if self._TOOL_CALL_RE.search(answer or ""):
                     retry_reason = "tool_call_echo"
                     _log.warning(
@@ -514,7 +527,7 @@ class DomainExecutor(Executor):
                         extra={"status": "RETRY"},
                     )
                     _add_event(span, "domain.retry", {"reason": retry_reason, "attempt": 2})
-                    answer = await self._ask("price_assist", state.query)
+                    answer = await self._ask("price_assist", base_prompt)
                 elif self._META_RESPONSE_RE.search(answer or ""):
                     retry_reason = "meta_response"
                     _log.warning(
@@ -523,7 +536,7 @@ class DomainExecutor(Executor):
                     )
                     _add_event(span, "domain.retry", {"reason": retry_reason, "attempt": 2})
                     retry_prompt = (
-                        f"{state.query}\n\n"
+                        f"{base_prompt}\n\n"
                         "IMPORTANT: Your previous response did not include the actual data. "
                         "You MUST copy the COMPLETE raw output returned by the tool into your "
                         "response — every field, every row, every figure. Do NOT say 'I retrieved' "
@@ -538,7 +551,7 @@ class DomainExecutor(Executor):
                     )
                     _add_event(span, "domain.retry", {"reason": retry_reason, "attempt": 2})
                     retry_prompt = (
-                        f"{state.query}\n\n"
+                        f"{base_prompt}\n\n"
                         "CRITICAL: Your previous response contained placeholder text like "
                         "[Name] or [Value] that is NOT real data. You MUST call the tool, "
                         "then copy the EXACT values it returns — customer names, figures, "

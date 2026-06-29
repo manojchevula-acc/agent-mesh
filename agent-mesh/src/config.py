@@ -38,6 +38,19 @@ class Config:
     CONVERSATION_STORE_DIR: str = os.getenv("CONVERSATION_STORE_DIR", "data/conversations")
 
     # ----------------------------------------------------------------------
+    # Conversational memory (Option B — MAF thread memory + JSONL persistence)
+    # ----------------------------------------------------------------------
+    # Multi-turn memory: the orchestrator loads prior turns for a session_id and
+    # injects them into the PriceAssistAgent prompt; turns are persisted per session.
+    ENABLE_CONVERSATION_MEMORY: bool = os.getenv("ENABLE_CONVERSATION_MEMORY", "true").lower() in ("1", "true", "yes")
+    # How many prior Q/A turns to replay into the prompt (history is capped to keep tokens bounded).
+    CONVERSATION_MAX_TURNS: int = int(os.getenv("CONVERSATION_MAX_TURNS", "8"))
+    # Storage backend: "jsonl" (active default, file-based) | "redis" (placeholder for future use).
+    CONVERSATION_BACKEND: str = os.getenv("CONVERSATION_BACKEND", "jsonl")
+    # Connection URL used only by the future Redis backend (placeholder — not active yet).
+    CONVERSATION_REDIS_URL: str = os.getenv("CONVERSATION_REDIS_URL", "redis://127.0.0.1:6379/0")
+
+    # ----------------------------------------------------------------------
     # Observability (Microsoft Agent Framework-native OpenTelemetry + logging)
     # ----------------------------------------------------------------------
     # OBS_PROFILE selects the exporter wiring:

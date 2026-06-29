@@ -11,8 +11,9 @@ Endpoints
 GET  /health              Liveness probe (mirrors A2A node /health schema).
 GET  /api/users           List all demo users with roles.
 POST /api/login           Body: {username} → User JSON.
-POST /api/query           Body: {username, query} → MeshResult JSON.
+POST /api/query           Body: {username, query, session_id?} → MeshResult JSON.
 GET  /api/mesh/status     Fan-out GET /health to all A2A nodes → per-node status.
+GET  /api/conversations/{session_id}  Stored conversation history for UI restore.
 
 Run
 ---
@@ -54,6 +55,7 @@ from src.a2a.hosting import TraceContextMiddleware
 from src.auth.identity_provider import login, list_users
 from src.config import Config
 from src.mesh.orchestrator import handle_request
+from src.memory import ConversationStore
 from src.observability import get_logger, CAT_SYSTEM, flush_observability
 from src.tracing.execution_trace import ExecutionTracer, set_active_tracer, clear_active_tracer
 
@@ -107,14 +109,15 @@ async def post_login(request: Request) -> JSONResponse:
 async def post_query(request: Request) -> JSONResponse:
     """Submit a query to the mesh and return the MeshResult.
 
-    Body: {"username": str, "query": str}
-    Response: MeshResult JSON — answer, blocked, block_stage, trail, plus full
-    execution summary and event stream for the UI transparency panel.
+    Body: {"username": str, "query": str, "session_id"?: str}
+    Response: MeshResult JSON — answer, blocked, block_stage, trail, session_id,
+    plus full execution summary and event stream for the UI transparency panel.
     """
     try:
         body = await request.json()
         username = str(body.get("username", "bob")).strip() or "bob"
         query = str(body.get("query", "")).strip()
+        session_id = str(body.get("session_id", "")).strip() or None
     except Exception:
         return JSONResponse(
             {"error": "Invalid JSON body. Expected {username, query}."},
@@ -129,7 +132,7 @@ async def post_query(request: Request) -> JSONResponse:
     tracer = ExecutionTracer(user=user.username, query=query)
     token = set_active_tracer(tracer)
     try:
-        result = await handle_request(user, query)
+        result = await handle_request(user, query, session_id)
     except Exception as exc:
         _log.exception("mesh query error: %s", exc)
         return JSONResponse(
@@ -145,6 +148,7 @@ async def post_query(request: Request) -> JSONResponse:
         "blocked": result.blocked,
         "block_stage": result.block_stage,
         "trail": result.trail,
+        "session_id": result.session_id,
         # Execution summary (mirrors ExecutionSummary dataclass fields)
         "request_id": summary.request_id,
         "domain": summary.domain,
@@ -195,6 +199,23 @@ async def get_mesh_status(request: Request) -> JSONResponse:
     return JSONResponse(nodes)
 
 
+async def get_conversation(request: Request) -> JSONResponse:
+    """Return the stored message history for a session (for UI restore on reload).
+
+    Path: GET /api/conversations/{session_id}
+    Response: {"session_id": str, "messages": [{"role", "content", "ts"}, ...]}
+    """
+    session_id = request.path_params.get("session_id", "").strip()
+    if not session_id:
+        return JSONResponse({"error": "session_id is required."}, status_code=400)
+    try:
+        messages = ConversationStore().load_messages(session_id)
+    except Exception as exc:
+        _log.warning("conversation load failed session=%s: %s", session_id, exc)
+        messages = []
+    return JSONResponse({"session_id": session_id, "messages": messages})
+
+
 # ---------------------------------------------------------------------------
 # App assembly
 # ---------------------------------------------------------------------------
@@ -239,6 +260,7 @@ app = Starlette(
         Route("/api/login",       post_login,      methods=["POST"]),
         Route("/api/query",       post_query,      methods=["POST"]),
         Route("/api/mesh/status", get_mesh_status, methods=["GET"]),
+        Route("/api/conversations/{session_id}", get_conversation, methods=["GET"]),
     ],
 )
 

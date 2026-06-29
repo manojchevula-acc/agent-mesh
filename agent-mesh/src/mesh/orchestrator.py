@@ -38,6 +38,7 @@ from src.observability.baggage import set_request_baggage, detach_baggage
 from src.observability.metrics import record_mesh_request
 from src.mesh.workflow import MeshState, build_mesh_workflow
 from src.tracing.execution_trace import get_active_tracer
+from src.memory import ConversationStore
 
 _log = get_logger(CAT_SYSTEM)
 
@@ -48,16 +49,22 @@ class MeshResult:
     blocked: bool = False
     block_stage: Optional[str] = None
     trail: List[str] = field(default_factory=list)
+    session_id: str = ""
 
 
-async def handle_request(user: User, query: str) -> MeshResult:
+async def handle_request(user: User, query: str, session_id: str | None = None) -> MeshResult:
     """Runs one request through the full mesh workflow.
 
     Opens a root ``mesh.request`` span so every downstream executor / agent / A2A
     span nests under one coherent distributed trace, then maps the workflow's
     terminal :class:`MeshState` to a :class:`MeshResult`.
+
+    ``session_id`` ties consecutive turns into one conversation. When omitted, a
+    fresh per-conversation id is generated; callers (api_server) should echo the
+    returned ``MeshResult.session_id`` back on the next turn to continue the thread.
     """
-    session_id = f"sess_{user.username}"
+    if not session_id:
+        session_id = f"{user.username}_{uuid.uuid4().hex[:8]}"
     request_id = uuid.uuid4().hex[:8].upper()
     AgentLogger.print_agent_header("Mesh", "Dispatching request through the workflow graph")
 
@@ -94,6 +101,15 @@ async def handle_request(user: User, query: str) -> MeshResult:
         session_id=session_id,
     )
 
+    # Load prior conversation turns for this session so PriceAssistAgent can resolve
+    # follow-ups in-context. No-op (empty history) when memory is disabled.
+    store = ConversationStore()
+    if Config.ENABLE_CONVERSATION_MEMORY:
+        try:
+            initial.conversation_history = store.load(session_id, Config.CONVERSATION_MAX_TURNS)
+        except Exception as exc:  # never let memory I/O break a request
+            _log.warning("conversation history load failed session=%s: %s", session_id, exc)
+
     # Build the workflow fresh per request, passing the (possibly patched at test
     # time) module-level ``ask_remote`` so the A2A seam is honoured.
     workflow = build_mesh_workflow(ask=ask_remote)
@@ -125,13 +141,23 @@ async def handle_request(user: User, query: str) -> MeshResult:
     if final is None:
         _log.error("Workflow produced no output", extra={"user": user.username})
         return MeshResult(answer="Internal error: no workflow output.", blocked=True,
-                          block_stage="internal_error", trail=["no_output"])
+                          block_stage="internal_error", trail=["no_output"],
+                          session_id=session_id)
+
+    # Persist this turn so the next request in the session sees it. Only non-blocked
+    # turns with a real answer are stored (blocked queries carry no useful context).
+    if Config.ENABLE_CONVERSATION_MEMORY and not final.blocked and final.answer:
+        try:
+            store.append_turn(session_id, query, final.answer)
+        except Exception as exc:  # never let memory I/O break a request
+            _log.warning("conversation history save failed session=%s: %s", session_id, exc)
 
     return MeshResult(
         answer=final.answer,
         blocked=final.blocked,
         block_stage=final.block_stage,
         trail=final.trail,
+        session_id=session_id,
     )
 
 
