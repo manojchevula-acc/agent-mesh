@@ -1,0 +1,61 @@
+deal_id,customer_id,customer_name,customer_segment,product_id,product_type,approved_price_pct,expected_margin_pct,relationship_discount_pct,min_margin_pct,min_expected_margin_pct,max_relationship_discount_pct,approval_required_if_discount_above_pct,rwa_risk_weight_pct,margin_below_min,discount_exceeds_policy,price_below_floor,competitor_match_requires_approval,high_rwa_requires_approval,is_exception,exception_reason
+DEAL001,CUST011,Royal Hospitality LLC,SME,PROD002,Loan,8.33,1.98,0.22,2.45,0.75,0.25,0.2,75,False,False,False,False,False,False,
+DEAL002,CUST012,Skyline Real Estate,Corporate,PROD008,Deposit,6.0,-1.05,0.05,0.7,0.1,0.45,0.3,100,True,False,False,False,True,True,margin_below_min; high_rwa_requires_approval
+DEAL003,CUST014,Arabian Textiles,SME,PROD004,Trade Finance,6.92,1.52,0.08,1.75,0.75,0.25,0.2,75,False,False,False,False,False,False,
+DEAL004,CUST019,Coastal Marine Services,SME,PROD006,Loan,7.6,1.95,0.2,2.45,0.75,0.25,0.2,75,False,False,False,False,False,False,
+DEAL005,CUST002,Falcon Steel Industries,Corporate,PROD002,Loan,7.25,1.35,0.45,2.0,0.75,0.45,0.3,50,False,False,False,False,False,False,
+DEAL006,CUST005,Emirates Healthcare Services,Corporate,PROD008,Deposit,4.9,0.05,0.4,0.2,0.1,0.45,0.3,50,True,False,False,False,False,True,margin_below_min
+DEAL007,CUST012,Skyline Real Estate,Corporate,PROD001,Loan,7.75,2.35,0.05,2.5,0.75,0.45,0.3,100,False,False,False,False,True,True,high_rwa_requires_approval
+DEAL008,CUST018,Lulu Fresh Markets,Corporate,PROD005,Loan,7.67,1.92,0.38,2.2,0.75,0.45,0.3,75,False,False,False,False,False,False,
+DEAL009,CUST010,Metro Auto Parts LLC,SME,PROD002,Loan,8.02,1.97,0.18,2.45,0.75,0.25,0.2,75,False,False,False,False,False,False,
+DEAL010,CUST017,Red Dune Mining,Corporate,PROD007,Treasury,6.4,0.97,0.08,1.1,0.75,0.45,0.3,100,False,False,False,False,True,True,high_rwa_requires_approval
+DEAL011,CUST004,Oasis Retail Group,SME,PROD005,Loan,8.1,2.2,0.2,2.45,0.75,0.25,0.2,75,False,False,False,False,False,False,
+DEAL012,CUST014,Arabian Textiles,SME,PROD001,Loan,7.02,1.62,0.08,2.45,0.75,0.25,0.2,75,False,False,False,False,False,False,
+DEAL013,CUST012,Skyline Real Estate,Corporate,PROD008,Deposit,6.55,-1.1,0.05,0.7,0.1,0.45,0.3,100,True,False,False,False,True,True,margin_below_min; high_rwa_requires_approval
+DEAL014,CUST016,Capital Education Group,Corporate,PROD001,Loan,6.4,1.0,0.45,2.0,0.75,0.45,0.3,50,False,False,False,False,False,False,
+DEAL015,CUST013,Union Pharma Trading,SME,PROD008,Deposit,5.35,-0.05,0.35,0.45,0.1,0.25,0.2,50,True,True,False,False,False,True,margin_below_min; discount_exceeds_policy
+DEAL016,CUST016,Capital Education Group,Corporate,PROD001,Loan,6.6,1.0,0.45,2.0,0.75,0.45,0.3,50,False,False,False,False,False,False,
+DEAL017,CUST013,Union Pharma Trading,SME,PROD004,Trade Finance,6.55,0.95,0.35,1.55,0.75,0.25,0.2,50,False,True,False,False,False,True,discount_exceeds_policy
+DEAL018,CUST018,Lulu Fresh Markets,Corporate,PROD003,Trade Finance,6.42,0.82,0.38,1.5,0.75,0.45,0.3,75,False,False,False,False,False,False,
+DEAL019,CUST012,Skyline Real Estate,Corporate,PROD005,Loan,8.55,2.95,0.05,2.5,0.75,0.45,0.3,100,False,False,False,False,True,True,high_rwa_requires_approval
+DEAL020,CUST008,Blue Wave Shipping,Corporate,PROD006,Loan,7.3,1.8,0.35,2.2,0.75,0.45,0.3,75,False,False,False,False,False,False,
+DEAL021,CUST010,Metro Auto Parts LLC,SME,PROD001,Loan,7.12,1.52,0.18,2.45,0.75,0.25,0.2,75,False,False,False,False,False,False,
+DEAL022,CUST005,Emirates Healthcare Services,Corporate,PROD008,Deposit,4.8,0.15,0.4,0.2,0.1,0.45,0.3,50,False,False,False,False,False,False,
+DEAL023,CUST013,Union Pharma Trading,SME,PROD004,Trade Finance,6.25,0.85,0.35,1.55,0.75,0.25,0.2,50,False,True,False,False,False,True,discount_exceeds_policy
+DEAL024,CUST003,Gulf Star Logistics,Corporate,PROD002,Loan,8.25,1.9,0.3,2.2,0.75,0.45,0.3,75,False,False,False,False,False,False,
+DEAL025,CUST004,Oasis Retail Group,SME,PROD001,Loan,7.3,1.7,0.2,2.45,0.75,0.25,0.2,75,False,False,False,False,False,False,
+DEAL026,CUST003,Gulf Star Logistics,Corporate,PROD002,Loan,8.15,1.8,0.3,2.2,0.75,0.45,0.3,75,False,False,False,False,False,False,
+DEAL027,CUST016,Capital Education Group,Corporate,PROD001,Loan,6.35,0.95,0.45,2.0,0.75,0.45,0.3,50,False,False,False,False,False,False,
+DEAL028,CUST016,Capital Education Group,Corporate,PROD003,Trade Finance,6.15,0.55,0.45,1.3,0.75,0.45,0.3,50,True,False,False,True,False,True,margin_below_min; competitor_match_requires_approval
+DEAL029,CUST006,Desert Sands Construction,Corporate,PROD008,Deposit,5.95,-1.0,0.1,0.7,0.1,0.45,0.3,100,True,False,False,False,True,True,margin_below_min; high_rwa_requires_approval
+DEAL030,CUST017,Red Dune Mining,Corporate,PROD007,Treasury,6.32,1.02,0.08,1.1,0.75,0.45,0.3,100,False,False,False,False,True,True,high_rwa_requires_approval
+DEAL031,CUST012,Skyline Real Estate,Corporate,PROD002,Loan,8.8,2.6,0.05,2.5,0.75,0.45,0.3,100,False,False,False,False,True,True,high_rwa_requires_approval
+DEAL032,CUST013,Union Pharma Trading,SME,PROD008,Deposit,5.15,-0.0,0.35,0.45,0.1,0.25,0.2,50,True,True,False,False,False,True,margin_below_min; discount_exceeds_policy
+DEAL033,CUST001,Al Noor Trading LLC,SME,PROD003,Trade Finance,6.8,1.05,0.25,1.75,0.75,0.25,0.2,75,False,False,False,False,False,False,
+DEAL034,CUST012,Skyline Real Estate,Corporate,PROD003,Trade Finance,7.4,1.8,0.05,1.8,0.75,0.45,0.3,100,False,False,False,False,True,True,high_rwa_requires_approval
+DEAL035,CUST007,Pearl Foods Distribution,SME,PROD003,Trade Finance,6.65,1.05,0.1,1.75,0.75,0.25,0.2,75,False,False,False,False,False,False,
+DEAL036,CUST012,Skyline Real Estate,Corporate,PROD001,Loan,7.6,2.2,0.05,2.5,0.75,0.45,0.3,100,False,False,False,False,True,True,high_rwa_requires_approval
+DEAL037,CUST006,Desert Sands Construction,Corporate,PROD005,Loan,8.5,2.75,0.1,2.5,0.75,0.45,0.3,100,False,False,False,False,True,True,high_rwa_requires_approval
+DEAL038,CUST003,Gulf Star Logistics,Corporate,PROD002,Loan,7.95,1.9,0.3,2.2,0.75,0.45,0.3,75,False,False,False,False,False,False,
+DEAL039,CUST005,Emirates Healthcare Services,Corporate,PROD008,Deposit,5.4,0.05,0.4,0.2,0.1,0.45,0.3,50,True,False,False,False,False,True,margin_below_min
+DEAL040,CUST001,Al Noor Trading LLC,SME,PROD008,Deposit,5.45,-0.5,0.25,0.65,0.1,0.25,0.2,75,True,False,False,False,False,True,margin_below_min
+DEAL041,CUST001,Al Noor Trading LLC,SME,PROD003,Trade Finance,6.5,0.9,0.25,1.75,0.75,0.25,0.2,75,False,False,False,False,False,False,
+DEAL042,CUST009,Green Energy MEA,Corporate,PROD007,Treasury,5.25,-0.1,0.35,0.6,0.75,0.45,0.3,50,True,False,False,False,False,True,margin_below_min
+DEAL043,CUST018,Lulu Fresh Markets,Corporate,PROD002,Loan,7.57,1.67,0.38,2.2,0.75,0.45,0.3,75,False,False,False,False,False,False,
+DEAL044,CUST005,Emirates Healthcare Services,Corporate,PROD002,Loan,7.3,1.25,0.4,2.0,0.75,0.45,0.3,50,False,False,False,False,False,False,
+DEAL045,CUST011,Royal Hospitality LLC,SME,PROD008,Deposit,6.03,-0.58,0.22,0.65,0.1,0.25,0.2,75,True,False,False,False,False,True,margin_below_min
+DEAL046,CUST009,Green Energy MEA,Corporate,PROD006,Loan,7.0,1.5,0.35,2.0,0.75,0.45,0.3,50,False,False,False,False,False,False,
+DEAL047,CUST015,Prime Tech Solutions,SME,PROD007,Treasury,5.35,-0.0,0.3,0.85,0.75,0.25,0.2,50,True,True,False,False,False,True,margin_below_min; discount_exceeds_policy
+DEAL048,CUST017,Red Dune Mining,Corporate,PROD007,Treasury,6.42,1.07,0.08,1.1,0.75,0.45,0.3,100,False,False,False,False,True,True,high_rwa_requires_approval
+DEAL049,CUST013,Union Pharma Trading,SME,PROD004,Trade Finance,6.55,0.95,0.35,1.55,0.75,0.25,0.2,50,False,True,False,False,False,True,discount_exceeds_policy
+DEAL050,CUST007,Pearl Foods Distribution,SME,PROD008,Deposit,6.0,-0.7,0.1,0.65,0.1,0.25,0.2,75,True,False,False,False,False,True,margin_below_min
+DEAL051,CUST009,Green Energy MEA,Corporate,PROD006,Loan,7.55,1.65,0.35,2.0,0.75,0.45,0.3,50,False,False,False,False,False,False,
+DEAL052,CUST006,Desert Sands Construction,Corporate,PROD002,Loan,8.5,2.45,0.1,2.5,0.75,0.45,0.3,100,False,False,False,False,True,True,high_rwa_requires_approval
+DEAL053,CUST014,Arabian Textiles,SME,PROD002,Loan,8.32,2.12,0.08,2.45,0.75,0.25,0.2,75,False,False,False,False,False,False,
+DEAL054,CUST011,Royal Hospitality LLC,SME,PROD005,Loan,8.18,2.28,0.22,2.45,0.75,0.25,0.2,75,False,False,False,False,False,False,
+DEAL055,CUST017,Red Dune Mining,Corporate,PROD007,Treasury,6.37,1.07,0.08,1.1,0.75,0.45,0.3,100,False,False,False,False,True,True,high_rwa_requires_approval
+DEAL056,CUST009,Green Energy MEA,Corporate,PROD007,Treasury,5.25,-0.05,0.35,0.6,0.75,0.45,0.3,50,True,False,False,False,False,True,margin_below_min
+DEAL057,CUST009,Green Energy MEA,Corporate,PROD007,Treasury,5.15,-0.2,0.35,0.6,0.75,0.45,0.3,50,True,False,False,False,False,True,margin_below_min
+DEAL058,CUST009,Green Energy MEA,Corporate,PROD006,Loan,7.3,1.65,0.35,2.0,0.75,0.45,0.3,50,False,False,False,False,False,False,
+DEAL059,CUST003,Gulf Star Logistics,Corporate,PROD003,Trade Finance,6.6,1.0,0.3,1.5,0.75,0.45,0.3,75,False,False,False,False,False,False,
+DEAL060,CUST004,Oasis Retail Group,SME,PROD004,Trade Finance,6.6,1.2,0.2,1.75,0.75,0.25,0.2,75,False,False,False,False,False,False,

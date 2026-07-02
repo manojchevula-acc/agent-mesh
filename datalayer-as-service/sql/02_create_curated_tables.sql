@@ -1,9 +1,18 @@
 -- =============================================================
 -- 02_create_curated_tables.sql
--- Creates all five curated tables in fab_curated schema.
+-- Creates the five CORE curated tables in fab_curated schema.
 -- Run after 01_create_schemas.sql.
--- Python script 03_load_curated_to_mysql.py loads data into
--- these tables using pandas + SQLAlchemy (replace strategy).
+--
+-- NOTE (enhanced POC): 03_load_curated_to_mysql.py loads EVERY
+-- CSV in data/curated dynamically using pandas.to_sql
+-- (if_exists='replace'). The additional enhanced tables --
+--   competitor_pricing, credit_rating_events,
+--   cross_sell_recommendation_rules, customer_segment_pricing_rules,
+--   customer_similarity_mapping, data_dictionary, operations_cost,
+--   pricing_negotiation_memory, prospect_customer_profile
+-- -- are therefore created automatically at load time (table name =
+-- CSV base filename) and do not require static DDL here. The DDL
+-- below documents the schema of the original five core tables.
 -- =============================================================
 
 USE fab_curated;

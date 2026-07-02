@@ -3,12 +3,10 @@ agent.py
 --------
 FAB Pricing Recommendation Data Assistant.
 
-A LangChain + Groq agent that answers banking business questions by querying
-the fab_semantic MySQL views through the existing mcp_server/tools.py functions.
-
-Rather than spinning up an MCP stdio client, this agent wraps the same query
-functions from mcp_server.tools as native LangChain tools — simpler and more
-reliable for a local demo while still querying ONLY the semantic layer.
+A LangChain + Groq agent that answers banking pricing questions by querying the
+fab_semantic MySQL views through the mcp_server/tools.py functions. The agent
+wraps those functions as native LangChain tools (querying ONLY the semantic
+layer — never raw or curated tables).
 
 Usage:
     python agent.py            # interactive CLI chat
@@ -23,13 +21,22 @@ from dotenv import load_dotenv
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage
 
-# Reuse the existing semantic-layer query functions (fab_semantic views only)
 from mcp_server.tools import (
     query_customer_360,
     query_pricing_recommendation,
     query_profitability_summary,
     query_margin_analysis,
     query_rwa_impact,
+    query_new_customer_pricing,
+    query_competitor_price_analysis,
+    query_pricing_trace,
+    query_segment_pricing_benchmark,
+    query_operations_cost_impact,
+    query_relationship_discount,
+    query_win_loss_insights,
+    query_policy_exception,
+    query_non_compliant_deals,
+    query_compare_fab_vs_competitor,
 )
 
 # ---------------------------------------------------------------------------
@@ -44,51 +51,114 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+DEFAULT_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+
 
 # ---------------------------------------------------------------------------
-# LangChain tools — thin wrappers around mcp_server.tools functions
-# Each returns a JSON string so the LLM can read the structured records.
+# LangChain tools — thin wrappers around mcp_server.tools functions.
 # ---------------------------------------------------------------------------
 
 @tool
-def customer_360(customer_id: str) -> str:
-    """Get the 360-degree customer profile (master data + aggregated deal KPIs
-    such as total deals, win rate, deal volume and average margin) for a given
-    customer_id, e.g. 'CUST001'. Use this for general customer profile questions."""
+def customer_360(customer_id: str = "") -> str:
+    """360 customer profile (master data + deal KPIs) for a customer_id e.g. 'CUST001'."""
     return json.dumps(query_customer_360(customer_id), default=str)
 
 
 @tool
-def pricing_recommendation(customer_id: str) -> str:
-    """Get pricing recommendation details for a customer_id (e.g. 'CUST001').
-    Returns each deal with recommended price, approved price, expected margin,
-    policy benchmarks and compliance flags (price_below_policy_floor,
-    margin_below_min, discount_exceeds_policy, policy_compliant)."""
+def pricing_recommendation(customer_id: str = "") -> str:
+    """Pricing recommendation per deal for a customer_id: rebuilt recommended price,
+    approved price, expected margin, policy benchmarks and compliance flags."""
     return json.dumps(query_pricing_recommendation(customer_id), default=str)
 
 
 @tool
-def margin_analysis(customer_id: str) -> str:
-    """Get deal-level margin analysis for a customer_id (e.g. 'CUST001').
-    Returns net margin decomposition, spread over the treasury benchmark, and
-    variance versus the recommended price for each deal."""
+def margin_analysis(customer_id: str = "") -> str:
+    """Deal-level margin analysis for a customer_id: net margin, spread over benchmark,
+    variance vs recommended and margin-below-minimum flag."""
     return json.dumps(query_margin_analysis(customer_id), default=str)
 
 
 @tool
-def profitability_summary(customer_id: str) -> str:
-    """Get the profitability summary for a customer_id (e.g. 'CUST001').
-    Aggregated by product type with total won deals, volume, average net margin,
-    total expected margin (AED) and a profitability tier label."""
+def profitability_summary(customer_id: str = "") -> str:
+    """Profitability summary for a customer_id: revenue, funding/operating/capital cost,
+    net profit and profitability tier."""
     return json.dumps(query_profitability_summary(customer_id), default=str)
 
 
 @tool
-def rwa_impact(customer_id: str) -> str:
-    """Get RWA (Risk-Weighted Assets) impact analysis for a customer_id
-    (e.g. 'CUST001'). Returns RWA-weighted exposure, capital required (Basel III
-    8%), revenue, cost of funds, net revenue and return on RWA per won deal."""
+def rwa_impact(customer_id: str = "") -> str:
+    """RWA impact for a customer_id's won deals: exposure, RWA, capital required and
+    return on RWA."""
     return json.dumps(query_rwa_impact(customer_id), default=str)
+
+
+@tool
+def new_customer_pricing(customer_id: str = "", segment: str = "",
+                         product_id: str = "", risk_rating: str = "") -> str:
+    """Recommended price for a NEW customer with no relationship history. Filter by any
+    of customer_id (e.g. 'CUST021'), segment (e.g. 'SME'), product_id (e.g. 'PROD001')
+    or risk_rating (e.g. 'Medium')."""
+    return json.dumps(query_new_customer_pricing(customer_id, segment, product_id, risk_rating), default=str)
+
+
+@tool
+def competitor_price_analysis(customer_id: str = "", deal_id: str = "") -> str:
+    """Compare FAB offer vs competitor offer; returns competitor_gap_bps and a
+    MATCH / COUNTER / ESCALATE / REJECT suggested action with reasoning."""
+    return json.dumps(query_competitor_price_analysis(customer_id, deal_id), default=str)
+
+
+@tool
+def pricing_trace(customer_id: str = "", deal_id: str = "") -> str:
+    """Step-by-step price build-up (treasury, target margin, risk premium, ops cost,
+    relationship discount, final recommended price) with an explanation sentence.
+    Filter by customer_id and/or deal_id (e.g. 'DEAL040')."""
+    return json.dumps(query_pricing_trace(customer_id, deal_id), default=str)
+
+
+@tool
+def segment_pricing_benchmark(segment: str = "", product_id: str = "") -> str:
+    """Segment pricing guideline (target margin, base floor, new-customer buffer,
+    max relationship discount, min profitability) by segment and/or product_id."""
+    return json.dumps(query_segment_pricing_benchmark(segment, product_id), default=str)
+
+
+@tool
+def operations_cost_impact(product_id: str = "", customer_segment: str = "") -> str:
+    """Operational cost impact on pricing (ops cost margin, cost breakdown) by
+    product_id and/or customer_segment."""
+    return json.dumps(query_operations_cost_impact(product_id, customer_segment), default=str)
+
+
+@tool
+def relationship_discount(customer_id: str) -> str:
+    """Relationship discount eligibility and approval requirement for a customer_id."""
+    return json.dumps(query_relationship_discount(customer_id), default=str)
+
+
+@tool
+def win_loss_insights(customer_id: str = "", product_id: str = "", segment: str = "") -> str:
+    """Win/loss insights (win rate, price gap vs recommended, competitor pressure)
+    filterable by customer_id, product_id or segment."""
+    return json.dumps(query_win_loss_insights(customer_id, product_id, segment), default=str)
+
+
+@tool
+def policy_exception(customer_id: str = "", deal_id: str = "") -> str:
+    """Policy exceptions per deal with reasons. Filter by customer_id and/or deal_id."""
+    return json.dumps(query_policy_exception(customer_id, deal_id), default=str)
+
+
+@tool
+def non_compliant_deals(customer_id: str = "") -> str:
+    """List only the deals that breach at least one policy rule (optionally by customer_id)."""
+    return json.dumps(query_non_compliant_deals(customer_id), default=str)
+
+
+@tool
+def compare_fab_vs_competitor(customer_id: str = "", deal_id: str = "") -> str:
+    """Direct FAB price vs competitor offer comparison with the suggested action."""
+    return json.dumps(query_compare_fab_vs_competitor(customer_id, deal_id), default=str)
 
 
 TOOLS = [
@@ -97,35 +167,63 @@ TOOLS = [
     margin_analysis,
     profitability_summary,
     rwa_impact,
+    new_customer_pricing,
+    competitor_price_analysis,
+    pricing_trace,
+    segment_pricing_benchmark,
+    operations_cost_impact,
+    relationship_discount,
+    win_loss_insights,
+    policy_exception,
+    non_compliant_deals,
+    compare_fab_vs_competitor,
 ]
 
 # ---------------------------------------------------------------------------
 # System prompt
 # ---------------------------------------------------------------------------
-SYSTEM_PROMPT = """You are the FAB Pricing Recommendation Data Assistant.
-
-Your job is to help relationship managers and pricing analysts understand
-customer pricing, margins, profitability and capital (RWA) impact.
+SYSTEM_PROMPT = """You are FAB Pricing Recommendation Data Assistant. Use only \
+semantic-layer tools. Do not invent data. For every pricing recommendation, \
+explain the calculation, policy compliance, profitability impact, RWA impact and \
+competitor comparison where available.
 
 STRICT RULES:
-- Use ONLY the data returned by the provided tools. These tools query the
-  fab_semantic MySQL layer (semantic views only — never raw or curated tables).
-- NEVER invent or assume customer information, numbers, or deals.
+- Use ONLY the data returned by the provided tools (they query the fab_semantic
+  MySQL layer — semantic views only, never raw or curated tables).
+- NEVER invent or assume customer information, numbers, deals or prices.
 - Always call the appropriate tool(s) before answering any data question.
-- If the user does not provide a customer_id (format like CUST001), politely
-  ask them to provide one before calling any tool.
-- If a tool returns a 'message' saying no records were found, clearly tell the
-  user that no data is available for that customer_id.
+- If the user asks about a specific customer or deal but does NOT provide the
+  customer_id (e.g. CUST001) or deal_id (e.g. DEAL040), politely ask for it
+  before calling a tool. For "new customer" questions you may use segment,
+  product_id and risk_rating with the new_customer_pricing tool.
+- If a tool returns a 'message' saying no records were found, tell the user no
+  data is available for that filter.
 - If a tool returns an 'error', tell the user there was a problem reading the
   data and suggest checking the database connection.
+- Do NOT expose SQL in the final answer unless the user explicitly asks for it.
 
-WHEN ANSWERING:
-- Explain results in clear, business-friendly language (avoid raw JSON).
-- Where relevant, explain: recommended price vs approved price, expected margin,
-  policy compliance (and which policy rule was breached if non-compliant),
-  profitability tier, and RWA / capital impact.
-- Use concise tables or bullet points for multiple deals.
-- Highlight risks such as negative margins, loss-making deals, or policy breaches.
+TOOL SELECTION GUIDE:
+- Interest rate / price for an existing customer  -> pricing_recommendation
+- Interest rate for a NEW customer (no history)   -> new_customer_pricing
+- Step-by-step price explanation                  -> pricing_trace
+- Competitor is lower / match-reject-counter      -> competitor_price_analysis / compare_fab_vs_competitor
+- Which deals are non-compliant and why           -> non_compliant_deals / policy_exception
+- Competitor pricing pressure by product/segment  -> competitor_price_analysis / win_loss_insights
+- Operations cost impact on pricing               -> operations_cost_impact
+- Profitability and RWA impact                     -> profitability_summary + rwa_impact
+- Relationship discount eligibility / approval    -> relationship_discount
+- Win/loss insights                                -> win_loss_insights
+- Segment benchmark                                -> segment_pricing_benchmark
+
+WHEN ANSWERING, prefer this business-friendly structure:
+- Recommendation
+- Reasoning
+- Pricing components (treasury, target margin, risk premium, ops cost, discount)
+- Policy status (and which rule is breached, if any)
+- Risk / RWA impact
+- Competitor comparison (where available)
+- Suggested next action
+Use concise tables or bullet points and highlight negative margins or breaches.
 """
 
 
@@ -133,19 +231,11 @@ WHEN ANSWERING:
 # Agent builder
 # ---------------------------------------------------------------------------
 
-def build_agent(model: str = "qwen/qwen3.6-27b", temperature: float = 0):
-    """
-    Build and return a LangChain Groq agent wired with the semantic-layer tools.
-
-    Raises:
-        RuntimeError: if GROQ_API_KEY is not set.
-    """
+def build_agent(model: str = DEFAULT_MODEL, temperature: float = 0):
+    """Build a LangChain Groq agent wired with the semantic-layer tools."""
     if not os.getenv("GROQ_API_KEY"):
-        raise RuntimeError(
-            "GROQ_API_KEY is not set. Add it to your .env file before running."
-        )
+        raise RuntimeError("GROQ_API_KEY is not set. Add it to your .env file before running.")
 
-    # Imported lazily so a missing dependency surfaces a clear error
     from langchain_groq import ChatGroq
     from langchain.agents import create_agent
 
@@ -156,13 +246,9 @@ def build_agent(model: str = "qwen/qwen3.6-27b", temperature: float = 0):
 
 
 def run_agent(agent, user_input: str) -> str:
-    """
-    Invoke the agent synchronously with a single user message and return the
-    assistant's final text answer.
-    """
+    """Invoke the agent with a single user message and return the final answer."""
     result = agent.invoke({"messages": [HumanMessage(content=user_input)]})
-    final_message = result["messages"][-1]
-    return final_message.content
+    return result["messages"][-1].content
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +267,7 @@ def main():
         return
 
     print("\nChat started. Type 'exit' or 'quit' to stop.")
-    print("Example: Show customer profile for CUST001")
+    print("Example: What interest rate should I offer to customer CUST001?")
 
     while True:
         user_input = input("\nYou: ").strip()
@@ -189,11 +275,9 @@ def main():
             continue
         if user_input.lower() in ("exit", "quit"):
             break
-
         try:
-            answer = run_agent(agent, user_input)
             print("\nBot:")
-            print(answer)
+            print(run_agent(agent, user_input))
         except Exception as exc:
             logger.error("Agent error: %s", exc)
             print(f"\nError: {exc}")

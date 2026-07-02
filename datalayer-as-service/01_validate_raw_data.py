@@ -1,24 +1,41 @@
 """
 01_validate_raw_data.py
 -----------------------
-Validates all raw CSV files in data/raw for:
-  - Expected column presence
-  - Missing values
-  - Duplicate key records
-  - Basic data type checks
+Dynamically validates EVERY CSV file found in data/raw.
+
+For each file it checks:
+  - empty file
+  - inconsistent / duplicate column names
+  - missing values (per column)
+  - fully duplicate rows
+  - duplicate primary keys (when an *_id column is detected)
+  - date column validity (inferred from column name)
+  - numeric column validity (inferred from column name)
+
+The script is non-fatal by design: it logs clear WARNING / ERROR lines but only
+reports a file as FAILED when it is empty or unreadable. A validation summary is
+printed to the console and written to logs/validation_summary.txt.
 """
 
 import os
+import re
 import logging
 import pandas as pd
 
 # ---------------------------------------------------------------------------
-# Logging setup
+# Logging setup (console + logs/ file)
 # ---------------------------------------------------------------------------
+LOG_DIR = "logs"
+os.makedirs(LOG_DIR, exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-8s | %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(os.path.join(LOG_DIR, "validation_summary.txt"), mode="w", encoding="utf-8"),
+    ],
 )
 logger = logging.getLogger(__name__)
 
@@ -27,210 +44,153 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 RAW_DIR = os.path.join("data", "raw")
 
-# Expected columns per file
-EXPECTED_COLUMNS = {
-    "customer_master.csv": [
-        "customer_id", "customer_name", "customer_segment", "industry",
-        "region", "preferred_currency", "risk_category", "internal_rating",
-        "relationship_tenure_years", "relationship_status",
-        "relationship_discount_pct", "annual_revenue_aed",
-        "debt_to_equity_ratio", "credit_score", "existing_exposure_aed",
-    ],
-    "historical_deals.csv": [
-        "deal_id", "deal_date", "customer_id", "product_id", "product_type",
-        "currency", "tenor", "requested_amount", "funding_cost_pct",
-        "standard_margin_pct", "risk_premium_pct", "relationship_discount_pct",
-        "recommended_price_pct", "final_approved_price_pct",
-        "expected_margin_pct", "deal_outcome", "sales_channel",
-    ],
-    "pricing_policy.csv": [
-        "policy_id", "customer_segment", "product_type", "risk_category",
-        "min_margin_pct", "risk_premium_pct", "max_relationship_discount_pct",
-        "approval_required_if_discount_above_pct", "min_expected_margin_pct",
-        "rwa_risk_weight_pct", "status",
-    ],
-    "product_master.csv": [
-        "product_id", "product_name", "product_type", "pricing_method",
-        "currency", "eligible_tenors", "standard_margin_pct", "max_margin_pct",
-        "max_discount_allowed_pct", "min_ticket_size", "max_ticket_size",
-        "eligible_segments",
-    ],
-    "treasury_rate_sheet.csv": [
-        "rate_id", "currency", "benchmark_index", "tenor", "effective_date",
-        "benchmark_rate_pct", "funding_cost_pct",
-    ],
-}
+# Substrings used to *infer* numeric columns from their name.
+NUMERIC_HINTS = (
+    "amount", "rate", "margin", "cost", "revenue", "rwa", "capital",
+    "score", "weight", "tenor", "price", "discount", "ratio", "aed",
+    "pct", "fee", "premium", "buffer", "exposure", "cushion",
+)
 
-# Primary key columns per file (used for duplicate checks)
-PRIMARY_KEYS = {
-    "customer_master.csv":      ["customer_id"],
-    "historical_deals.csv":     ["deal_id"],
-    "pricing_policy.csv":       ["policy_id"],
-    "product_master.csv":       ["product_id"],
-    "treasury_rate_sheet.csv":  ["rate_id"],
-}
+# Substrings used to *infer* date columns from their name.
+DATE_HINTS = ("date", "timestamp", "_from", "_to", "effective")
 
-# Numeric columns per file (sanity-checked for non-negative values)
-NUMERIC_COLUMNS = {
-    "customer_master.csv": [
-        "relationship_tenure_years", "relationship_discount_pct",
-        "annual_revenue_aed", "debt_to_equity_ratio", "credit_score",
-        "existing_exposure_aed",
-    ],
-    "historical_deals.csv": [
-        "requested_amount", "funding_cost_pct", "standard_margin_pct",
-        "risk_premium_pct", "relationship_discount_pct",
-        "recommended_price_pct", "final_approved_price_pct",
-        "expected_margin_pct",
-    ],
-    "pricing_policy.csv": [
-        "min_margin_pct", "risk_premium_pct", "max_relationship_discount_pct",
-        "approval_required_if_discount_above_pct", "min_expected_margin_pct",
-        "rwa_risk_weight_pct",
-    ],
-    "product_master.csv": [
-        "standard_margin_pct", "max_margin_pct", "max_discount_allowed_pct",
-        "min_ticket_size", "max_ticket_size",
-    ],
-    "treasury_rate_sheet.csv": ["benchmark_rate_pct", "funding_cost_pct"],
-}
+# Columns whose name matches a numeric hint but must stay textual.
+NUMERIC_EXCLUDE = ("tenor",)  # e.g. '1M', '60M' are not numbers
 
-# Date columns per file
-DATE_COLUMNS = {
-    "historical_deals.csv":    ["deal_date"],
-    "treasury_rate_sheet.csv": ["effective_date"],
-}
+# Threshold: a column is treated as numeric/date only if this fraction of
+# non-null values parse successfully (protects mixed columns like 'tenor').
+PARSE_THRESHOLD = 0.8
 
 
 # ---------------------------------------------------------------------------
-# Validation helpers
+# Helpers
 # ---------------------------------------------------------------------------
 
-def check_columns(df: pd.DataFrame, filename: str) -> bool:
-    """Return True if all expected columns are present."""
-    expected = set(EXPECTED_COLUMNS.get(filename, []))
-    actual = set(df.columns)
-    missing = expected - actual
-    extra = actual - expected
-
-    if missing:
-        logger.error("[%s] Missing columns: %s", filename, sorted(missing))
-    if extra:
-        logger.warning("[%s] Extra columns (ignored): %s", filename, sorted(extra))
-    if not missing:
-        logger.info("[%s] Column check PASSED", filename)
-        return True
-    return False
+def normalise_columns(cols) -> list[str]:
+    """Lower-case, trim and snake_case a list of column names."""
+    out = []
+    for c in cols:
+        c = str(c).strip().lower()
+        c = re.sub(r"[^\w]+", "_", c)   # non-word -> underscore
+        c = re.sub(r"_+", "_", c).strip("_")
+        out.append(c)
+    return out
 
 
-def check_missing_values(df: pd.DataFrame, filename: str) -> bool:
-    """Log missing-value counts and return True when no critical nulls exist."""
-    null_counts = df.isnull().sum()
-    null_counts = null_counts[null_counts > 0]
-
-    if null_counts.empty:
-        logger.info("[%s] Missing-value check PASSED (no nulls)", filename)
-        return True
-
-    logger.warning("[%s] Columns with missing values:\n%s", filename, null_counts.to_string())
-    return False
-
-
-def check_duplicates(df: pd.DataFrame, filename: str) -> bool:
-    """Return True when no duplicate primary-key records are found."""
-    pk_cols = PRIMARY_KEYS.get(filename)
-    if not pk_cols:
-        logger.info("[%s] No primary key configured — skipping duplicate check", filename)
-        return True
-
-    # Only check pk_cols that actually exist in df
-    available_pk = [c for c in pk_cols if c in df.columns]
-    if not available_pk:
-        logger.warning("[%s] Primary key columns not found in data", filename)
-        return True
-
-    dup_count = df.duplicated(subset=available_pk).sum()
-    if dup_count == 0:
-        logger.info("[%s] Duplicate check PASSED (key: %s)", filename, available_pk)
-        return True
-
-    logger.error("[%s] Found %d duplicate rows on key %s", filename, dup_count, available_pk)
-    return False
-
-
-def check_numeric_types(df: pd.DataFrame, filename: str) -> bool:
-    """Verify numeric columns can be cast to float; log any that cannot."""
-    num_cols = NUMERIC_COLUMNS.get(filename, [])
-    all_ok = True
-
-    for col in num_cols:
-        if col not in df.columns:
+def infer_numeric_columns(df: pd.DataFrame) -> list[str]:
+    cols = []
+    for c in df.columns:
+        if any(x in c for x in NUMERIC_EXCLUDE):
             continue
-        try:
-            pd.to_numeric(df[col], errors="raise")
-        except (ValueError, TypeError):
-            non_numeric = df[col][pd.to_numeric(df[col], errors="coerce").isna()].unique()
-            logger.error(
-                "[%s] Column '%s' has non-numeric values: %s",
-                filename, col, non_numeric[:5],
-            )
-            all_ok = False
-
-    if all_ok:
-        logger.info("[%s] Numeric type check PASSED", filename)
-    return all_ok
+        if any(h in c for h in NUMERIC_HINTS):
+            parsed = pd.to_numeric(df[c], errors="coerce")
+            non_null = df[c].notna().sum()
+            if non_null and parsed.notna().sum() / non_null >= PARSE_THRESHOLD:
+                cols.append(c)
+    return cols
 
 
-def check_date_columns(df: pd.DataFrame, filename: str) -> bool:
-    """Verify date columns can be parsed; log any that cannot."""
-    date_cols = DATE_COLUMNS.get(filename, [])
-    all_ok = True
+def infer_date_columns(df: pd.DataFrame) -> list[str]:
+    cols = []
+    for c in df.columns:
+        if any(h in c for h in DATE_HINTS):
+            parsed = pd.to_datetime(df[c], errors="coerce")
+            non_null = df[c].notna().sum()
+            if non_null and parsed.notna().sum() / non_null >= PARSE_THRESHOLD:
+                cols.append(c)
+    return cols
 
-    for col in date_cols:
-        if col not in df.columns:
-            continue
-        parsed = pd.to_datetime(df[col], errors="coerce")
-        bad_count = parsed.isna().sum()
-        if bad_count > 0:
-            logger.error(
-                "[%s] Column '%s' has %d unparseable date values",
-                filename, col, bad_count,
-            )
-            all_ok = False
 
-    if all_ok and date_cols:
-        logger.info("[%s] Date type check PASSED", filename)
-    return all_ok
+def detect_primary_key(df: pd.DataFrame) -> str | None:
+    """Best-effort primary-key detection: first *_id column that is unique."""
+    id_cols = [c for c in df.columns if c.endswith("_id")]
+    for c in id_cols:
+        if df[c].is_unique:
+            return c
+    return id_cols[0] if id_cols else None
 
 
 # ---------------------------------------------------------------------------
 # Per-file validation
 # ---------------------------------------------------------------------------
 
-def validate_file(filepath: str) -> bool:
+def validate_file(filepath: str) -> dict:
     filename = os.path.basename(filepath)
     logger.info("=" * 60)
     logger.info("Validating: %s", filename)
 
+    summary = {"file": filename, "rows": 0, "cols": 0, "status": "PASSED", "warnings": 0}
+
     try:
         df = pd.read_csv(filepath)
-        logger.info("[%s] Loaded — %d rows × %d columns", filename, *df.shape)
     except Exception as exc:
         logger.error("[%s] Failed to read file: %s", filename, exc)
-        return False
+        summary["status"] = "FAILED"
+        return summary
 
-    results = [
-        check_columns(df, filename),
-        check_missing_values(df, filename),
-        check_duplicates(df, filename),
-        check_numeric_types(df, filename),
-        check_date_columns(df, filename),
-    ]
+    if df.empty:
+        logger.error("[%s] File is EMPTY (no data rows)", filename)
+        summary["status"] = "FAILED"
+        return summary
 
-    overall = all(results)
-    status = "PASSED" if overall else "FAILED (see warnings/errors above)"
-    logger.info("[%s] Overall validation: %s", filename, status)
-    return overall
+    # Normalise column names
+    original_cols = list(df.columns)
+    df.columns = normalise_columns(df.columns)
+    if original_cols != list(df.columns):
+        logger.info("[%s] Column names normalised to snake_case", filename)
+
+    # Duplicate column names
+    dup_cols = [c for c in set(df.columns) if list(df.columns).count(c) > 1]
+    if dup_cols:
+        logger.warning("[%s] Duplicate column names detected: %s", filename, dup_cols)
+        summary["warnings"] += 1
+
+    summary["rows"], summary["cols"] = df.shape
+    logger.info("[%s] Loaded — %d rows x %d columns", filename, *df.shape)
+
+    # Missing values
+    nulls = df.isnull().sum()
+    nulls = nulls[nulls > 0]
+    if not nulls.empty:
+        logger.warning("[%s] Missing values:\n%s", filename, nulls.to_string())
+        summary["warnings"] += 1
+    else:
+        logger.info("[%s] No missing values", filename)
+
+    # Fully duplicate rows
+    dup_rows = df.duplicated().sum()
+    if dup_rows:
+        logger.warning("[%s] %d fully-duplicate row(s)", filename, dup_rows)
+        summary["warnings"] += 1
+
+    # Duplicate primary keys
+    pk = detect_primary_key(df)
+    if pk:
+        dup_pk = df.duplicated(subset=[pk]).sum()
+        if dup_pk:
+            logger.warning("[%s] %d duplicate value(s) on inferred key '%s'", filename, dup_pk, pk)
+            summary["warnings"] += 1
+        else:
+            logger.info("[%s] Primary key '%s' is unique", filename, pk)
+
+    # Numeric columns
+    for col in infer_numeric_columns(df):
+        bad = pd.to_numeric(df[col], errors="coerce").isna() & df[col].notna()
+        if bad.any():
+            logger.warning("[%s] Numeric column '%s' has %d non-numeric value(s)", filename, col, int(bad.sum()))
+            summary["warnings"] += 1
+
+    # Date columns
+    for col in infer_date_columns(df):
+        bad = pd.to_datetime(df[col], errors="coerce").isna() & df[col].notna()
+        if bad.any():
+            logger.warning("[%s] Date column '%s' has %d unparseable value(s)", filename, col, int(bad.sum()))
+            summary["warnings"] += 1
+
+    status = "PASSED" if summary["warnings"] == 0 else "PASSED (with warnings)"
+    summary["status"] = status
+    logger.info("[%s] Validation: %s", filename, status)
+    return summary
 
 
 # ---------------------------------------------------------------------------
@@ -245,27 +205,28 @@ def main():
         logger.error("Raw data directory not found: %s", RAW_DIR)
         return
 
-    csv_files = sorted(f for f in os.listdir(RAW_DIR) if f.endswith(".csv"))
+    csv_files = sorted(f for f in os.listdir(RAW_DIR) if f.lower().endswith(".csv"))
     if not csv_files:
         logger.warning("No CSV files found in %s", RAW_DIR)
         return
 
-    results = {}
-    for filename in csv_files:
-        filepath = os.path.join(RAW_DIR, filename)
-        results[filename] = validate_file(filepath)
+    logger.info("Detected %d CSV file(s): %s", len(csv_files), ", ".join(csv_files))
+
+    results = [validate_file(os.path.join(RAW_DIR, f)) for f in csv_files]
 
     logger.info("=" * 60)
     logger.info("Validation Summary")
     logger.info("=" * 60)
-    for filename, passed in results.items():
-        status = "PASSED" if passed else "FAILED"
-        logger.info("  %-40s %s", filename, status)
+    for r in results:
+        logger.info("  %-42s %-24s rows=%-6d warnings=%d",
+                    r["file"], r["status"], r["rows"], r["warnings"])
 
-    total = len(results)
-    passed = sum(results.values())
+    failed = [r for r in results if r["status"] == "FAILED"]
     logger.info("-" * 60)
-    logger.info("Result: %d / %d files passed validation", passed, total)
+    logger.info("Result: %d file(s) validated, %d failed (empty/unreadable).",
+                len(results), len(failed))
+    logger.info("Full summary written to: %s",
+                os.path.abspath(os.path.join(LOG_DIR, "validation_summary.txt")))
 
 
 if __name__ == "__main__":

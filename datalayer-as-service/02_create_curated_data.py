@@ -1,21 +1,28 @@
 """
 02_create_curated_data.py
 --------------------------
-Reads raw CSVs, applies cleaning rules, and writes curated CSVs to data/curated.
+Dynamically cleans EVERY CSV in data/raw and writes one curated CSV per raw
+file into data/curated (same base filename).
 
-Cleaning steps per file:
-  - Cast columns to correct data types
-  - Drop duplicate primary-key rows (keep first)
-  - Fill or flag missing values
-  - Normalise string columns (strip whitespace, title-case where appropriate)
+Cleaning applied per file:
+  - normalise column names to lower snake_case
+  - trim whitespace on string values
+  - drop fully-duplicate rows
+  - parse inferred date columns (kept as ISO text in the curated CSV)
+  - convert inferred numeric columns safely (guarded so 'tenor' stays text)
+  - fill missing values: numeric -> median, string -> 'Unknown', date -> left null
+
+Row counts before and after curation are logged. The script never breaks when a
+new CSV is added later — it simply processes whatever it finds.
 """
 
 import os
+import re
 import logging
 import pandas as pd
 
 # ---------------------------------------------------------------------------
-# Logging setup
+# Logging
 # ---------------------------------------------------------------------------
 logging.basicConfig(
     level=logging.INFO,
@@ -27,143 +34,59 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-RAW_DIR     = os.path.join("data", "raw")
+RAW_DIR = os.path.join("data", "raw")
 CURATED_DIR = os.path.join("data", "curated")
 
-PRIMARY_KEYS = {
-    "customer_master.csv":      ["customer_id"],
-    "historical_deals.csv":     ["deal_id"],
-    "pricing_policy.csv":       ["policy_id"],
-    "product_master.csv":       ["product_id"],
-    "treasury_rate_sheet.csv":  ["rate_id"],
-}
-
-# Columns to cast to float
-FLOAT_COLUMNS = {
-    "customer_master.csv": [
-        "relationship_tenure_years", "relationship_discount_pct",
-        "annual_revenue_aed", "debt_to_equity_ratio", "credit_score",
-        "existing_exposure_aed",
-    ],
-    "historical_deals.csv": [
-        "requested_amount", "funding_cost_pct", "standard_margin_pct",
-        "risk_premium_pct", "relationship_discount_pct",
-        "recommended_price_pct", "final_approved_price_pct",
-        "expected_margin_pct",
-    ],
-    "pricing_policy.csv": [
-        "min_margin_pct", "risk_premium_pct", "max_relationship_discount_pct",
-        "approval_required_if_discount_above_pct", "min_expected_margin_pct",
-        "rwa_risk_weight_pct",
-    ],
-    "product_master.csv": [
-        "standard_margin_pct", "max_margin_pct", "max_discount_allowed_pct",
-        "min_ticket_size", "max_ticket_size",
-    ],
-    "treasury_rate_sheet.csv": ["benchmark_rate_pct", "funding_cost_pct"],
-}
-
-# Columns to cast to datetime
-DATE_COLUMNS = {
-    "historical_deals.csv":    ["deal_date"],
-    "treasury_rate_sheet.csv": ["effective_date"],
-}
-
-# String columns to strip / normalise
-STRING_COLUMNS = {
-    "customer_master.csv": [
-        "customer_name", "customer_segment", "industry", "region",
-        "preferred_currency", "risk_category", "internal_rating",
-        "relationship_status",
-    ],
-    "historical_deals.csv": [
-        "product_type", "currency", "tenor", "deal_outcome", "sales_channel",
-    ],
-    "pricing_policy.csv":  ["customer_segment", "product_type", "risk_category", "status"],
-    "product_master.csv":  [
-        "product_name", "product_type", "pricing_method", "currency",
-        "eligible_segments",
-    ],
-    "treasury_rate_sheet.csv": ["currency", "benchmark_index", "tenor"],
-}
+NUMERIC_HINTS = (
+    "amount", "rate", "margin", "cost", "revenue", "rwa", "capital",
+    "score", "weight", "tenor", "price", "discount", "ratio", "aed",
+    "pct", "fee", "premium", "buffer", "exposure", "cushion",
+)
+DATE_HINTS = ("date", "timestamp", "_from", "_to", "effective")
+NUMERIC_EXCLUDE = ("tenor",)          # keep '1M','60M' as text
+PARSE_THRESHOLD = 0.8
 
 
 # ---------------------------------------------------------------------------
-# Cleaning helpers
+# Helpers
 # ---------------------------------------------------------------------------
 
-def drop_duplicates(df: pd.DataFrame, filename: str) -> pd.DataFrame:
-    pk_cols = [c for c in PRIMARY_KEYS.get(filename, []) if c in df.columns]
-    if not pk_cols:
-        return df
-    before = len(df)
-    df = df.drop_duplicates(subset=pk_cols, keep="first")
-    dropped = before - len(df)
-    if dropped:
-        logger.warning("[%s] Dropped %d duplicate rows on key %s", filename, dropped, pk_cols)
-    else:
-        logger.info("[%s] No duplicates found", filename)
-    return df
+def normalise_columns(cols) -> list[str]:
+    out = []
+    for c in cols:
+        c = str(c).strip().lower()
+        c = re.sub(r"[^\w]+", "_", c)
+        c = re.sub(r"_+", "_", c).strip("_")
+        out.append(c)
+    return out
 
 
-def cast_floats(df: pd.DataFrame, filename: str) -> pd.DataFrame:
-    for col in FLOAT_COLUMNS.get(filename, []):
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-    logger.info("[%s] Numeric columns cast to float", filename)
-    return df
+def infer_numeric_columns(df: pd.DataFrame) -> list[str]:
+    cols = []
+    for c in df.columns:
+        if any(x in c for x in NUMERIC_EXCLUDE):
+            continue
+        if any(h in c for h in NUMERIC_HINTS):
+            parsed = pd.to_numeric(df[c], errors="coerce")
+            non_null = df[c].notna().sum()
+            if non_null and parsed.notna().sum() / non_null >= PARSE_THRESHOLD:
+                cols.append(c)
+    return cols
 
 
-def cast_dates(df: pd.DataFrame, filename: str) -> pd.DataFrame:
-    for col in DATE_COLUMNS.get(filename, []):
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors="coerce")
-            bad = df[col].isna().sum()
-            if bad:
-                logger.warning("[%s] Column '%s': %d values could not be parsed as dates", filename, col, bad)
-    if DATE_COLUMNS.get(filename):
-        logger.info("[%s] Date columns parsed", filename)
-    return df
-
-
-def normalise_strings(df: pd.DataFrame, filename: str) -> pd.DataFrame:
-    for col in STRING_COLUMNS.get(filename, []):
-        if col in df.columns:
-            df[col] = df[col].astype(str).str.strip()
-    logger.info("[%s] String columns normalised", filename)
-    return df
-
-
-def fill_missing(df: pd.DataFrame, filename: str) -> pd.DataFrame:
-    """
-    Strategy:
-      - Numeric NaNs → fill with column median (safe for POC).
-      - String NaNs  → fill with 'Unknown'.
-    Logs counts before filling.
-    """
-    null_counts = df.isnull().sum()
-    null_counts = null_counts[null_counts > 0]
-
-    if null_counts.empty:
-        logger.info("[%s] No missing values to fill", filename)
-        return df
-
-    logger.info("[%s] Filling missing values:\n%s", filename, null_counts.to_string())
-
-    for col in df.columns:
-        if df[col].isnull().any():
-            if pd.api.types.is_numeric_dtype(df[col]):
-                median_val = df[col].median()
-                df[col] = df[col].fillna(median_val)
-                logger.info("[%s] '%s' → filled %d NaN(s) with median %.4f", filename, col, null_counts.get(col, 0), median_val)
-            else:
-                df[col] = df[col].fillna("Unknown")
-                logger.info("[%s] '%s' → filled %d NaN(s) with 'Unknown'", filename, col, null_counts.get(col, 0))
-    return df
+def infer_date_columns(df: pd.DataFrame) -> list[str]:
+    cols = []
+    for c in df.columns:
+        if any(h in c for h in DATE_HINTS):
+            parsed = pd.to_datetime(df[c], errors="coerce")
+            non_null = df[c].notna().sum()
+            if non_null and parsed.notna().sum() / non_null >= PARSE_THRESHOLD:
+                cols.append(c)
+    return cols
 
 
 # ---------------------------------------------------------------------------
-# Per-file curate
+# Per-file curation
 # ---------------------------------------------------------------------------
 
 def curate_file(filename: str) -> bool:
@@ -175,24 +98,61 @@ def curate_file(filename: str) -> bool:
 
     try:
         df = pd.read_csv(src)
-        logger.info("[%s] Loaded — %d rows × %d columns", filename, *df.shape)
     except Exception as exc:
         logger.error("[%s] Failed to read: %s", filename, exc)
         return False
 
-    df = drop_duplicates(df, filename)
-    df = cast_floats(df, filename)
-    df = cast_dates(df, filename)
-    df = normalise_strings(df, filename)
-    df = fill_missing(df, filename)
+    rows_before = len(df)
+    df.columns = normalise_columns(df.columns)
+
+    numeric_cols = infer_numeric_columns(df)
+    date_cols = infer_date_columns(df)
+    string_cols = [c for c in df.columns if c not in numeric_cols and c not in date_cols]
+
+    # Trim strings
+    for c in string_cols:
+        df[c] = df[c].astype(str).str.strip()
+        df[c] = df[c].replace({"nan": None, "NaN": None, "None": None, "": None})
+
+    # Drop fully-duplicate rows
+    df = df.drop_duplicates(keep="first")
+
+    # Parse dates (store as ISO date text; keep null when unparseable)
+    for c in date_cols:
+        parsed = pd.to_datetime(df[c], errors="coerce")
+        # normalise timezone-aware values to naive to keep CSV/MySQL simple
+        try:
+            if getattr(parsed.dt, "tz", None) is not None:
+                parsed = parsed.dt.tz_convert(None)
+        except (TypeError, AttributeError):
+            pass
+        df[c] = parsed.dt.strftime("%Y-%m-%d")
+
+    # Convert numeric columns safely
+    for c in numeric_cols:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    # Fill missing values
+    for c in df.columns:
+        if df[c].isnull().any():
+            if c in numeric_cols and pd.api.types.is_numeric_dtype(df[c]):
+                median_val = df[c].median()
+                median_val = 0.0 if pd.isna(median_val) else median_val
+                df[c] = df[c].fillna(median_val)
+            elif c in date_cols:
+                continue  # leave date nulls as-is
+            else:
+                df[c] = df[c].fillna("Unknown")
 
     try:
         df.to_csv(dst, index=False)
-        logger.info("[%s] Curated file written → %s (%d rows)", filename, dst, len(df))
     except Exception as exc:
         logger.error("[%s] Failed to write curated file: %s", filename, exc)
         return False
 
+    rows_after = len(df)
+    logger.info("[%s] rows before=%d after=%d (dropped %d) -> %s",
+                filename, rows_before, rows_after, rows_before - rows_after, dst)
     return True
 
 
@@ -210,20 +170,20 @@ def main():
     os.makedirs(CURATED_DIR, exist_ok=True)
     logger.info("Curated output directory: %s", os.path.abspath(CURATED_DIR))
 
-    csv_files = sorted(f for f in os.listdir(RAW_DIR) if f.endswith(".csv"))
+    csv_files = sorted(f for f in os.listdir(RAW_DIR) if f.lower().endswith(".csv"))
     if not csv_files:
         logger.warning("No CSV files found in %s", RAW_DIR)
         return
 
-    results = {}
-    for filename in csv_files:
-        results[filename] = curate_file(filename)
+    logger.info("Detected %d CSV file(s)", len(csv_files))
+
+    results = {f: curate_file(f) for f in csv_files}
 
     logger.info("=" * 60)
     logger.info("Curation Summary")
     logger.info("=" * 60)
-    for filename, ok in results.items():
-        logger.info("  %-40s %s", filename, "OK" if ok else "FAILED")
+    for f, ok in results.items():
+        logger.info("  %-42s %s", f, "OK" if ok else "FAILED")
 
     passed = sum(results.values())
     logger.info("-" * 60)

@@ -1,0 +1,106 @@
+2026-07-01 22:59:32 | INFO     | Starting raw data validation
+2026-07-01 22:59:32 | INFO     | Raw data directory: C:\MyWork\Projects\FAB\agent-mesh\datalayer-as-service\data\raw
+2026-07-01 22:59:32 | INFO     | Detected 14 CSV file(s): competitor_pricing.csv, credit_rating_events.csv, cross_sell_recommendation_rules.csv, customer_master.csv, customer_segment_pricing_rules.csv, customer_similarity_mapping.csv, data_dictionary.csv, historical_deals.csv, operations_cost.csv, pricing_negotiation_memory.csv, pricing_policy.csv, product_master.csv, prospect_customer_profile.csv, treasury_rate_sheet.csv
+2026-07-01 22:59:32 | INFO     | ============================================================
+2026-07-01 22:59:32 | INFO     | Validating: competitor_pricing.csv
+2026-07-01 22:59:32 | INFO     | [competitor_pricing.csv] Loaded — 84 rows x 24 columns
+2026-07-01 22:59:32 | INFO     | [competitor_pricing.csv] No missing values
+2026-07-01 22:59:32 | INFO     | [competitor_pricing.csv] Primary key 'competitor_offer_id' is unique
+2026-07-01 22:59:32 | INFO     | [competitor_pricing.csv] Validation: PASSED
+2026-07-01 22:59:32 | INFO     | ============================================================
+2026-07-01 22:59:32 | INFO     | Validating: credit_rating_events.csv
+2026-07-01 22:59:32 | INFO     | [credit_rating_events.csv] Loaded — 20 rows x 20 columns
+2026-07-01 22:59:32 | INFO     | [credit_rating_events.csv] No missing values
+2026-07-01 22:59:32 | INFO     | [credit_rating_events.csv] Primary key 'rating_event_id' is unique
+2026-07-01 22:59:32 | INFO     | [credit_rating_events.csv] Validation: PASSED
+2026-07-01 22:59:32 | INFO     | ============================================================
+2026-07-01 22:59:32 | INFO     | Validating: cross_sell_recommendation_rules.csv
+2026-07-01 22:59:32 | INFO     | [cross_sell_recommendation_rules.csv] Loaded — 64 rows x 18 columns
+2026-07-01 22:59:32 | INFO     | [cross_sell_recommendation_rules.csv] No missing values
+2026-07-01 22:59:32 | INFO     | [cross_sell_recommendation_rules.csv] Primary key 'cross_sell_rule_id' is unique
+2026-07-01 22:59:32 | INFO     | [cross_sell_recommendation_rules.csv] Validation: PASSED
+2026-07-01 22:59:32 | INFO     | ============================================================
+2026-07-01 22:59:32 | INFO     | Validating: customer_master.csv
+2026-07-01 22:59:32 | INFO     | [customer_master.csv] Loaded — 20 rows x 15 columns
+2026-07-01 22:59:32 | INFO     | [customer_master.csv] No missing values
+2026-07-01 22:59:32 | INFO     | [customer_master.csv] Primary key 'customer_id' is unique
+2026-07-01 22:59:32 | INFO     | [customer_master.csv] Validation: PASSED
+2026-07-01 22:59:32 | INFO     | ============================================================
+2026-07-01 22:59:32 | INFO     | Validating: customer_segment_pricing_rules.csv
+2026-07-01 22:59:32 | INFO     | [customer_segment_pricing_rules.csv] Loaded — 54 rows x 24 columns
+2026-07-01 22:59:32 | INFO     | [customer_segment_pricing_rules.csv] No missing values
+2026-07-01 22:59:33 | INFO     | [customer_segment_pricing_rules.csv] Primary key 'segment_rule_id' is unique
+2026-07-01 22:59:33 | INFO     | [customer_segment_pricing_rules.csv] Validation: PASSED
+2026-07-01 22:59:33 | INFO     | ============================================================
+2026-07-01 22:59:33 | INFO     | Validating: customer_similarity_mapping.csv
+2026-07-01 22:59:33 | INFO     | [customer_similarity_mapping.csv] Loaded — 24 rows x 20 columns
+2026-07-01 22:59:33 | INFO     | [customer_similarity_mapping.csv] No missing values
+2026-07-01 22:59:33 | INFO     | [customer_similarity_mapping.csv] Primary key 'similarity_mapping_id' is unique
+2026-07-01 22:59:33 | INFO     | [customer_similarity_mapping.csv] Validation: PASSED
+2026-07-01 22:59:33 | INFO     | ============================================================
+2026-07-01 22:59:33 | INFO     | Validating: data_dictionary.csv
+2026-07-01 22:59:33 | INFO     | [data_dictionary.csv] Loaded — 178 rows x 5 columns
+2026-07-01 22:59:33 | INFO     | [data_dictionary.csv] No missing values
+2026-07-01 22:59:33 | INFO     | [data_dictionary.csv] Validation: PASSED
+2026-07-01 22:59:33 | INFO     | ============================================================
+2026-07-01 22:59:33 | INFO     | Validating: historical_deals.csv
+2026-07-01 22:59:33 | INFO     | [historical_deals.csv] Loaded — 60 rows x 17 columns
+2026-07-01 22:59:33 | INFO     | [historical_deals.csv] No missing values
+2026-07-01 22:59:33 | INFO     | [historical_deals.csv] Primary key 'deal_id' is unique
+2026-07-01 22:59:33 | INFO     | [historical_deals.csv] Validation: PASSED
+2026-07-01 22:59:33 | INFO     | ============================================================
+2026-07-01 22:59:33 | INFO     | Validating: operations_cost.csv
+2026-07-01 22:59:33 | INFO     | [operations_cost.csv] Loaded — 48 rows x 21 columns
+2026-07-01 22:59:33 | INFO     | [operations_cost.csv] No missing values
+2026-07-01 22:59:33 | INFO     | [operations_cost.csv] Primary key 'ops_cost_id' is unique
+2026-07-01 22:59:33 | INFO     | [operations_cost.csv] Validation: PASSED
+2026-07-01 22:59:33 | INFO     | ============================================================
+2026-07-01 22:59:33 | INFO     | Validating: pricing_negotiation_memory.csv
+2026-07-01 22:59:33 | INFO     | [pricing_negotiation_memory.csv] Loaded — 20 rows x 25 columns
+2026-07-01 22:59:33 | INFO     | [pricing_negotiation_memory.csv] No missing values
+2026-07-01 22:59:33 | INFO     | [pricing_negotiation_memory.csv] Primary key 'memory_interaction_id' is unique
+2026-07-01 22:59:33 | INFO     | [pricing_negotiation_memory.csv] Validation: PASSED
+2026-07-01 22:59:33 | INFO     | ============================================================
+2026-07-01 22:59:33 | INFO     | Validating: pricing_policy.csv
+2026-07-01 22:59:33 | INFO     | [pricing_policy.csv] Loaded — 24 rows x 11 columns
+2026-07-01 22:59:33 | INFO     | [pricing_policy.csv] No missing values
+2026-07-01 22:59:33 | INFO     | [pricing_policy.csv] Primary key 'policy_id' is unique
+2026-07-01 22:59:33 | INFO     | [pricing_policy.csv] Validation: PASSED
+2026-07-01 22:59:33 | INFO     | ============================================================
+2026-07-01 22:59:33 | INFO     | Validating: product_master.csv
+2026-07-01 22:59:33 | INFO     | [product_master.csv] Loaded — 8 rows x 12 columns
+2026-07-01 22:59:33 | INFO     | [product_master.csv] No missing values
+2026-07-01 22:59:33 | INFO     | [product_master.csv] Primary key 'product_id' is unique
+2026-07-01 22:59:33 | INFO     | [product_master.csv] Validation: PASSED
+2026-07-01 22:59:33 | INFO     | ============================================================
+2026-07-01 22:59:33 | INFO     | Validating: prospect_customer_profile.csv
+2026-07-01 22:59:33 | INFO     | [prospect_customer_profile.csv] Loaded — 12 rows x 26 columns
+2026-07-01 22:59:33 | INFO     | [prospect_customer_profile.csv] No missing values
+2026-07-01 22:59:33 | INFO     | [prospect_customer_profile.csv] Primary key 'customer_id' is unique
+2026-07-01 22:59:33 | INFO     | [prospect_customer_profile.csv] Validation: PASSED
+2026-07-01 22:59:33 | INFO     | ============================================================
+2026-07-01 22:59:33 | INFO     | Validating: treasury_rate_sheet.csv
+2026-07-01 22:59:33 | INFO     | [treasury_rate_sheet.csv] Loaded — 14 rows x 7 columns
+2026-07-01 22:59:33 | INFO     | [treasury_rate_sheet.csv] No missing values
+2026-07-01 22:59:33 | INFO     | [treasury_rate_sheet.csv] Primary key 'rate_id' is unique
+2026-07-01 22:59:33 | INFO     | [treasury_rate_sheet.csv] Validation: PASSED
+2026-07-01 22:59:33 | INFO     | ============================================================
+2026-07-01 22:59:33 | INFO     | Validation Summary
+2026-07-01 22:59:33 | INFO     | ============================================================
+2026-07-01 22:59:33 | INFO     |   competitor_pricing.csv                     PASSED                   rows=84     warnings=0
+2026-07-01 22:59:33 | INFO     |   credit_rating_events.csv                   PASSED                   rows=20     warnings=0
+2026-07-01 22:59:33 | INFO     |   cross_sell_recommendation_rules.csv        PASSED                   rows=64     warnings=0
+2026-07-01 22:59:33 | INFO     |   customer_master.csv                        PASSED                   rows=20     warnings=0
+2026-07-01 22:59:33 | INFO     |   customer_segment_pricing_rules.csv         PASSED                   rows=54     warnings=0
+2026-07-01 22:59:33 | INFO     |   customer_similarity_mapping.csv            PASSED                   rows=24     warnings=0
+2026-07-01 22:59:33 | INFO     |   data_dictionary.csv                        PASSED                   rows=178    warnings=0
+2026-07-01 22:59:33 | INFO     |   historical_deals.csv                       PASSED                   rows=60     warnings=0
+2026-07-01 22:59:33 | INFO     |   operations_cost.csv                        PASSED                   rows=48     warnings=0
+2026-07-01 22:59:33 | INFO     |   pricing_negotiation_memory.csv             PASSED                   rows=20     warnings=0
+2026-07-01 22:59:33 | INFO     |   pricing_policy.csv                         PASSED                   rows=24     warnings=0
+2026-07-01 22:59:33 | INFO     |   product_master.csv                         PASSED                   rows=8      warnings=0
+2026-07-01 22:59:33 | INFO     |   prospect_customer_profile.csv              PASSED                   rows=12     warnings=0
+2026-07-01 22:59:33 | INFO     |   treasury_rate_sheet.csv                    PASSED                   rows=14     warnings=0
+2026-07-01 22:59:33 | INFO     | ------------------------------------------------------------
+2026-07-01 22:59:33 | INFO     | Result: 14 file(s) validated, 0 failed (empty/unreadable).
+2026-07-01 22:59:33 | INFO     | Full summary written to: C:\MyWork\Projects\FAB\agent-mesh\datalayer-as-service\logs\validation_summary.txt

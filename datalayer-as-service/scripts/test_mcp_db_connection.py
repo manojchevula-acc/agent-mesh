@@ -82,12 +82,26 @@ def test_sample_query(engine) -> None:
     print(json.dumps(records, indent=2, default=str))
 
 
+def test_env_loaded() -> None:
+    print_section("Step 0 – Confirm .env is loaded")
+    from dotenv import load_dotenv
+    load_dotenv()
+    required = ["MYSQL_USER", "MYSQL_PASSWORD", "MYSQL_HOST", "MYSQL_PORT", "MYSQL_DATABASE"]
+    missing = [k for k in required if not os.getenv(k)]
+    for k in required:
+        # Never print secret values — only whether they are set.
+        print(f"  {k:<16} {'SET' if os.getenv(k) else 'MISSING'}")
+    if missing:
+        raise RuntimeError(f"Missing env vars: {missing}. Copy .env.example to .env.")
+
+
 def main() -> None:
     print("\n========================================")
     print("  FAB MCP Server – DB Connection Test")
     print("========================================")
 
     try:
+        test_env_loaded()
         engine = test_connection()
         test_list_views(engine)
         test_sample_query(engine)
