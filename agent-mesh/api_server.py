@@ -160,6 +160,8 @@ async def post_query(request: Request) -> JSONResponse:
         "confidence": summary.confidence,
         # Full event stream for the UI transparency panel
         "events": [dataclasses.asdict(e) for e in summary.events],
+        # Captured LLM reasoning entries for the AI Reasoning explainability panel
+        "llm_reasoning": summary.llm_reasoning,
     })
 
 

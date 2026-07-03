@@ -94,9 +94,15 @@ function RouteChip({ route }: { route: string }) {
   );
 }
 
+const LLM_REASONING_RE = /<llm_reasoning>[\s\S]*?<\/llm_reasoning>/g;
+
 const MessageBubble = memo(function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const timeLabel = useMemo(() => formatTime(message.timestamp), [message.timestamp]);
+  const safeContent = useMemo(
+    () => message.content.replace(LLM_REASONING_RE, "").trim(),
+    [message.content],
+  );
 
   if (isUser) {
     return (
@@ -146,9 +152,9 @@ const MessageBubble = memo(function MessageBubble({ message }: MessageBubbleProp
               )}
 
               {/* Answer text */}
-              {message.content && (
+              {safeContent && (
                 <div className="text-sm leading-relaxed prose-sm">
-                  <Markdown>{message.content}</Markdown>
+                  <Markdown>{safeContent}</Markdown>
                 </div>
               )}
 

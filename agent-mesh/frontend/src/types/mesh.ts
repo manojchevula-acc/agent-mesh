@@ -1,6 +1,40 @@
 // TypeScript types mirroring the Python MeshResult dataclass and related
 // models in src/mesh/orchestrator.py and src/auth/identity_provider.py.
 
+// Mirrors LLMReasoningEntry dataclass in src/tracing/llm_reasoning.py
+export interface LLMReasoningData {
+  // intent_routing phase
+  intent?: "data" | "knowledge" | "hybrid";
+  data_signals?: string[];
+  rag_signals?: string[];
+  rationale?: string;
+  confidence?: number;
+  // synthesis phase
+  sources_used?: string[];
+  key_findings?: string[];
+  answer_rationale?: string;
+  // safety_review phase
+  checks?: string[];
+  risk_signals?: string[];
+  decision?: string;
+  // tool_selection phase (data / rag agents)
+  tool_selected?: string;
+  customer_id?: string;
+  query_intent?: string;
+  search_query?: string;
+  knowledge_domain?: string;
+  // fallback for unstructured blocks
+  raw?: string;
+  [key: string]: unknown;
+}
+
+export interface LLMReasoningEntry {
+  agent: string;   // "compliance" | "price_assist" | "data" | "rag"
+  phase: string;   // "safety_review" | "intent_routing" | "synthesis"
+  data: LLMReasoningData;
+  timestamp?: string;
+}
+
 export type Role =
   | "customer"
   | "relationship_manager"
@@ -49,6 +83,8 @@ export interface MeshResult {
   total_duration_ms?: number;
   // Full step-by-step event stream for the execution transparency panel
   events?: ExecutionEvent[];
+  // Captured LLM reasoning entries for the AI Reasoning explainability panel
+  llm_reasoning?: LLMReasoningEntry[];
 }
 
 export interface ChatMessage {

@@ -1,7 +1,8 @@
 import { memo, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, CheckCircle2, XCircle, AlertTriangle, Activity } from "lucide-react";
+import { ChevronDown, ChevronRight, CheckCircle2, XCircle, Activity, Brain } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { MeshResult, ExecutionEvent } from "@/types/mesh";
+import LLMReasoningPanel from "./LLMReasoningPanel";
 
 // Maps Python stage keys → human-readable step titles (mirrors cli_renderer.py _STAGE_LABELS)
 const STAGE_LABELS: Record<string, string> = {
@@ -231,27 +232,29 @@ interface ExecutionPanelProps {
   result: MeshResult;
 }
 
+type PanelTab = "trace" | "reasoning";
+
 export default function ExecutionPanel({ result }: ExecutionPanelProps) {
   const [open, setOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<PanelTab>("trace");
 
   const steps = useMemo(() => collapseEvents(result.events ?? []), [result.events]);
   const stepCount = steps.length;
+  const reasoningCount = result.llm_reasoning?.length ?? 0;
   const durationLabel = result.total_duration_ms != null
     ? `${(result.total_duration_ms / 1000).toFixed(1)} s`
     : null;
 
   const hasSummary = result.request_id || result.route || result.domain;
 
-  if (!hasSummary && stepCount === 0) return null;
+  if (!hasSummary && stepCount === 0 && reasoningCount === 0) return null;
 
   return (
     <div className="mt-3 pt-3 border-t border-line">
       {/* Toggle button */}
       <button
         onClick={() => setOpen((v) => !v)}
-        className={cn(
-          "flex items-center gap-1.5 text-xs text-muted hover:text-fg transition-colors"
-        )}
+        className="flex items-center gap-1.5 text-xs text-muted hover:text-fg transition-colors"
       >
         <Activity className="h-3.5 w-3.5" />
         <span className="font-medium">Execution Trace</span>
@@ -268,20 +271,75 @@ export default function ExecutionPanel({ result }: ExecutionPanelProps) {
       </button>
 
       {open && (
-        <div className="mt-3 space-y-2">
-          {/* Step-by-step events */}
-          {steps.map((ev, i) => (
-            <Step key={`${ev.stage}-${i}`} index={i + 1} event={ev} />
-          ))}
+        <div className="mt-3">
+          {/* Tab switcher */}
+          <div className="flex gap-0.5 mb-3 p-0.5 rounded-lg bg-surface border border-line w-fit">
+            <button
+              onClick={() => setActiveTab("trace")}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-medium transition-colors",
+                activeTab === "trace"
+                  ? "bg-canvas text-fg shadow-sm"
+                  : "text-muted hover:text-fg"
+              )}
+            >
+              <Activity className="h-3 w-3" />
+              Execution Steps
+              {stepCount > 0 && (
+                <span className={cn(
+                  "ml-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold",
+                  activeTab === "trace"
+                    ? "bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300"
+                    : "bg-line text-muted"
+                )}>
+                  {stepCount}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => setActiveTab("reasoning")}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-medium transition-colors",
+                activeTab === "reasoning"
+                  ? "bg-canvas text-fg shadow-sm"
+                  : "text-muted hover:text-fg"
+              )}
+            >
+              <Brain className="h-3 w-3" />
+              AI Reasoning
+              {reasoningCount > 0 && (
+                <span className={cn(
+                  "ml-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold",
+                  activeTab === "reasoning"
+                    ? "bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300"
+                    : "bg-line text-muted"
+                )}>
+                  {reasoningCount}
+                </span>
+              )}
+            </button>
+          </div>
 
-          {/* Execution summary table */}
-          {hasSummary && (
-            <div className="mt-3">
-              <p className="text-[10px] uppercase tracking-wider text-muted mb-1.5 font-semibold">
-                Execution Summary
-              </p>
-              <SummaryTable result={result} />
+          {/* ── EXECUTION STEPS tab ── */}
+          {activeTab === "trace" && (
+            <div className="space-y-2">
+              {steps.map((ev, i) => (
+                <Step key={`${ev.stage}-${i}`} index={i + 1} event={ev} />
+              ))}
+              {hasSummary && (
+                <div className="mt-3">
+                  <p className="text-[10px] uppercase tracking-wider text-muted mb-1.5 font-semibold">
+                    Execution Summary
+                  </p>
+                  <SummaryTable result={result} />
+                </div>
+              )}
             </div>
+          )}
+
+          {/* ── AI REASONING tab ── */}
+          {activeTab === "reasoning" && (
+            <LLMReasoningPanel entries={result.llm_reasoning ?? []} />
           )}
         </div>
       )}

@@ -38,6 +38,7 @@ from src.observability.baggage import set_request_baggage, detach_baggage
 from src.observability.metrics import record_mesh_request
 from src.mesh.workflow import MeshState, build_mesh_workflow
 from src.tracing.execution_trace import get_active_tracer
+from src.tracing.llm_reasoning import strip_reasoning_markers
 from src.memory import ConversationStore
 
 _log = get_logger(CAT_SYSTEM)
@@ -143,6 +144,12 @@ async def handle_request(user: User, query: str, session_id: str | None = None) 
         return MeshResult(answer="Internal error: no workflow output.", blocked=True,
                           block_stage="internal_error", trail=["no_output"],
                           session_id=session_id)
+
+    # Safety-net: strip any <llm_reasoning> blocks that slipped through the
+    # DomainExecutor extraction pass (e.g. on a retry path or when the LLM
+    # placed the synthesis block after the answer text rather than before it).
+    if final.answer:
+        final.answer = strip_reasoning_markers(final.answer)
 
     # Persist this turn so the next request in the session sees it. Only non-blocked
     # turns with a real answer are stored (blocked queries carry no useful context).

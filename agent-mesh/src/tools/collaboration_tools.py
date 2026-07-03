@@ -28,20 +28,50 @@ from src.a2a.clients import ask_remote
 _peer_depth: contextvars.ContextVar[int] = contextvars.ContextVar("peer_call_depth", default=0)
 _MAX_PEER_DEPTH = 2
 
+# Per-request result cache keyed by (node, question). Scoped to the current async
+# context so different concurrent requests never share entries. Initialised lazily
+# on the first _consult_peer call in a given context.
+_peer_cache: contextvars.ContextVar[dict] = contextvars.ContextVar("peer_cache", default=None)
+
 
 async def _consult_peer(node: str, question: str, unavailable_label: str) -> str:
     depth = _peer_depth.get()
     if depth >= _MAX_PEER_DEPTH:
         return "PEER_LIMIT: delegation depth exceeded; aborting to prevent loops."
+
+    # Deduplicate: if this (node, question) pair was already fetched in the current
+    # request context, return the cached result immediately. This prevents the MAF
+    # tool-loop from calling the same downstream agent multiple times and receiving
+    # a Groq-rate-limited echo response on the second call.
+    cache = _peer_cache.get()
+    if cache is None:
+        cache = {}
+        _peer_cache.set(cache)
+    cache_key = (node, question.strip())
+    if cache_key in cache:
+        return cache[cache_key]
+
     token = _peer_depth.set(depth + 1)
     t0 = time.perf_counter()
     error_occurred = False
     try:
         result = await ask_remote(node, question)
+        # Echo detection: if the peer returned the input question verbatim it means
+        # the downstream agent's LLM failed to call its tool (e.g. hit a Groq
+        # rate-limit before making any MCP call and just echoed the prompt).
+        if result and result.strip() == question.strip():
+            result = (
+                f"{unavailable_label}: agent returned no data "
+                "(response matched input — downstream LLM may be rate-limited)."
+            )
+            error_occurred = True
+        cache[cache_key] = result
         return result
     except Exception as e:
         error_occurred = True
-        return f"{unavailable_label}: could not reach the {node} agent ({e})."
+        result = f"{unavailable_label}: could not reach the {node} agent ({e})."
+        cache[cache_key] = result
+        return result
     finally:
         _peer_depth.reset(token)
         # Enrich the enclosing execute_tool span (created by Agent Framework for

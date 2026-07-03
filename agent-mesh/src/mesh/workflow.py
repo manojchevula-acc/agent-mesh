@@ -57,6 +57,7 @@ from src.observability.metrics import (
     record_pii_hits,
 )
 from src.tracing.execution_trace import get_active_tracer, infer_route_and_scores
+from src.tracing.llm_reasoning import extract_reasoning, strip_reasoning_markers
 from src.memory import ConversationStore
 
 _log = get_logger(CAT_WORKFLOW)
@@ -390,7 +391,11 @@ class ComplianceExecutor(Executor):
 
                 _add_event(span, "compliance.a2a_call.started", {"target": "compliance"})
                 verdict = await self._ask("compliance", f"Review this request for safety: '{state.query}'")
+                # Extract and capture LLM reasoning before consuming the verdict text.
+                _reasoning_entries, verdict = extract_reasoning(verdict, "compliance")
                 state.compliance_verdict = verdict
+                if tracer and _reasoning_entries:
+                    tracer.add_llm_reasoning([e.to_dict() for e in _reasoning_entries])
                 elapsed = (time.perf_counter() - t0) * 1000
 
                 if "compliance_failed" in verdict.lower():
@@ -485,7 +490,9 @@ class DomainExecutor(Executor):
 
     # Detects hallucinated bracket-placeholder templates, e.g. [Name], [Value],
     # [Customer ID], [Brief overview].  These are never present in real tool output.
-    _HALLUCINATION_RE = re.compile(r'\[[A-Za-z][A-Za-z0-9 _/-]{1,40}\]')
+    # Excludes snake_case tool/view names like [pricing_recommendation] (underscore
+    # removed from char class) and all-caps IDs like [CUST001] (negative lookahead).
+    _HALLUCINATION_RE = re.compile(r'\[(?![A-Z]{2,}[0-9])[A-Za-z][A-Za-z0-9 /-]{1,40}\]')
 
     @handler
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState]) -> None:
@@ -573,7 +580,68 @@ class DomainExecutor(Executor):
 
             total_ms = int((time.perf_counter() - t0) * 1000)
             answer = ConversationStore.strip_history_echo(answer or "", state.query)
-            state.answer = answer
+            # Extract LLM reasoning markers from the answer and strip them so the
+            # user-facing answer is clean. Captured entries go to the trace layer.
+            _reasoning_entries: list = []
+            if not failed:
+                _reasoning_entries, answer = extract_reasoning(answer, "price_assist")
+                if tracer and _reasoning_entries:
+                    tracer.add_llm_reasoning([e.to_dict() for e in _reasoning_entries])
+            # Belt-and-suspenders: strip any blocks not caught by extract_reasoning
+            # (e.g. synthesis placed after the answer text, or blocks on retry path).
+            clean = strip_reasoning_markers(answer)
+            # Fallback: if the LLM packed its entire answer inside <llm_reasoning> blocks
+            # (leaving only an echoed question or nothing after stripping), reconstruct
+            # a readable response from the synthesis entry's key_findings + answer_rationale.
+            if not failed and (not clean or clean.strip() == state.query.strip()):
+                _syn = next((e for e in _reasoning_entries if e.phase == "synthesis"), None)
+                if _syn and isinstance(_syn.data, dict):
+                    _parts: list[str] = list(_syn.data.get("key_findings") or [])
+                    if _syn.data.get("answer_rationale"):
+                        _parts.append(_syn.data["answer_rationale"])
+                    if _parts:
+                        clean = "\n\n".join(_parts)
+                        _log.warning(
+                            "DomainExecutor: answer was empty after reasoning strip; "
+                            "reconstructed from synthesis block (%d chars)",
+                            len(clean),
+                            extra={"status": "WARN"},
+                        )
+            # Fallback 2: if the answer is still empty or just echoes the user's
+            # question after all processing, issue one final plain-answer retry that
+            # explicitly asks PriceAssist to respond without reasoning blocks.
+            if not failed and (not clean or clean.strip() == state.query.strip()):
+                _log.warning(
+                    "DomainExecutor: answer still empty/echoed after all processing; "
+                    "issuing plain-answer retry",
+                    extra={"status": "RETRY"},
+                )
+                try:
+                    _plain = await self._ask(
+                        "price_assist",
+                        state.query
+                        + "\n\n[SYSTEM NOTE: Please provide a direct, complete answer "
+                        "to the question above in plain markdown. "
+                        "Do NOT repeat the question. Do NOT use <llm_reasoning> blocks.]",
+                    )
+                    _plain_entries, _plain_clean = extract_reasoning(
+                        _plain or "", "price_assist"
+                    )
+                    if tracer and _plain_entries:
+                        tracer.add_llm_reasoning(
+                            [e.to_dict() for e in _plain_entries]
+                        )
+                    _plain_clean = strip_reasoning_markers(_plain_clean)
+                    if _plain_clean and _plain_clean.strip() != state.query.strip():
+                        clean = _plain_clean
+                        state.trail.append("domain_answer:retry_plain")
+                except Exception as _exc:
+                    _log.warning(
+                        "DomainExecutor: plain-answer retry failed: %s",
+                        _exc,
+                        extra={"status": "ERROR"},
+                    )
+            state.answer = clean
 
             _set_attr(span, "domain.retry_reason", retry_reason)
             _set_attr(span, "domain.retried", retry_reason != "none")

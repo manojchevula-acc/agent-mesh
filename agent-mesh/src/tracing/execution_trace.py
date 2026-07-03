@@ -47,6 +47,8 @@ class ExecutionSummary:
     blocked: bool = False
     block_stage: Optional[str] = None
     events: List[ExecutionEvent] = field(default_factory=list)
+    # Captured LLM reasoning entries (one per decision point across all agents).
+    llm_reasoning: List[Dict[str, Any]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +77,7 @@ class ExecutionTracer:
         self._blocked = False
         self._block_stage: Optional[str] = None
         self._confidence: Optional[float] = None
+        self._llm_reasoning: List[Dict[str, Any]] = []
 
     # -- Listener management -------------------------------------------------
 
@@ -138,6 +141,10 @@ class ExecutionTracer:
         self._blocked = True
         self._block_stage = stage
 
+    def add_llm_reasoning(self, entries: List[Dict[str, Any]]) -> None:
+        """Store LLM reasoning entries captured from agent response text."""
+        self._llm_reasoning.extend(entries)
+
     def summary(self) -> ExecutionSummary:
         return ExecutionSummary(
             request_id=self.request_id,
@@ -152,6 +159,7 @@ class ExecutionTracer:
             blocked=self._blocked,
             block_stage=self._block_stage,
             events=list(self._events),
+            llm_reasoning=list(self._llm_reasoning),
         )
 
 
