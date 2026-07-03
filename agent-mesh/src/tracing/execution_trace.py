@@ -5,6 +5,7 @@ changes. Designed for CLI, REST API, Web UI, OTel/Langfuse/Grafana.
 """
 from __future__ import annotations
 
+import re
 import time
 import uuid
 import contextvars
@@ -159,6 +160,41 @@ class ExecutionTracer:
 # Routing inference — derive display info from query/answer text
 # ---------------------------------------------------------------------------
 
+# Keyword vocabularies shared by route inference and the follow-up signal check.
+# Removed from _DATA_KW:
+#   "pricing" — appears in policy queries ("pricing floor/ceiling") as often as
+#               data queries; was causing false-positive data routing.
+#   "rate"    — "BB-rated" substring was triggering data routing for pure RAG
+#               policy questions; rate-specific data queries always carry "cust"
+#               or "deal" anyway.
+_DATA_KW = ["price", "margin", "customer", "cust", "deal", "profitability",
+            "rwa", "data", "record", "structured", "recommend", "cost"]
+_RAG_KW  = ["policy", "regulation", "document", "guide", "faq", "procedure", "rule",
+            "limit", "floor", "ceiling", "credit", "compliance", "aml", "kyc", "fee",
+            # governance / model-risk / CBUAE regulatory domain
+            "governance", "model", "requirement", "circular", "criteria",
+            "incident", "validation", "eligibility", "cbuae",
+            # product structure questions (e.g. "interest rate components")
+            "component"]
+
+# Entity references that mean the question itself targets a specific record.
+_ENTITY_RE = re.compile(r"\b(cust|deal|customer)\s*[-_]?\s*\d", re.I)
+
+
+def query_has_retrieval_signal(query: str) -> bool:
+    """True if the QUESTION itself requires a fresh data/policy lookup.
+
+    Looks only at the user's query (not the answer): an entity id (e.g. CUST001)
+    or any data/RAG keyword means the turn needs retrieval. Returns False for
+    anaphoric follow-ups like "explain the third point" / "tell me more about that"
+    that are answerable from prior conversation context alone.
+    """
+    q = (query or "").lower()
+    if _ENTITY_RE.search(q):
+        return True
+    return any(k in q for k in _DATA_KW) or any(k in q for k in _RAG_KW)
+
+
 def infer_route_and_scores(
     query: str, answer: str
 ) -> Tuple[str, List[str], float, Dict[str, float]]:
@@ -170,21 +206,8 @@ def infer_route_and_scores(
     """
     text = (query + " " + answer).lower()
 
-    # Removed from data_kw:
-    #   "pricing" — appears in policy queries ("pricing floor/ceiling") as often as
-    #               data queries; was causing false-positive data routing.
-    #   "rate"    — "BB-rated" substring was triggering data routing for pure RAG
-    #               policy questions; rate-specific data queries always carry "cust"
-    #               or "deal" anyway.
-    data_kw = ["price", "margin", "customer", "cust", "deal", "profitability",
-               "rwa", "data", "record", "structured", "recommend", "cost"]
-    rag_kw  = ["policy", "regulation", "document", "guide", "faq", "procedure", "rule",
-               "limit", "floor", "ceiling", "credit", "compliance", "aml", "kyc", "fee",
-               # governance / model-risk / CBUAE regulatory domain
-               "governance", "model", "requirement", "circular", "criteria",
-               "incident", "validation", "eligibility", "cbuae",
-               # product structure questions (e.g. "interest rate components")
-               "component"]
+    data_kw = _DATA_KW
+    rag_kw  = _RAG_KW
 
     # Check query alone first — prevents answer-inflated data keywords from
     # drowning out RAG signals when the user explicitly asked for both.

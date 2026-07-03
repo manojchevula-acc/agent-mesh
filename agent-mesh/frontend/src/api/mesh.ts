@@ -4,6 +4,7 @@ import type {
   MeshResult,
   MeshUser,
   NodeHealth,
+  TokenUsageSummary,
 } from "@/types/mesh";
 
 export async function queryMesh(
@@ -38,5 +39,12 @@ export async function loginUser(username: string): Promise<MeshUser> {
 
 export async function getMeshStatus(): Promise<NodeHealth[]> {
   const { data } = await apiClient.get<NodeHealth[]>("/api/mesh/status");
+  return data;
+}
+
+export async function getCostSummary(sessionId: string): Promise<TokenUsageSummary> {
+  const { data } = await apiClient.get<TokenUsageSummary>(
+    `/api/cost/summary?session_id=${encodeURIComponent(sessionId)}`,
+  );
   return data;
 }

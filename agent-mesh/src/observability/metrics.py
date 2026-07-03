@@ -16,6 +16,11 @@ fab.mesh.requests.total        — end-to-end mesh requests
 fab.domain.route.total         — routing decisions (Data / RAG / Hybrid)
 fab.a2a.calls.total            — A2A hops (by target node)
 fab.mcp.calls.total            — MCP tool invocations (by service + tool)
+fab.conversation.load.total    — conversation history load operations
+fab.conversation.append.total  — conversation turn append operations
+fab.llm.tokens.input           — LLM prompt tokens consumed (by agent, model, role)
+fab.llm.tokens.output          — LLM completion tokens generated (by agent, model, role)
+fab.llm.tokens.total           — LLM total tokens (input + output)
 
 Histograms (unit: ms unless stated)
 --------------------------------------
@@ -26,6 +31,11 @@ fab.domain.duration            — domain dispatch wall-clock time
 fab.a2a.duration               — A2A hop wall-clock time
 fab.mesh.request.duration      — full mesh request wall-clock time
 fab.output.redaction.pii_hits  — PII tokens redacted per request (unit: {match})
+fab.conversation.load.duration — conversation history load wall-clock time
+fab.conversation.append.duration — conversation turn append wall-clock time
+fab.conversation.turns_loaded  — prior turns injected per request (unit: {turn})
+fab.llm.cost.usd               — estimated USD cost per LLM call (unit: {USD})
+fab.llm.tokens.per_call        — total tokens per single LLM call (for percentile analysis)
 """
 from __future__ import annotations
 
@@ -47,6 +57,11 @@ _mesh_request_counter = None
 _domain_route_counter = None
 _a2a_counter = None
 _mcp_counter = None
+_conversation_load_counter = None
+_conversation_append_counter = None
+_llm_input_token_counter = None
+_llm_output_token_counter = None
+_llm_total_token_counter = None
 
 # Histograms
 _guardrail_duration = None
@@ -56,6 +71,19 @@ _domain_duration = None
 _a2a_duration = None
 _mesh_request_duration = None
 _pii_hits = None
+_conversation_load_duration = None
+_conversation_append_duration = None
+_conversation_turns_loaded = None
+_llm_cost_histogram = None
+_llm_tokens_per_call_histogram = None
+
+# ---------------------------------------------------------------------------
+# In-process session cost accumulator
+# Keyed by session_id; populated by record_llm_tokens(); read by api_server's
+# /api/cost/summary endpoint. This dict lives in the api_server process only —
+# audit_middleware (which runs in remote agent nodes) records to OTel only.
+# ---------------------------------------------------------------------------
+_session_costs: dict = {}
 
 
 def _get_meter():
@@ -144,6 +172,28 @@ def _mcp_ctr():
     return _mcp_counter
 
 
+def _conversation_load_ctr():
+    global _conversation_load_counter
+    if _conversation_load_counter is None:
+        _conversation_load_counter = _get_meter().create_counter(
+            "fab.conversation.load.total",
+            unit="{request}",
+            description="Total conversation history load operations",
+        )
+    return _conversation_load_counter
+
+
+def _conversation_append_ctr():
+    global _conversation_append_counter
+    if _conversation_append_counter is None:
+        _conversation_append_counter = _get_meter().create_counter(
+            "fab.conversation.append.total",
+            unit="{request}",
+            description="Total conversation turn append operations",
+        )
+    return _conversation_append_counter
+
+
 # --- Histogram accessors ------------------------------------------------------
 
 def _guardrail_hist():
@@ -221,6 +271,39 @@ def _pii_hits_hist():
             description="PII tokens redacted per request by output redaction",
         )
     return _pii_hits
+
+
+def _conversation_load_hist():
+    global _conversation_load_duration
+    if _conversation_load_duration is None:
+        _conversation_load_duration = _get_meter().create_histogram(
+            "fab.conversation.load.duration",
+            unit="ms",
+            description="Conversation history load wall-clock time in milliseconds",
+        )
+    return _conversation_load_duration
+
+
+def _conversation_append_hist():
+    global _conversation_append_duration
+    if _conversation_append_duration is None:
+        _conversation_append_duration = _get_meter().create_histogram(
+            "fab.conversation.append.duration",
+            unit="ms",
+            description="Conversation turn append wall-clock time in milliseconds",
+        )
+    return _conversation_append_duration
+
+
+def _conversation_turns_hist():
+    global _conversation_turns_loaded
+    if _conversation_turns_loaded is None:
+        _conversation_turns_loaded = _get_meter().create_histogram(
+            "fab.conversation.turns_loaded",
+            unit="{turn}",
+            description="Prior conversation turns injected into prompt per request",
+        )
+    return _conversation_turns_loaded
 
 
 # ---------------------------------------------------------------------------
@@ -362,3 +445,177 @@ def record_pii_hits(count: int) -> None:
         _pii_hits_hist().record(float(count))
     except Exception:
         pass
+
+
+def record_conversation_load(result: str, backend: str, duration_ms: float, turns: int) -> None:
+    """Record one conversation history load operation.
+
+    Args:
+        result:      ``"ok"`` (turns found), ``"empty"`` (new session), or ``"error"``
+        backend:     storage backend name (``"jsonl"`` or ``"redis"``)
+        duration_ms: wall-clock time in milliseconds
+        turns:       number of prior turns loaded (0 on empty/error)
+    """
+    if not Config.ENABLE_BUSINESS_METRICS:
+        return
+    try:
+        attrs = {"result": result, "backend": backend}
+        _conversation_load_ctr().add(1, attrs)
+        _conversation_load_hist().record(duration_ms, {"result": result})
+        _conversation_turns_hist().record(float(turns), {"backend": backend})
+    except Exception:
+        pass
+
+
+def record_conversation_append(result: str, backend: str, duration_ms: float) -> None:
+    """Record one conversation turn append operation.
+
+    Args:
+        result:      ``"ok"`` or ``"error"``
+        backend:     storage backend name (``"jsonl"`` or ``"redis"``)
+        duration_ms: wall-clock time in milliseconds
+    """
+    if not Config.ENABLE_BUSINESS_METRICS:
+        return
+    try:
+        attrs = {"result": result, "backend": backend}
+        _conversation_append_ctr().add(1, attrs)
+        _conversation_append_hist().record(duration_ms, {"result": result})
+    except Exception:
+        pass
+
+
+# --- LLM token counter accessors ---------------------------------------------
+
+def _llm_input_ctr():
+    global _llm_input_token_counter
+    if _llm_input_token_counter is None:
+        _llm_input_token_counter = _get_meter().create_counter(
+            "fab.llm.tokens.input",
+            unit="{token}",
+            description="LLM prompt tokens consumed per A2A call",
+        )
+    return _llm_input_token_counter
+
+
+def _llm_output_ctr():
+    global _llm_output_token_counter
+    if _llm_output_token_counter is None:
+        _llm_output_token_counter = _get_meter().create_counter(
+            "fab.llm.tokens.output",
+            unit="{token}",
+            description="LLM completion tokens generated per A2A call",
+        )
+    return _llm_output_token_counter
+
+
+def _llm_total_ctr():
+    global _llm_total_token_counter
+    if _llm_total_token_counter is None:
+        _llm_total_token_counter = _get_meter().create_counter(
+            "fab.llm.tokens.total",
+            unit="{token}",
+            description="LLM total tokens (input + output) per A2A call",
+        )
+    return _llm_total_token_counter
+
+
+def _llm_cost_hist():
+    global _llm_cost_histogram
+    if _llm_cost_histogram is None:
+        _llm_cost_histogram = _get_meter().create_histogram(
+            "fab.llm.cost.usd",
+            unit="{USD}",
+            description="Estimated USD cost per LLM call based on model pricing",
+        )
+    return _llm_cost_histogram
+
+
+def _llm_tokens_per_call_hist():
+    global _llm_tokens_per_call_histogram
+    if _llm_tokens_per_call_histogram is None:
+        _llm_tokens_per_call_histogram = _get_meter().create_histogram(
+            "fab.llm.tokens.per_call",
+            unit="{token}",
+            description="Total tokens per single LLM call for percentile analysis",
+        )
+    return _llm_tokens_per_call_histogram
+
+
+# ---------------------------------------------------------------------------
+# Public token + cost record functions
+# ---------------------------------------------------------------------------
+
+def record_llm_tokens(
+    agent_name: str,
+    model: str,
+    role: str,
+    input_tokens: int,
+    output_tokens: int,
+    session_id: str = "unknown",
+) -> None:
+    """Record LLM token consumption and estimated cost for one A2A call.
+
+    Args:
+        agent_name:    name of the agent node (e.g. ``"price_assist"``)
+        model:         Groq model identifier (e.g. ``"openai/gpt-oss-120b"``)
+        role:          FAB banking role of the requesting user
+        input_tokens:  prompt tokens (exact from usage object, or chars//4 estimate)
+        output_tokens: completion tokens (exact from usage object, or chars//4 estimate)
+        session_id:    conversation session identifier for the in-process accumulator
+    """
+    if not Config.ENABLE_BUSINESS_METRICS:
+        return
+    try:
+        total = input_tokens + output_tokens
+        attrs = {"agent": agent_name, "model": model, "role": role}
+
+        _llm_input_ctr().add(input_tokens, attrs)
+        _llm_output_ctr().add(output_tokens, attrs)
+        _llm_total_ctr().add(total, attrs)
+        _llm_tokens_per_call_hist().record(float(total), attrs)
+
+        pricing = Config.LLM_TOKEN_PRICING.get(model, (0.0, 0.0))
+        cost_usd = (input_tokens * pricing[0] + output_tokens * pricing[1]) / 1_000_000
+        _llm_cost_hist().record(cost_usd, {"agent": agent_name, "model": model})
+
+        if Config.ENABLE_COST_TRACKING and session_id:
+            entry = _session_costs.setdefault(session_id, {
+                "agents": {},
+                "total_input_tokens": 0,
+                "total_output_tokens": 0,
+                "total_tokens": 0,
+                "estimated_usd": 0.0,
+            })
+            agent_entry = entry["agents"].setdefault(agent_name, {
+                "model": model,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "estimated_usd": 0.0,
+            })
+            agent_entry["input_tokens"] += input_tokens
+            agent_entry["output_tokens"] += output_tokens
+            agent_entry["total_tokens"] += total
+            agent_entry["estimated_usd"] += cost_usd
+            entry["total_input_tokens"] += input_tokens
+            entry["total_output_tokens"] += output_tokens
+            entry["total_tokens"] += total
+            entry["estimated_usd"] += cost_usd
+    except Exception:
+        pass
+
+
+def get_cost_summary(session_id: str) -> dict:
+    """Return accumulated token/cost data for a session from the in-process store.
+
+    Returns a dict with keys: agents, total_input_tokens, total_output_tokens,
+    total_tokens, estimated_usd. Returns zeroed structure if session not found.
+    """
+    return dict(_session_costs.get(session_id, {
+        "agents": {},
+        "total_input_tokens": 0,
+        "total_output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_usd": 0.0,
+    }))

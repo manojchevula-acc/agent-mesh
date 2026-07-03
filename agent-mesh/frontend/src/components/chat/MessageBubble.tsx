@@ -4,6 +4,7 @@ import { Markdown } from "@/components/ui/Markdown";
 import PipelineTrail from "./PipelineTrail";
 import SecurityBadge from "./SecurityBadge";
 import ExecutionPanel from "./ExecutionPanel";
+import CostBadge from "./CostBadge";
 import type { ChatMessage } from "@/types/mesh";
 
 // Cycles through pipeline stages shown during loading
@@ -80,7 +81,9 @@ function formatTime(date: Date): string {
 function RouteChip({ route }: { route: string }) {
   const lower = route.toLowerCase();
   let cls = "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400";
-  if (lower.includes("hybrid")) {
+  if (lower.includes("context") || lower.includes("memory")) {
+    cls = "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300";
+  } else if (lower.includes("hybrid")) {
     cls = "bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300";
   } else if (lower.includes("rag")) {
     cls = "bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300";
@@ -171,6 +174,11 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
                     </span>
                   )}
                 </div>
+              )}
+
+              {/* Token usage + cost badge */}
+              {result && result.token_usage && !isBlocked && (
+                <CostBadge tokenUsage={result.token_usage} className="mt-2" />
               )}
 
               {/* Fallback domain chip from trail when tracer data is absent */}

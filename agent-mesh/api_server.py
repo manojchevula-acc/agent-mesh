@@ -143,6 +143,15 @@ async def post_query(request: Request) -> JSONResponse:
         clear_active_tracer(token)
 
     summary = tracer.summary()
+
+    # Attach token/cost data accumulated during this request's A2A calls.
+    token_usage = {}
+    try:
+        from src.observability.metrics import get_cost_summary as _get_cost
+        token_usage = _get_cost(result.session_id or "unknown")
+    except Exception:
+        pass
+
     return JSONResponse({
         "answer": result.answer,
         "blocked": result.blocked,
@@ -160,6 +169,8 @@ async def post_query(request: Request) -> JSONResponse:
         "confidence": summary.confidence,
         # Full event stream for the UI transparency panel
         "events": [dataclasses.asdict(e) for e in summary.events],
+        # LLM token usage and estimated cost for this session
+        "token_usage": token_usage,
     })
 
 
@@ -199,6 +210,32 @@ async def get_mesh_status(request: Request) -> JSONResponse:
     return JSONResponse(nodes)
 
 
+async def get_cost_summary(request: Request) -> JSONResponse:
+    """Return accumulated LLM token usage and estimated cost for a session.
+
+    Query param: session_id (required)
+    Response: {session_id, agents: {name: {model, input_tokens, output_tokens,
+              total_tokens, estimated_usd}}, total_input_tokens, total_output_tokens,
+              total_tokens, estimated_usd}
+    """
+    session_id = request.query_params.get("session_id", "").strip()
+    if not session_id:
+        return JSONResponse({"error": "session_id is required."}, status_code=400)
+    try:
+        from src.observability.metrics import get_cost_summary as _get_summary
+        summary = _get_summary(session_id)
+    except Exception as exc:
+        _log.warning("cost summary failed session=%s: %s", session_id, exc)
+        summary = {
+            "agents": {},
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "total_tokens": 0,
+            "estimated_usd": 0.0,
+        }
+    return JSONResponse({"session_id": session_id, **summary})
+
+
 async def get_conversation(request: Request) -> JSONResponse:
     """Return the stored message history for a session (for UI restore on reload).
 
@@ -210,6 +247,7 @@ async def get_conversation(request: Request) -> JSONResponse:
         return JSONResponse({"error": "session_id is required."}, status_code=400)
     try:
         messages = ConversationStore().load_messages(session_id)
+        _log.info("conversation retrieved session=%s messages=%d", session_id, len(messages))
     except Exception as exc:
         _log.warning("conversation load failed session=%s: %s", session_id, exc)
         messages = []
@@ -260,6 +298,7 @@ app = Starlette(
         Route("/api/login",       post_login,      methods=["POST"]),
         Route("/api/query",       post_query,      methods=["POST"]),
         Route("/api/mesh/status", get_mesh_status, methods=["GET"]),
+        Route("/api/cost/summary", get_cost_summary, methods=["GET"]),
         Route("/api/conversations/{session_id}", get_conversation, methods=["GET"]),
     ],
 )
@@ -299,7 +338,7 @@ def main() -> None:
     print(f"  URL:    http://{_API_SERVER_HOST}:{_API_SERVER_PORT}")
     print(f"  CORS:   {', '.join(_CORS_ORIGINS)}")
     print("  Routes: GET /health  GET /api/users  POST /api/login")
-    print("          POST /api/query  GET /api/mesh/status")
+    print("          POST /api/query  GET /api/mesh/status  GET /api/cost/summary")
     print(f"  Observability: profile={profile} → {obs_dest}")
     print("  Note:   Ensure mesh is running first (python launch_mesh.py)")
     print("=" * 64)

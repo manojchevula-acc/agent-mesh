@@ -12,6 +12,7 @@ config). Dependency-free (stdlib only).
 from __future__ import annotations
 
 import json
+import logging
 import pathlib
 import re
 import datetime
@@ -19,6 +20,8 @@ from typing import List, Dict
 
 from src.config import Config
 from src.memory.base import ConversationBackend
+
+_log = logging.getLogger("mesh.memory")
 
 # agent-mesh root: src/memory/jsonl_backend.py -> parents[2] == agent-mesh/
 _PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -55,8 +58,10 @@ class JsonlBackend(ConversationBackend):
                     continue
                 try:
                     rec = json.loads(line)
-                except json.JSONDecodeError:
-                    continue  # tolerate corrupt lines
+                except json.JSONDecodeError as _exc:
+                    _log.warning("jsonl_backend: corrupt line in session=%s skipped: %s",
+                                 session_id, _exc)
+                    continue
                 if isinstance(rec, dict) and rec.get("role") and "content" in rec:
                     messages.append(rec)
         return messages
@@ -75,5 +80,5 @@ class JsonlBackend(ConversationBackend):
         path = self._path(session_id)
         try:
             path.unlink(missing_ok=True)
-        except OSError:
-            pass
+        except OSError as _exc:
+            _log.warning("jsonl_backend: clear failed session=%s: %s", session_id, _exc)

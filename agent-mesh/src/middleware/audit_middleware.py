@@ -215,6 +215,48 @@ class AuditMiddleware(AgentMiddleware):
                 except Exception:
                     pass
 
+            # 5c. Token tracking safety net — try to extract exact token counts from
+            #     the framework response object. Runs in the remote agent node process,
+            #     so it records to OTel (Grafana) only; the in-process accumulator in
+            #     api_server is populated separately by ask_remote() (approximation).
+            if status == "SUCCESS":
+                try:
+                    from src.observability.metrics import record_llm_tokens
+                    usage = None
+                    if hasattr(context, "result") and context.result:
+                        usage = (
+                            getattr(context.result, "usage", None)
+                            or getattr(context.result, "token_usage", None)
+                        )
+                    if usage:
+                        input_tok = (
+                            getattr(usage, "prompt_tokens", 0)
+                            or getattr(usage, "input_tokens", 0)
+                            or 0
+                        )
+                        output_tok = (
+                            getattr(usage, "completion_tokens", 0)
+                            or getattr(usage, "output_tokens", 0)
+                            or 0
+                        )
+                        if input_tok or output_tok:
+                            _NAME_TO_MODEL = {
+                                "ComplianceAgent":  Config.COMPLIANCE_MODEL,
+                                "DataAgent":        Config.DATA_AGENT_MODEL,
+                                "RAGAgent":         Config.RAG_AGENT_MODEL,
+                                "PriceAssistAgent": Config.PRICE_ASSIST_MODEL,
+                            }
+                            record_llm_tokens(
+                                agent_name=agent_name,
+                                model=_NAME_TO_MODEL.get(agent_name, Config.GROQ_MODEL),
+                                role=baggage_role,
+                                input_tokens=int(input_tok),
+                                output_tokens=int(output_tok),
+                                session_id=session_id,
+                            )
+                except Exception:
+                    pass
+
             # 6. Structured, trace-correlated application log line.
             try:
                 if status == "ERROR":

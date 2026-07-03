@@ -35,7 +35,11 @@ from src.a2a.clients import ask_remote
 from src.utils.console_logger import AgentLogger
 from src.observability import get_logger, CAT_SYSTEM
 from src.observability.baggage import set_request_baggage, detach_baggage
-from src.observability.metrics import record_mesh_request
+from src.observability.metrics import (
+    record_mesh_request,
+    record_conversation_load,
+    record_conversation_append,
+)
 from src.mesh.workflow import MeshState, build_mesh_workflow
 from src.tracing.execution_trace import get_active_tracer
 from src.memory import ConversationStore
@@ -105,10 +109,41 @@ async def handle_request(user: User, query: str, session_id: str | None = None) 
     # follow-ups in-context. No-op (empty history) when memory is disabled.
     store = ConversationStore()
     if Config.ENABLE_CONVERSATION_MEMORY:
+        _t0_load = time.perf_counter()
         try:
-            initial.conversation_history = store.load(session_id, Config.CONVERSATION_MAX_TURNS)
+            with _mem_span("conversation.memory.load") as _cs:
+                _mem_attr(_cs, "conversation.session_id", session_id)
+                _mem_attr(_cs, "conversation.max_turns", Config.CONVERSATION_MAX_TURNS)
+                initial.conversation_history = store.load(session_id, Config.CONVERSATION_MAX_TURNS)
+                _turns = len(initial.conversation_history) // 2
+                _mem_attr(_cs, "conversation.turns_loaded", _turns)
+            record_conversation_load(
+                "ok" if initial.conversation_history else "empty",
+                Config.CONVERSATION_BACKEND,
+                (time.perf_counter() - _t0_load) * 1000,
+                _turns)
+            if initial.conversation_history:
+                _log.info("conversation history loaded session=%s turns=%d", session_id, _turns)
         except Exception as exc:  # never let memory I/O break a request
+            record_conversation_load("error", Config.CONVERSATION_BACKEND,
+                                     (time.perf_counter() - _t0_load) * 1000, 0)
             _log.warning("conversation history load failed session=%s: %s", session_id, exc)
+
+    # Emit a truthful Conversation Memory trace step — only when prior turns were
+    # actually loaded. The orchestrator owns this fact (it is measured, not inferred),
+    # so it is NOT tagged inferred unlike the downstream domain/route steps.
+    if tracer and initial.conversation_history:
+        turns = len(initial.conversation_history) // 2
+        tracer.add_execution_path("Conversation Memory")
+        tracer.emit_stage(
+            "conversation_memory", "completed",
+            result=f"{turns} prior turn(s) recalled",
+            checks=[
+                f"Loaded {turns} prior turn(s) for this session",
+                "Conversation context injected into the assistant prompt",
+            ],
+            turns=turns,
+        )
 
     # Build the workflow fresh per request, passing the (possibly patched at test
     # time) module-level ``ask_remote`` so the A2A seam is honoured.
@@ -147,9 +182,17 @@ async def handle_request(user: User, query: str, session_id: str | None = None) 
     # Persist this turn so the next request in the session sees it. Only non-blocked
     # turns with a real answer are stored (blocked queries carry no useful context).
     if Config.ENABLE_CONVERSATION_MEMORY and not final.blocked and final.answer:
+        _t0_append = time.perf_counter()
         try:
-            store.append_turn(session_id, query, final.answer)
+            with _mem_span("conversation.memory.append") as _cs:
+                _mem_attr(_cs, "conversation.session_id", session_id)
+                store.append_turn(session_id, query, final.answer)
+            record_conversation_append("ok", Config.CONVERSATION_BACKEND,
+                                       (time.perf_counter() - _t0_append) * 1000)
+            _log.info("conversation turn saved session=%s", session_id)
         except Exception as exc:  # never let memory I/O break a request
+            record_conversation_append("error", Config.CONVERSATION_BACKEND,
+                                       (time.perf_counter() - _t0_append) * 1000)
             _log.warning("conversation history save failed session=%s: %s", session_id, exc)
 
     return MeshResult(
@@ -195,6 +238,26 @@ def _root_span(user: User, query: str, session_id: str, request_id: str = ""):
     except Exception:
         import contextlib
         return contextlib.nullcontext()
+
+
+def _mem_span(name: str):
+    """Returns an OTel child span CM for conversation-memory ops; nullcontext if unavailable."""
+    try:
+        from agent_framework.observability import get_tracer
+        from opentelemetry.trace import SpanKind
+        return get_tracer().start_as_current_span(name, kind=SpanKind.INTERNAL)
+    except Exception:
+        import contextlib
+        return contextlib.nullcontext()
+
+
+def _mem_attr(span, key: str, value) -> None:
+    """Crash-safe span attribute setter for memory spans."""
+    try:
+        if span is not None and hasattr(span, "set_attribute"):
+            span.set_attribute(key, value)
+    except Exception:
+        pass
 
 
 def _enrich_root_span(span, final: Optional[MeshState], request_id: str) -> None:

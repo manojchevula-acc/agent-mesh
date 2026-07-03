@@ -64,10 +64,11 @@ async def ask_remote(
     t0 = time.perf_counter()
     error: str | None = None
     result = ""
+    _res = None
     try:
         remote = get_remote_agent(name)
-        res = await remote.run(prompt)
-        result = getattr(res, "text", str(res))
+        _res = await remote.run(prompt)
+        result = getattr(_res, "text", str(_res))
         return result
     except Exception as e:
         error = str(e)
@@ -90,6 +91,36 @@ async def ask_remote(
             )
         except Exception:
             pass
+        # Token / cost tracking — only on success; runs in the api_server process.
+        if error is None and Config.ENABLE_COST_TRACKING:
+            try:
+                from src.observability.metrics import record_llm_tokens
+                from src.observability.baggage import get_role, get_session_id
+                # Try exact usage from A2A response object first.
+                usage = getattr(_res, "usage", None) if _res is not None else None
+                if usage and getattr(usage, "prompt_tokens", None) is not None:
+                    input_tok = int(usage.prompt_tokens)
+                    output_tok = int(usage.completion_tokens)
+                else:
+                    # Approximation: chars / 4 (standard OpenAI rule-of-thumb).
+                    input_tok = len(prompt) // 4
+                    output_tok = len(result) // 4
+                _agent_models = {
+                    "compliance":   Config.COMPLIANCE_MODEL,
+                    "data_agent":   Config.DATA_AGENT_MODEL,
+                    "rag_agent":    Config.RAG_AGENT_MODEL,
+                    "price_assist": Config.PRICE_ASSIST_MODEL,
+                }
+                record_llm_tokens(
+                    agent_name=name,
+                    model=_agent_models.get(name, Config.GROQ_MODEL),
+                    role=get_role() or "unknown",
+                    input_tokens=input_tok,
+                    output_tokens=output_tok,
+                    session_id=get_session_id() or "unknown",
+                )
+            except Exception:
+                pass
         # Optional legacy JSONL sink (off by default; workflow/agent spans cover this).
         if Config.ENABLE_TRACE_JSONL:
             try:

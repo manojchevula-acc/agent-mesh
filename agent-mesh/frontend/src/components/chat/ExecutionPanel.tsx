@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { ChevronDown, ChevronRight, CheckCircle2, XCircle, AlertTriangle, Activity } from "lucide-react";
+import { ChevronDown, ChevronRight, CheckCircle2, XCircle, Activity } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { MeshResult, ExecutionEvent } from "@/types/mesh";
 
 // Maps Python stage keys → human-readable step titles (mirrors cli_renderer.py _STAGE_LABELS)
 const STAGE_LABELS: Record<string, string> = {
   input_processing:      "Input Processing",
+  conversation_memory:   "Conversation Memory",
   guardrail:             "Guardrail Validation",
   rbac:                  "RBAC Validation",
   compliance:            "Compliance Validation",
@@ -13,6 +14,7 @@ const STAGE_LABELS: Record<string, string> = {
   routing:               "Routing Decision",
   agent_handoff:         "Agent Handoff",
   data_retrieval:        "Data Retrieval",
+  knowledge_retrieval:   "Knowledge Retrieval",
   response_generation:   "Response Generation",
   output_redaction:      "Output Redaction",
 };
@@ -85,6 +87,14 @@ function Step({ index, event }: StepProps) {
           isBlocked ? "text-red-700 dark:text-red-400" : "text-fg")}>
           {stageLabel(event.stage)}
         </span>
+        {event.metadata?.inferred === true && (
+          <span
+            title="Inferred from the response — the coordinator agent runs in a separate process, so this step is reconstructed, not directly measured."
+            className="shrink-0 text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 font-medium"
+          >
+            inferred
+          </span>
+        )}
         {event.result && !isBlocked && (
           <span className="text-green-600 dark:text-green-400 font-medium truncate max-w-[120px]">
             {event.result}

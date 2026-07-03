@@ -27,6 +27,7 @@ _SYM_ARROW   = "[dim]>[/dim]"
 
 _STAGE_LABELS: Dict[str, str] = {
     "input_processing":      "INPUT PROCESSING",
+    "conversation_memory":   "CONVERSATION MEMORY",
     "guardrail":             "GUARDRAIL VALIDATION",
     "rbac":                  "RBAC VALIDATION",
     "compliance":            "COMPLIANCE VALIDATION",
@@ -34,6 +35,7 @@ _STAGE_LABELS: Dict[str, str] = {
     "routing":               "ROUTING DECISION",
     "agent_handoff":         "AGENT HANDOFF",
     "data_retrieval":        "DATA RETRIEVAL",
+    "knowledge_retrieval":   "KNOWLEDGE RETRIEVAL",
     "response_generation":   "RESPONSE GENERATION",
     "output_redaction":      "OUTPUT REDACTION",
 }

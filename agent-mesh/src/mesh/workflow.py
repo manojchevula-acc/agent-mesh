@@ -56,7 +56,11 @@ from src.observability.metrics import (
     record_a2a_call,
     record_pii_hits,
 )
-from src.tracing.execution_trace import get_active_tracer, infer_route_and_scores
+from src.tracing.execution_trace import (
+    get_active_tracer,
+    infer_route_and_scores,
+    query_has_retrieval_signal,
+)
 from src.memory import ConversationStore
 
 _log = get_logger(CAT_WORKFLOW)
@@ -517,6 +521,18 @@ class DomainExecutor(Executor):
             history_block = ConversationStore.format_history_block(state.conversation_history)
             base_prompt = f"{history_block}{state.query}" if history_block else state.query
             _set_attr(span, "domain.history_turns", len(state.conversation_history) // 2)
+            _set_attr(span, "domain.session_id", getattr(state, "session_id", ""))
+
+            # Classify the turn for trace fidelity: a follow-up whose question carries
+            # no retrieval signal of its own (no entity id / data / policy keyword) was
+            # answered from recalled conversation context — so we must NOT fabricate
+            # Data/RAG retrieval steps for it. This is a heuristic (the remote agent's
+            # real tool calls aren't visible over A2A), hence downstream steps are
+            # tagged inferred=True.
+            answered_from_context = (
+                bool(state.conversation_history)
+                and not query_has_retrieval_signal(state.query)
+            )
             try:
                 _add_event(span, "domain.a2a_call.started", {"target": "price_assist"})
                 answer = await self._ask("price_assist", base_prompt)
@@ -580,10 +596,22 @@ class DomainExecutor(Executor):
             _set_attr(span, "domain.answer_length", len(answer or ""))
 
             if tracer and not failed:
-                route, route_rationale, route_conf, alt_scores = infer_route_and_scores(
-                    state.query, answer
-                )
-                tracer.record_domain("Price Assist Agent", 0.96)
+                if answered_from_context:
+                    # Follow-up resolved from recalled conversation — no fresh lookup.
+                    route = "Conversation Context"
+                    route_conf = 0.9
+                    route_rationale = [
+                        "Follow-up resolved from prior conversation turns.",
+                        "No new entity or policy keyword in the question.",
+                        "Answer derived from recalled context, not a fresh lookup.",
+                    ]
+                    alt_scores = {"Price Assist": 0.9, "Conversation Memory": 0.85}
+                else:
+                    route, route_rationale, route_conf, alt_scores = infer_route_and_scores(
+                        state.query, answer
+                    )
+
+                tracer.record_domain("Price Assist Agent", route_conf)
                 tracer.record_route(route)
                 if route == "Data Layer + RAG (Hybrid)":
                     tracer.add_execution_path("Data Layer Service")
@@ -591,16 +619,20 @@ class DomainExecutor(Executor):
                 else:
                     tracer.add_execution_path(route)
 
+                # domain_classification / routing are heuristic (the remote agent's real
+                # tool calls aren't visible over A2A) → tagged inferred for UI honesty.
                 tracer.emit_stage(
                     "domain_classification", "completed",
                     result="Price Assist Agent",
-                    confidence=0.96,
-                    checks=["Request classified to pricing domain"],
-                    rationale=[
-                        "User is requesting pricing or banking information.",
-                        "Price Assist domain has highest confidence score.",
-                        "Historical routing pattern matched.",
-                    ],
+                    confidence=route_conf,
+                    checks=["Request handled by the Price Assist coordinator"],
+                    rationale=(
+                        ["Follow-up answered from conversation context."]
+                        if answered_from_context
+                        else ["User is requesting pricing or banking information.",
+                              "Price Assist coordinator selected for this domain."]
+                    ),
+                    inferred=True,
                     alt_scores=alt_scores,
                 )
                 tracer.emit_stage(
@@ -609,24 +641,49 @@ class DomainExecutor(Executor):
                     confidence=route_conf,
                     checks=["Evaluated available retrieval strategies"],
                     rationale=route_rationale,
+                    inferred=True,
                 )
-                handoff_path = [
-                    "Coordinator Agent", "Price Assist Agent", route, "Response Generator"
-                ]
-                tracer.emit_stage(
-                    "agent_handoff", "completed",
-                    result="Handoff successful",
-                    handoff_path=handoff_path,
-                )
-                tracer.record_tool_used()
-                retrieval_ms = max(50, int(total_ms * 0.35))
-                tracer.emit_stage(
-                    "data_retrieval", "completed",
-                    result="Data retrieved successfully",
-                    checks=["Query generated", "Query validated", "Data retrieved"],
-                    duration_ms=retrieval_ms,
-                    latency_ms=retrieval_ms,
-                )
+
+                if answered_from_context:
+                    # No retrieval node in the handoff; no tool counted.
+                    handoff_path = [
+                        "Coordinator Agent", "Price Assist Agent", "Response Generator"
+                    ]
+                    tracer.emit_stage(
+                        "agent_handoff", "completed",
+                        result="Handoff successful",
+                        handoff_path=handoff_path,
+                    )
+                else:
+                    handoff_path = [
+                        "Coordinator Agent", "Price Assist Agent", route, "Response Generator"
+                    ]
+                    tracer.emit_stage(
+                        "agent_handoff", "completed",
+                        result="Handoff successful",
+                        handoff_path=handoff_path,
+                    )
+                    # Emit a retrieval step only for the route(s) actually taken, and
+                    # count a tool only when a peer was consulted. Per-step latency is
+                    # not measurable here (remote process) so it is omitted; real
+                    # wall-clock stays in the summary's total_duration_ms.
+                    if "Data Layer" in route:
+                        tracer.record_tool_used()
+                        tracer.emit_stage(
+                            "data_retrieval", "completed",
+                            result="Structured data retrieved",
+                            checks=["Data Layer queried via Data Agent"],
+                            inferred=True,
+                        )
+                    if "RAG" in route:
+                        tracer.record_tool_used()
+                        tracer.emit_stage(
+                            "knowledge_retrieval", "completed",
+                            result="Knowledge retrieved",
+                            checks=["Knowledge base queried via RAG Agent"],
+                            inferred=True,
+                        )
+
                 tracer.emit_stage(
                     "response_generation", "completed",
                     result="Response generated",

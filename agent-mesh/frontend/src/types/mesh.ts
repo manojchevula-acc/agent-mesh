@@ -49,6 +49,8 @@ export interface MeshResult {
   total_duration_ms?: number;
   // Full step-by-step event stream for the execution transparency panel
   events?: ExecutionEvent[];
+  // LLM token usage and estimated cost accumulated across all A2A calls
+  token_usage?: TokenUsageSummary;
 }
 
 export interface ChatMessage {
@@ -90,4 +92,21 @@ export interface ConversationHistory {
 
 export interface LoginRequest {
   username: string;
+}
+
+export interface AgentTokenUsage {
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  estimated_usd: number;
+}
+
+export interface TokenUsageSummary {
+  session_id?: string;
+  agents: Record<string, AgentTokenUsage>;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_tokens: number;
+  estimated_usd: number;
 }

@@ -27,6 +27,15 @@ class Config:
     RAG_AGENT_API_KEY:    str = os.getenv("RAG_AGENT_API_KEY",    "") or os.getenv("GROQ_API_KEY", "")
     PRICE_ASSIST_API_KEY: str = os.getenv("PRICE_ASSIST_API_KEY", "") or os.getenv("GROQ_API_KEY", "")
 
+    # LLM token pricing for cost estimation (USD per 1 million tokens).
+    # Tuple: (input_cost_per_1m, output_cost_per_1m). Source: Groq pricing 2026-07-01.
+    ENABLE_COST_TRACKING: bool = os.getenv("ENABLE_COST_TRACKING", "true").lower() in ("1", "true", "yes")
+    LLM_TOKEN_PRICING: dict = {
+        "openai/gpt-oss-20b":   (0.10, 0.10),
+        "openai/gpt-oss-120b":  (0.90, 0.90),
+        "qwen/qwen3.6-27b":     (0.29, 0.29),
+    }
+
     # Ollama (local) — kept for rollback; not used when GROQ_API_KEY is set
     # OLLAMA_HOST: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")
     # OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
