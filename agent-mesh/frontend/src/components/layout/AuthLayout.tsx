@@ -5,10 +5,10 @@ import { Logo } from "@/components/ui/Logo";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 
 const HIGHLIGHTS = [
-  "7-stage defense-in-depth security pipeline",
-  "Role-based access control (employee · HR · leadership)",
-  "Semantic compliance + deterministic guardrails",
-  "18 custom OpenTelemetry metrics + audit trail",
+  "Policy-compliant pricing recommendations",
+  "Role-based access for Relationship Managers & Credit Officers",
+  "Live enterprise data from FAB's data layer",
+  "Audit-ready decisions with full execution trace",
 ];
 
 /** Two-pane shell for the login / signup forms. */
@@ -32,13 +32,13 @@ export function AuthLayout({
         <Link to="/" className="relative">
           <Logo
             className="text-white [&_p:first-child]:text-white [&_p:last-child]:text-white/70"
-            subtitle="Enterprise Agent Mesh"
+            subtitle="Corporate Banking"
           />
         </Link>
 
         <div className="relative">
           <h2 className="max-w-md text-3xl font-bold leading-tight text-white">
-            Role-aware enterprise assistant with defense-in-depth security.
+            AI-powered pricing intelligence for corporate banking.
           </h2>
           <ul className="mt-8 space-y-3">
             {HIGHLIGHTS.map((h) => (
@@ -51,7 +51,7 @@ export function AuthLayout({
         </div>
 
         <p className="relative text-sm text-white/60">
-          © {new Date().getFullYear()} Agent Mesh — Microsoft Agent Framework · A2A Protocol
+          © {new Date().getFullYear()} FAB Price Assist · First Abu Dhabi Bank
         </p>
       </div>
 

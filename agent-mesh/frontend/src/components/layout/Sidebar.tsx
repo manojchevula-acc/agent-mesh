@@ -1,5 +1,5 @@
 import { Link, NavLink } from "react-router-dom";
-import { MessageSquare, Activity, X } from "lucide-react";
+import { MessageSquare, Activity, X, SquarePen } from "lucide-react";
 import { ApiStatus } from "./ApiStatus";
 import { Logo } from "@/components/ui/Logo";
 import { cn } from "@/lib/utils";
@@ -19,7 +19,7 @@ const NAV_ITEMS = [
   },
 ];
 
-export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function Sidebar({ open, onClose, onNewChat }: { open: boolean; onClose: () => void; onNewChat?: () => void }) {
   return (
     <>
       {/* Mobile backdrop */}
@@ -40,7 +40,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         {/* Brand */}
         <div className="flex items-center justify-between gap-2 border-b border-line px-5 py-5">
           <Link to="/" className="transition-transform hover:scale-[1.02]">
-            <Logo subtitle="Agent Mesh" />
+            <Logo subtitle="Price Intelligence" />
           </Link>
           <button
             className="rounded-md p-1.5 text-muted hover:bg-surface-2 lg:hidden"
@@ -50,6 +50,19 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             <X className="h-5 w-5" />
           </button>
         </div>
+
+        {/* New Chat */}
+        {onNewChat && (
+          <div className="px-3 pt-3 pb-1">
+            <button
+              onClick={() => { onNewChat(); onClose(); }}
+              className="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium bg-brand-50 dark:bg-brand-900/30 text-brand-700 dark:text-brand-300 hover:bg-brand-100 dark:hover:bg-brand-900/50 transition-colors"
+            >
+              <SquarePen className="h-4 w-4" />
+              New Chat
+            </button>
+          </div>
+        )}
 
         {/* Nav */}
         <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
@@ -95,8 +108,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         <div className="border-t border-line px-4 py-4">
           <ApiStatus />
           <p className="mt-3 px-1 text-[11px] leading-relaxed text-faint">
-            Role-aware enterprise assistant mesh. Queries flow through guardrails,
-            router, access control, compliance, and domain agents.
+            FAB Price Assist — AI-powered pricing intelligence for corporate banking.
           </p>
         </div>
       </aside>

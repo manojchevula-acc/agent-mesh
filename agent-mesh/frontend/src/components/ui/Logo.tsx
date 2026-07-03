@@ -1,12 +1,12 @@
 import { Landmark } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-/** Agent Mesh brand mark + wordmark. */
+/** FAB Price Assist brand mark + wordmark. */
 export function Logo({
   className,
   iconClassName,
   showText = true,
-  subtitle = "Agent Mesh",
+  subtitle = "Price Intelligence",
 }: {
   className?: string;
   iconClassName?: string;
@@ -25,7 +25,7 @@ export function Logo({
       </div>
       {showText && (
         <div className="leading-tight">
-          <p className="text-sm font-bold text-fg">Agent Mesh</p>
+          <p className="text-sm font-bold text-fg">FAB Price Assist</p>
           <p className="text-xs text-muted">{subtitle}</p>
         </div>
       )}

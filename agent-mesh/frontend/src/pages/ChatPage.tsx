@@ -1,6 +1,7 @@
-import React, { useEffect, useRef, useState } from "react";
-import { Send, Trash2, Bot } from "lucide-react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Send, SquarePen, Bot } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { ChatContext } from "@/contexts/ChatContext";
 import { useChat } from "@/hooks/useChat";
 import MessageBubble from "@/components/chat/MessageBubble";
 import { Button } from "@/components/ui/Button";
@@ -40,13 +41,19 @@ export default function ChatPage() {
 
   const isEmpty = messages.length === 0;
 
+  const handleSampleClick = useCallback((q: string) => {
+    setInput(q);
+    textareaRef.current?.focus();
+  }, []);
+
   return (
+    <ChatContext.Provider value={{ clearChat }}>
     <div className="flex flex-col h-full max-h-[calc(100vh-64px)]">
       {/* Header bar */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-line bg-surface/50 backdrop-blur-sm shrink-0">
         <div className="flex items-center gap-2">
           <Bot className="h-5 w-5 text-brand-500" />
-          <h1 className="font-semibold text-fg text-sm">Agent Mesh</h1>
+          <h1 className="font-semibold text-fg text-sm">FAB Price Assist</h1>
           {user && (
             <span className="text-xs text-muted ml-1">
               — signed in as{" "}
@@ -57,21 +64,23 @@ export default function ChatPage() {
             </span>
           )}
         </div>
-        {!isEmpty && (
-          <button
-            onClick={clearChat}
-            className="flex items-center gap-1.5 text-xs text-muted hover:text-fg transition-colors"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            Clear
-          </button>
-        )}
+        <button
+          onClick={clearChat}
+          disabled={isEmpty}
+          className={cn(
+            "flex items-center gap-1.5 text-xs transition-colors",
+            isEmpty ? "text-faint cursor-default" : "text-muted hover:text-fg"
+          )}
+        >
+          <SquarePen className="h-3.5 w-3.5" />
+          New Chat
+        </button>
       </div>
 
       {/* Message list */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-1">
         {isEmpty ? (
-          <EmptyState onSampleClick={(q) => { setInput(q); textareaRef.current?.focus(); }} />
+          <EmptyState onSampleClick={handleSampleClick} />
         ) : (
           messages.map((msg) => (
             <MessageBubble key={msg.id} message={msg} />
@@ -112,6 +121,7 @@ export default function ChatPage() {
         </p>
       </div>
     </div>
+    </ChatContext.Provider>
   );
 }
 

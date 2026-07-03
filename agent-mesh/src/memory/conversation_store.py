@@ -82,3 +82,25 @@ class ConversationStore:
         lines.append("[Current question]")
         lines.append("")
         return "\n".join(lines)
+
+    @staticmethod
+    def strip_history_echo(answer: str, original_query: str | None = None) -> str:
+        """Remove any accidentally echoed [Conversation so far] block from an answer.
+
+        When the LLM echoes the injected history prefix back in its response,
+        this strips everything up to and including the [Current question] marker
+        (and the echoed user query, if present) so only the actual answer is returned.
+        """
+        if "[Conversation so far]" not in answer:
+            return answer
+        marker = "[Current question]"
+        idx = answer.find(marker)
+        if idx == -1:
+            # Partial echo without the closing marker — strip from the block start
+            block_start = answer.find("[Conversation so far]")
+            return answer[:block_start].strip() or answer
+        after_marker = answer[idx + len(marker):].lstrip("\n ")
+        # Skip an echoed copy of the user's own question if present
+        if original_query and after_marker.startswith(original_query.strip()):
+            after_marker = after_marker[len(original_query.strip()):].lstrip("\n ")
+        return after_marker.strip() if after_marker.strip() else answer

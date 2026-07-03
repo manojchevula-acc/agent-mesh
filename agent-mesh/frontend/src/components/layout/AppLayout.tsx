@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useChatContext } from "@/contexts/ChatContext";
 import { Outlet, useLocation } from "react-router-dom";
 import { Menu } from "lucide-react";
 import { Sidebar } from "./Sidebar";
@@ -8,8 +9,8 @@ import { ThemeToggle } from "@/components/ui/ThemeToggle";
 
 const PAGE_TITLES: Record<string, { title: string; subtitle: string }> = {
   "/app/chat": {
-    title: "Agent Mesh Chat",
-    subtitle: "Role-aware enterprise assistant — queries flow through a 7-stage security pipeline.",
+    title: "FAB Price Assist",
+    subtitle: "AI-powered pricing intelligence — policy-compliant recommendations for corporate banking.",
   },
   "/app/mesh-status": {
     title: "Mesh Status",
@@ -19,12 +20,13 @@ const PAGE_TITLES: Record<string, { title: string; subtitle: string }> = {
 
 export function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { clearChat } = useChatContext();
   const { pathname } = useLocation();
   const meta = PAGE_TITLES[pathname] ?? PAGE_TITLES["/app/chat"];
 
   return (
     <div className="flex min-h-screen bg-canvas">
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} onNewChat={clearChat} />
 
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Top bar */}

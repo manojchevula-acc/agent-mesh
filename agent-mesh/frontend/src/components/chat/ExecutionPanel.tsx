@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, CheckCircle2, XCircle, AlertTriangle, Activity } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { MeshResult, ExecutionEvent } from "@/types/mesh";
@@ -45,7 +45,7 @@ interface StepProps {
   event: ExecutionEvent;
 }
 
-function Step({ index, event }: StepProps) {
+const Step = memo(function Step({ index, event }: StepProps) {
   const [open, setOpen] = useState(true);
   const isBlocked = event.status === "blocked" || event.status === "failed";
   const hasDetail =
@@ -107,7 +107,7 @@ function Step({ index, event }: StepProps) {
           {event.checks && event.checks.length > 0 && (
             <ul className="mt-2 space-y-0.5">
               {event.checks.map((chk, i) => (
-                <li key={i} className="flex items-start gap-1.5 text-muted">
+                <li key={`${i}-${chk}`} className="flex items-start gap-1.5 text-muted">
                   <CheckCircle2 className="shrink-0 h-3 w-3 text-green-500 mt-0.5" />
                   <span>{chk}</span>
                 </li>
@@ -134,7 +134,7 @@ function Step({ index, event }: StepProps) {
               <p className="text-[10px] uppercase tracking-wider text-muted mb-1">Reasoning</p>
               <ul className="space-y-0.5">
                 {event.rationale.map((r, i) => (
-                  <li key={i} className="flex items-start gap-1.5 text-muted">
+                  <li key={`${i}-${r}`} className="flex items-start gap-1.5 text-muted">
                     <span className="text-brand-400 shrink-0">›</span>
                     <span>{r}</span>
                   </li>
@@ -174,7 +174,7 @@ function Step({ index, event }: StepProps) {
       )}
     </div>
   );
-}
+});
 
 // ── Agent handoff tree ───────────────────────────────────────────────────────
 
@@ -182,7 +182,7 @@ function HandoffTree({ path }: { path: string[] }) {
   return (
     <div className="font-mono text-xs text-muted">
       {path.map((node, i) => (
-        <div key={i} style={{ paddingLeft: `${i * 12}px` }}>
+        <div key={`${i}-${node}`} style={{ paddingLeft: `${i * 12}px` }}>
           {i > 0 && <span className="text-brand-400 mr-1">└──</span>}
           <span className={i === 0 ? "text-fg font-semibold" : "text-fg"}>{node}</span>
         </div>
@@ -234,8 +234,7 @@ interface ExecutionPanelProps {
 export default function ExecutionPanel({ result }: ExecutionPanelProps) {
   const [open, setOpen] = useState(false);
 
-  const events = result.events ?? [];
-  const steps = collapseEvents(events);
+  const steps = useMemo(() => collapseEvents(result.events ?? []), [result.events]);
   const stepCount = steps.length;
   const durationLabel = result.total_duration_ms != null
     ? `${(result.total_duration_ms / 1000).toFixed(1)} s`

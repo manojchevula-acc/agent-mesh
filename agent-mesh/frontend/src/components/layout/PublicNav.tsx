@@ -11,7 +11,7 @@ export function PublicNav() {
     <header className="sticky top-0 z-30 border-b border-line/60 bg-canvas/70 backdrop-blur-xl">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
         <Link to="/" className="transition-transform hover:scale-[1.02]">
-          <Logo subtitle="Agent Mesh" />
+          <Logo subtitle="Price Intelligence" />
         </Link>
 
         <div className="flex items-center gap-2 sm:gap-3">

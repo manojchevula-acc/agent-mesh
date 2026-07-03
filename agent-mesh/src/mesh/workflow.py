@@ -572,6 +572,7 @@ class DomainExecutor(Executor):
                           extra={"status": "SUCCESS"})
 
             total_ms = int((time.perf_counter() - t0) * 1000)
+            answer = ConversationStore.strip_history_echo(answer or "", state.query)
             state.answer = answer
 
             _set_attr(span, "domain.retry_reason", retry_reason)

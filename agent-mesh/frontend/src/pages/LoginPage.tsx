@@ -81,7 +81,7 @@ export function LoginPage() {
 
   return (
     <AuthLayout
-      title="Sign in to Agent Mesh"
+      title="Sign in to FAB Price Assist"
       subtitle="Select a demo user or enter any username"
     >
       <div className="space-y-5">

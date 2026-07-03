@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { memo, useMemo, useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Markdown } from "@/components/ui/Markdown";
 import PipelineTrail from "./PipelineTrail";
@@ -94,8 +94,9 @@ function RouteChip({ route }: { route: string }) {
   );
 }
 
-export default function MessageBubble({ message }: MessageBubbleProps) {
+const MessageBubble = memo(function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === "user";
+  const timeLabel = useMemo(() => formatTime(message.timestamp), [message.timestamp]);
 
   if (isUser) {
     return (
@@ -112,7 +113,7 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
             </p>
           </div>
           <p className="text-xs text-muted mt-1 text-right pr-1">
-            {formatTime(message.timestamp)}
+            {timeLabel}
           </p>
         </div>
       </div>
@@ -174,18 +175,19 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
               )}
 
               {/* Fallback domain chip from trail when tracer data is absent */}
-              {result && !isBlocked && !result.route && !result.domain && result.trail.length > 0 && (() => {
-                const domainStep = result.trail.find((t) => t.startsWith("domain_answer:"));
-                const node = domainStep?.split(":")[1];
-                if (!node) return null;
-                return (
-                  <div className="flex flex-wrap gap-1.5 mt-3">
-                    <span className="inline-flex items-center text-xs px-2 py-0.5 rounded-full bg-brand-100 dark:bg-brand-900/40 text-brand-700 dark:text-brand-300 font-medium">
-                      {node.replace(/_/g, " ")}
-                    </span>
-                  </div>
-                );
-              })()}
+              {result && !isBlocked && !result.route && !result.domain && result.trail.length > 0 &&
+                (() => {
+                  const domainStep = result.trail.find((t) => t.startsWith("domain_answer:"));
+                  const node = domainStep?.split(":")[1];
+                  if (!node) return null;
+                  return (
+                    <div className="flex flex-wrap gap-1.5 mt-3">
+                      <span className="inline-flex items-center text-xs px-2 py-0.5 rounded-full bg-brand-100 dark:bg-brand-900/40 text-brand-700 dark:text-brand-300 font-medium">
+                        {node.replace(/_/g, " ")}
+                      </span>
+                    </div>
+                  );
+                })()}
 
               {/* Pipeline trail */}
               {result && result.trail.length > 0 && (
@@ -201,9 +203,11 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
         </div>
 
         <p className="text-xs text-muted mt-1 pl-1">
-          {formatTime(message.timestamp)}
+          {timeLabel}
         </p>
       </div>
     </div>
   );
-}
+});
+
+export default MessageBubble;

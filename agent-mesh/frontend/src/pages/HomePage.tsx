@@ -71,21 +71,19 @@ export function HomePage() {
         <div className="mx-auto max-w-3xl">
           <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-brand-200 dark:border-brand-800 bg-brand-50 dark:bg-brand-900/30 px-4 py-1.5 text-sm text-brand-700 dark:text-brand-300">
             <Bot className="h-4 w-4" />
-            Microsoft Agent Framework · A2A Protocol · OpenTelemetry
+            First Abu Dhabi Bank · Corporate Banking · Policy Compliant
           </div>
 
           <h1 className="text-4xl font-bold tracking-tight text-fg sm:text-5xl lg:text-6xl">
-            Safety &amp;{" "}
+            FAB{" "}
             <span className="bg-gradient-to-r from-brand-600 to-accent-500 bg-clip-text text-transparent">
-              Governance
-            </span>{" "}
-            Agent Mesh
+              Price Assist
+            </span>
           </h1>
 
           <p className="mx-auto mt-6 max-w-xl text-lg text-muted leading-relaxed">
-            A distributed multi-agent system with defense-in-depth security, semantic
-            compliance, policy-grounded answers, and enterprise-grade observability — built on
-            the Microsoft Agent Framework.
+            AI-powered pricing intelligence for Relationship Managers, Credit Officers, and
+            Compliance teams — grounded in FAB policy and live enterprise data.
           </p>
 
           <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
@@ -111,16 +109,15 @@ export function HomePage() {
             )}
           </div>
 
-          <div className="mt-10 grid grid-cols-2 sm:grid-cols-4 gap-4 max-w-lg mx-auto">
+          <div className="mt-10 grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-2xl mx-auto">
             {[
-              { v: "2", l: "Agent nodes" },
-              { v: "4", l: "Pipeline stages" },
-              { v: "OTel", l: "Observability" },
-              { v: "A2A", l: "Protocol" },
-            ].map(({ v, l }) => (
-              <div key={l} className="rounded-xl bg-surface border border-line p-3 text-center">
-                <p className="text-2xl font-bold text-brand-600 dark:text-brand-400">{v}</p>
-                <p className="text-xs text-muted mt-0.5">{l}</p>
+              "Relationship Manager",
+              "Credit Officer",
+              "Compliance Officer",
+              "Operations Manager",
+            ].map((role) => (
+              <div key={role} className="rounded-xl bg-surface border border-line px-3 py-2.5 text-center">
+                <p className="text-xs font-medium text-brand-700 dark:text-brand-300 leading-snug">{role}</p>
               </div>
             ))}
           </div>
@@ -199,7 +196,7 @@ export function HomePage() {
       </section>
 
       <footer className="border-t border-line py-6 text-center text-xs text-muted">
-        Agent Mesh · Microsoft Agent Framework · Built with React + Starlette
+        FAB Price Assist · First Abu Dhabi Bank · Corporate Banking Platform
       </footer>
     </div>
   );
