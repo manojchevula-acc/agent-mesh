@@ -48,14 +48,26 @@ def _serve_mcp_node(name: str, port: int) -> None:
     from src.integrations.mcp_clients import MCP_TOOL_FACTORIES
 
     _MCP_RETRIES = 8
-    _MCP_BACKOFF_BASE = 2.0  # seconds; doubles each attempt (2, 4, 8, …)
+    _MCP_BACKOFF_BASE = 2.0   # seconds; doubles each startup attempt (2, 4, 8, …)
+    _MCP_RECONNECT_DELAY = 5.0  # fixed wait after a mid-session MCP drop
 
     async def _run() -> None:
-        last_exc: Exception | None = None
-        for attempt in range(1, _MCP_RETRIES + 1):
+        """Startup retry loop + mid-session reconnect.
+
+        Distinguishes two failure modes:
+        - Startup failures (MCP not yet available): exponential backoff up to
+          _MCP_RETRIES, then hard exit.
+        - Mid-session drops (MCP restarted while A2A node was serving): fixed
+          5-second reconnect loop, never exits. The A2A node rebinds its port
+          on each iteration (uvicorn.Server created fresh).
+        """
+        ever_started = False
+        startup_attempt = 0
+        while True:
+            startup_attempt += 1
             try:
                 mcp_tool = MCP_TOOL_FACTORIES[name]()
-                async with mcp_tool:  # connect + load tools; closes on shutdown
+                async with mcp_tool:  # connect + load tools; closes on exit
                     agent, public_name, description = build_node(name, mcp_tool=mcp_tool)
                     card = build_agent_card(public_name, description, port)
                     app = build_starlette_app(agent, card)
@@ -64,19 +76,26 @@ def _serve_mcp_node(name: str, port: int) -> None:
                     server = uvicorn.Server(
                         uvicorn.Config(app, host=Config.A2A_HOST, port=port, log_level="warning")
                     )
+                    ever_started = True
+                    startup_attempt = 0  # reset counter; future failures are reconnects
                     await server.serve()
-                    return  # clean shutdown
+                    return  # clean shutdown from SIGINT/SIGTERM — do not reconnect
             except Exception as exc:
-                last_exc = exc
-                if attempt < _MCP_RETRIES:
-                    delay = _MCP_BACKOFF_BASE * (2 ** (attempt - 1))
-                    print(f"[mesh] '{name}' MCP connect failed (attempt {attempt}/{_MCP_RETRIES}): "
-                          f"{exc}. Retrying in {delay:.0f}s …")
-                    await asyncio.sleep(delay)
-                else:
+                if ever_started:
+                    # Node was healthy before — MCP session dropped mid-flight.
+                    # Reconnect unconditionally: the MCP service may have restarted.
+                    print(f"[mesh] '{name}' MCP session dropped: {exc}. "
+                          f"Reconnecting in {_MCP_RECONNECT_DELAY:.0f}s …")
+                    await asyncio.sleep(_MCP_RECONNECT_DELAY)
+                elif startup_attempt >= _MCP_RETRIES:
                     print(f"[mesh] '{name}' MCP connect failed after {_MCP_RETRIES} attempts. "
                           f"Is the external MCP service running? Last error: {exc}")
-                    raise SystemExit(1) from last_exc
+                    raise SystemExit(1) from exc
+                else:
+                    delay = _MCP_BACKOFF_BASE * (2 ** (startup_attempt - 1))
+                    print(f"[mesh] '{name}' MCP connect failed (attempt {startup_attempt}/{_MCP_RETRIES}): "
+                          f"{exc}. Retrying in {delay:.0f}s …")
+                    await asyncio.sleep(delay)
 
     asyncio.run(_run())
 

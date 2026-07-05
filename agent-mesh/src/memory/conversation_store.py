@@ -61,6 +61,24 @@ class ConversationStore:
     def clear(self, session_id: str) -> None:
         self._backend.clear(session_id)
 
+    def bind_session(self, session_id: str, user_name: str) -> None:
+        """Record the owner of a session. No-op if already bound or backend lacks support."""
+        if hasattr(self._backend, "write_owner"):
+            self._backend.write_owner(session_id, user_name)
+
+    def check_owner(self, session_id: str, requesting_user: str) -> bool:
+        """Return True if requesting_user owns the session (or no ownership record exists).
+
+        Backward-compatible: sessions created before ownership tracking was introduced
+        have no .owner file and are allowed through to avoid breaking existing clients.
+        """
+        if not hasattr(self._backend, "read_owner"):
+            return True
+        owner = self._backend.read_owner(session_id)
+        if owner is None:
+            return True  # legacy session — allow for backward compatibility
+        return owner == requesting_user
+
     @staticmethod
     def format_history_block(messages: List[Dict]) -> str:
         """Render prior messages as a delimited block to prepend to a query.

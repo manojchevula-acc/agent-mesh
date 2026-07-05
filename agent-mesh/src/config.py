@@ -44,7 +44,7 @@ class Config:
     # injects them into the PriceAssistAgent prompt; turns are persisted per session.
     ENABLE_CONVERSATION_MEMORY: bool = os.getenv("ENABLE_CONVERSATION_MEMORY", "true").lower() in ("1", "true", "yes")
     # How many prior Q/A turns to replay into the prompt (history is capped to keep tokens bounded).
-    CONVERSATION_MAX_TURNS: int = int(os.getenv("CONVERSATION_MAX_TURNS", "8"))
+    CONVERSATION_MAX_TURNS: int = int(os.getenv("CONVERSATION_MAX_TURNS", "3"))
     # Storage backend: "jsonl" (active default, file-based) | "redis" (placeholder for future use).
     CONVERSATION_BACKEND: str = os.getenv("CONVERSATION_BACKEND", "jsonl")
     # Connection URL used only by the future Redis backend (placeholder — not active yet).
@@ -131,11 +131,11 @@ class Config:
     # Optional API key if the RAG MCP server is configured to require one.
     RAG_API_KEY: str = os.getenv("RAG_API_KEY", "")
     # Timeout (seconds) for an MCP tool request to an external service.
-    MCP_REQUEST_TIMEOUT: int = int(os.getenv("MCP_REQUEST_TIMEOUT", "120"))
+    MCP_REQUEST_TIMEOUT: int = int(os.getenv("MCP_REQUEST_TIMEOUT", "30"))
 
     # Timeout (seconds) for A2A calls. Groq is fast (~70+ tok/s); 60 s is generous
     # headroom for complex multi-step reasoning.
-    A2A_TIMEOUT: float = float(os.getenv("A2A_TIMEOUT", "180.0"))
+    A2A_TIMEOUT: float = float(os.getenv("A2A_TIMEOUT", "60.0"))
 
     @classmethod
     def agent_url(cls, name: str) -> str:

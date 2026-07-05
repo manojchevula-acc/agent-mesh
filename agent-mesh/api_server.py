@@ -204,14 +204,31 @@ async def get_mesh_status(request: Request) -> JSONResponse:
 async def get_conversation(request: Request) -> JSONResponse:
     """Return the stored message history for a session (for UI restore on reload).
 
-    Path: GET /api/conversations/{session_id}
+    Path: GET /api/conversations/{session_id}?username=<user>
+    The optional ``username`` query param enforces session ownership: if the session
+    was created by a different user, 403 is returned. Sessions created before ownership
+    tracking was introduced are accessible to all users (backward-compatible).
+
     Response: {"session_id": str, "messages": [{"role", "content", "ts"}, ...]}
     """
     session_id = request.path_params.get("session_id", "").strip()
     if not session_id:
         return JSONResponse({"error": "session_id is required."}, status_code=400)
+
+    requesting_user = request.query_params.get("username", "").strip()
+    store = ConversationStore()
+    if requesting_user and not store.check_owner(session_id, requesting_user):
+        _log.warning(
+            "conversation access denied session=%s requesting_user=%s",
+            session_id, requesting_user,
+        )
+        return JSONResponse(
+            {"error": "Access denied: this conversation belongs to a different user."},
+            status_code=403,
+        )
+
     try:
-        messages = ConversationStore().load_messages(session_id)
+        messages = store.load_messages(session_id)
     except Exception as exc:
         _log.warning("conversation load failed session=%s: %s", session_id, exc)
         messages = []

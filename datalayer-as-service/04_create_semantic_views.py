@@ -4,7 +4,7 @@
 Executes sql/03_create_semantic_views.sql against MySQL to create (or replace)
 the enhanced business views in the fab_semantic schema.
 
-Views created (13 business products + 0 helpers exposed):
+Views created (16 business products + 0 helpers exposed):
   Core:
     customer_360, pricing_recommendation_view, margin_analysis,
     profitability_summary, rwa_impact_view
@@ -12,6 +12,8 @@ Views created (13 business products + 0 helpers exposed):
     new_customer_pricing_view, competitor_price_analysis, pricing_trace_view,
     segment_pricing_benchmark, operations_cost_impact,
     relationship_discount_view, win_loss_insights, policy_exception_view
+  Analytical (new):
+    cross_sell_opportunity, credit_rating_events, similar_customer_pricing
 
 After this script completes, the MCP server / AI agent connect to MySQL and
 query ONLY the fab_semantic views (never raw or curated tables).
@@ -57,6 +59,10 @@ EXPECTED_VIEWS = [
     "relationship_discount_view",
     "win_loss_insights",
     "policy_exception_view",
+    # analytical views (new curated data sources)
+    "cross_sell_opportunity",
+    "credit_rating_events",
+    "similar_customer_pricing",
 ]
 
 

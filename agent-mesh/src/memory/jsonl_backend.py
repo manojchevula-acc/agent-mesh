@@ -77,3 +77,28 @@ class JsonlBackend(ConversationBackend):
             path.unlink(missing_ok=True)
         except OSError:
             pass
+
+    # ------------------------------------------------------------------
+    # Session ownership — stored in a lightweight sidecar file so the
+    # JSONL message format stays untouched and existing sessions remain
+    # fully readable without migration.
+    # ------------------------------------------------------------------
+
+    def _owner_path(self, session_id: str) -> pathlib.Path:
+        safe = _UNSAFE.sub("_", session_id or "default_session")
+        self._dir.mkdir(parents=True, exist_ok=True)
+        return self._dir / f"{safe}.owner"
+
+    def write_owner(self, session_id: str, user_name: str) -> None:
+        """Record the owner for a new session. No-op if already set."""
+        path = self._owner_path(session_id)
+        if not path.exists():
+            path.write_text(user_name.strip(), encoding="utf-8")
+
+    def read_owner(self, session_id: str) -> str | None:
+        """Return the recorded owner username, or None if not set."""
+        path = self._owner_path(session_id)
+        try:
+            return path.read_text(encoding="utf-8").strip() or None
+        except OSError:
+            return None

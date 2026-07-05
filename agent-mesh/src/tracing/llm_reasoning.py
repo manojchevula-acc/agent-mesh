@@ -25,7 +25,10 @@ from typing import Any, Dict, List, Optional, Tuple
 # Matches <llm_reasoning>...</llm_reasoning> including newlines inside the block.
 # The closing tag tolerates optional whitespace before the slash (e.g. "< /llm_reasoning>")
 # which some LLMs emit.
-_REASONING_RE = re.compile(r"<llm_reasoning>(.*?)<\s*/\s*llm_reasoning>", re.DOTALL)
+_REASONING_RE = re.compile(
+    r"<llm_reasoning>(.*?)<\s*/\s*llm_reasoning\s*>",
+    re.DOTALL | re.IGNORECASE,
+)
 
 
 @dataclass

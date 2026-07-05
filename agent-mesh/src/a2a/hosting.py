@@ -12,12 +12,16 @@ project_root = str(pathlib.Path(__file__).resolve().parents[2])
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+import time as _time
 from typing import List
 
 import uvicorn
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Route
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_jsonrpc_routes, create_agent_card_routes
 from a2a.server.tasks import InMemoryTaskStore
@@ -107,7 +111,20 @@ def build_starlette_app(agent, card: AgentCard) -> Starlette:
 
     Installs ``TraceContextMiddleware`` so inbound A2A calls continue the
     caller's distributed trace.
+
+    Adds a ``GET /health`` endpoint so the launcher and ``api_server`` mesh-status
+    fan-out can liveness-check each A2A node independently.
     """
+    _start_time = _time.time()
+
+    async def _health(request: Request) -> JSONResponse:
+        return JSONResponse({
+            "status": "ok",
+            "node": card.name,
+            "uptime_seconds": round(_time.time() - _start_time, 1),
+            "model": getattr(Config, "GROQ_MODEL", "unknown"),
+        })
+
     request_handler = DefaultRequestHandler(
         agent_executor=A2AExecutor(agent),
         task_store=InMemoryTaskStore(),
@@ -116,6 +133,7 @@ def build_starlette_app(agent, card: AgentCard) -> Starlette:
     return Starlette(
         middleware=[Middleware(TraceContextMiddleware)],
         routes=[
+            Route("/health", _health, methods=["GET"]),
             *create_agent_card_routes(card),
             *create_jsonrpc_routes(request_handler, "/"),
         ],

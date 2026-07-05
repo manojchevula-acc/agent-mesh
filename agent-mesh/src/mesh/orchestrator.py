@@ -156,6 +156,8 @@ async def handle_request(user: User, query: str, session_id: str | None = None) 
     if Config.ENABLE_CONVERSATION_MEMORY and not final.blocked and final.answer:
         try:
             store.append_turn(session_id, query, final.answer)
+            # Bind owner on the first turn; no-op on subsequent turns in the session.
+            store.bind_session(session_id, user.username)
         except Exception as exc:  # never let memory I/O break a request
             _log.warning("conversation history save failed session=%s: %s", session_id, exc)
 

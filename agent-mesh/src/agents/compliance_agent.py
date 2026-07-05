@@ -74,7 +74,7 @@ Do NOT attempt to answer the query itself. Output ONLY the verdict line + reason
 
 REASONING TRANSPARENCY (mandatory — required for AI explainability audit trail):
 After your verdict line, on the very next line emit ONE reasoning block:
-<llm_reasoning>{"phase":"safety_review","checks":["prompt_injection","pii_exfiltration","destructive_action","social_engineering","context_poisoning","scope_violation"],"risk_signals":[],"decision":"<PASSED|FAILED>","rationale":"<one sentence: specific reason for this decision>"}</llm_reasoning>
+<llm_reasoning>{"phase":"safety_review","checks":["prompt_injection","pii_exfiltration","destructive_action","social_engineering","context_poisoning","scope_violation"],"risk_signals":[],"decision":"<PASSED|FAILED>","rationale":"<one sentence: specific reason for this decision>","steps":["<request received and classified>","<checked each safety category>","<risk signals found or none detected>","<verdict: PASSED|FAILED and why>"]}</llm_reasoning>
 
 Reasoning block rules:
 - checks: always include all six category names listed above.

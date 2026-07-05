@@ -23,7 +23,7 @@ from mcp_server.db import get_engine
 
 logger = logging.getLogger(__name__)
 
-MAX_ROWS = 100
+MAX_ROWS = 15
 
 
 # ---------------------------------------------------------------------------
@@ -175,3 +175,28 @@ def query_non_compliant_deals(customer_id: str = "") -> list[dict[str, Any]]:
 def query_compare_fab_vs_competitor(customer_id: str = "", deal_id: str = "") -> list[dict[str, Any]]:
     """Alias over competitor_price_analysis for direct FAB vs competitor comparison."""
     return query_competitor_price_analysis(customer_id=customer_id, deal_id=deal_id)
+
+
+# ---------------------------------------------------------------------------
+# Analytical tools (new curated data sources)
+# ---------------------------------------------------------------------------
+
+def query_cross_sell_opportunity(customer_segment: str = "", industry: str = "") -> list[dict[str, Any]]:
+    """Active cross-sell product recommendations by customer segment and industry."""
+    filters: dict[str, str | None] = {
+        k: v or None for k, v in {
+            "customer_segment": customer_segment,
+            "industry": industry,
+        }.items()
+    }
+    return _query_view("cross_sell_opportunity", filters)
+
+
+def query_credit_rating_events(customer_id: str = "") -> list[dict[str, Any]]:
+    """Credit rating migration events per customer with recommended pricing actions."""
+    return _query_view("credit_rating_events", {"customer_id": customer_id})
+
+
+def query_similar_customer_pricing(new_customer_id: str = "") -> list[dict[str, Any]]:
+    """Reference similarity scores and suggested pricing for new/prospect customers."""
+    return _query_view("similar_customer_pricing", {"new_customer_id": new_customer_id})

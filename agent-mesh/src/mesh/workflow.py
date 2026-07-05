@@ -29,6 +29,7 @@ Design notes
 """
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import re
 import sys
@@ -517,12 +518,16 @@ class DomainExecutor(Executor):
             _set_attr(span, "domain.user", state.user_name)
             _set_attr(span, "domain.query_length", len(state.query))
 
-            # Prepend prior conversation turns (if any) so the PriceAssistAgent's
-            # LLM resolves follow-ups ("that deal", "its RWA") in-context. The A2A
-            # layer flattens to a single string, so history travels inline in the
-            # prompt; the bare user question is preserved on the span attr above.
+            # Prepend role context so PriceAssistAgent can enforce scope rules
+            # (e.g. a 'customer' role may only access their own account data).
+            # History travels inline in the prompt; bare query is preserved on span.
+            role_context = f"[User: {state.user_name} | Role: {state.role}]\n"
             history_block = ConversationStore.format_history_block(state.conversation_history)
-            base_prompt = f"{history_block}{state.query}" if history_block else state.query
+            base_prompt = (
+                f"{role_context}{history_block}{state.query}"
+                if history_block
+                else f"{role_context}{state.query}"
+            )
             _set_attr(span, "domain.history_turns", len(state.conversation_history) // 2)
             try:
                 _add_event(span, "domain.a2a_call.started", {"target": "price_assist"})
@@ -534,6 +539,7 @@ class DomainExecutor(Executor):
                         extra={"status": "RETRY"},
                     )
                     _add_event(span, "domain.retry", {"reason": retry_reason, "attempt": 2})
+                    await asyncio.sleep(5)
                     answer = await self._ask("price_assist", base_prompt)
                 elif self._META_RESPONSE_RE.search(answer or ""):
                     retry_reason = "meta_response"
@@ -549,6 +555,7 @@ class DomainExecutor(Executor):
                         "response — every field, every row, every figure. Do NOT say 'I retrieved' "
                         "or 'I called'; just show the data."
                     )
+                    await asyncio.sleep(5)
                     answer = await self._ask("price_assist", retry_prompt)
                 elif self._HALLUCINATION_RE.search(answer or ""):
                     retry_reason = "hallucination"
@@ -564,6 +571,7 @@ class DomainExecutor(Executor):
                         "then copy the EXACT values it returns — customer names, figures, "
                         "percentages — verbatim. NEVER invent or template any field."
                     )
+                    await asyncio.sleep(5)
                     answer = await self._ask("price_assist", retry_prompt)
             except Exception as exc:
                 answer = f"The banking assistant is currently unavailable ({exc})."
@@ -587,6 +595,15 @@ class DomainExecutor(Executor):
                 _reasoning_entries, answer = extract_reasoning(answer, "price_assist")
                 if tracer and _reasoning_entries:
                     tracer.add_llm_reasoning([e.to_dict() for e in _reasoning_entries])
+                # Collect reasoning entries emitted by peer agents (DataAgent, RAGAgent)
+                # that were extracted and cached in collaboration_tools._peer_reasoning.
+                try:
+                    from src.tools.collaboration_tools import _peer_reasoning as _pr_ctx
+                    _peer_entries = _pr_ctx.get() or []
+                    if tracer and _peer_entries:
+                        tracer.add_llm_reasoning(_peer_entries)
+                except Exception:
+                    pass
             # Belt-and-suspenders: strip any blocks not caught by extract_reasoning
             # (e.g. synthesis placed after the answer text, or blocks on retry path).
             clean = strip_reasoning_markers(answer)
@@ -632,7 +649,9 @@ class DomainExecutor(Executor):
                             [e.to_dict() for e in _plain_entries]
                         )
                     _plain_clean = strip_reasoning_markers(_plain_clean)
-                    if _plain_clean and _plain_clean.strip() != state.query.strip():
+                    if (_plain_clean
+                            and _plain_clean.strip() != state.query.strip()
+                            and "SYSTEM NOTE" not in _plain_clean):
                         clean = _plain_clean
                         state.trail.append("domain_answer:retry_plain")
                 except Exception as _exc:

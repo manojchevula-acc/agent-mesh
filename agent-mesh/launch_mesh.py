@@ -19,6 +19,7 @@ os.environ.setdefault("PYTHONWARNINGS", "ignore")
 import sys
 import time
 import signal
+import socket
 import subprocess
 import pathlib
 
@@ -32,6 +33,20 @@ from src.agents.node_registry import NODE_NAMES
 # Start specialist agents first, then the primary orchestrator last.
 START_ORDER = ["compliance", "data_agent", "rag_agent", "price_assist"]
 
+_PORT_READY_TIMEOUT = 30.0  # seconds to wait for each node's port to bind
+
+
+def _wait_for_port(host: str, port: int, timeout: float = _PORT_READY_TIMEOUT) -> None:
+    """Block until host:port accepts a TCP connection or timeout elapses."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=1.0):
+                return
+        except OSError:
+            time.sleep(0.5)
+    raise RuntimeError(f"Port {port} on {host} did not become ready within {timeout:.0f}s")
+
 
 def main():
     server = str(pathlib.Path(__file__).resolve().parent / "a2a_server.py")
@@ -43,11 +58,15 @@ def main():
         port = Config.AGENT_PORTS[name]
         p = subprocess.Popen([sys.executable, server, "--agent", name, "--port", str(port)])
         procs.append((name, p))
-        print(f"  -> {name:<13} pid={p.pid:<6} http://{Config.A2A_HOST}:{port}/")
-        time.sleep(1.0)
+        print(f"  -> {name:<13} pid={p.pid:<6} http://{Config.A2A_HOST}:{port}/  (waiting…)")
+        try:
+            _wait_for_port(Config.A2A_HOST, port)
+            print(f"     {name:<13} ready")
+        except RuntimeError as exc:
+            print(f"[mesh] WARNING: {exc} — proceeding anyway")
 
     print("-" * 70)
-    print("  Mesh is starting. Give it ~10s to warm up, then run:  python run.py")
+    print("  All nodes ready. Run:  python run.py")
     print("  Press Ctrl+C to stop the whole mesh.")
     print("=" * 70)
 

@@ -15,6 +15,8 @@ Tools:
     segment_pricing_benchmark, operations_cost_impact, relationship_discount,
     win_loss_insights, policy_exception, non_compliant_deals,
     compare_fab_vs_competitor
+  Analytical (new):
+    cross_sell_opportunity, credit_rating_events, similar_customer_pricing
 
 Run (stdio — default, for local/Claude Desktop clients):
     python -m mcp_server.server
@@ -46,6 +48,9 @@ from mcp_server.tools import (
     query_policy_exception,
     query_non_compliant_deals,
     query_compare_fab_vs_competitor,
+    query_cross_sell_opportunity,
+    query_credit_rating_events,
+    query_similar_customer_pricing,
 )
 
 # ---------------------------------------------------------------------------
@@ -203,6 +208,35 @@ def compare_fab_vs_competitor(customer_id: str = "", deal_id: str = "") -> str:
     suggested pricing action."""
     logger.info("[tool] compare_fab_vs_competitor | %r %r", customer_id, deal_id)
     return _to_json(query_compare_fab_vs_competitor(customer_id, deal_id))
+
+
+@mcp.tool()
+def cross_sell_opportunity(customer_segment: str = "", industry: str = "") -> str:
+    """Active cross-sell product recommendations: customer_segment + industry + trigger_condition
+    → recommended_product_name, expected_incremental_revenue_aed, cross_sell_priority, rationale.
+    Filter by customer_segment (e.g. 'SME', 'Corporate') and/or industry (e.g. 'Healthcare')."""
+    logger.info("[tool] cross_sell_opportunity | segment=%r industry=%r", customer_segment, industry)
+    return _to_json(query_cross_sell_opportunity(customer_segment, industry))
+
+
+@mcp.tool()
+def credit_rating_events(customer_id: str = "") -> str:
+    """Credit rating migration events per customer: old_internal_rating → new_internal_rating,
+    rating_change_direction, reason_code, recommended_pricing_action,
+    additional_risk_premium_pct, floating_rate_required_flag, credit_review_required_flag.
+    Filter by customer_id (e.g. 'CUST002'). Pass '' for all customers."""
+    logger.info("[tool] credit_rating_events | customer_id=%r", customer_id)
+    return _to_json(query_credit_rating_events(customer_id))
+
+
+@mcp.tool()
+def similar_customer_pricing(new_customer_id: str = "") -> str:
+    """Reference similarity scores and suggested pricing for new/prospect customers:
+    reference_customer_name, similarity_score, reference_final_price_pct,
+    adjustment_for_new_customer_pct, suggested_price_pct, adjustment_rationale.
+    Filter by new_customer_id (e.g. 'CUST021'). Pass '' for all mappings."""
+    logger.info("[tool] similar_customer_pricing | new_customer_id=%r", new_customer_id)
+    return _to_json(query_similar_customer_pricing(new_customer_id))
 
 
 # ---------------------------------------------------------------------------

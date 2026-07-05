@@ -612,3 +612,75 @@ LEFT JOIN (
     FROM fab_curated.pricing_negotiation_memory
     GROUP BY customer_id, product_id
 ) cp ON cp.customer_id = d.customer_id AND cp.product_id = d.product_id;
+
+
+-- =============================================================
+-- 12. cross_sell_opportunity
+--     Active cross-sell product recommendations by customer
+--     segment + industry. Drives revenue expansion proposals.
+-- =============================================================
+CREATE OR REPLACE VIEW cross_sell_opportunity AS
+SELECT
+    x.cross_sell_rule_id,
+    x.customer_segment,
+    x.industry,
+    x.trigger_condition,
+    x.primary_product_id,
+    x.primary_product_name,
+    x.recommended_product_id,
+    x.recommended_product_name,
+    x.expected_incremental_revenue_aed,
+    x.cross_sell_priority,
+    x.rationale,
+    x.rule_status
+FROM fab_curated.cross_sell_recommendation_rules x
+WHERE x.rule_status = 'Active';
+
+
+-- =============================================================
+-- 13. credit_rating_events
+--     Credit rating migration events per customer: captures
+--     downgrades/upgrades, recommended pricing actions, and
+--     flags requiring floating rates or credit reviews.
+-- =============================================================
+CREATE OR REPLACE VIEW credit_rating_events AS
+SELECT
+    r.rating_event_id,
+    r.customer_id,
+    r.customer_name,
+    r.event_date,
+    r.old_internal_rating,
+    r.new_internal_rating,
+    r.old_risk_category,
+    r.new_risk_category,
+    r.rating_change_direction,
+    r.reason_code,
+    r.recommended_pricing_action,
+    r.additional_risk_premium_pct,
+    r.floating_rate_required_flag,
+    r.credit_review_required_flag
+FROM fab_curated.credit_rating_events r;
+
+
+-- =============================================================
+-- 14. similar_customer_pricing
+--     Reference similarity scores for pricing new/prospect
+--     customers. Maps new_customer_id to a reference customer
+--     with a computed suggested_price_pct.
+-- =============================================================
+CREATE OR REPLACE VIEW similar_customer_pricing AS
+SELECT
+    s.similarity_mapping_id,
+    s.new_customer_id,
+    s.new_customer_name,
+    s.reference_customer_id,
+    s.reference_customer_name,
+    s.customer_segment,
+    s.requested_product_id,
+    s.requested_product_name,
+    s.similarity_score,
+    s.reference_final_price_pct,
+    s.adjustment_for_new_customer_pct,
+    ROUND(s.reference_final_price_pct + s.adjustment_for_new_customer_pct, 4) AS suggested_price_pct,
+    s.suggested_price_adjustment_rationale
+FROM fab_curated.customer_similarity_mapping s;

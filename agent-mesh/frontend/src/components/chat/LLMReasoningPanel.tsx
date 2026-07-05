@@ -1,5 +1,5 @@
 import { memo, useState } from "react";
-import { ChevronDown, ChevronRight, Brain, ShieldCheck, GitBranch, Layers } from "lucide-react";
+import { ChevronDown, ChevronRight, Brain, ShieldCheck, GitBranch, Layers, Database, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { LLMReasoningEntry } from "@/types/mesh";
 
@@ -19,6 +19,8 @@ const PHASE_LABELS: Record<string, string> = {
   intent_routing: "Intent Routing",
   synthesis:      "Answer Synthesis",
   tool_selection: "Tool Selection",
+  data_synthesis: "Data Synthesis",
+  rag_synthesis:  "RAG Synthesis",
   unknown:        "Reasoning",
 };
 
@@ -37,6 +39,8 @@ const PHASE_ICONS: Record<string, React.ReactNode> = {
   intent_routing: <GitBranch   className="h-3.5 w-3.5" />,
   synthesis:      <Layers      className="h-3.5 w-3.5" />,
   tool_selection: <Brain       className="h-3.5 w-3.5" />,
+  data_synthesis: <Database    className="h-3.5 w-3.5" />,
+  rag_synthesis:  <Search      className="h-3.5 w-3.5" />,
 };
 
 function agentColours(agent: string) {
@@ -95,6 +99,25 @@ function SignalList({ label, signals, colour }: { label: string; signals: string
           </span>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ── Chain-of-thought steps ────────────────────────────────────────────────────
+
+function StepsChain({ steps }: { steps: string[] }) {
+  if (!steps || steps.length === 0) return null;
+  return (
+    <div className="mt-2">
+      <p className="text-[10px] uppercase tracking-wider text-muted mb-1">Reasoning chain</p>
+      <ol className="space-y-1 border-l-2 border-slate-200 dark:border-slate-700 pl-3">
+        {steps.map((step, i) => (
+          <li key={i} className="text-[10px] text-muted flex gap-1.5">
+            <span className="font-semibold text-slate-400 shrink-0">{i + 1}.</span>
+            <span>{step}</span>
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }
@@ -189,6 +212,7 @@ const ReasoningCard = memo(function ReasoningCard({
                   <ConfidenceBar value={data.confidence} />
                 </div>
               )}
+              <StepsChain steps={(data.steps as string[]) ?? []} />
             </>
           )}
 
@@ -225,6 +249,7 @@ const ReasoningCard = memo(function ReasoningCard({
                   {data.answer_rationale}
                 </blockquote>
               )}
+              <StepsChain steps={(data.steps as string[]) ?? []} />
             </>
           )}
 
@@ -256,6 +281,7 @@ const ReasoningCard = memo(function ReasoningCard({
                   {data.rationale}
                 </blockquote>
               )}
+              <StepsChain steps={(data.steps as string[]) ?? []} />
             </>
           )}
 
@@ -303,11 +329,46 @@ const ReasoningCard = memo(function ReasoningCard({
                   {data.rationale}
                 </blockquote>
               )}
+              <StepsChain steps={(data.steps as string[]) ?? []} />
+            </>
+          )}
+
+          {/* ── DATA SYNTHESIS (DataAgent final response) ── */}
+          {entry.phase === "data_synthesis" && (
+            <>
+              <div className="mt-2 flex items-center gap-3 flex-wrap">
+                {data.rows !== undefined && (
+                  <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300">
+                    {String(data.rows)} row{Number(data.rows) !== 1 ? "s" : ""} returned
+                  </span>
+                )}
+              </div>
+              {data.finding && (
+                <p className="mt-1.5 text-[10px] font-medium text-fg">{data.finding as string}</p>
+              )}
+              <StepsChain steps={(data.steps as string[]) ?? []} />
+            </>
+          )}
+
+          {/* ── RAG SYNTHESIS (RAGAgent final response) ───── */}
+          {entry.phase === "rag_synthesis" && (
+            <>
+              <div className="mt-2 flex items-center gap-3 flex-wrap">
+                {data.docs !== undefined && (
+                  <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300">
+                    {String(data.docs)} document{Number(data.docs) !== 1 ? "s" : ""} matched
+                  </span>
+                )}
+              </div>
+              {data.finding && (
+                <p className="mt-1.5 text-[10px] font-medium text-fg">{data.finding as string}</p>
+              )}
+              <StepsChain steps={(data.steps as string[]) ?? []} />
             </>
           )}
 
           {/* ── FALLBACK (raw / unknown phase) ───────────── */}
-          {entry.phase !== "intent_routing" && entry.phase !== "synthesis" && entry.phase !== "safety_review" && entry.phase !== "tool_selection" && (
+          {entry.phase !== "intent_routing" && entry.phase !== "synthesis" && entry.phase !== "safety_review" && entry.phase !== "tool_selection" && entry.phase !== "data_synthesis" && entry.phase !== "rag_synthesis" && (
             <div className="mt-2">
               {data.rationale && (
                 <blockquote className="border-l-2 border-line pl-2 text-muted italic">{data.rationale}</blockquote>

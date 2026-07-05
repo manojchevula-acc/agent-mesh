@@ -12,6 +12,7 @@ Two safeguards:
 2. Soft-fail — a failed hop returns an error STRING rather than raising, so the
    coordinator can tell the user a source is unavailable instead of crashing.
 """
+import asyncio
 import sys
 import time
 import pathlib
@@ -28,10 +29,19 @@ from src.a2a.clients import ask_remote
 _peer_depth: contextvars.ContextVar[int] = contextvars.ContextVar("peer_call_depth", default=0)
 _MAX_PEER_DEPTH = 2
 
+# Retry once on transient A2A transport failures (connection reset, brief unavailability).
+# Does NOT retry on application-level errors (e.g. echo/rate-limit responses).
+_A2A_RETRIES = 1
+_A2A_RETRY_DELAY = 0.75  # seconds between attempts
+
 # Per-request result cache keyed by (node, question). Scoped to the current async
 # context so different concurrent requests never share entries. Initialised lazily
 # on the first _consult_peer call in a given context.
 _peer_cache: contextvars.ContextVar[dict] = contextvars.ContextVar("peer_cache", default=None)
+
+# Accumulates LLM reasoning entries extracted from peer agent responses. Each
+# _consult_peer call appends here so DomainExecutor can forward them to the tracer.
+_peer_reasoning: contextvars.ContextVar[list] = contextvars.ContextVar("peer_reasoning", default=None)
 
 
 async def _consult_peer(node: str, question: str, unavailable_label: str) -> str:
@@ -55,7 +65,37 @@ async def _consult_peer(node: str, question: str, unavailable_label: str) -> str
     t0 = time.perf_counter()
     error_occurred = False
     try:
-        result = await ask_remote(node, question)
+        # Retry once on transient transport errors (connect reset, brief unavailability).
+        _last_exc: Exception | None = None
+        result = None
+        for _attempt in range(_A2A_RETRIES + 1):
+            try:
+                result = await ask_remote(node, question)
+                break
+            except Exception as _e:
+                _last_exc = _e
+                if _attempt < _A2A_RETRIES:
+                    await asyncio.sleep(_A2A_RETRY_DELAY)
+        if result is None:
+            raise _last_exc  # all retry attempts failed — fall into outer except
+        # Extract and strip any <llm_reasoning> blocks emitted by the peer agent in
+        # its final response. Entries are stored in _peer_reasoning so DomainExecutor
+        # can forward them to the tracer. The result returned to PriceAssist is clean
+        # (no raw JSON blocks), saving tokens in PriceAssist's tool-result context.
+        if result:
+            try:
+                from src.tracing.llm_reasoning import extract_reasoning as _er
+                _entries, _clean = _er(result, node)
+                if _clean.strip():
+                    result = _clean
+                if _entries:
+                    _pr = _peer_reasoning.get()
+                    if _pr is None:
+                        _pr = []
+                        _peer_reasoning.set(_pr)
+                    _pr.extend([e.to_dict() for e in _entries])
+            except Exception:
+                pass
         # Echo detection: if the peer returned the input question verbatim it means
         # the downstream agent's LLM failed to call its tool (e.g. hit a Groq
         # rate-limit before making any MCP call and just echoed the prompt).
