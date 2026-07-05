@@ -8,7 +8,8 @@ _ENV_FILE = pathlib.Path(__file__).resolve().parents[1] / ".env"
 load_dotenv(_ENV_FILE, override=True)
 
 class Config:
-    # LLM provider — Groq (OpenAI-compatible cloud inference)
+    # LLM provider — OpenAI-compatible endpoint (Groq by default; swap for Ollama/Cerebras)
+    LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "https://api.groq.com/openai/v1")
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
     GROQ_MODEL:   str = os.getenv("GROQ_MODEL",   "openai/gpt-oss-20b")
 
@@ -147,26 +148,24 @@ class Config:
     def validate(cls):
         """Validates configuration sanity."""
         if not cls.GROQ_API_KEY:
-            raise ValueError("Invalid Configuration: GROQ_API_KEY is required.")
+            raise ValueError("Invalid Configuration: GROQ_API_KEY (LLM API key) is required.")
         if not cls.GROQ_MODEL:
-            raise ValueError("Invalid Configuration: GROQ_MODEL is required.")
+            raise ValueError("Invalid Configuration: GROQ_MODEL (LLM model name) is required.")
 
     @classmethod
     def check_groq(cls) -> tuple[bool, str]:
-        """Fast pre-flight check for Groq: verifies the API key is set and the
-        model name is non-empty. Does not make a network call — Groq responds
-        immediately at inference time; there is no equivalent of Ollama's /api/tags.
+        """Fast pre-flight check: verifies the LLM API key and model name are set.
+        Does not make a network call.
         """
         if not cls.GROQ_API_KEY:
             return False, (
-                "GROQ_API_KEY is not set. Add it to agent-mesh/.env "
-                "(e.g. GROQ_API_KEY=gsk_...). Without it, all agents will fail "
-                "to connect to Groq and return errors at inference time."
+                "GROQ_API_KEY is not set. Add it to agent-mesh/.env. "
+                "Without it, all agents will fail to connect to the LLM and return errors at inference time."
             )
         if not cls.GROQ_MODEL:
-            return False, "GROQ_MODEL is not set. Add it to agent-mesh/.env (e.g. GROQ_MODEL=openai/gpt-oss-20b)."
+            return False, "GROQ_MODEL is not set. Add it to agent-mesh/.env."
         return True, (
-            f"Groq configured — key=gsk_***{cls.GROQ_API_KEY[-4:]} | "
+            f"LLM configured — url={cls.LLM_BASE_URL} key=***{cls.GROQ_API_KEY[-4:]} | "
             f"compliance={cls.COMPLIANCE_MODEL} | data={cls.DATA_AGENT_MODEL} | "
             f"rag={cls.RAG_AGENT_MODEL} | price_assist={cls.PRICE_ASSIST_MODEL}"
         )

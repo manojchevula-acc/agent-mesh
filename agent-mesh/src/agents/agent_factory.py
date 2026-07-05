@@ -29,7 +29,7 @@ def create_demo_agent(
     client = OpenAIChatCompletionClient(
         model=model or Config.GROQ_MODEL,
         api_key=api_key or Config.GROQ_API_KEY,
-        base_url="https://api.groq.com/openai/v1",
+        base_url=Config.LLM_BASE_URL,
     )
 
     # 2. Setup standard middleware (Audit trail)
