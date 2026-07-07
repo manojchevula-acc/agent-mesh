@@ -1,4 +1,50 @@
-# Created by venv; see https://docs.python.org/3/library/venv.html
-fab-venv
+# ── Virtual Environments ──────────────────────────────────────────────────────
+fab-venv/
+.venv/
+.venv313/
+venv/
+env/
+
+# ── Python Bytecode & Caches ──────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Secrets & Environment Files ───────────────────────────────────────────────
+.env
+.env.backup
+.env.local
+.env.*.local
+# Keep .env.example templates — they are safe to commit
+
+# ── Node.js ───────────────────────────────────────────────────────────────────
+node_modules/
+dist/
+build/
+.next/
+.nuxt/
+
+# ── Python Build Artifacts ────────────────────────────────────────────────────
+*.egg-info/
+.eggs/
+
+# ── Jupyter Notebooks (outputs only, keep .ipynb sources) ────────────────────
+.ipynb_checkpoints/
+
+# ── Knowledge Base (large/generated data) ────────────────────────────────────
 my_KB/*
-*.pyc
+
+# ── IDE & OS ──────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
+
+# ── Logs & Temporary Files ────────────────────────────────────────────────────
+*.log
+*.tmp
+*.swp
