@@ -87,6 +87,24 @@ export interface MeshResult {
   llm_reasoning?: LLMReasoningEntry[];
 }
 
+export interface FeedbackRequest {
+  request_id: string;
+  session_id: string;
+  user: string;
+  role: string;
+  rating: "up" | "down";
+  query: string;
+  answer: string;
+  route?: string;
+  blocked?: boolean;
+  comment?: string;
+}
+
+export interface FeedbackResponse {
+  success: boolean;
+  feedback_id: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
@@ -94,6 +112,7 @@ export interface ChatMessage {
   result?: MeshResult;
   timestamp: Date;
   isLoading?: boolean;
+  feedback?: { rating: "up" | "down"; comment?: string };
 }
 
 export interface NodeHealth {

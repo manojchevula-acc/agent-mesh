@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { getConversation, queryMesh } from "@/api/mesh";
+import { getConversation, queryMesh, submitFeedback } from "@/api/mesh";
 import type { ChatMessage, MeshResult } from "@/types/mesh";
 
 const SESSION_ID_KEY = "agent-mesh-session-id";
@@ -28,9 +28,10 @@ function writeSessionId(id: string | null) {
 
 interface UseChatOptions {
   username: string;
+  role: string;
 }
 
-export function useChat({ username }: UseChatOptions) {
+export function useChat({ username, role }: UseChatOptions) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   // Holds the active conversation id. Persisted to localStorage so the thread
   // survives a page refresh; pinned by the first response that returns it.
@@ -152,10 +153,41 @@ export function useChat({ username }: UseChatOptions) {
     writeSessionId(null);
   }, []);
 
+  const handleFeedback = useCallback(
+    async (messageId: string, rating: "up" | "down", comment?: string) => {
+      const msgIndex = messages.findIndex((m) => m.id === messageId);
+      if (msgIndex === -1) return;
+      const msg = messages[msgIndex];
+      if (!msg.result?.request_id) return;
+      // Find the preceding user message to get the original query text.
+      const userMsg = msgIndex > 0 ? messages[msgIndex - 1] : null;
+      await submitFeedback({
+        request_id: msg.result.request_id,
+        session_id: msg.result.session_id ?? sessionIdRef.current ?? "",
+        user: username,
+        role,
+        rating,
+        query: userMsg?.content ?? "",
+        answer: msg.content,
+        route: msg.result.route ?? undefined,
+        blocked: msg.result.blocked,
+        comment: comment ?? "",
+      });
+      // Lock the message — no re-rating after submission.
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === messageId ? { ...m, feedback: { rating, comment } } : m
+        )
+      );
+    },
+    [messages, username, role]
+  );
+
   return {
     messages,
     sendMessage,
     clearChat,
+    handleFeedback,
     isLoading: mutation.isPending,
     error: mutation.error,
   };

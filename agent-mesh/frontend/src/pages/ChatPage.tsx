@@ -12,7 +12,10 @@ export default function ChatPage() {
   const { user } = useAuth();
   const username = user?.username ?? "bob";
 
-  const { messages, sendMessage, clearChat, isLoading } = useChat({ username });
+  const { messages, sendMessage, clearChat, handleFeedback, isLoading } = useChat({
+    username,
+    role: user?.role ?? "customer",
+  });
 
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -83,7 +86,7 @@ export default function ChatPage() {
           <EmptyState onSampleClick={handleSampleClick} />
         ) : (
           messages.map((msg) => (
-            <MessageBubble key={msg.id} message={msg} />
+            <MessageBubble key={msg.id} message={msg} onFeedback={handleFeedback} />
           ))
         )}
         <div ref={bottomRef} />

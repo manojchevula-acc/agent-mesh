@@ -1,4 +1,5 @@
-import { memo, useMemo, useEffect, useState } from "react";
+import { memo, useMemo, useEffect, useRef, useState } from "react";
+import { ThumbsUp, ThumbsDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Markdown } from "@/components/ui/Markdown";
 import PipelineTrail from "./PipelineTrail";
@@ -68,8 +69,125 @@ function ThinkingIndicator() {
   );
 }
 
+// ── Feedback bar ─────────────────────────────────────────────────────────────
+
+interface FeedbackBarProps {
+  messageId: string;
+  existing?: { rating: "up" | "down"; comment?: string };
+  onSubmit: (messageId: string, rating: "up" | "down", comment?: string) => Promise<void>;
+}
+
+function FeedbackBar({ messageId, existing, onSubmit }: FeedbackBarProps) {
+  const [selected, setSelected] = useState<"up" | "down" | null>(existing?.rating ?? null);
+  const [comment, setComment] = useState(existing?.comment ?? "");
+  const [submitted, setSubmitted] = useState(!!existing);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const locked = submitted || isSubmitting;
+
+  function handleThumb(rating: "up" | "down") {
+    if (locked) return;
+    setSelected((prev) => (prev === rating ? null : rating));
+  }
+
+  async function handleSubmit() {
+    if (!selected || locked) return;
+    setIsSubmitting(true);
+    try {
+      await onSubmit(messageId, selected, comment.trim() || undefined);
+      setSubmitted(true);
+    } catch {
+      // Silent fail — feedback is best-effort; don't break the chat UI.
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  if (submitted) {
+    return (
+      <div className="flex items-center gap-2 mt-3 pt-2 border-t border-line">
+        {selected === "up" ? (
+          <ThumbsUp className="h-3.5 w-3.5 text-emerald-500" />
+        ) : (
+          <ThumbsDown className="h-3.5 w-3.5 text-red-400" />
+        )}
+        <span className="text-xs text-muted">Thanks for your feedback</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 pt-2 border-t border-line">
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-muted mr-1">Was this helpful?</span>
+        <button
+          onClick={() => handleThumb("up")}
+          disabled={locked}
+          aria-label="Thumbs up"
+          className={cn(
+            "p-1 rounded transition-colors",
+            selected === "up"
+              ? "text-emerald-500"
+              : "text-muted hover:text-emerald-500"
+          )}
+        >
+          <ThumbsUp className="h-3.5 w-3.5" />
+        </button>
+        <button
+          onClick={() => handleThumb("down")}
+          disabled={locked}
+          aria-label="Thumbs down"
+          className={cn(
+            "p-1 rounded transition-colors",
+            selected === "down"
+              ? "text-red-400"
+              : "text-muted hover:text-red-400"
+          )}
+        >
+          <ThumbsDown className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      {selected && (
+        <div className="mt-2 flex flex-col gap-1.5">
+          <textarea
+            ref={textareaRef}
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            placeholder="Add a comment (optional)"
+            rows={2}
+            disabled={locked}
+            className={cn(
+              "w-full resize-none rounded-lg border border-line bg-canvas px-2.5 py-1.5",
+              "text-xs text-fg placeholder:text-muted",
+              "focus:outline-none focus:ring-1 focus:ring-brand-500 focus:border-brand-500",
+              "disabled:opacity-60 transition-colors"
+            )}
+          />
+          <div className="flex justify-end">
+            <button
+              onClick={handleSubmit}
+              disabled={locked}
+              className={cn(
+                "text-xs px-3 py-1 rounded-lg font-medium transition-colors",
+                "bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-60"
+              )}
+            >
+              {isSubmitting ? "Submitting…" : "Submit"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 interface MessageBubbleProps {
   message: ChatMessage;
+  onFeedback?: (messageId: string, rating: "up" | "down", comment?: string) => Promise<void>;
 }
 
 function formatTime(date: Date): string {
@@ -96,7 +214,7 @@ function RouteChip({ route }: { route: string }) {
 
 const LLM_REASONING_RE = /<llm_reasoning>[\s\S]*?<\/llm_reasoning>/g;
 
-const MessageBubble = memo(function MessageBubble({ message }: MessageBubbleProps) {
+const MessageBubble = memo(function MessageBubble({ message, onFeedback }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const timeLabel = useMemo(() => formatTime(message.timestamp), [message.timestamp]);
   const safeContent = useMemo(
@@ -204,6 +322,15 @@ const MessageBubble = memo(function MessageBubble({ message }: MessageBubbleProp
 
               {/* Execution trace panel — collapsible, mirrors run.py CLIRenderer output */}
               {result && <ExecutionPanel result={result} />}
+
+              {/* Feedback bar — shown on non-blocked responses once loaded */}
+              {onFeedback && result?.request_id && !isBlocked && (
+                <FeedbackBar
+                  messageId={message.id}
+                  existing={message.feedback}
+                  onSubmit={onFeedback}
+                />
+              )}
             </>
           )}
         </div>

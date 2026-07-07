@@ -102,6 +102,13 @@ class Config:
     ENABLE_COMPLIANCE:   bool = os.getenv("ENABLE_COMPLIANCE",   "true").lower() in ("1", "true", "yes")
 
     # ----------------------------------------------------------------------
+    # User feedback — thumbs up/down + comment stored for future fine-tuning.
+    # Records include a fine_tune_record.messages array (OpenAI/Anthropic format)
+    # so the JSONL can be exported directly to a fine-tuning job.
+    # ----------------------------------------------------------------------
+    FEEDBACK_LOG_FILE: str = os.getenv("FEEDBACK_LOG_FILE", "data/feedback.jsonl")
+
+    # ----------------------------------------------------------------------
     # DevUI (Microsoft Agent Framework dev tool) — Docker-free live trace viewer
     # ----------------------------------------------------------------------
     # ``devui_app.py`` runs the whole mesh in ONE process so DevUI can capture the
