@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import dataclasses
+import json
 import os
 import pathlib
 import sys
@@ -54,6 +55,7 @@ from starlette.routing import Route
 from src.a2a.hosting import TraceContextMiddleware
 from src.auth.identity_provider import login, list_users
 from src.config import Config
+from src.feedback.store import record_feedback
 from src.mesh.orchestrator import handle_request
 from src.memory import ConversationStore
 from src.observability import get_logger, CAT_SYSTEM, flush_observability
@@ -235,6 +237,76 @@ async def get_conversation(request: Request) -> JSONResponse:
     return JSONResponse({"session_id": session_id, "messages": messages})
 
 
+async def post_feedback(request: Request) -> JSONResponse:
+    """Record user thumbs-up/down feedback on an assistant response.
+
+    Body: {request_id, session_id, user, role, rating ("up"|"down"),
+           query, answer, route?, blocked?, comment?}
+    Response: {success: true, feedback_id}
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body."}, status_code=400)
+
+    required = {"request_id", "session_id", "user", "role", "rating", "query", "answer"}
+    if missing := required - body.keys():
+        return JSONResponse({"error": f"Missing required fields: {sorted(missing)}"}, status_code=400)
+    if body["rating"] not in ("up", "down"):
+        return JSONResponse({"error": "rating must be 'up' or 'down'."}, status_code=400)
+
+    try:
+        feedback_id = record_feedback(
+            request_id=str(body["request_id"]),
+            session_id=str(body["session_id"]),
+            user=str(body["user"]),
+            role=str(body["role"]),
+            rating=str(body["rating"]),
+            query=str(body["query"]),
+            answer=str(body["answer"]),
+            route=body.get("route"),
+            blocked=bool(body.get("blocked", False)),
+            comment=str(body.get("comment", "")),
+        )
+    except Exception as exc:
+        _log.warning("feedback write failed: %s", exc, extra={"status": "ERROR"})
+        return JSONResponse({"error": "Failed to save feedback."}, status_code=500)
+
+    _log.info(
+        "Feedback recorded id=%s user=%s rating=%s",
+        feedback_id, body["user"], body["rating"],
+        extra={"status": "SUCCESS"},
+    )
+    return JSONResponse({"success": True, "feedback_id": feedback_id})
+
+
+async def get_feedback_stats(request: Request) -> JSONResponse:
+    """Return aggregate feedback counts (total, up, down, with_comment)."""
+    path = Config.FEEDBACK_LOG_FILE
+    if not os.path.exists(path):
+        return JSONResponse({"total": 0, "up": 0, "down": 0, "with_comment": 0})
+    up = down = commented = 0
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    if rec.get("rating") == "up":
+                        up += 1
+                    elif rec.get("rating") == "down":
+                        down += 1
+                    if rec.get("comment"):
+                        commented += 1
+                except Exception:
+                    pass
+    except Exception as exc:
+        _log.warning("feedback stats read failed: %s", exc)
+    return JSONResponse({"total": up + down, "up": up, "down": down, "with_comment": commented})
+
+
 # ---------------------------------------------------------------------------
 # App assembly
 # ---------------------------------------------------------------------------
@@ -274,11 +346,13 @@ app = Starlette(
         Middleware(TraceContextMiddleware),
     ],
     routes=[
-        Route("/health",          health,          methods=["GET"]),
-        Route("/api/users",       get_users,       methods=["GET"]),
-        Route("/api/login",       post_login,      methods=["POST"]),
-        Route("/api/query",       post_query,      methods=["POST"]),
-        Route("/api/mesh/status", get_mesh_status, methods=["GET"]),
+        Route("/health",               health,              methods=["GET"]),
+        Route("/api/users",            get_users,           methods=["GET"]),
+        Route("/api/login",            post_login,          methods=["POST"]),
+        Route("/api/query",            post_query,          methods=["POST"]),
+        Route("/api/feedback",         post_feedback,       methods=["POST"]),
+        Route("/api/feedback/stats",   get_feedback_stats,  methods=["GET"]),
+        Route("/api/mesh/status",      get_mesh_status,     methods=["GET"]),
         Route("/api/conversations/{session_id}", get_conversation, methods=["GET"]),
     ],
 )
