@@ -307,6 +307,214 @@ async def get_feedback_stats(request: Request) -> JSONResponse:
     return JSONResponse({"total": up + down, "up": up, "down": down, "with_comment": commented})
 
 
+async def get_audit_list(request: Request) -> JSONResponse:
+    """Return all audit trail records newest-first with aggregate stats.
+
+    Strips bulky inputs/output fields — returns previews only.
+    Use GET /api/audit/{request_id} for the full record.
+    """
+    path = Config.AUDIT_LOG_FILE
+    if not os.path.exists(path):
+        return JSONResponse({"records": [], "total": 0, "success_count": 0, "error_count": 0, "avg_latency_ms": 0})
+    records = []
+    success = error = total_latency = 0
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    latency = rec.get("latency_ms", 0) or 0
+                    status = rec.get("status", "UNKNOWN")
+                    if status == "SUCCESS":
+                        success += 1
+                    else:
+                        error += 1
+                    total_latency += latency
+                    # Build a slimmed record with previews instead of full inputs/output
+                    inputs = rec.get("inputs") or []
+                    input_preview = (inputs[0][:200] if inputs else "")
+                    output_preview = (rec.get("output", "") or "")[:200]
+                    slim = {k: v for k, v in rec.items() if k not in ("inputs", "output")}
+                    slim["input_preview"] = input_preview
+                    slim["output_preview"] = output_preview
+                    records.append(slim)
+                except Exception:
+                    pass
+    except Exception as exc:
+        _log.warning("audit list read failed: %s", exc)
+    records.reverse()
+    total = success + error
+    return JSONResponse({
+        "records": records,
+        "total": total,
+        "success_count": success,
+        "error_count": error,
+        "avg_latency_ms": round(total_latency / total) if total else 0,
+    })
+
+
+async def get_audit_detail(request: Request) -> JSONResponse:
+    """Return full inputs + output for a single audit record by request_id."""
+    request_id = request.path_params.get("request_id", "").strip().upper()
+    if not request_id:
+        return JSONResponse({"error": "request_id is required."}, status_code=400)
+    path = Config.AUDIT_LOG_FILE
+    if not os.path.exists(path):
+        return JSONResponse({"error": "Audit log not found."}, status_code=404)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    if str(rec.get("request_id", "")).upper() == request_id:
+                        return JSONResponse(rec)
+                except Exception:
+                    pass
+    except Exception as exc:
+        _log.warning("audit detail read failed: %s", exc)
+    return JSONResponse({"error": f"Record {request_id} not found."}, status_code=404)
+
+
+async def get_trace_list(request: Request) -> JSONResponse:
+    """Return all trace span records newest-first with aggregate stats.
+
+    Handles the known formatting issue where multiple JSON objects may appear
+    on a single line by using raw_decode() to extract them iteratively.
+    """
+    path = Config.TRACE_LOG_FILE
+    if not os.path.exists(path):
+        return JSONResponse({"records": [], "total": 0, "success_count": 0, "avg_duration_ms": 0, "max_duration_ms": 0})
+    records = []
+    success = total_dur = max_dur = 0
+    decoder = json.JSONDecoder()
+    try:
+        with open(path, encoding="utf-8") as fh:
+            content = fh.read()
+        idx = 0
+        while idx < len(content):
+            # Skip whitespace / newlines
+            while idx < len(content) and content[idx] in " \t\r\n":
+                idx += 1
+            if idx >= len(content):
+                break
+            try:
+                rec, length = decoder.raw_decode(content, idx)
+                idx += length
+                dur = rec.get("duration_ms", 0) or 0
+                if rec.get("status") == "SUCCESS":
+                    success += 1
+                total_dur += dur
+                if dur > max_dur:
+                    max_dur = dur
+                records.append(rec)
+            except Exception:
+                idx += 1
+    except Exception as exc:
+        _log.warning("trace list read failed: %s", exc)
+    records.reverse()
+    total = len(records)
+    return JSONResponse({
+        "records": records,
+        "total": total,
+        "success_count": success,
+        "avg_duration_ms": round(total_dur / total) if total else 0,
+        "max_duration_ms": max_dur,
+    })
+
+
+async def get_conversations_list(request: Request) -> JSONResponse:
+    """Return all conversation sessions with full message history."""
+    store_dir = pathlib.Path(Config.CONVERSATION_STORE_DIR)
+    if not store_dir.exists():
+        return JSONResponse({"sessions": [], "total_sessions": 0, "total_messages": 0, "unique_users": 0})
+    sessions = []
+    total_messages = 0
+    users: set[str] = set()
+    try:
+        for jf in sorted(store_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True):
+            session_id = jf.stem  # filename without .jsonl
+            # Infer user from session_id prefix (e.g. "alice_37ce2a8d" → "alice")
+            user = session_id.rsplit("_", 1)[0] if "_" in session_id else session_id
+            messages = []
+            try:
+                with open(jf, encoding="utf-8") as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            messages.append(json.loads(line))
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            if not messages:
+                continue
+            users.add(user)
+            total_messages += len(messages)
+            first_ts = messages[0].get("ts", "")
+            last_ts = messages[-1].get("ts", "")
+            first_query = next(
+                (m.get("content", "")[:200] for m in messages if m.get("role") == "user"),
+                "",
+            )
+            sessions.append({
+                "session_id": session_id,
+                "user": user,
+                "message_count": len(messages),
+                "first_ts": first_ts,
+                "last_ts": last_ts,
+                "first_query": first_query,
+                "messages": messages,
+            })
+    except Exception as exc:
+        _log.warning("conversations list failed: %s", exc)
+    return JSONResponse({
+        "sessions": sessions,
+        "total_sessions": len(sessions),
+        "total_messages": total_messages,
+        "unique_users": len(users),
+    })
+
+
+async def get_feedback_list(request: Request):
+    """Return all feedback records sorted newest-first, with aggregate counts."""
+    path = Config.FEEDBACK_LOG_FILE
+    if not os.path.exists(path):
+        return JSONResponse({"records": [], "total": 0, "up": 0, "down": 0, "with_comment": 0})
+    records = []
+    up = down = commented = 0
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    # Exclude the bulky fine_tune_record from the list response
+                    rec.pop("fine_tune_record", None)
+                    records.append(rec)
+                    if rec.get("rating") == "up":
+                        up += 1
+                    elif rec.get("rating") == "down":
+                        down += 1
+                    if rec.get("comment"):
+                        commented += 1
+                except Exception:
+                    pass
+    except Exception as exc:
+        _log.warning("feedback list read failed: %s", exc)
+    records.reverse()  # newest first
+    return JSONResponse({"records": records, "total": len(records), "up": up, "down": down, "with_comment": commented})
+
+
 # ---------------------------------------------------------------------------
 # App assembly
 # ---------------------------------------------------------------------------
@@ -350,8 +558,13 @@ app = Starlette(
         Route("/api/users",            get_users,           methods=["GET"]),
         Route("/api/login",            post_login,          methods=["POST"]),
         Route("/api/query",            post_query,          methods=["POST"]),
-        Route("/api/feedback",         post_feedback,       methods=["POST"]),
-        Route("/api/feedback/stats",   get_feedback_stats,  methods=["GET"]),
+        Route("/api/audit",                      get_audit_list,           methods=["GET"]),
+        Route("/api/audit/{request_id}",         get_audit_detail,         methods=["GET"]),
+        Route("/api/traces",                     get_trace_list,           methods=["GET"]),
+        Route("/api/conversations/list",         get_conversations_list,   methods=["GET"]),
+        Route("/api/feedback",                   post_feedback,            methods=["POST"]),
+        Route("/api/feedback/list",              get_feedback_list,        methods=["GET"]),
+        Route("/api/feedback/stats",             get_feedback_stats,       methods=["GET"]),
         Route("/api/mesh/status",      get_mesh_status,     methods=["GET"]),
         Route("/api/conversations/{session_id}", get_conversation, methods=["GET"]),
     ],

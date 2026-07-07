@@ -1,5 +1,5 @@
 import { Link, NavLink } from "react-router-dom";
-import { MessageSquare, Activity, X, SquarePen } from "lucide-react";
+import { MessageSquare, Activity, X, SquarePen, ThumbsUp, ShieldCheck, Zap, MessagesSquare } from "lucide-react";
 import { ApiStatus } from "./ApiStatus";
 import { Logo } from "@/components/ui/Logo";
 import { cn } from "@/lib/utils";
@@ -16,6 +16,30 @@ const NAV_ITEMS = [
     label: "Mesh Status",
     icon: Activity,
     description: "Health of all 6 A2A nodes",
+  },
+  {
+    to: "/app/feedback",
+    label: "Feedback",
+    icon: ThumbsUp,
+    description: "User ratings & satisfaction",
+  },
+  {
+    to: "/app/audit",
+    label: "Audit Trail",
+    icon: ShieldCheck,
+    description: "Full agent invocation log",
+  },
+  {
+    to: "/app/traces",
+    label: "Trace Spans",
+    icon: Zap,
+    description: "A2A wire call latency",
+  },
+  {
+    to: "/app/conversations",
+    label: "Conversations",
+    icon: MessagesSquare,
+    description: "All chat session threads",
   },
 ];
 

@@ -146,3 +146,105 @@ export interface ConversationHistory {
 export interface LoginRequest {
   username: string;
 }
+
+export interface AuditRecord {
+  timestamp: string;
+  request_id: string;
+  trace_id: string;
+  span_id: string;
+  session_id: string;
+  user: string;
+  role: string;
+  agent_name: string;
+  input_preview: string;
+  output_preview: string;
+  status: string;
+  latency_ms: number;
+}
+
+export interface AuditListResponse {
+  records: AuditRecord[];
+  total: number;
+  success_count: number;
+  error_count: number;
+  avg_latency_ms: number;
+}
+
+export interface AuditDetailRecord extends AuditRecord {
+  inputs: string[];
+  output: string;
+}
+
+export interface TraceAttributes {
+  target_node: string;
+  prompt_length: number;
+  response_length: number;
+  response_preview: string;
+}
+
+export interface TraceRecord {
+  event_type: string;
+  name: string;
+  status: string;
+  timestamp: string;
+  trace_id: string | null;
+  span_id: string;
+  parent_span_id: string | null;
+  duration_ms: number;
+  error: string | null;
+  attributes: TraceAttributes;
+}
+
+export interface TraceListResponse {
+  records: TraceRecord[];
+  total: number;
+  success_count: number;
+  avg_duration_ms: number;
+  max_duration_ms: number;
+}
+
+export interface SessionMessage {
+  role: "user" | "assistant";
+  content: string;
+  ts?: string;
+}
+
+export interface SessionSummary {
+  session_id: string;
+  user: string;
+  message_count: number;
+  first_ts: string;
+  last_ts: string;
+  first_query: string;
+  messages: SessionMessage[];
+}
+
+export interface ConversationsResponse {
+  sessions: SessionSummary[];
+  total_sessions: number;
+  total_messages: number;
+  unique_users: number;
+}
+
+export interface FeedbackRecord {
+  feedback_id: string;
+  ts: string;
+  request_id: string;
+  session_id: string;
+  user: string;
+  role: string;
+  rating: "up" | "down";
+  comment?: string;
+  query: string;
+  answer: string;
+  route: string;
+  blocked: boolean;
+}
+
+export interface FeedbackListResponse {
+  records: FeedbackRecord[];
+  total: number;
+  up: number;
+  down: number;
+  with_comment: number;
+}

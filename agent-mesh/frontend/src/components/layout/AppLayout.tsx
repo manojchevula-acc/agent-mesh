@@ -16,6 +16,22 @@ const PAGE_TITLES: Record<string, { title: string; subtitle: string }> = {
     title: "Mesh Status",
     subtitle: "Real-time health of all 6 A2A agent nodes.",
   },
+  "/app/feedback": {
+    title: "User Feedback",
+    subtitle: "Thumbs-up / thumbs-down ratings from Price Assist responses.",
+  },
+  "/app/audit": {
+    title: "Audit Trail",
+    subtitle: "Complete log of every agent invocation — inputs, outputs, latency, and status.",
+  },
+  "/app/traces": {
+    title: "Trace Spans",
+    subtitle: "Agent-to-agent wire call spans — latency, payload sizes, and response previews.",
+  },
+  "/app/conversations": {
+    title: "Conversations",
+    subtitle: "All chat sessions with full message history.",
+  },
 };
 
 export function AppLayout() {
