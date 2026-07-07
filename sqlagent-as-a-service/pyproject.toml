@@ -1,0 +1,62 @@
+[project]
+name = "sql-agent"
+version = "1.0.0"
+description = "Production-grade multi-agent ReAct SQL Agent for the GERNAS v3.0 FAB pricing platform"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "langgraph>=0.2.0",
+    "langchain-core>=0.3.0",
+    # LLM providers — provider is configurable per step (see sql_agent/llm/).
+    "langchain-groq>=0.2.0",
+    "langchain-openai>=0.2.0",
+    "langchain-anthropic>=0.2.0",
+    "sqlglot>=25.0.0",
+    "sqlalchemy>=2.0.0",
+    # Database drivers — works on both PostgreSQL and MySQL out of the box.
+    "psycopg2-binary>=2.9.0",
+    "pymysql>=1.1.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "pyyaml>=6.0",
+    "fastapi>=0.110.0",
+    "uvicorn>=0.29.0",
+]
+
+[project.optional-dependencies]
+# Scoped schema retrieval for the dynamic tier (Component B). Only needed when
+# SCHEMA_RETRIEVAL_ENABLED=true; imports are lazy so the agent runs without these.
+retrieval = [
+    "sentence-transformers>=3.0.0",  # local embeddings (default BAAI/bge-base-en-v1.5)
+    "rank-bm25>=0.2.2",              # sparse lexical ranker for hybrid search
+    "numpy>=1.26.0",
+    "faiss-cpu>=1.8.0",             # optional VECTOR_BACKEND=faiss (file-based index)
+    "qdrant-client>=1.9.0",         # optional VECTOR_BACKEND=qdrant (existing service)
+]
+
+[dependency-groups]
+# Installed by default with `uv sync`.
+dev = [
+    "pytest>=8.0.0",
+    "openpyxl>=3.1.0",  # used by scripts/load_excel_to_db.py to read the POC workbook
+]
+# Conversation memory in production (Postgres checkpointer + metadata DB).
+# Only needed when CHECKPOINTER_BACKEND=postgres:  uv sync --group memory
+# Dev uses the in-memory checkpointer and needs none of these.
+memory = [
+    "langgraph-checkpoint-postgres>=2.0.0",
+    "psycopg[binary]>=3.1.0",  # PostgresSaver uses psycopg3
+    "psycopg-pool>=3.2.0",     # connection pool for the long-lived checkpointer
+    "langgraph-checkpoint-sqlite",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["sql_agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

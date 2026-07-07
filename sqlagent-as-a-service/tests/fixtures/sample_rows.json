@@ -1,0 +1,84 @@
+{
+  "customer_master": [
+    {
+      "customer_id": "CUST002",
+      "customer_name": "Falcon Steel Industries",
+      "customer_segment": "Corporate",
+      "industry": "Manufacturing",
+      "region": "Abu Dhabi",
+      "preferred_currency": "AED",
+      "risk_category": "Low",
+      "internal_rating": "A",
+      "relationship_tenure_years": 11,
+      "relationship_status": "Strategic",
+      "relationship_discount_pct": 0.22,
+      "annual_revenue_aed": 820000000,
+      "debt_to_equity_ratio": 0.8,
+      "credit_score": 760,
+      "existing_exposure_aed": 120000000
+    }
+  ],
+  "product_master": [
+    {
+      "product_id": "PROD002",
+      "product_name": "Corporate Term Loan",
+      "product_type": "Loan",
+      "pricing_method": "Fixed",
+      "currency": "AED",
+      "eligible_tenors": "12M,24M,36M,60M",
+      "standard_margin_pct": 2.10,
+      "max_margin_pct": 4.00,
+      "max_discount_allowed_pct": 0.50,
+      "min_ticket_size": 1000000,
+      "max_ticket_size": 500000000,
+      "eligible_segments": "Corporate,SME"
+    }
+  ],
+  "treasury_rate_sheet": [
+    {
+      "rate_id": "RATE_AED_60M",
+      "currency": "AED",
+      "benchmark_index": "EIBOR",
+      "tenor": "60M",
+      "effective_date": "2026-06-01",
+      "benchmark_rate_pct": 5.40,
+      "funding_cost_pct": 6.00
+    }
+  ],
+  "pricing_policy": [
+    {
+      "policy_id": "POL_CORP_LOAN_LOW",
+      "customer_segment": "Corporate",
+      "product_type": "Loan",
+      "risk_category": "Low",
+      "min_margin_pct": 1.50,
+      "risk_premium_pct": 0.45,
+      "max_relationship_discount_pct": 0.50,
+      "approval_required_if_discount_above_pct": 0.30,
+      "min_expected_margin_pct": 1.00,
+      "rwa_risk_weight_pct": 75,
+      "status": "Active"
+    }
+  ],
+  "historical_deals": [
+    {
+      "deal_id": "DEAL001",
+      "deal_date": "2026-05-12",
+      "customer_id": "CUST002",
+      "product_id": "PROD002",
+      "product_type": "Loan",
+      "currency": "AED",
+      "tenor": "60M",
+      "requested_amount": 50000000,
+      "funding_cost_pct": 6.00,
+      "standard_margin_pct": 2.10,
+      "risk_premium_pct": 0.45,
+      "relationship_discount_pct": 0.22,
+      "recommended_price_pct": 8.33,
+      "final_approved_price_pct": 8.30,
+      "expected_margin_pct": 2.30,
+      "deal_outcome": "Won",
+      "sales_channel": "Relationship Manager"
+    }
+  ]
+}

@@ -1,0 +1,579 @@
+# Section 3 — Semantic Layer, Full Specification (All 5 Tables)
+#
+# This is the ONLY place table and column names are declared. Tools, the validator's
+# whitelist, and the dynamic-generation prompt all derive from this file. It is the
+# security boundary: a column absent from (or marked blocked in) this layer cannot be
+# selected by any tier.
+
+# Columns that must NEVER be selectable by any tier. They are absent from the table
+# definitions below; this explicit list is also fed to the validator's blocked-column
+# check as defence in depth (Design Document §4.3, §11.2).
+blocked_columns:
+  - national_id
+  - salary
+  - salary_type
+
+# Default DB schema for tables that do not declare their own `schema:`. The base
+# tables live in fab_curated; the semantic views override this with fab_semantic.
+# The tier-3 generator renders these as schema-qualified names so generated SQL
+# resolves correctly regardless of the connection's default schema.
+default_schema: fab_curated
+
+tables:
+
+  # 3.1 ---------------------------------------------------------------------------
+  customer_master:
+    grain: one row per customer
+    primary_key: customer_id
+    sensitivity_default: internal
+    columns:
+      customer_id:                {type: str,   sensitivity: public,   filterable: true,  desc: "Unique customer identifier, e.g. CUST002"}
+      customer_name:              {type: str,   sensitivity: internal, filterable: true,  desc: "Legal customer name"}
+      customer_segment:           {type: enum,  values: [Corporate, SME], filterable: true, desc: "Business segment used in policy lookup"}
+      industry:                   {type: enum,  values: [Trading, Manufacturing, Logistics, Retail, Healthcare], filterable: true, desc: "Customer industry sector"}
+      region:                     {type: enum,  values: [Dubai, Abu Dhabi, Sharjah, Ajman, Ras Al Khaimah, Fujairah], filterable: true, desc: "UAE emirate of the customer"}
+      preferred_currency:         {type: enum,  values: [AED, USD], filterable: true, desc: "Customer's preferred settlement currency"}
+      risk_category:              {type: enum,  values: [Low, Medium, High], filterable: true, desc: "Internal risk band; drives risk premium and RWA"}
+      internal_rating:            {type: str,   sensitivity: internal, filterable: true, desc: "Internal credit rating grade"}
+      relationship_tenure_years:  {type: int,   unit: years, filterable: true, desc: "Years the customer has banked with FAB"}
+      relationship_status:        {type: enum,  values: [New, Existing, Strategic], filterable: true, desc: "Relationship classification"}
+      relationship_discount_pct:  {type: float, unit: pct, filterable: false, desc: "Negotiated relationship discount, subtracted in price formula"}
+      annual_revenue_aed:         {type: int,   unit: AED, filterable: true, desc: "Customer annual revenue in AED"}
+      debt_to_equity_ratio:       {type: float, unit: ratio, filterable: true, desc: "Gearing; customer debt-to-equity ratio"}
+      credit_score:               {type: int,   sensitivity: internal, filterable: true, desc: "Internal credit score, higher is better"}
+      existing_exposure_aed:      {type: int,   unit: AED, filterable: true, desc: "Current outstanding exposure in AED"}
+    blocked_columns: []   # national_id / salary not present here; remain blocked in policy even if added later
+    joins:
+      pricing_policy: "customer_segment -> pricing_policy.customer_segment AND risk_category -> pricing_policy.risk_category"
+      historical_deals: "customer_id -> historical_deals.customer_id"
+
+  # 3.2 ---------------------------------------------------------------------------
+  product_master:
+    grain: one row per product
+    primary_key: product_id
+    sensitivity_default: public
+    columns:
+      product_id:               {type: str,   filterable: true,  desc: "Unique product identifier, e.g. PROD002"}
+      product_name:             {type: str,   filterable: true,  desc: "Product display name"}
+      product_type:             {type: enum,  values: [Loan, Trade Finance, Treasury, Deposit], filterable: true, desc: "Product family"}
+      pricing_method:           {type: enum,  values: [Fixed, Floating], filterable: true, desc: "Rate basis"}
+      currency:                 {type: enum,  values: [AED, USD], filterable: true, desc: "Product currency"}
+      eligible_tenors:          {type: str,   format: "comma-delimited, e.g. '1M,3M,6M,12M'", filterable: true, note: "app-side parse or SQL LIKE; not 1NF", desc: "Allowed tenors for this product"}
+      standard_margin_pct:      {type: float, unit: pct, filterable: false, desc: "Standard product margin added in price formula"}
+      max_margin_pct:           {type: float, unit: pct, filterable: false, desc: "Maximum permitted margin"}
+      max_discount_allowed_pct: {type: float, unit: pct, filterable: false, desc: "Product cap on relationship discount"}
+      min_ticket_size:          {type: int,   unit: AED/USD, filterable: true, desc: "Minimum deal amount"}
+      max_ticket_size:          {type: int,   unit: AED/USD, filterable: true, desc: "Maximum deal amount"}
+      eligible_segments:        {type: str,   format: "comma-delimited, e.g. 'Corporate,SME'", filterable: true, note: "app-side parse or SQL LIKE", desc: "Segments allowed to buy this product"}
+    blocked_columns: []
+    joins:
+      pricing_policy: "product_type -> pricing_policy.product_type"
+      historical_deals: "product_id -> historical_deals.product_id"
+
+  # 3.3 ---------------------------------------------------------------------------
+  treasury_rate_sheet:
+    grain: one row per currency + tenor (+ effective_date)
+    primary_key: rate_id
+    sensitivity_default: public
+    columns:
+      rate_id:            {type: str,   filterable: false, desc: "Unique rate-sheet row id"}
+      currency:           {type: enum,  values: [AED, USD], filterable: true, desc: "Rate currency"}
+      benchmark_index:    {type: enum,  values: [EIBOR, SOFR], filterable: true, desc: "Benchmark index used"}
+      tenor:              {type: enum,  values: [1M, 3M, 6M, 12M, 24M, 36M, 60M], filterable: true, desc: "Rate tenor"}
+      effective_date:     {type: date,  filterable: true, desc: "Date the rate became effective"}
+      benchmark_rate_pct: {type: float, unit: pct, filterable: false, desc: "Benchmark index rate"}
+      funding_cost_pct:   {type: float, unit: pct, filterable: false, desc: "Bank funding cost; first term of price formula"}
+    blocked_columns: []
+    joins:
+      treasury_rate_sheet: "(implicit) product/deal currency + tenor -> treasury_rate_sheet.currency + tenor"
+
+  # 3.4 ---------------------------------------------------------------------------
+  pricing_policy:
+    grain: one row per customer_segment + product_type + risk_category
+    primary_key: policy_id
+    sensitivity_default: internal
+    columns:
+      policy_id:                               {type: str,   filterable: true,  desc: "Unique policy row id"}
+      customer_segment:                        {type: enum,  values: [Corporate, SME], filterable: true, desc: "Segment the policy applies to"}
+      product_type:                            {type: enum,  values: [Loan, Trade Finance, Treasury, Deposit], filterable: true, desc: "Product type the policy applies to"}
+      risk_category:                           {type: enum,  values: [Low, Medium, High], filterable: true, desc: "Risk band the policy applies to"}
+      min_margin_pct:                          {type: float, unit: pct, filterable: false, desc: "Policy floor margin; headroom is measured against this"}
+      risk_premium_pct:                        {type: float, unit: pct, filterable: false, desc: "Risk premium added in price formula"}
+      max_relationship_discount_pct:           {type: float, unit: pct, filterable: false, desc: "Policy cap on relationship discount"}
+      approval_required_if_discount_above_pct: {type: float, unit: pct, filterable: false, desc: "Discount threshold above which approval is required"}
+      min_expected_margin_pct:                 {type: float, unit: pct, filterable: false, desc: "Minimum expected margin permitted"}
+      rwa_risk_weight_pct:                     {type: int,   unit: pct, filterable: false, desc: "Risk weight (50/75/100) used for RWA"}
+      status:                                  {type: enum,  values: [Active, Inactive], filterable: true, desc: "Whether the policy row is active"}
+    blocked_columns: []
+    joins:
+      customer_master: "customer_segment + risk_category"
+      product_master: "product_type"
+
+  # 3.5 ---------------------------------------------------------------------------
+  historical_deals:
+    grain: one row per past deal
+    primary_key: deal_id
+    sensitivity_default: internal
+    columns:
+      deal_id:                   {type: str,   filterable: true,  desc: "Unique deal identifier, e.g. DEAL001"}
+      deal_date:                 {type: date,  filterable: true,  desc: "Date the deal was booked"}
+      customer_id:               {type: str,   filterable: true,  desc: "Customer on the deal"}
+      product_id:                {type: str,   filterable: true,  desc: "Product on the deal"}
+      product_type:              {type: enum,  values: [Loan, Trade Finance, Treasury, Deposit], filterable: true, desc: "Product family of the deal"}
+      currency:                  {type: enum,  values: [AED, USD], filterable: true, desc: "Deal currency"}
+      tenor:                     {type: enum,  values: [1M, 3M, 6M, 12M, 24M, 36M, 60M], filterable: true, desc: "Deal tenor"}
+      requested_amount:          {type: int,   unit: AED/USD, filterable: true, desc: "Requested deal amount"}
+      funding_cost_pct:          {type: float, unit: pct, filterable: false, desc: "Funding cost at deal time"}
+      standard_margin_pct:       {type: float, unit: pct, filterable: false, desc: "Standard margin at deal time"}
+      risk_premium_pct:          {type: float, unit: pct, filterable: false, desc: "Risk premium at deal time"}
+      relationship_discount_pct: {type: float, unit: pct, filterable: false, desc: "Relationship discount applied"}
+      recommended_price_pct:     {type: float, unit: pct, filterable: false, desc: "Recommended all-in price"}
+      final_approved_price_pct:  {type: float, unit: pct, filterable: false, desc: "Final approved price"}
+      expected_margin_pct:       {type: float, unit: pct, filterable: true,  desc: "Expected margin on the deal"}
+      deal_outcome:              {type: enum,  values: [Won, Lost], filterable: true, desc: "Whether the deal was won or lost"}
+      sales_channel:             {type: enum,  values: [Relationship Manager, API Quote, Branch, Digital Upload], filterable: true, desc: "Origination channel"}
+    blocked_columns: []
+    joins:
+      customer_master: "customer_id"
+      product_master: "product_id"
+
+  # ===========================================================================
+  # SEMANTIC VIEWS (fab_semantic schema) — maintained by the DATA PIPELINE service.
+  #
+  # These are the SQL Agent's half of the cross-service contract. The columns
+  # below must match fab_semantic views produced by the pipeline's
+  # sql/03_create_semantic_views.sql. When the pipeline changes a view, update the
+  # matching block here (and vice versa). Keys are UNQUALIFIED on purpose: the
+  # validator's table whitelist matches sqlglot's bare Table.name, so a tool's
+  # schema-qualified "fab_semantic.customer_360" reference validates against the
+  # "customer_360" key here. See tools/semantic_view_tools.py.
+  # ===========================================================================
+
+  # V1 ---------------------------------------------------------------------------
+  customer_360:
+    schema: fab_semantic
+    grain: one row per customer — profile enriched with aggregated deal KPIs
+    primary_key: customer_id
+    sensitivity_default: internal
+    columns:
+      customer_id:                  {type: str,   sensitivity: public,   filterable: true,  desc: "Unique customer identifier, e.g. CUST002"}
+      customer_name:                {type: str,   sensitivity: internal, filterable: true,  desc: "Legal customer name"}
+      customer_segment:             {type: enum,  values: [Corporate, SME], filterable: true, desc: "Business segment"}
+      industry:                     {type: enum,  values: [Trading, Manufacturing, Logistics, Retail, Healthcare], filterable: true, desc: "Customer industry sector"}
+      region:                       {type: enum,  values: [Dubai, Abu Dhabi, Sharjah, Ajman, Ras Al Khaimah, Fujairah], filterable: true, desc: "UAE emirate"}
+      preferred_currency:           {type: enum,  values: [AED, USD], filterable: true, desc: "Preferred settlement currency"}
+      risk_category:                {type: enum,  values: [Low, Medium, High], filterable: true, desc: "Internal risk band"}
+      internal_rating:              {type: str,   sensitivity: internal, filterable: true, desc: "Internal credit rating grade"}
+      relationship_tenure_years:    {type: int,   unit: years, filterable: true, desc: "Years banking with FAB"}
+      relationship_status:          {type: enum,  values: [New, Existing, Strategic], filterable: true, desc: "Relationship classification"}
+      relationship_discount_pct:    {type: float, unit: pct, filterable: false, desc: "Negotiated relationship discount"}
+      annual_revenue_aed:           {type: int,   unit: AED, filterable: true, desc: "Annual revenue in AED"}
+      debt_to_equity_ratio:         {type: float, unit: ratio, filterable: true, desc: "Gearing; debt-to-equity ratio"}
+      credit_score:                 {type: int,   sensitivity: internal, filterable: true, desc: "Internal credit score"}
+      existing_exposure_aed:        {type: int,   unit: AED, filterable: true, desc: "Current outstanding exposure in AED"}
+      total_deals:                  {type: int,   filterable: false, desc: "Total deal count"}
+      won_deals:                    {type: int,   filterable: false, desc: "Number of won deals"}
+      lost_deals:                   {type: int,   filterable: false, desc: "Number of lost deals"}
+      total_deal_volume_aed:        {type: int,   unit: AED, filterable: false, desc: "Sum of requested amounts across deals"}
+      avg_deal_size_aed:            {type: float, unit: AED, filterable: false, desc: "Average requested amount per deal"}
+      avg_expected_margin_pct:      {type: float, unit: pct, filterable: false, desc: "Average expected margin across deals"}
+      avg_approved_price_pct:       {type: float, unit: pct, filterable: false, desc: "Average final approved price across deals"}
+      avg_relationship_discount_pct: {type: float, unit: pct, filterable: false, desc: "Average relationship discount across deals"}
+      last_deal_date:               {type: date,  filterable: true, desc: "Date of the most recent deal"}
+      win_rate_pct:                 {type: float, unit: pct, filterable: false, desc: "Won deals / total deals * 100"}
+    blocked_columns: []
+
+  # V2 ---------------------------------------------------------------------------
+  pricing_recommendation_view:
+    schema: fab_semantic
+    grain: one row per historical deal — deal annotated with policy benchmarks and compliance flags
+    primary_key: deal_id
+    sensitivity_default: internal
+    columns:
+      deal_id:                       {type: str,   filterable: true,  desc: "Unique deal identifier, e.g. DEAL001"}
+      deal_date:                     {type: date,  filterable: true,  desc: "Date the deal was booked"}
+      customer_id:                   {type: str,   filterable: true,  desc: "Customer on the deal"}
+      customer_name:                 {type: str,   sensitivity: internal, filterable: true, desc: "Customer legal name"}
+      customer_segment:              {type: enum,  values: [Corporate, SME], filterable: true, desc: "Customer segment"}
+      risk_category:                 {type: enum,  values: [Low, Medium, High], filterable: true, desc: "Customer risk band"}
+      internal_rating:               {type: str,   sensitivity: internal, filterable: true, desc: "Internal credit rating grade"}
+      relationship_status:           {type: enum,  values: [New, Existing, Strategic], filterable: true, desc: "Relationship classification"}
+      product_id:                    {type: str,   filterable: true,  desc: "Product on the deal"}
+      product_name:                  {type: str,   filterable: true,  desc: "Product display name"}
+      product_type:                  {type: enum,  values: [Loan, Trade Finance, Treasury, Deposit], filterable: true, desc: "Product family"}
+      pricing_method:                {type: enum,  values: [Fixed, Floating], filterable: true, desc: "Rate basis"}
+      currency:                      {type: enum,  values: [AED, USD], filterable: true, desc: "Deal currency"}
+      tenor:                         {type: enum,  values: [1M, 3M, 6M, 12M, 24M, 36M, 60M], filterable: true, desc: "Deal tenor"}
+      requested_amount:              {type: int,   unit: AED/USD, filterable: true, desc: "Requested deal amount"}
+      benchmark_rate_pct_treasury:   {type: float, unit: pct, filterable: false, desc: "Latest treasury benchmark rate for the deal's currency+tenor"}
+      funding_cost_pct:              {type: float, unit: pct, filterable: false, desc: "Funding cost at deal time"}
+      target_margin_pct:             {type: float, unit: pct, filterable: false, desc: "Segment-benchmark target margin (falls back to product standard margin)"}
+      risk_premium_pct:              {type: float, unit: pct, filterable: false, desc: "Risk premium at deal time"}
+      ops_cost_margin_pct:           {type: float, unit: pct, filterable: false, desc: "Operational cost margin applied in the price build-up"}
+      relationship_discount_pct:     {type: float, unit: pct, filterable: false, desc: "Relationship discount applied"}
+      system_recommended_price_pct:  {type: float, unit: pct, filterable: false, desc: "Recommended price rebuilt from pricing components"}
+      recommended_price_pct:         {type: float, unit: pct, filterable: false, desc: "Recommended all-in price as booked"}
+      approved_price_pct:            {type: float, unit: pct, filterable: false, desc: "Final approved price"}
+      expected_margin_pct:           {type: float, unit: pct, filterable: false, desc: "Expected margin on the deal"}
+      deal_outcome:                  {type: enum,  values: [Won, Lost], filterable: true, desc: "Deal outcome"}
+      sales_channel:                 {type: enum,  values: [Relationship Manager, API Quote, Branch, Digital Upload], filterable: true, desc: "Origination channel"}
+      policy_min_margin_pct:         {type: float, unit: pct, filterable: false, desc: "Applicable policy floor margin"}
+      policy_min_expected_margin_pct: {type: float, unit: pct, filterable: false, desc: "Applicable policy minimum expected margin"}
+      policy_max_discount_pct:       {type: float, unit: pct, filterable: false, desc: "Applicable policy max relationship discount"}
+      policy_rwa_risk_weight_pct:    {type: int,   unit: pct, filterable: false, desc: "Applicable policy RWA risk weight"}
+      price_below_policy_floor:      {type: bool,  filterable: true, desc: "True if final price < policy floor margin"}
+      margin_below_min:              {type: bool,  filterable: true, desc: "True if expected margin < policy minimum"}
+      discount_exceeds_policy:       {type: bool,  filterable: true, desc: "True if relationship discount > policy cap"}
+      policy_compliant:              {type: bool,  filterable: true, desc: "True if the deal breached no policy rule"}
+    blocked_columns: []
+
+  # V3 ---------------------------------------------------------------------------
+  margin_analysis:
+    schema: fab_semantic
+    grain: one row per historical deal — margin decomposition with treasury benchmark comparison
+    primary_key: deal_id
+    sensitivity_default: internal
+    columns:
+      deal_id:                     {type: str,   filterable: true,  desc: "Unique deal identifier"}
+      deal_date:                   {type: date,  filterable: true,  desc: "Date the deal was booked"}
+      customer_id:                 {type: str,   filterable: true,  desc: "Customer on the deal"}
+      customer_name:               {type: str,   sensitivity: internal, filterable: true, desc: "Customer legal name"}
+      customer_segment:            {type: enum,  values: [Corporate, SME], filterable: true, desc: "Customer segment"}
+      region:                      {type: enum,  values: [Dubai, Abu Dhabi, Sharjah, Ajman, Ras Al Khaimah, Fujairah], filterable: true, desc: "UAE emirate"}
+      risk_category:               {type: enum,  values: [Low, Medium, High], filterable: true, desc: "Customer risk band"}
+      internal_rating:             {type: str,   sensitivity: internal, filterable: true, desc: "Internal credit rating grade"}
+      product_id:                  {type: str,   filterable: true,  desc: "Product on the deal"}
+      product_type:                {type: enum,  values: [Loan, Trade Finance, Treasury, Deposit], filterable: true, desc: "Product family"}
+      currency:                    {type: enum,  values: [AED, USD], filterable: true, desc: "Deal currency"}
+      tenor:                       {type: enum,  values: [1M, 3M, 6M, 12M, 24M, 36M, 60M], filterable: true, desc: "Deal tenor"}
+      requested_amount:            {type: int,   unit: AED/USD, filterable: true, desc: "Requested deal amount"}
+      funding_cost_pct:            {type: float, unit: pct, filterable: false, desc: "Funding cost at deal time"}
+      risk_premium_pct:            {type: float, unit: pct, filterable: false, desc: "Risk premium at deal time"}
+      relationship_discount_pct:   {type: float, unit: pct, filterable: false, desc: "Relationship discount applied"}
+      recommended_price_pct:       {type: float, unit: pct, filterable: false, desc: "Recommended all-in price"}
+      final_approved_price_pct:    {type: float, unit: pct, filterable: false, desc: "Final approved price"}
+      expected_margin_pct:         {type: float, unit: pct, filterable: false, desc: "Expected margin on the deal"}
+      deal_outcome:                {type: enum,  values: [Won, Lost], filterable: true, desc: "Deal outcome"}
+      benchmark_rate_pct_treasury: {type: float, unit: pct, filterable: false, desc: "Latest treasury benchmark rate for currency+tenor"}
+      net_margin_pct:              {type: float, unit: pct, filterable: false, desc: "Final price minus funding, risk premium, and discount"}
+      spread_over_benchmark_pct:   {type: float, unit: pct, filterable: false, desc: "Final price minus treasury benchmark"}
+      margin_vs_recommended_pct:   {type: float, unit: pct, filterable: false, desc: "Final price minus recommended price"}
+      min_expected_margin_pct:     {type: float, unit: pct, filterable: false, desc: "Applicable policy minimum expected margin"}
+      margin_below_minimum:        {type: bool,  filterable: true,  desc: "True if expected margin < policy minimum expected margin"}
+    blocked_columns: []
+
+  # V4 ---------------------------------------------------------------------------
+  profitability_summary:
+    schema: fab_semantic
+    grain: one row per customer x product_type — won-deals roll-up with profitability tier
+    primary_key: null
+    sensitivity_default: internal
+    columns:
+      customer_id:               {type: str,   filterable: true,  desc: "Customer the rollup is for"}
+      customer_segment:          {type: enum,  values: [Corporate, SME], filterable: true, desc: "Customer segment"}
+      region:                    {type: enum,  values: [Dubai, Abu Dhabi, Sharjah, Ajman, Ras Al Khaimah, Fujairah], filterable: true, desc: "UAE emirate"}
+      risk_category:             {type: enum,  values: [Low, Medium, High], filterable: true, desc: "Customer risk band"}
+      product_type:              {type: enum,  values: [Loan, Trade Finance, Treasury, Deposit], filterable: true, desc: "Product family"}
+      total_won_deals:           {type: int,   filterable: false, desc: "Count of won deals in this group"}
+      total_volume_aed:          {type: int,   unit: AED, filterable: false, desc: "Sum of requested amounts for won deals"}
+      revenue_aed:               {type: float, unit: AED, filterable: false, desc: "Sum of amount * final approved price"}
+      funding_cost_aed:          {type: float, unit: AED, filterable: false, desc: "Sum of amount * funding cost"}
+      operating_cost_aed:        {type: float, unit: AED, filterable: false, desc: "Sum of amount * operational cost margin"}
+      capital_cost_aed:          {type: float, unit: AED, filterable: false, desc: "Basel III capital cost on RWA for the group"}
+      net_profit_aed:            {type: float, unit: AED, filterable: false, desc: "Revenue minus funding, risk premium, discount and ops cost"}
+      avg_net_margin_pct:        {type: float, unit: pct, filterable: false, desc: "Average net margin"}
+      profitability_tier:        {type: enum,  values: [Loss-Making, Low, Medium, High], filterable: true, desc: "Tier by average net margin"}
+    blocked_columns: []
+
+  # V5 ---------------------------------------------------------------------------
+  rwa_impact_view:
+    schema: fab_semantic
+    grain: one row per won historical deal — Basel III RWA and capital metrics
+    primary_key: deal_id
+    sensitivity_default: internal
+    columns:
+      deal_id:                  {type: str,   filterable: true,  desc: "Unique deal identifier"}
+      deal_date:                {type: date,  filterable: true,  desc: "Date the deal was booked"}
+      customer_id:              {type: str,   filterable: true,  desc: "Customer on the deal"}
+      customer_segment:         {type: enum,  values: [Corporate, SME], filterable: true, desc: "Customer segment"}
+      product_type:             {type: enum,  values: [Loan, Trade Finance, Treasury, Deposit], filterable: true, desc: "Product family"}
+      risk_category:            {type: enum,  values: [Low, Medium, High], filterable: true, desc: "Customer risk band"}
+      currency:                 {type: enum,  values: [AED, USD], filterable: true, desc: "Deal currency"}
+      tenor:                    {type: enum,  values: [1M, 3M, 6M, 12M, 24M, 36M, 60M], filterable: true, desc: "Deal tenor"}
+      exposure_aed:             {type: int,   unit: AED, filterable: true, desc: "Deal exposure (requested amount)"}
+      risk_weight_pct:          {type: int,   unit: pct, filterable: false, desc: "Applicable policy RWA risk weight"}
+      rwa_aed:                  {type: float, unit: AED, filterable: false, desc: "Risk-weighted assets = exposure * risk weight / 100"}
+      capital_required_aed:     {type: float, unit: AED, filterable: false, desc: "8% Basel III capital charge on RWA"}
+      revenue_aed:              {type: float, unit: AED, filterable: false, desc: "Amount * final approved price / 100"}
+      cost_of_funds_aed:        {type: float, unit: AED, filterable: false, desc: "Amount * funding cost / 100"}
+      net_revenue_aed:          {type: float, unit: AED, filterable: false, desc: "Revenue minus cost of funds"}
+      return_on_rwa_pct:        {type: float, unit: pct, filterable: false, desc: "Net revenue / RWA * 100"}
+      is_high_rwa:              {type: bool,  filterable: true, desc: "True when risk weight >= 100"}
+      final_approved_price_pct: {type: float, unit: pct, filterable: false, desc: "Final approved price"}
+      expected_margin_pct:      {type: float, unit: pct, filterable: false, desc: "Expected margin on the deal"}
+    blocked_columns: []
+
+  # V6 ---------------------------------------------------------------------------
+  segment_pricing_benchmark:
+    schema: fab_semantic
+    grain: one row per customer_segment x product x risk_category — aggregated pricing guideline
+    primary_key: null
+    sensitivity_default: internal
+    columns:
+      customer_segment:                        {type: enum,  values: [Corporate, SME], filterable: true, desc: "Segment the benchmark applies to"}
+      product_type:                            {type: enum,  values: [Loan, Trade Finance, Treasury, Deposit], filterable: true, desc: "Product family"}
+      product_id:                              {type: str,   filterable: true,  desc: "Product identifier"}
+      product_name:                            {type: str,   filterable: true,  desc: "Product display name"}
+      risk_category:                           {type: enum,  values: [Low, Medium, High], filterable: true, desc: "Risk band"}
+      base_margin_floor_pct:                   {type: float, unit: pct, filterable: false, desc: "Base margin floor for the segment"}
+      target_margin_pct:                       {type: float, unit: pct, filterable: false, desc: "Target margin for the segment"}
+      risk_premium_pct:                        {type: float, unit: pct, filterable: false, desc: "Segment risk premium"}
+      new_customer_buffer_pct:                 {type: float, unit: pct, filterable: false, desc: "Extra buffer added for new customers"}
+      max_relationship_discount_pct:           {type: float, unit: pct, filterable: false, desc: "Max relationship discount allowed"}
+      min_profitability_margin_pct:            {type: float, unit: pct, filterable: false, desc: "Minimum profitability margin"}
+      approval_required_if_discount_above_pct: {type: float, unit: pct, filterable: false, desc: "Discount threshold above which approval is required"}
+      pricing_cushion_for_rating_drop_pct:     {type: float, unit: pct, filterable: false, desc: "Pricing cushion applied on a rating downgrade"}
+    blocked_columns: []
+
+  # V7 ---------------------------------------------------------------------------
+  operations_cost_impact:
+    schema: fab_semantic
+    grain: one row per product x customer_segment — operational cost margin roll-up
+    primary_key: null
+    sensitivity_default: internal
+    columns:
+      product_id:                      {type: str,   filterable: true,  desc: "Product identifier"}
+      product_name:                    {type: str,   filterable: true,  desc: "Product display name"}
+      product_type:                    {type: enum,  values: [Loan, Trade Finance, Treasury, Deposit], filterable: true, desc: "Product family"}
+      customer_segment:                {type: enum,  values: [Corporate, SME], filterable: true, desc: "Customer segment"}
+      ops_cost_margin_pct:             {type: float, unit: pct, filterable: false, desc: "Operational cost expressed as a margin"}
+      avg_annual_operating_cost_aed:   {type: float, unit: AED, filterable: false, desc: "Average annual operating cost"}
+      avg_onboarding_cost_aed:         {type: float, unit: AED, filterable: false, desc: "Average onboarding cost"}
+      avg_monthly_servicing_cost_aed:  {type: float, unit: AED, filterable: false, desc: "Average monthly servicing cost"}
+      avg_exception_handling_cost_aed: {type: float, unit: AED, filterable: false, desc: "Average exception handling cost"}
+    blocked_columns: []
+
+  # V8 ---------------------------------------------------------------------------
+  new_customer_pricing_view:
+    schema: fab_semantic
+    grain: one row per prospect customer — recommended price with no relationship history
+    primary_key: customer_id
+    sensitivity_default: internal
+    columns:
+      customer_id:                   {type: str,   filterable: true,  desc: "Prospect customer identifier"}
+      customer_name:                 {type: str,   sensitivity: internal, filterable: true, desc: "Prospect legal name"}
+      customer_segment:              {type: enum,  values: [Corporate, SME], filterable: true, desc: "Customer segment"}
+      industry:                      {type: enum,  values: [Trading, Manufacturing, Logistics, Retail, Healthcare], filterable: true, desc: "Customer industry sector"}
+      region:                        {type: enum,  values: [Dubai, Abu Dhabi, Sharjah, Ajman, Ras Al Khaimah, Fujairah], filterable: true, desc: "UAE emirate"}
+      risk_category:                 {type: enum,  values: [Low, Medium, High], filterable: true, desc: "Risk band"}
+      internal_rating:               {type: str,   sensitivity: internal, filterable: true, desc: "Internal credit rating grade"}
+      relationship_status:           {type: enum,  values: [New, Existing, Strategic], filterable: true, desc: "Relationship classification"}
+      no_previous_relationship_flag: {type: bool,  filterable: true, desc: "True if the prospect has no prior relationship"}
+      product_id:                    {type: str,   filterable: true,  desc: "Requested product identifier"}
+      product_name:                  {type: str,   filterable: true,  desc: "Requested product display name"}
+      product_type:                  {type: enum,  values: [Loan, Trade Finance, Treasury, Deposit], filterable: true, desc: "Requested product family"}
+      currency:                      {type: enum,  values: [AED, USD], filterable: true, desc: "Preferred currency"}
+      tenor:                         {type: enum,  values: [1M, 3M, 6M, 12M, 24M, 36M, 60M], filterable: true, desc: "Requested tenor"}
+      requested_amount:              {type: int,   unit: AED/USD, filterable: true, desc: "Requested amount"}
+      benchmark_rate_pct_treasury:   {type: float, unit: pct, filterable: false, desc: "Latest treasury benchmark rate"}
+      funding_cost_pct:              {type: float, unit: pct, filterable: false, desc: "Treasury funding cost"}
+      target_margin_pct:             {type: float, unit: pct, filterable: false, desc: "Segment target margin (falls back to product standard margin)"}
+      risk_premium_pct:              {type: float, unit: pct, filterable: false, desc: "Segment risk premium"}
+      new_customer_buffer_pct:       {type: float, unit: pct, filterable: false, desc: "New-customer buffer"}
+      ops_cost_margin_pct:           {type: float, unit: pct, filterable: false, desc: "Operational cost margin"}
+      recommended_price_pct:         {type: float, unit: pct, filterable: false, desc: "Recommended all-in price for the prospect"}
+      policy_floor_margin_pct:       {type: float, unit: pct, filterable: false, desc: "Segment base margin floor"}
+      min_profitability_margin_pct:  {type: float, unit: pct, filterable: false, desc: "Minimum profitability margin"}
+    blocked_columns: []
+
+  # V9 ---------------------------------------------------------------------------
+  competitor_price_analysis:
+    schema: fab_semantic
+    grain: one row per negotiation-memory interaction — FAB vs competitor with a suggested action
+    primary_key: deal_id
+    sensitivity_default: internal
+    columns:
+      deal_id:                  {type: str,   filterable: true,  desc: "Memory interaction id (used as the deal key)"}
+      conversation_id:          {type: str,   filterable: true,  desc: "Negotiation conversation id"}
+      customer_id:              {type: str,   filterable: true,  desc: "Customer id"}
+      customer_name:            {type: str,   sensitivity: internal, filterable: true, desc: "Customer legal name"}
+      product_id:               {type: str,   filterable: true,  desc: "Product id"}
+      product_name:             {type: str,   filterable: true,  desc: "Product display name"}
+      product_type:             {type: enum,  values: [Loan, Trade Finance, Treasury, Deposit], filterable: true, desc: "Product family"}
+      competitor_name:          {type: str,   filterable: true,  desc: "Competitor bank name"}
+      fab_price_pct:            {type: float, unit: pct, filterable: false, desc: "FAB initial offered price"}
+      competitor_price_pct:     {type: float, unit: pct, filterable: false, desc: "Competitor offered rate"}
+      profitability_floor_pct:  {type: float, unit: pct, filterable: false, desc: "FAB profitability floor price"}
+      max_reducible_pct:        {type: float, unit: pct, filterable: false, desc: "Max price reducible without breaching profitability"}
+      competitor_gap_bps:       {type: float, unit: bps, filterable: false, desc: "FAB price minus competitor price, in basis points"}
+      suggested_action:         {type: enum,  values: [MATCH, COUNTER, ESCALATE, REJECT], filterable: true, desc: "Recommended pricing action vs the competitor"}
+      action_reason:            {type: str,   filterable: false, desc: "One-line rationale for the suggested action"}
+      last_agent_recommendation: {type: str,  filterable: false, desc: "Most recent agent recommendation from the negotiation"}
+      rm_note:                  {type: str,   filterable: false, desc: "Relationship manager note"}
+    blocked_columns: []
+
+  # V10 --------------------------------------------------------------------------
+  pricing_trace_view:
+    schema: fab_semantic
+    grain: one row per historical deal — step-by-step recommended-price decomposition
+    primary_key: deal_id
+    sensitivity_default: internal
+    columns:
+      deal_id:                          {type: str,   filterable: true,  desc: "Deal identifier"}
+      customer_id:                      {type: str,   filterable: true,  desc: "Customer id"}
+      customer_name:                    {type: str,   sensitivity: internal, filterable: true, desc: "Customer legal name"}
+      customer_segment:                 {type: enum,  values: [Corporate, SME], filterable: true, desc: "Customer segment"}
+      risk_category:                    {type: enum,  values: [Low, Medium, High], filterable: true, desc: "Risk band"}
+      product_id:                       {type: str,   filterable: true,  desc: "Product id"}
+      product_type:                     {type: enum,  values: [Loan, Trade Finance, Treasury, Deposit], filterable: true, desc: "Product family"}
+      currency:                         {type: enum,  values: [AED, USD], filterable: true, desc: "Deal currency"}
+      tenor:                            {type: enum,  values: [1M, 3M, 6M, 12M, 24M, 36M, 60M], filterable: true, desc: "Deal tenor"}
+      treasury_rate_component:          {type: float, unit: pct, filterable: false, desc: "Treasury/funding component of the price"}
+      target_margin_component:          {type: float, unit: pct, filterable: false, desc: "Target margin component"}
+      risk_premium_component:           {type: float, unit: pct, filterable: false, desc: "Risk premium component"}
+      operations_cost_component:        {type: float, unit: pct, filterable: false, desc: "Operations cost component"}
+      relationship_discount_component:  {type: float, unit: pct, filterable: false, desc: "Relationship discount component (subtracted)"}
+      final_recommended_price:          {type: float, unit: pct, filterable: false, desc: "Sum of the components = recommended price"}
+      approved_price_pct:               {type: float, unit: pct, filterable: false, desc: "Final approved price"}
+      explanation_text:                 {type: str,   filterable: false, desc: "Human-readable price build-up sentence"}
+    blocked_columns: []
+
+  # V11 --------------------------------------------------------------------------
+  relationship_discount_view:
+    schema: fab_semantic
+    grain: one row per customer — relationship discount eligibility and approval requirement
+    primary_key: customer_id
+    sensitivity_default: internal
+    columns:
+      customer_id:                             {type: str,   filterable: true,  desc: "Customer id"}
+      customer_name:                           {type: str,   sensitivity: internal, filterable: true, desc: "Customer legal name"}
+      customer_segment:                        {type: enum,  values: [Corporate, SME], filterable: true, desc: "Customer segment"}
+      risk_category:                           {type: enum,  values: [Low, Medium, High], filterable: true, desc: "Risk band"}
+      relationship_status:                     {type: enum,  values: [New, Existing, Strategic], filterable: true, desc: "Relationship classification"}
+      relationship_tenure_years:               {type: int,   unit: years, filterable: true, desc: "Years banking with FAB"}
+      relationship_discount_pct:               {type: float, unit: pct, filterable: false, desc: "Negotiated relationship discount"}
+      policy_max_relationship_discount_pct:    {type: float, unit: pct, filterable: false, desc: "Policy cap on relationship discount"}
+      approval_required_if_discount_above_pct: {type: float, unit: pct, filterable: false, desc: "Discount threshold above which approval is required"}
+      discount_eligible:                       {type: bool,  filterable: true, desc: "True if discount is within the policy cap"}
+      approval_required:                       {type: bool,  filterable: true, desc: "True if discount exceeds the approval threshold"}
+      eligibility_reason:                      {type: str,   filterable: false, desc: "Explanation of the eligibility verdict"}
+    blocked_columns: []
+
+  # V12 --------------------------------------------------------------------------
+  win_loss_insights:
+    schema: fab_semantic
+    grain: one row per customer x product — won/lost aggregation with pricing gap
+    primary_key: null
+    sensitivity_default: internal
+    columns:
+      customer_id:                    {type: str,   filterable: true,  desc: "Customer id"}
+      customer_name:                  {type: str,   sensitivity: internal, filterable: true, desc: "Customer legal name"}
+      customer_segment:               {type: enum,  values: [Corporate, SME], filterable: true, desc: "Customer segment"}
+      product_id:                     {type: str,   filterable: true,  desc: "Product id"}
+      product_type:                   {type: enum,  values: [Loan, Trade Finance, Treasury, Deposit], filterable: true, desc: "Product family"}
+      total_deals:                    {type: int,   filterable: false, desc: "Total deals for this customer+product"}
+      won_deals:                      {type: int,   filterable: false, desc: "Won deal count"}
+      lost_deals:                     {type: int,   filterable: false, desc: "Lost deal count"}
+      win_rate_pct:                   {type: float, unit: pct, filterable: false, desc: "Won / total * 100"}
+      avg_approved_price_pct:         {type: float, unit: pct, filterable: false, desc: "Average final approved price"}
+      avg_recommended_price_pct:      {type: float, unit: pct, filterable: false, desc: "Average recommended price"}
+      avg_price_gap_pct:              {type: float, unit: pct, filterable: false, desc: "Average (approved - recommended) price gap"}
+      avg_expected_margin_pct:        {type: float, unit: pct, filterable: false, desc: "Average expected margin"}
+      avg_competitor_offer_rate_pct:  {type: float, unit: pct, filterable: false, desc: "Average competitor offer rate from negotiation memory"}
+    blocked_columns: []
+
+  # V13 --------------------------------------------------------------------------
+  policy_exception_view:
+    schema: fab_semantic
+    grain: one row per historical deal — which policy rules the deal breached
+    primary_key: deal_id
+    sensitivity_default: internal
+    columns:
+      deal_id:                                  {type: str,   filterable: true,  desc: "Deal identifier"}
+      customer_id:                              {type: str,   filterable: true,  desc: "Customer id"}
+      customer_name:                            {type: str,   sensitivity: internal, filterable: true, desc: "Customer legal name"}
+      customer_segment:                         {type: enum,  values: [Corporate, SME], filterable: true, desc: "Customer segment"}
+      product_id:                               {type: str,   filterable: true,  desc: "Product id"}
+      product_type:                             {type: enum,  values: [Loan, Trade Finance, Treasury, Deposit], filterable: true, desc: "Product family"}
+      approved_price_pct:                       {type: float, unit: pct, filterable: false, desc: "Final approved price"}
+      expected_margin_pct:                      {type: float, unit: pct, filterable: false, desc: "Expected margin"}
+      relationship_discount_pct:                {type: float, unit: pct, filterable: false, desc: "Relationship discount applied"}
+      min_margin_pct:                           {type: float, unit: pct, filterable: false, desc: "Policy floor margin"}
+      min_expected_margin_pct:                  {type: float, unit: pct, filterable: false, desc: "Policy minimum expected margin"}
+      max_relationship_discount_pct:            {type: float, unit: pct, filterable: false, desc: "Policy max relationship discount"}
+      approval_required_if_discount_above_pct:  {type: float, unit: pct, filterable: false, desc: "Discount approval threshold"}
+      rwa_risk_weight_pct:                      {type: int,   unit: pct, filterable: false, desc: "Applicable policy RWA risk weight"}
+      margin_below_min:                         {type: bool,  filterable: true, desc: "True if expected margin < policy minimum"}
+      discount_exceeds_policy:                  {type: bool,  filterable: true, desc: "True if discount > policy cap"}
+      price_below_floor:                        {type: bool,  filterable: true, desc: "True if price < policy floor margin"}
+      competitor_match_requires_approval:       {type: bool,  filterable: true, desc: "True if a competitor undercut requires approval"}
+      high_rwa_requires_approval:               {type: bool,  filterable: true, desc: "True if risk weight >= 100 requires approval"}
+      is_exception:                             {type: bool,  filterable: true, desc: "True if the deal breached any policy rule"}
+      exception_reason:                         {type: str,   filterable: false, desc: "Pipe-delimited list of breached rules"}
+    blocked_columns: []
+
+  # V14 --------------------------------------------------------------------------
+  cross_sell_opportunity:
+    schema: fab_semantic
+    grain: one row per active cross-sell rule — segment x industry recommendation
+    primary_key: cross_sell_rule_id
+    sensitivity_default: internal
+    columns:
+      cross_sell_rule_id:               {type: str,   filterable: true,  desc: "Cross-sell rule identifier"}
+      customer_segment:                 {type: enum,  values: [Corporate, SME], filterable: true, desc: "Customer segment the rule targets"}
+      industry:                         {type: enum,  values: [Trading, Manufacturing, Logistics, Retail, Healthcare], filterable: true, desc: "Industry the rule targets"}
+      trigger_condition:                {type: str,   filterable: false, desc: "Condition that triggers the recommendation"}
+      primary_product_id:               {type: str,   filterable: true,  desc: "Product the customer already holds"}
+      primary_product_name:             {type: str,   filterable: false, desc: "Primary product display name"}
+      recommended_product_id:           {type: str,   filterable: true,  desc: "Recommended cross-sell product id"}
+      recommended_product_name:         {type: str,   filterable: false, desc: "Recommended product display name"}
+      expected_incremental_revenue_aed: {type: float, unit: AED, filterable: false, desc: "Expected incremental revenue"}
+      cross_sell_priority:              {type: str,   filterable: true,  desc: "Priority label for the recommendation"}
+      rationale:                        {type: str,   filterable: false, desc: "Why this cross-sell is recommended"}
+      rule_status:                      {type: enum,  values: [Active, Inactive], filterable: true, desc: "Whether the rule is active"}
+    blocked_columns: []
+
+  # V15 --------------------------------------------------------------------------
+  credit_rating_events:
+    schema: fab_semantic
+    grain: one row per credit-rating migration event
+    primary_key: rating_event_id
+    sensitivity_default: internal
+    columns:
+      rating_event_id:              {type: str,   filterable: true,  desc: "Rating event identifier"}
+      customer_id:                  {type: str,   filterable: true,  desc: "Customer id"}
+      customer_name:                {type: str,   sensitivity: internal, filterable: true, desc: "Customer legal name"}
+      event_date:                   {type: date,  filterable: true,  desc: "Date of the rating event"}
+      old_internal_rating:          {type: str,   filterable: true,  desc: "Internal rating before the event"}
+      new_internal_rating:          {type: str,   filterable: true,  desc: "Internal rating after the event"}
+      old_risk_category:            {type: enum,  values: [Low, Medium, High], filterable: true, desc: "Risk band before the event"}
+      new_risk_category:            {type: enum,  values: [Low, Medium, High], filterable: true, desc: "Risk band after the event"}
+      rating_change_direction:      {type: str,   filterable: true,  desc: "Direction of the change (e.g. Upgrade/Downgrade)"}
+      reason_code:                  {type: str,   filterable: true,  desc: "Reason code for the rating change"}
+      recommended_pricing_action:   {type: str,   filterable: false, desc: "Recommended pricing action after the change"}
+      additional_risk_premium_pct:  {type: float, unit: pct, filterable: false, desc: "Additional risk premium to apply"}
+      floating_rate_required_flag:  {type: bool,  filterable: true, desc: "True if a floating rate is now required"}
+      credit_review_required_flag:  {type: bool,  filterable: true, desc: "True if a credit review is now required"}
+    blocked_columns: []
+
+  # V16 --------------------------------------------------------------------------
+  similar_customer_pricing:
+    schema: fab_semantic
+    grain: one row per new_customer -> reference_customer similarity mapping
+    primary_key: similarity_mapping_id
+    sensitivity_default: internal
+    columns:
+      similarity_mapping_id:                 {type: str,   filterable: true,  desc: "Similarity mapping identifier"}
+      new_customer_id:                       {type: str,   filterable: true,  desc: "New/prospect customer id"}
+      new_customer_name:                     {type: str,   sensitivity: internal, filterable: true, desc: "New customer legal name"}
+      reference_customer_id:                 {type: str,   filterable: true,  desc: "Reference (similar) customer id"}
+      reference_customer_name:               {type: str,   sensitivity: internal, filterable: true, desc: "Reference customer legal name"}
+      customer_segment:                      {type: enum,  values: [Corporate, SME], filterable: true, desc: "Customer segment"}
+      requested_product_id:                  {type: str,   filterable: true,  desc: "Requested product id"}
+      requested_product_name:                {type: str,   filterable: false, desc: "Requested product display name"}
+      similarity_score:                      {type: float, filterable: false, desc: "Similarity score between new and reference customer"}
+      reference_final_price_pct:             {type: float, unit: pct, filterable: false, desc: "Reference customer's final price"}
+      adjustment_for_new_customer_pct:       {type: float, unit: pct, filterable: false, desc: "Adjustment applied for the new customer"}
+      suggested_price_pct:                   {type: float, unit: pct, filterable: false, desc: "Reference price + adjustment = suggested price"}
+      suggested_price_adjustment_rationale:  {type: str,   filterable: false, desc: "Why this adjustment was suggested"}
+    blocked_columns: []
