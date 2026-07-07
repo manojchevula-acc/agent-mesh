@@ -13,10 +13,13 @@ Two safeguards:
    coordinator can tell the user a source is unavailable instead of crashing.
 """
 import asyncio
+import json
 import sys
 import time
 import pathlib
 import contextvars
+
+import httpx
 
 project_root = str(pathlib.Path(__file__).resolve().parents[2])
 if project_root not in sys.path:
@@ -24,6 +27,10 @@ if project_root not in sys.path:
 
 from agent_framework import tool
 from src.a2a.clients import ask_remote
+from src.config import Config
+from src.observability import get_logger, CAT_A2A
+
+_log = get_logger(CAT_A2A)
 
 # Bounds nested peer delegation within a single process.
 _peer_depth: contextvars.ContextVar[int] = contextvars.ContextVar("peer_call_depth", default=0)
@@ -130,14 +137,74 @@ async def _consult_peer(node: str, question: str, unavailable_label: str) -> str
             pass
 
 
+async def _ask_sql_agent(question: str) -> str:
+    """Route a structured-data question to the FAB SQL Agent service.
+
+    Posts the natural-language question to POST /v1/sql-agent/ask and returns the
+    composed answer. The SQL agent is itself a full ReAct agent (its own LLM +
+    routing + SQL tools), so this replaces the DataAgent -> DataLayer MCP leg with
+    a single downstream agent.
+
+    Soft-fail contract (matches _consult_peer): any transport/HTTP error, an error
+    envelope, or a clarification is returned as a STRING rather than raised, so the
+    coordinator can tell the user the source is unavailable instead of crashing.
+    An error/clarification is prefixed with DATA_UNAVAILABLE where appropriate so the
+    coordinator's OPERATING RULES treat it as a data gap, not a fabricated answer.
+    """
+    payload = {
+        "envelope": {
+            "caller_agent": "price_assist",
+            "auth_scope": Config.SQL_AGENT_SCOPES,
+        },
+        "question": question,
+        "user_id": "mesh",
+    }
+    url = f"{Config.SQL_AGENT_URL.rstrip('/')}/v1/sql-agent/ask"
+    t0 = time.perf_counter()
+    try:
+        async with httpx.AsyncClient(timeout=Config.SQL_AGENT_TIMEOUT) as client:
+            resp = await client.post(url, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as e:
+        _log.error("SQL agent call failed url=%s: %s", url, e,
+                   extra={"node": "sql_agent", "status": "ERROR"})
+        return f"DATA_UNAVAILABLE: could not reach the SQL agent ({e})."
+
+    elapsed_ms = int((time.perf_counter() - t0) * 1000)
+    status = data.get("status")
+    _log.info("SQL agent replied status=%s tool=%s rows=%s (%d ms)",
+              status, data.get("tool"), data.get("rows_returned"), elapsed_ms,
+              extra={"node": "sql_agent", "status": "SUCCESS"})
+
+    # A clarification is the agent asking for a missing/ambiguous input — surface the
+    # question text so the coordinator can relay it (not a data result, not an error).
+    if status == "clarification":
+        return data.get("message") or (
+            "The data service needs more detail to answer this question."
+        )
+    # An error envelope (including NoToolInvoked) => no validated data was produced.
+    if status == "error":
+        return f"DATA_UNAVAILABLE: {data.get('message', 'SQL agent returned an error')}."
+    # Success: prefer the composed natural-language answer; fall back to the raw
+    # envelope so the coordinator still has the underlying figures if answer is empty.
+    return data.get("answer") or json.dumps(data, default=str)
+
+
 @tool(description=(
-    "Query FAB structured banking data via the Data Agent: customer profiles, deal "
-    "pricing, margins, profitability, and RWA/capital (DataLayer). Use for any "
-    "numeric or record lookup about a customer or deal (e.g. CUST001's recommended "
-    "price, margin analysis, profitability tier, RWA impact)."
+    "Query FAB structured banking data: customer profiles, deal pricing, margins, "
+    "profitability, and RWA/capital. Use for any numeric or record lookup about a "
+    "customer or deal (e.g. CUST001's recommended price, margin analysis, "
+    "profitability tier, RWA impact)."
 ))
 async def query_structured_data(question: str) -> str:
-    """Agent-to-agent hop: Price Assist asks the Data Agent (over A2A)."""
+    """Agent-to-agent hop for structured data.
+
+    Routes to the SQL Agent service when SQL_AGENT_ENABLED (default), otherwise
+    falls back to the legacy DataAgent -> DataLayer MCP path over A2A.
+    """
+    if Config.SQL_AGENT_ENABLED:
+        return await _ask_sql_agent(question)
     return await _consult_peer("data_agent", question, "DATA_UNAVAILABLE")
 
 

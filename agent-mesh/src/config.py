@@ -134,6 +134,23 @@ class Config:
     # Timeout (seconds) for an MCP tool request to an external service.
     MCP_REQUEST_TIMEOUT: int = int(os.getenv("MCP_REQUEST_TIMEOUT", "30"))
 
+    # ----------------------------------------------------------------------
+    # SQL Agent service (FAB-SQL-AGENT) — structured-data backend.
+    # When SQL_AGENT_ENABLED is true, the coordinator's query_structured_data
+    # tool posts natural-language questions to the SQL agent's /v1/sql-agent/ask
+    # endpoint instead of delegating to the DataAgent -> DataLayer MCP path.
+    # Flip SQL_AGENT_ENABLED to false to instantly fall back to the DataLayer path.
+    # ----------------------------------------------------------------------
+    SQL_AGENT_ENABLED: bool = os.getenv("SQL_AGENT_ENABLED", "true").lower() in ("1", "true", "yes")
+    SQL_AGENT_URL: str = os.getenv("SQL_AGENT_URL", "http://127.0.0.1:9200")
+    SQL_AGENT_TIMEOUT: float = float(os.getenv("SQL_AGENT_TIMEOUT", "60.0"))
+    # Auth scopes sent in the SQL agent envelope. Add "dynamic_sql" to permit the
+    # gated free-form SQL tier; leave empty to restrict to parameterised/semi-dynamic
+    # tools. Comma-separated (e.g. "dynamic_sql").
+    SQL_AGENT_SCOPES: list[str] = [
+        s.strip() for s in os.getenv("SQL_AGENT_SCOPES", "").split(",") if s.strip()
+    ]
+
     # Timeout (seconds) for A2A calls. Groq is fast (~70+ tok/s); 60 s is generous
     # headroom for complex multi-step reasoning.
     A2A_TIMEOUT: float = float(os.getenv("A2A_TIMEOUT", "60.0"))
