@@ -6,6 +6,6 @@ default. Swapping providers (Groq / OpenAI / Azure / Anthropic) or models per st
 config change, not a code change.
 """
 
-from .factory import Step, get_llm
+from .factory import Step, get_llm, log_usage
 
-__all__ = ["Step", "get_llm"]
+__all__ = ["Step", "get_llm", "log_usage"]

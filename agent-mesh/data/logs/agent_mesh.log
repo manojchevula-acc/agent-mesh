@@ -1,19 +1,176 @@
-2026-07-07 16:54:14,621 | INFO     | agent_framework._workflows._validation | trace=- span=- req=24B0C3A5 | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
-2026-07-07 16:54:14,623 | INFO     | mesh.system      | trace=- span=- req=24B0C3A5 | Request start user=alice role=relationship_manager query_len=54 req=24B0C3A5
-2026-07-07 16:54:14,623 | INFO     | mesh.workflow    | trace=- span=- req=24B0C3A5 | Input guardrail PASS
-2026-07-07 16:54:14,624 | INFO     | agent_framework._workflows._runner | trace=- span=- req=24B0C3A5 | Yielding pre-loop events
-2026-07-07 16:54:14,624 | INFO     | agent_framework._workflows._runner | trace=- span=- req=24B0C3A5 | Starting superstep 1
-2026-07-07 16:54:14,624 | INFO     | mesh.workflow    | trace=- span=- req=24B0C3A5 | RBAC PASS role=relationship_manager
-2026-07-07 16:54:14,689 | INFO     | agent_framework._workflows._runner | trace=- span=- req=24B0C3A5 | Completed superstep 1
-2026-07-07 16:54:14,689 | INFO     | agent_framework._workflows._runner | trace=- span=- req=24B0C3A5 | Starting superstep 2
-2026-07-07 16:54:14,690 | INFO     | mesh.workflow    | trace=- span=- req=24B0C3A5 | Compliance BYPASS role=relationship_manager
-2026-07-07 16:54:14,753 | INFO     | agent_framework._workflows._runner | trace=- span=- req=24B0C3A5 | Completed superstep 2
-2026-07-07 16:54:14,753 | INFO     | agent_framework._workflows._runner | trace=- span=- req=24B0C3A5 | Starting superstep 3
-2026-07-07 16:54:16,723 | INFO     | mesh.agent       | trace=- span=- req=- | agent=PriceAssistAgent status=SUCCESS latency_ms=1903
-2026-07-07 16:54:16,731 | INFO     | mesh.a2a         | trace=- span=- req=24B0C3A5 | A2A call node=price_assist ok (1976 ms, 901 chars)
-2026-07-07 16:54:16,731 | INFO     | mesh.workflow    | trace=- span=- req=24B0C3A5 | Domain answer (901 chars)
-2026-07-07 16:54:16,794 | INFO     | agent_framework._workflows._runner | trace=- span=- req=24B0C3A5 | Completed superstep 3
-2026-07-07 16:54:16,795 | INFO     | agent_framework._workflows._runner | trace=- span=- req=24B0C3A5 | Starting superstep 4
-2026-07-07 16:54:16,797 | INFO     | mesh.workflow    | trace=- span=- req=24B0C3A5 | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:elevated_role:relationship_manager -> domain_answer:price_assist -> output_redacted
-2026-07-07 16:54:16,857 | INFO     | agent_framework._workflows._runner | trace=- span=- req=24B0C3A5 | Completed superstep 4
-2026-07-07 16:54:16,857 | INFO     | agent_framework._workflows._runner | trace=- span=- req=24B0C3A5 | Workflow completed after 4 supersteps
+2026-07-08 13:47:24,089 | INFO     | agent_framework._workflows._validation | trace=- span=- req=994DDABB | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-08 13:47:24,090 | INFO     | mesh.system      | trace=- span=- req=994DDABB | Request start user=alice role=relationship_manager query_len=54 req=994DDABB
+2026-07-08 13:47:24,092 | INFO     | mesh.workflow    | trace=- span=- req=994DDABB | Input guardrail PASS
+2026-07-08 13:47:24,092 | INFO     | agent_framework._workflows._runner | trace=- span=- req=994DDABB | Yielding pre-loop events
+2026-07-08 13:47:24,093 | INFO     | agent_framework._workflows._runner | trace=- span=- req=994DDABB | Starting superstep 1
+2026-07-08 13:47:24,093 | INFO     | mesh.workflow    | trace=- span=- req=994DDABB | RBAC PASS role=relationship_manager
+2026-07-08 13:47:24,159 | INFO     | agent_framework._workflows._runner | trace=- span=- req=994DDABB | Completed superstep 1
+2026-07-08 13:47:24,160 | INFO     | agent_framework._workflows._runner | trace=- span=- req=994DDABB | Starting superstep 2
+2026-07-08 13:47:24,161 | INFO     | mesh.workflow    | trace=- span=- req=994DDABB | Compliance BYPASS role=relationship_manager
+2026-07-08 13:47:24,225 | INFO     | agent_framework._workflows._runner | trace=- span=- req=994DDABB | Completed superstep 2
+2026-07-08 13:47:24,225 | INFO     | agent_framework._workflows._runner | trace=- span=- req=994DDABB | Starting superstep 3
+2026-07-08 13:47:26,613 | INFO     | agent_framework  | trace=- span=- req=- | Function name: query_structured_data
+2026-07-08 13:48:24,313 | INFO     | mesh.a2a         | trace=- span=- req=- | SQL agent replied status=success tool=get_customer_pricing_recommendations rows=3 (57699 ms)
+2026-07-08 13:48:24,313 | INFO     | agent_framework  | trace=- span=- req=- | Function query_structured_data succeeded.
+2026-07-08 13:48:24,448 | INFO     | openai._base_client | trace=- span=- req=- | Retrying request to /chat/completions in 21.000000 seconds
+2026-07-08 13:48:48,584 | INFO     | agent_framework  | trace=- span=- req=- | Function name: query_knowledge_base
+2026-07-08 13:48:50,513 | INFO     | agent_framework  | trace=- span=- req=- | Function name: search_documents
+2026-07-08 13:50:14,351 | INFO     | agent_framework  | trace=- span=- req=- | Function search_documents succeeded.
+2026-07-08 13:50:15,529 | INFO     | agent_framework  | trace=- span=- req=- | Function name: search_documents
+2026-07-08 13:50:15,933 | INFO     | agent_framework  | trace=- span=- req=- | Function search_documents succeeded.
+2026-07-08 13:50:16,010 | INFO     | mesh.mcp         | trace=- span=- req=- | service=rag agent=RAGAgent status=ERROR latency_ms=87390 req=-
+2026-07-08 13:50:16,010 | ERROR    | mesh.agent       | trace=- span=- req=- | agent=RAGAgent status=ERROR latency_ms=87390 error=("<class 'agent_framework_openai._chat_completion_client.OpenAIChatCompletionClient'> service failed to complete the prompt: Error code: 413 - {'error': {'message': 'Request too large for model `qwen/qwen3.6-27b` in organization `org_01j55qe221efdr2bk9phkd6gq3` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 8390, please reduce your message size and try again. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}", APIStatusError("Error code: 413 - {'error': {'message': 'Request too large for model `qwen/qwen3.6-27b` in organization `org_01j55qe221efdr2bk9phkd6gq3` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 8390, please reduce your message size and try again. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"))
+2026-07-08 13:50:16,010 | ERROR    | agent_framework.a2a | trace=- span=- req=- | A2AExecutor encountered an error during execution.
+Traceback (most recent call last):
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\.venv\Lib\site-packages\agent_framework_openai\_chat_completion_client.py", line 555, in _get_response
+    await client.chat.completions.create(stream=False, **options_dict), options
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\.venv\Lib\site-packages\openai\resources\chat\completions\completions.py", line 2814, in create
+    return await self._post(
+           ^^^^^^^^^^^^^^^^^
+    ...<54 lines>...
+    )
+    ^
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\.venv\Lib\site-packages\openai\_base_client.py", line 1931, in post
+    return await self.request(cast_to, opts, stream=stream, stream_cls=stream_cls)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\.venv\Lib\site-packages\openai\_base_client.py", line 1716, in request
+    raise self._make_status_error_from_response(err.response) from None
+openai.APIStatusError: Error code: 413 - {'error': {'message': 'Request too large for model `qwen/qwen3.6-27b` in organization `org_01j55qe221efdr2bk9phkd6gq3` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 8390, please reduce your message size and try again. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\.venv\Lib\site-packages\agent_framework_a2a\_a2a_executor.py", line 168, in execute
+    await self._run(query, session, updater)
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\.venv\Lib\site-packages\agent_framework_a2a\_a2a_executor.py", line 202, in _run
+    response = await self._agent.run(query, session=session, stream=False, **self._run_kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\.venv\Lib\site-packages\agent_framework\_middleware.py", line 1397, in _execute
+    return await pipeline.execute(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+    )
+    ^
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\.venv\Lib\site-packages\agent_framework\_middleware.py", line 918, in execute
+    await first_handler()
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\.venv\Lib\site-packages\agent_framework\_middleware.py", line 912, in current_handler
+    await self._middleware[index].process(context, create_next_handler(index + 1))
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\src\middleware\audit_middleware.py", line 132, in process
+    raise e
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\src\middleware\audit_middleware.py", line 128, in process
+    await call_next()
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\.venv\Lib\site-packages\agent_framework\_middleware.py", line 904, in final_wrapper
+    context.result = await cast(Awaitable[AgentResponse], result)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\.venv\Lib\site-packages\agent_framework\_agents.py", line 964, in _run_non_streaming
+    response = await self._call_chat_client(ctx, stream=False)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\.venv\Lib\site-packages\agent_framework\_tools.py", line 2563, in _get_response
+    await super_get_response(
+    ^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    ),
+    ^
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\.venv\Lib\site-packages\agent_framework_openai\_chat_completion_client.py", line 571, in _get_response
+    raise ChatClientException(
+    ...<5 lines>...
+    ) from ex
+agent_framework.exceptions.ChatClientException: ("<class 'agent_framework_openai._chat_completion_client.OpenAIChatCompletionClient'> service failed to complete the prompt: Error code: 413 - {'error': {'message': 'Request too large for model `qwen/qwen3.6-27b` in organization `org_01j55qe221efdr2bk9phkd6gq3` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 8390, please reduce your message size and try again. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}", APIStatusError("Error code: 413 - {'error': {'message': 'Request too large for model `qwen/qwen3.6-27b` in organization `org_01j55qe221efdr2bk9phkd6gq3` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 8390, please reduce your message size and try again. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"))
+2026-07-08 13:50:16,219 | INFO     | mesh.a2a         | trace=- span=- req=- | A2A call node=rag_agent ok (87634 ms, 85 chars)
+2026-07-08 13:50:16,233 | INFO     | agent_framework  | trace=- span=- req=- | Function query_knowledge_base succeeded.
+2026-07-08 13:50:18,528 | INFO     | mesh.agent       | trace=- span=- req=- | agent=PriceAssistAgent status=SUCCESS latency_ms=174249
+2026-07-08 13:50:18,528 | WARNING  | agent_framework.a2a | trace=- span=- req=- | A2AExecutor does not yet support content type: function_call. Omitted.
+2026-07-08 13:50:18,528 | WARNING  | agent_framework.a2a | trace=- span=- req=- | A2AExecutor does not yet support content type: function_result. Omitted.
+2026-07-08 13:50:18,528 | WARNING  | agent_framework.a2a | trace=- span=- req=- | A2AExecutor does not yet support content type: function_call. Omitted.
+2026-07-08 13:50:18,528 | WARNING  | agent_framework.a2a | trace=- span=- req=- | A2AExecutor does not yet support content type: function_result. Omitted.
+2026-07-08 13:50:18,533 | INFO     | mesh.a2a         | trace=- span=- req=994DDABB | A2A call node=price_assist ok (174307 ms, 2057 chars)
+2026-07-08 13:50:18,534 | WARNING  | mesh.workflow    | trace=- span=- req=994DDABB | price_assist returned bare tool-call text; retrying once.
+2026-07-08 13:50:24,991 | INFO     | agent_framework  | trace=- span=- req=- | Function name: query_structured_data
+2026-07-08 13:51:16,241 | INFO     | mesh.a2a         | trace=- span=- req=- | SQL agent replied status=success tool=get_customer rows=1 (51249 ms)
+2026-07-08 13:51:16,241 | INFO     | agent_framework  | trace=- span=- req=- | Function query_structured_data succeeded.
+2026-07-08 13:51:16,390 | INFO     | openai._base_client | trace=- span=- req=- | Retrying request to /chat/completions in 9.000000 seconds
+2026-07-08 13:51:25,554 | INFO     | openai._base_client | trace=- span=- req=- | Retrying request to /chat/completions in 4.000000 seconds
+2026-07-08 13:51:30,823 | INFO     | agent_framework  | trace=- span=- req=- | Function name: query_structured_data
+2026-07-08 13:52:55,619 | ERROR    | mesh.a2a         | trace=- span=- req=- | SQL agent call failed url=http://127.0.0.1:9200/v1/sql-agent/ask: 
+2026-07-08 13:52:55,621 | INFO     | agent_framework  | trace=- span=- req=- | Function query_structured_data succeeded.
+2026-07-08 13:52:56,517 | INFO     | agent_framework  | trace=- span=- req=- | Function name: query_knowledge_base
+2026-07-08 13:52:57,500 | INFO     | agent_framework  | trace=- span=- req=- | Function name: search_documents
+2026-07-08 13:52:57,892 | INFO     | agent_framework  | trace=- span=- req=- | Function search_documents succeeded.
+2026-07-08 13:53:01,697 | INFO     | agent_framework  | trace=- span=- req=- | Function name: search_documents
+2026-07-08 13:53:02,006 | INFO     | agent_framework  | trace=- span=- req=- | Function search_documents succeeded.
+2026-07-08 13:53:02,092 | INFO     | mesh.mcp         | trace=- span=- req=- | service=rag agent=RAGAgent status=ERROR latency_ms=5552 req=-
+2026-07-08 13:53:02,092 | ERROR    | mesh.agent       | trace=- span=- req=- | agent=RAGAgent status=ERROR latency_ms=5552 error=("<class 'agent_framework_openai._chat_completion_client.OpenAIChatCompletionClient'> service failed to complete the prompt: Error code: 413 - {'error': {'message': 'Request too large for model `qwen/qwen3.6-27b` in organization `org_01j55qe221efdr2bk9phkd6gq3` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 10011, please reduce your message size and try again. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}", APIStatusError("Error code: 413 - {'error': {'message': 'Request too large for model `qwen/qwen3.6-27b` in organization `org_01j55qe221efdr2bk9phkd6gq3` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 10011, please reduce your message size and try again. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"))
+2026-07-08 13:53:02,092 | ERROR    | agent_framework.a2a | trace=- span=- req=- | A2AExecutor encountered an error during execution.
+Traceback (most recent call last):
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\.venv\Lib\site-packages\agent_framework_openai\_chat_completion_client.py", line 555, in _get_response
+    await client.chat.completions.create(stream=False, **options_dict), options
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\.venv\Lib\site-packages\openai\resources\chat\completions\completions.py", line 2814, in create
+    return await self._post(
+           ^^^^^^^^^^^^^^^^^
+    ...<54 lines>...
+    )
+    ^
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\.venv\Lib\site-packages\openai\_base_client.py", line 1931, in post
+    return await self.request(cast_to, opts, stream=stream, stream_cls=stream_cls)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\.venv\Lib\site-packages\openai\_base_client.py", line 1716, in request
+    raise self._make_status_error_from_response(err.response) from None
+openai.APIStatusError: Error code: 413 - {'error': {'message': 'Request too large for model `qwen/qwen3.6-27b` in organization `org_01j55qe221efdr2bk9phkd6gq3` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 10011, please reduce your message size and try again. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\.venv\Lib\site-packages\agent_framework_a2a\_a2a_executor.py", line 168, in execute
+    await self._run(query, session, updater)
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\.venv\Lib\site-packages\agent_framework_a2a\_a2a_executor.py", line 202, in _run
+    response = await self._agent.run(query, session=session, stream=False, **self._run_kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\.venv\Lib\site-packages\agent_framework\_middleware.py", line 1397, in _execute
+    return await pipeline.execute(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+    )
+    ^
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\.venv\Lib\site-packages\agent_framework\_middleware.py", line 918, in execute
+    await first_handler()
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\.venv\Lib\site-packages\agent_framework\_middleware.py", line 912, in current_handler
+    await self._middleware[index].process(context, create_next_handler(index + 1))
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\src\middleware\audit_middleware.py", line 132, in process
+    raise e
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\src\middleware\audit_middleware.py", line 128, in process
+    await call_next()
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\.venv\Lib\site-packages\agent_framework\_middleware.py", line 904, in final_wrapper
+    context.result = await cast(Awaitable[AgentResponse], result)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\.venv\Lib\site-packages\agent_framework\_agents.py", line 964, in _run_non_streaming
+    response = await self._call_chat_client(ctx, stream=False)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\.venv\Lib\site-packages\agent_framework\_tools.py", line 2563, in _get_response
+    await super_get_response(
+    ^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    ),
+    ^
+  File "C:\Users\kanan.sharma\Documents\agent-mesh\agent-mesh\.venv\Lib\site-packages\agent_framework_openai\_chat_completion_client.py", line 571, in _get_response
+    raise ChatClientException(
+    ...<5 lines>...
+    ) from ex
+agent_framework.exceptions.ChatClientException: ("<class 'agent_framework_openai._chat_completion_client.OpenAIChatCompletionClient'> service failed to complete the prompt: Error code: 413 - {'error': {'message': 'Request too large for model `qwen/qwen3.6-27b` in organization `org_01j55qe221efdr2bk9phkd6gq3` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 10011, please reduce your message size and try again. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}", APIStatusError("Error code: 413 - {'error': {'message': 'Request too large for model `qwen/qwen3.6-27b` in organization `org_01j55qe221efdr2bk9phkd6gq3` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 10011, please reduce your message size and try again. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"))
+2026-07-08 13:53:02,099 | INFO     | mesh.a2a         | trace=- span=- req=- | A2A call node=rag_agent ok (5581 ms, 76 chars)
+2026-07-08 13:53:02,099 | INFO     | agent_framework  | trace=- span=- req=- | Function query_knowledge_base succeeded.
+2026-07-08 13:53:04,205 | INFO     | mesh.agent       | trace=- span=- req=- | agent=PriceAssistAgent status=SUCCESS latency_ms=160637
+2026-07-08 13:53:04,206 | WARNING  | agent_framework.a2a | trace=- span=- req=- | A2AExecutor does not yet support content type: function_call. Omitted.
+2026-07-08 13:53:04,206 | WARNING  | agent_framework.a2a | trace=- span=- req=- | A2AExecutor does not yet support content type: function_result. Omitted.
+2026-07-08 13:53:04,206 | WARNING  | agent_framework.a2a | trace=- span=- req=- | A2AExecutor does not yet support content type: function_call. Omitted.
+2026-07-08 13:53:04,206 | WARNING  | agent_framework.a2a | trace=- span=- req=- | A2AExecutor does not yet support content type: function_result. Omitted.
+2026-07-08 13:53:04,206 | WARNING  | agent_framework.a2a | trace=- span=- req=- | A2AExecutor does not yet support content type: function_call. Omitted.
+2026-07-08 13:53:04,206 | WARNING  | agent_framework.a2a | trace=- span=- req=- | A2AExecutor does not yet support content type: function_result. Omitted.
+2026-07-08 13:53:04,210 | INFO     | mesh.a2a         | trace=- span=- req=994DDABB | A2A call node=price_assist ok (160668 ms, 1046 chars)
+2026-07-08 13:53:04,210 | INFO     | mesh.workflow    | trace=- span=- req=994DDABB | Domain answer (1046 chars)
+2026-07-08 13:53:04,280 | INFO     | agent_framework._workflows._runner | trace=- span=- req=994DDABB | Completed superstep 3
+2026-07-08 13:53:04,280 | INFO     | agent_framework._workflows._runner | trace=- span=- req=994DDABB | Starting superstep 4
+2026-07-08 13:53:04,281 | INFO     | mesh.workflow    | trace=- span=- req=994DDABB | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:elevated_role:relationship_manager -> domain_answer:price_assist -> output_redacted
+2026-07-08 13:53:04,345 | INFO     | agent_framework._workflows._runner | trace=- span=- req=994DDABB | Completed superstep 4
+2026-07-08 13:53:04,345 | INFO     | agent_framework._workflows._runner | trace=- span=- req=994DDABB | Workflow completed after 4 supersteps

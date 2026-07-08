@@ -189,7 +189,7 @@ a `job_id`) or the [`scripts/ingest_docs.py`](scripts/ingest_docs.py) CLI.
 | # | Step                     | Component               | What happens                                                                                                                                                            |
 | - | ------------------------ | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1 | **Extract**        | `DoclingExtractor`    | Convert PDF/DOCX into structure-preserving Markdown + a typed element list (headings, paragraphs, tables, lists).                                                       |
-| 2 | **Build metadata** | `MetadataExtractor`   | Derive `document_name`, `document_type`, `effective_date`, `product_applicability` from the filename/content (or use the values the caller supplied).           |
+| 2 | **Build metadata** | `MetadataExtractor`   | Derive`document_name`, `document_type`, `effective_date`, `product_applicability` from the filename/content (or use the values the caller supplied).            |
 | 3 | **Chunk**          | `HierarchicalChunker` | Split into**parent** sections and **child** sub-clauses at semantic boundaries; attach metadata + a deterministic ID + a detected clause reference to each. |
 | 4 | **Embed**          | `BGEM3Embedder`       | Encode chunk texts in batches into dense (1024-d) + SPLADE sparse vectors. Runs in a thread pool.                                                                       |
 | 5 | **Upsert**         | `QdrantVectorDB`      | Write points (dense + sparse named vectors + full metadata payload) into the collection. Idempotent.                                                                    |
@@ -209,10 +209,10 @@ Orchestrated by [`retrieval/pipeline.py`](src/gernas_rag/retrieval/pipeline.py)
 | 1 | **Encode query**        | `BGEM3Embedder`     | One model pass → dense + sparse query vectors.                                                                           |
 | 2 | **Hybrid search**       | `HybridSearcher`    | Dense ANN (top 40)**and** sparse BM25 (top 40) in parallel, with metadata pre-filtering (deprecated docs excluded). |
 | 3 | **RRF merge**           | `HybridSearcher`    | Fuse the two ranked lists with Reciprocal Rank Fusion (`k=60`) → top 20 candidates.                                    |
-| 4 | **Rerank**              | `Reranker`          | Cross-encoder scores each `(query, chunk)` pair and keeps the top-`k`.                                                |
-| 5 | **Freshness penalty**   | `FreshnessFilter`   | Decay scores of chunks older than `freshness_max_age_days`; re-sort; tag stale chunks.                                  |
+| 4 | **Rerank**              | `Reranker`          | Cross-encoder scores each`(query, chunk)` pair and keeps the top-`k`.                                                 |
+| 5 | **Freshness penalty**   | `FreshnessFilter`   | Decay scores of chunks older than`freshness_max_age_days`; re-sort; tag stale chunks.                                   |
 | 6 | **Parent expand**       | `RetrievalPipeline` | Fetch the parent section text for each child chunk so the answer has full context.                                        |
-| 7 | **Generate (optional)** | `ResponseGenerator` | If `generate_answer=true`, build a grounded prompt and call the LLM for a cited answer.                                 |
+| 7 | **Generate (optional)** | `ResponseGenerator` | If`generate_answer=true`, build a grounded prompt and call the LLM for a cited answer.                                  |
 | 8 | **Cache + return**      | `RAGCache`          | Store the response in Redis (background task) and return it with latency + freshness flags.                               |
 
 ---
@@ -509,18 +509,18 @@ endpoints in [`api/routers/evaluate.py`](src/gernas_rag/api/routers/evaluate.py)
 
 Endpoints:
 
-| Method & path                       | Router   | Purpose                                                 |
-| ----------------------------------- | -------- | ------------------------------------------------------- |
-| `GET /health`                     | health   | Liveness (process up).                                  |
-| `GET /ready`                      | health   | Readiness (vector DB reachable).                        |
-| `POST /api/v1/retrieve`           | retrieve | Hybrid retrieval (+ optional LLM answer), cached.       |
-| `POST /api/v1/ingest`             | ingest   | Upload a document; async ingestion; returns `job_id`. |
-| `GET /api/v1/ingest/{job_id}`     | ingest   | Poll ingestion job status.                              |
-| `POST /api/v1/evaluate`           | evaluate | Run RAGAS over the FAB test set.                        |
-| `POST /api/v1/evaluate/answer`    | evaluate | Reference-free score for one answer.                    |
-| `GET /api/v1/evaluate/test-cases` | evaluate | Return the 7 test cases.                                |
-| `POST /api/v1/admin/reindex`      | admin    | Drop + recreate the collection.                         |
-| `DELETE /api/v1/admin/collection` | admin    | Delete the collection.                                  |
+| Method & path                       | Router   | Purpose                                                |
+| ----------------------------------- | -------- | ------------------------------------------------------ |
+| `GET /health`                     | health   | Liveness (process up).                                 |
+| `GET /ready`                      | health   | Readiness (vector DB reachable).                       |
+| `POST /api/v1/retrieve`           | retrieve | Hybrid retrieval (+ optional LLM answer), cached.      |
+| `POST /api/v1/ingest`             | ingest   | Upload a document; async ingestion; returns`job_id`. |
+| `GET /api/v1/ingest/{job_id}`     | ingest   | Poll ingestion job status.                             |
+| `POST /api/v1/evaluate`           | evaluate | Run RAGAS over the FAB test set.                       |
+| `POST /api/v1/evaluate/answer`    | evaluate | Reference-free score for one answer.                   |
+| `GET /api/v1/evaluate/test-cases` | evaluate | Return the 7 test cases.                               |
+| `POST /api/v1/admin/reindex`      | admin    | Drop + recreate the collection.                        |
+| `DELETE /api/v1/admin/collection` | admin    | Delete the collection.                                 |
 
 - **Auth** ([`auth.py`](src/gernas_rag/api/auth.py)) is tiered: a Bearer **JWT** is
   required if `jwt_secret` is set (production); otherwise a matching **`X-API-Key`** if

@@ -52,9 +52,15 @@ class Settings(BaseSettings):
     cors_allow_origins: str = "*"
 
     # --- Observability --------------------------------------------------------
-    # Root level for the "sql_agent" logger tree. DEBUG surfaces SQL text and the
-    # full per-step trace; INFO gives the request->tool->tier->output flow.
+    # Root level for the "sql_agent" logger tree. INFO includes the request->tool->
+    # tier->output flow AND the executed SQL for every tier; DEBUG adds the rest of
+    # the per-step trace.
     log_level: str = "INFO"
+    # File the logger tree also writes to, in addition to stdout. Blank disables the
+    # file handler. Rotates at log_file_max_bytes, keeping log_file_backup_count files.
+    log_file: str = "logs/sql_agent.log"
+    log_file_max_bytes: int = 10_000_000
+    log_file_backup_count: int = 5
 
     # --- Safety / execution constants ----------------------------------------
     row_cap: int = 50

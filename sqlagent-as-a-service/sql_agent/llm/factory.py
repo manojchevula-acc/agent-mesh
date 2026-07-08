@@ -15,6 +15,9 @@ from enum import Enum
 from functools import lru_cache
 
 from sql_agent.config import settings
+from sql_agent.logging_config import get_logger
+
+log = get_logger("llm")
 
 
 class Step(str, Enum):
@@ -123,3 +126,26 @@ def get_llm(step: Step | str = Step.DEFAULT):
         step = Step(step)
     rm = _resolve(step)
     return _get_cached(rm.provider, rm.model, rm.temperature)
+
+
+def log_usage(step: Step | str, response) -> None:
+    """Log token usage for one LLM call, tagged by pipeline step and model.
+
+    Every provider wired through this factory (Groq, OpenAI, Azure, Anthropic)
+    populates ``response.usage_metadata`` per the LangChain standard interface;
+    fall back to ``response_metadata['token_usage']`` for older/other providers.
+    """
+    step_name = step.value if isinstance(step, Step) else str(step)
+    rm = _resolve(step if isinstance(step, Step) else Step(step))
+    usage = getattr(response, "usage_metadata", None) or (
+        getattr(response, "response_metadata", None) or {}
+    ).get("token_usage")
+    if not usage:
+        log.debug("TOKENS step=%s model=%s | usage metadata unavailable",
+                   step_name, rm.model)
+        return
+    input_tokens = usage.get("input_tokens", usage.get("prompt_tokens"))
+    output_tokens = usage.get("output_tokens", usage.get("completion_tokens"))
+    total_tokens = usage.get("total_tokens")
+    log.info("TOKENS step=%s model=%s | input=%s output=%s total=%s",
+              step_name, rm.model, input_tokens, output_tokens, total_tokens)

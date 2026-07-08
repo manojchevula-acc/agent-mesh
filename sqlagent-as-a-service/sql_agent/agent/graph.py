@@ -14,7 +14,7 @@ from sql_agent.agent.prompts import REACT_SYSTEM_PROMPT
 from sql_agent.agent.state import AgentState
 from sql_agent.config import settings
 from sql_agent.formatting.audit_logger import log_invocation
-from sql_agent.llm import Step, get_llm
+from sql_agent.llm import Step, get_llm, log_usage
 from sql_agent.logging_config import get_logger
 from sql_agent.memory import approved_examples, render_examples_block
 from sql_agent.routing.intent_classifier import classify
@@ -90,7 +90,9 @@ def build_sql_agent_graph(llm=None, checkpointer=None):
             rather than call a tool), surface a clean SQLAgentError so the API
             layer returns a readable message instead of a raw 400."""
             try:
-                return llm_with_tools.invoke(messages)
+                response = llm_with_tools.invoke(messages)
+                log_usage(Step.AGENT, response)
+                return response
             except Exception as exc:
                 if not _is_tool_call_failure(exc):
                     raise
@@ -104,7 +106,9 @@ def build_sql_agent_graph(llm=None, checkpointer=None):
                     "tool first; never pass a name where an *_id argument is expected."
                 ))
                 try:
-                    return llm_with_tools.invoke(messages + [correction])
+                    response = llm_with_tools.invoke(messages + [correction])
+                    log_usage(Step.AGENT, response)
+                    return response
                 except Exception as retry_exc:
                     if _is_tool_call_failure(retry_exc):
                         # Both attempts failed — the model cannot determine what to

@@ -48,7 +48,7 @@ class Executor:
         safe_sql = self._validator.validate(
             sql, allowed_join_pairs=allowed_join_pairs, strict_columns=strict_columns
         )
-        log.debug("DB execute | sql=%s | params=%s", safe_sql, params)
+        log.info("DB execute | sql=%s | params=%s", safe_sql, params)
 
         engine = get_engine()
         if settings.execution_guard_enabled:

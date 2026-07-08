@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 
 from sql_agent.agent.prompts import SCHEMA_LINK_PROMPT
 from sql_agent.config import settings
-from sql_agent.llm import Step, get_llm
+from sql_agent.llm import Step, get_llm, log_usage
 from sql_agent.logging_config import get_logger
 from sql_agent.semantic_layer.loader import load_semantic_layer
 from sql_agent.semantic_layer.renderer import render_schema_context
@@ -64,6 +64,7 @@ def link_schema(question: str, candidates: set[str]) -> QueryPlan:
         raw = get_llm(Step.PLAN).invoke(
             SCHEMA_LINK_PROMPT.format(question=question, candidate_schema=candidate_schema)
         )
+        log_usage(Step.PLAN, raw)
         text = raw.content if hasattr(raw, "content") else str(raw)
         data = _parse(text)
     except Exception as exc:  # noqa: BLE001 — planner must never break the turn

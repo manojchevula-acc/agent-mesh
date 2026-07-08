@@ -29,6 +29,7 @@ from agent_framework import tool
 from src.a2a.clients import ask_remote
 from src.config import Config
 from src.observability import get_logger, CAT_A2A
+from src.observability.baggage import get_session_id
 
 _log = get_logger(CAT_A2A)
 
@@ -158,6 +159,11 @@ async def _ask_sql_agent(question: str) -> str:
         },
         "question": question,
         "user_id": "mesh",
+        # Threads this hop onto the mesh's own conversation session (set as W3C
+        # baggage at the orchestrator entry point) so retries/continuations within
+        # the same chat reuse the SQL agent's LangGraph thread instead of each
+        # getting a brand-new one. Omitted (None) => SQL agent mints a fresh session.
+        "session_id": get_session_id(),
     }
     url = f"{Config.SQL_AGENT_URL.rstrip('/')}/v1/sql-agent/ask"
     t0 = time.perf_counter()

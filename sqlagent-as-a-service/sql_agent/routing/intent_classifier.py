@@ -11,7 +11,7 @@ import json
 from dataclasses import asdict, dataclass, field
 
 from sql_agent.agent.prompts import INTENT_PRECLASSIFIER_PROMPT
-from sql_agent.llm import Step, get_llm
+from sql_agent.llm import Step, get_llm, log_usage
 from sql_agent.logging_config import get_logger
 
 log = get_logger("intent")
@@ -46,6 +46,7 @@ def classify(question: str) -> Intent:
         raw = get_llm(Step.INTENT).invoke(
             INTENT_PRECLASSIFIER_PROMPT.format(user_request=question)
         )
+        log_usage(Step.INTENT, raw)
         text = raw.content if hasattr(raw, "content") else str(raw)
         data = _parse(text)
     except Exception as exc:  # noqa: BLE001 — advisory stage must never break the turn

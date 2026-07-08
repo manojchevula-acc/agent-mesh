@@ -18,7 +18,7 @@ from sql_agent.config import settings
 from sql_agent.db import db
 from sql_agent.db.dialect import dialect_label, dialect_notes
 from sql_agent.formatting import format_error, format_response
-from sql_agent.llm import Step, get_llm
+from sql_agent.llm import Step, get_llm, log_usage
 from sql_agent.logging_config import get_logger
 from sql_agent.semantic_layer.joins import resolve_joins
 from sql_agent.semantic_layer.renderer import render_schema_context
@@ -55,6 +55,7 @@ def _generate_sql(prompt: str, step: Step) -> str:
     CORRECTION model (both configurable per provider/model in config).
     """
     response = get_llm(step).invoke(prompt)
+    log_usage(step, response)
     text = response.content if hasattr(response, "content") else str(response)
     # Model is instructed to return ONLY SQL, but strip any stray fences defensively.
     return text.strip().strip("`").removeprefix("sql").strip()

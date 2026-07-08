@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 from sql_agent.agent.prompts import ANSWER_VALIDATION_PROMPT
 from sql_agent.config import settings
-from sql_agent.llm import Step, get_llm
+from sql_agent.llm import Step, get_llm, log_usage
 from sql_agent.logging_config import get_logger
 
 log = get_logger("judge")
@@ -53,6 +53,7 @@ def judge_sql(question: str, sql: str, columns: list[str], row_count: int,
                 schema_context=schema_context or "(not provided)",
             )
         )
+        log_usage(Step.JUDGE, raw)
         text = raw.content if hasattr(raw, "content") else str(raw)
         data = _parse(text)
     except Exception as exc:  # noqa: BLE001 — fail open while un-calibrated
