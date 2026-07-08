@@ -1,6 +1,8 @@
 import { apiClient } from "@/lib/apiClient";
 import type {
   ConversationHistory,
+  FeedbackRequest,
+  FeedbackResponse,
   MeshResult,
   MeshUser,
   NodeHealth,
@@ -38,5 +40,10 @@ export async function loginUser(username: string): Promise<MeshUser> {
 
 export async function getMeshStatus(): Promise<NodeHealth[]> {
   const { data } = await apiClient.get<NodeHealth[]>("/api/mesh/status");
+  return data;
+}
+
+export async function submitFeedback(payload: FeedbackRequest): Promise<FeedbackResponse> {
+  const { data } = await apiClient.post<FeedbackResponse>("/api/feedback", payload);
   return data;
 }

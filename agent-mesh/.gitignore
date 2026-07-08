@@ -11,8 +11,6 @@ __pycache__/
 venv/
 ENV/
 
-# Data outputs and local logs
-data/audit_trail.jsonl
-data/conversations/
-data/audit_trail_test.jsonl
+# All runtime data — logs, traces, conversations, feedback
+data/
 *.md

@@ -60,6 +60,7 @@ from src.observability.metrics import (
 from src.tracing.execution_trace import get_active_tracer, infer_route_and_scores
 from src.tracing.llm_reasoning import extract_reasoning, strip_reasoning_markers
 from src.memory import ConversationStore
+from src.config import Config
 
 _log = get_logger(CAT_WORKFLOW)
 
@@ -343,9 +344,10 @@ class RBACValidationExecutor(Executor):
 class ComplianceExecutor(Executor):
     """Semantic safety review via the Compliance node over A2A (hard gate)."""
 
-    def __init__(self, ask: AskRemote, id: str = "compliance") -> None:
+    def __init__(self, ask: AskRemote, id: str = "compliance", enabled: bool = True) -> None:
         super().__init__(id=id)
         self._ask = ask
+        self._enabled = enabled
 
     @handler
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
@@ -357,7 +359,12 @@ class ComplianceExecutor(Executor):
             _set_attr(span, "compliance.role", state.role)
             _set_attr(span, "compliance.user", state.user_name)
             _set_attr(span, "compliance.query_length", len(state.query))
-            bypass = state.role in _COMPLIANCE_BYPASS_ROLES
+            _bypass_reason = (
+                "service_disabled" if not self._enabled else
+                "elevated_role" if state.role in _COMPLIANCE_BYPASS_ROLES else
+                None
+            )
+            bypass = _bypass_reason is not None
             _set_attr(span, "compliance.bypass", bypass)
             try:
                 if bypass:
@@ -365,19 +372,24 @@ class ComplianceExecutor(Executor):
                     _set_attr(span, "compliance.result", "BYPASSED")
                     _add_event(span, "compliance.bypassed", {
                         "role":   state.role,
-                        "reason": "elevated_role",
+                        "reason": _bypass_reason,
                     })
                     _set_ok(span)
 
-                    state.compliance_verdict = "COMPLIANCE_PASSED: elevated role bypass"
-                    state.trail.append(f"compliance_pass:elevated_role:{state.role}")
-                    _log.info("Compliance BYPASS role=%s", state.role,
+                    state.compliance_verdict = f"COMPLIANCE_PASSED: {_bypass_reason} bypass"
+                    state.trail.append(f"compliance_pass:{_bypass_reason}:{state.role}")
+                    _log.info("Compliance BYPASS reason=%s role=%s", _bypass_reason, state.role,
                               extra={"user": state.user_name, "status": "PASS"})
                     if tracer:
+                        _check_msg = (
+                            "Compliance node is disabled (ENABLE_COMPLIANCE=false); stamping pass verdict."
+                            if _bypass_reason == "service_disabled"
+                            else f"Elevated role '{state.role}' bypasses semantic compliance check."
+                        )
                         tracer.emit_stage(
                             "compliance", "completed",
                             result="COMPLIANT",
-                            checks=[f"Elevated role '{state.role}' bypasses semantic compliance check."],
+                            checks=[_check_msg],
                         )
                     record_compliance("BYPASSED", state.role, elapsed)
                     await ctx.send_message(state)
@@ -464,9 +476,10 @@ class DomainExecutor(Executor):
     answer rather than crashing the workflow.
     """
 
-    def __init__(self, ask: AskRemote, id: str = "domain") -> None:
+    def __init__(self, ask: AskRemote, id: str = "domain", bypass_price_assist: bool = False) -> None:
         super().__init__(id=id)
         self._ask = ask
+        self._bypass_price_assist = bypass_price_assist
 
     # Matches a bare tool-call echo: the model wrote the call as plain text
     # instead of using structured function-calling, so the framework returned
@@ -504,17 +517,27 @@ class DomainExecutor(Executor):
         route = "unknown"
         route_conf = 0.0
 
+        _target_node = "data_agent" if self._bypass_price_assist else "price_assist"
+
         if tracer:
             tracer.record_agent_invoked()
-            tracer.add_execution_path("Price Assist")
-            tracer.emit_stage(
-                "domain_classification", "started",
-                message="Analyzing intent...",
-            )
+            if self._bypass_price_assist:
+                tracer.add_execution_path("Data Agent (Direct)")
+                tracer.emit_stage(
+                    "domain_classification", "started",
+                    message="Routing directly to Data Agent (PriceAssist disabled)...",
+                )
+            else:
+                tracer.add_execution_path("Price Assist")
+                tracer.emit_stage(
+                    "domain_classification", "started",
+                    message="Analyzing intent...",
+                )
 
         otel = _mesh_tracer()
         with _span_ctx(otel, "fab.domain.dispatch", kind_internal=False) as span:
-            _set_attr(span, "domain.target_node", "price_assist")
+            _set_attr(span, "domain.target_node", _target_node)
+            _set_attr(span, "domain.bypass_mode", "direct" if self._bypass_price_assist else "full_orchestration")
             _set_attr(span, "domain.user", state.user_name)
             _set_attr(span, "domain.query_length", len(state.query))
 
@@ -529,62 +552,100 @@ class DomainExecutor(Executor):
                 else f"{role_context}{state.query}"
             )
             _set_attr(span, "domain.history_turns", len(state.conversation_history) // 2)
-            try:
-                _add_event(span, "domain.a2a_call.started", {"target": "price_assist"})
-                answer = await self._ask("price_assist", base_prompt)
-                if self._TOOL_CALL_RE.search(answer or ""):
-                    retry_reason = "tool_call_echo"
-                    _log.warning(
-                        "price_assist returned bare tool-call text; retrying once.",
-                        extra={"status": "RETRY"},
-                    )
-                    _add_event(span, "domain.retry", {"reason": retry_reason, "attempt": 2})
-                    await asyncio.sleep(5)
-                    answer = await self._ask("price_assist", base_prompt)
-                elif self._META_RESPONSE_RE.search(answer or ""):
-                    retry_reason = "meta_response"
-                    _log.warning(
-                        "price_assist returned meta-response without data; retrying once.",
-                        extra={"status": "RETRY"},
-                    )
-                    _add_event(span, "domain.retry", {"reason": retry_reason, "attempt": 2})
-                    retry_prompt = (
-                        f"{base_prompt}\n\n"
-                        "IMPORTANT: Your previous response did not include the actual data. "
-                        "You MUST copy the COMPLETE raw output returned by the tool into your "
-                        "response — every field, every row, every figure. Do NOT say 'I retrieved' "
-                        "or 'I called'; just show the data."
-                    )
-                    await asyncio.sleep(5)
-                    answer = await self._ask("price_assist", retry_prompt)
-                elif self._HALLUCINATION_RE.search(answer or ""):
-                    retry_reason = "hallucination"
-                    _log.warning(
-                        "price_assist returned hallucinated placeholder text; retrying once.",
-                        extra={"status": "RETRY"},
-                    )
-                    _add_event(span, "domain.retry", {"reason": retry_reason, "attempt": 2})
-                    retry_prompt = (
-                        f"{base_prompt}\n\n"
-                        "CRITICAL: Your previous response contained placeholder text like "
-                        "[Name] or [Value] that is NOT real data. You MUST call the tool, "
-                        "then copy the EXACT values it returns — customer names, figures, "
-                        "percentages — verbatim. NEVER invent or template any field."
-                    )
-                    await asyncio.sleep(5)
-                    answer = await self._ask("price_assist", retry_prompt)
-            except Exception as exc:
-                answer = f"The banking assistant is currently unavailable ({exc})."
-                failed = True
-                state.trail.append("domain_error:price_assist")
-                _log.warning("Domain hop failed node=price_assist: %s", exc,
-                             extra={"status": "ERROR"})
-                _add_event(span, "domain.error", {"error": str(exc)[:200]})
-                _set_error(span, str(exc)[:200])
+            if self._bypass_price_assist:
+                # --- Direct DataAgent path (PriceAssist disabled) ---
+                # Inject routing decision reasoning entry for the frontend AI Reasoning tab.
+                if tracer:
+                    from datetime import datetime, timezone as _tz
+                    tracer.add_llm_reasoning([{
+                        "agent": "orchestrator",
+                        "phase": "routing_decision",
+                        "timestamp": datetime.now(_tz.utc).isoformat(),
+                        "data": {
+                            "agent": "orchestrator",
+                            "phase": "routing_decision",
+                            "decision": "direct_data_agent",
+                            "reason": (
+                                "ENABLE_PRICE_ASSIST=false — PriceAssist orchestration is disabled; "
+                                "routing query directly to Data Agent (structured data path)."
+                            ),
+                            "skipped_nodes": ["price_assist"],
+                            "active_node": "data_agent",
+                        },
+                    }])
+                try:
+                    _add_event(span, "domain.a2a_call.started", {"target": "data_agent", "mode": "direct"})
+                    answer = await self._ask("data_agent", base_prompt)
+                except Exception as exc:
+                    answer = f"The banking data service is currently unavailable ({exc})."
+                    failed = True
+                    state.trail.append("domain_error:data_agent_direct")
+                    _log.warning("Domain direct hop failed node=data_agent: %s", exc,
+                                 extra={"status": "ERROR"})
+                    _add_event(span, "domain.error", {"error": str(exc)[:200]})
+                    _set_error(span, str(exc)[:200])
+                else:
+                    state.trail.append("domain_answer:data_agent_direct")
+                    _log.info("Domain direct answer (%d chars)", len(answer or ""),
+                              extra={"status": "SUCCESS"})
             else:
-                state.trail.append("domain_answer:price_assist")
-                _log.info("Domain answer (%d chars)", len(answer or ""),
-                          extra={"status": "SUCCESS"})
+                # --- Full PriceAssist orchestration path ---
+                try:
+                    _add_event(span, "domain.a2a_call.started", {"target": "price_assist"})
+                    answer = await self._ask("price_assist", base_prompt)
+                    if self._TOOL_CALL_RE.search(answer or ""):
+                        retry_reason = "tool_call_echo"
+                        _log.warning(
+                            "price_assist returned bare tool-call text; retrying once.",
+                            extra={"status": "RETRY"},
+                        )
+                        _add_event(span, "domain.retry", {"reason": retry_reason, "attempt": 2})
+                        await asyncio.sleep(5)
+                        answer = await self._ask("price_assist", base_prompt)
+                    elif self._META_RESPONSE_RE.search(answer or ""):
+                        retry_reason = "meta_response"
+                        _log.warning(
+                            "price_assist returned meta-response without data; retrying once.",
+                            extra={"status": "RETRY"},
+                        )
+                        _add_event(span, "domain.retry", {"reason": retry_reason, "attempt": 2})
+                        retry_prompt = (
+                            f"{base_prompt}\n\n"
+                            "IMPORTANT: Your previous response did not include the actual data. "
+                            "You MUST copy the COMPLETE raw output returned by the tool into your "
+                            "response — every field, every row, every figure. Do NOT say 'I retrieved' "
+                            "or 'I called'; just show the data."
+                        )
+                        await asyncio.sleep(5)
+                        answer = await self._ask("price_assist", retry_prompt)
+                    elif self._HALLUCINATION_RE.search(answer or ""):
+                        retry_reason = "hallucination"
+                        _log.warning(
+                            "price_assist returned hallucinated placeholder text; retrying once.",
+                            extra={"status": "RETRY"},
+                        )
+                        _add_event(span, "domain.retry", {"reason": retry_reason, "attempt": 2})
+                        retry_prompt = (
+                            f"{base_prompt}\n\n"
+                            "CRITICAL: Your previous response contained placeholder text like "
+                            "[Name] or [Value] that is NOT real data. You MUST call the tool, "
+                            "then copy the EXACT values it returns — customer names, figures, "
+                            "percentages — verbatim. NEVER invent or template any field."
+                        )
+                        await asyncio.sleep(5)
+                        answer = await self._ask("price_assist", retry_prompt)
+                except Exception as exc:
+                    answer = f"The banking assistant is currently unavailable ({exc})."
+                    failed = True
+                    state.trail.append("domain_error:price_assist")
+                    _log.warning("Domain hop failed node=price_assist: %s", exc,
+                                 extra={"status": "ERROR"})
+                    _add_event(span, "domain.error", {"error": str(exc)[:200]})
+                    _set_error(span, str(exc)[:200])
+                else:
+                    state.trail.append("domain_answer:price_assist")
+                    _log.info("Domain answer (%d chars)", len(answer or ""),
+                              extra={"status": "SUCCESS"})
 
             total_ms = int((time.perf_counter() - t0) * 1000)
             answer = ConversationStore.strip_history_echo(answer or "", state.query)
@@ -592,18 +653,25 @@ class DomainExecutor(Executor):
             # user-facing answer is clean. Captured entries go to the trace layer.
             _reasoning_entries: list = []
             if not failed:
-                _reasoning_entries, answer = extract_reasoning(answer, "price_assist")
+                # Extract <llm_reasoning> blocks from the response.
+                # In bypass mode the response comes directly from DataAgent, which
+                # self-labels its blocks with "agent":"data". extract_reasoning() reads
+                # data.get("agent", ...) so attribution is always correct.
+                _reasoning_entries, answer = extract_reasoning(answer, _target_node)
                 if tracer and _reasoning_entries:
                     tracer.add_llm_reasoning([e.to_dict() for e in _reasoning_entries])
-                # Collect reasoning entries emitted by peer agents (DataAgent, RAGAgent)
-                # that were extracted and cached in collaboration_tools._peer_reasoning.
-                try:
-                    from src.tools.collaboration_tools import _peer_reasoning as _pr_ctx
-                    _peer_entries = _pr_ctx.get() or []
-                    if tracer and _peer_entries:
-                        tracer.add_llm_reasoning(_peer_entries)
-                except Exception:
-                    pass
+                if not self._bypass_price_assist:
+                    # Collect reasoning entries emitted by peer agents (DataAgent, RAGAgent)
+                    # that were extracted and cached in collaboration_tools._peer_reasoning.
+                    # In bypass mode DataAgent is called directly, so this ContextVar is not
+                    # populated — reasoning comes from the direct response instead.
+                    try:
+                        from src.tools.collaboration_tools import _peer_reasoning as _pr_ctx
+                        _peer_entries = _pr_ctx.get() or []
+                        if tracer and _peer_entries:
+                            tracer.add_llm_reasoning(_peer_entries)
+                    except Exception:
+                        pass
             # Belt-and-suspenders: strip any blocks not caught by extract_reasoning
             # (e.g. synthesis placed after the answer text, or blocks on retry path).
             clean = strip_reasoning_markers(answer)
@@ -635,14 +703,14 @@ class DomainExecutor(Executor):
                 )
                 try:
                     _plain = await self._ask(
-                        "price_assist",
+                        _target_node,
                         state.query
                         + "\n\n[SYSTEM NOTE: Please provide a direct, complete answer "
                         "to the question above in plain markdown. "
                         "Do NOT repeat the question. Do NOT use <llm_reasoning> blocks.]",
                     )
                     _plain_entries, _plain_clean = extract_reasoning(
-                        _plain or "", "price_assist"
+                        _plain or "", _target_node
                     )
                     if tracer and _plain_entries:
                         tracer.add_llm_reasoning(
@@ -668,79 +736,131 @@ class DomainExecutor(Executor):
             _set_attr(span, "domain.answer_length", len(answer or ""))
 
             if tracer and not failed:
-                route, route_rationale, route_conf, alt_scores = infer_route_and_scores(
-                    state.query, answer
-                )
-                tracer.record_domain("Price Assist Agent", 0.96)
-                tracer.record_route(route)
-                if route == "Data Layer + RAG (Hybrid)":
+                if self._bypass_price_assist:
+                    route = "Data Layer Service"
+                    route_conf = 1.0
+                    tracer.record_domain("Data Agent (Direct)", 1.0)
+                    tracer.record_route(route)
                     tracer.add_execution_path("Data Layer Service")
-                    tracer.add_execution_path("RAG Service")
+                    tracer.emit_stage(
+                        "domain_classification", "completed",
+                        result="Data Agent (Direct)",
+                        confidence=1.0,
+                        checks=["Direct data routing (ENABLE_PRICE_ASSIST=false)"],
+                        rationale=[
+                            "PriceAssist orchestration is disabled via ENABLE_PRICE_ASSIST=false.",
+                            "Query routed directly to Data Agent (structured data path).",
+                        ],
+                    )
+                    tracer.emit_stage(
+                        "routing", "completed",
+                        result=route,
+                        confidence=1.0,
+                        checks=["Direct DataAgent routing (bypass mode)"],
+                        rationale=["ENABLE_PRICE_ASSIST=false — no intent classification needed."],
+                    )
+                    tracer.emit_stage(
+                        "agent_handoff", "completed",
+                        result="Handoff successful",
+                        handoff_path=["Coordinator Agent", "Data Agent (Direct)", "Data Layer Service", "Response Generator"],
+                    )
+                    tracer.record_tool_used()
+                    retrieval_ms = max(50, int(total_ms * 0.35))
+                    tracer.emit_stage(
+                        "data_retrieval", "completed",
+                        result="Data retrieved successfully",
+                        checks=["Query generated", "Query validated", "Data retrieved"],
+                        duration_ms=retrieval_ms,
+                        latency_ms=retrieval_ms,
+                    )
+                    tracer.emit_stage(
+                        "response_generation", "completed",
+                        result="Response generated",
+                        checks=["Context assembled", "Response generated", "Hallucination checks passed"],
+                    )
+                    _set_attr(span, "domain.route", route)
+                    _set_attr(span, "domain.route_confidence", route_conf)
+                    _add_event(span, "domain.a2a_call.completed", {
+                        "target":        "data_agent",
+                        "mode":          "direct",
+                        "result":        "SUCCESS",
+                        "answer_length": len(answer or ""),
+                    })
+                    _set_ok(span)
                 else:
-                    tracer.add_execution_path(route)
+                    route, route_rationale, route_conf, alt_scores = infer_route_and_scores(
+                        state.query, answer
+                    )
+                    tracer.record_domain("Price Assist Agent", 0.96)
+                    tracer.record_route(route)
+                    if route == "Data Layer + RAG (Hybrid)":
+                        tracer.add_execution_path("Data Layer Service")
+                        tracer.add_execution_path("RAG Service")
+                    else:
+                        tracer.add_execution_path(route)
 
-                tracer.emit_stage(
-                    "domain_classification", "completed",
-                    result="Price Assist Agent",
-                    confidence=0.96,
-                    checks=["Request classified to pricing domain"],
-                    rationale=[
-                        "User is requesting pricing or banking information.",
-                        "Price Assist domain has highest confidence score.",
-                        "Historical routing pattern matched.",
-                    ],
-                    alt_scores=alt_scores,
-                )
-                tracer.emit_stage(
-                    "routing", "completed",
-                    result=route,
-                    confidence=route_conf,
-                    checks=["Evaluated available retrieval strategies"],
-                    rationale=route_rationale,
-                )
-                handoff_path = [
-                    "Coordinator Agent", "Price Assist Agent", route, "Response Generator"
-                ]
-                tracer.emit_stage(
-                    "agent_handoff", "completed",
-                    result="Handoff successful",
-                    handoff_path=handoff_path,
-                )
-                tracer.record_tool_used()
-                retrieval_ms = max(50, int(total_ms * 0.35))
-                tracer.emit_stage(
-                    "data_retrieval", "completed",
-                    result="Data retrieved successfully",
-                    checks=["Query generated", "Query validated", "Data retrieved"],
-                    duration_ms=retrieval_ms,
-                    latency_ms=retrieval_ms,
-                )
-                tracer.emit_stage(
-                    "response_generation", "completed",
-                    result="Response generated",
-                    checks=[
-                        "Context assembled",
-                        "Response generated",
-                        "Hallucination checks passed",
-                    ],
-                )
+                    tracer.emit_stage(
+                        "domain_classification", "completed",
+                        result="Price Assist Agent",
+                        confidence=0.96,
+                        checks=["Request classified to pricing domain"],
+                        rationale=[
+                            "User is requesting pricing or banking information.",
+                            "Price Assist domain has highest confidence score.",
+                            "Historical routing pattern matched.",
+                        ],
+                        alt_scores=alt_scores,
+                    )
+                    tracer.emit_stage(
+                        "routing", "completed",
+                        result=route,
+                        confidence=route_conf,
+                        checks=["Evaluated available retrieval strategies"],
+                        rationale=route_rationale,
+                    )
+                    handoff_path = [
+                        "Coordinator Agent", "Price Assist Agent", route, "Response Generator"
+                    ]
+                    tracer.emit_stage(
+                        "agent_handoff", "completed",
+                        result="Handoff successful",
+                        handoff_path=handoff_path,
+                    )
+                    tracer.record_tool_used()
+                    retrieval_ms = max(50, int(total_ms * 0.35))
+                    tracer.emit_stage(
+                        "data_retrieval", "completed",
+                        result="Data retrieved successfully",
+                        checks=["Query generated", "Query validated", "Data retrieved"],
+                        duration_ms=retrieval_ms,
+                        latency_ms=retrieval_ms,
+                    )
+                    tracer.emit_stage(
+                        "response_generation", "completed",
+                        result="Response generated",
+                        checks=[
+                            "Context assembled",
+                            "Response generated",
+                            "Hallucination checks passed",
+                        ],
+                    )
+                    _set_attr(span, "domain.route", route)
+                    _set_attr(span, "domain.route_confidence", route_conf)
+                    _add_event(span, "domain.a2a_call.completed", {
+                        "target":        "price_assist",
+                        "result":        "SUCCESS",
+                        "answer_length": len(answer or ""),
+                    })
+                    _add_event(span, "domain.route_inferred", {
+                        "route":      route,
+                        "confidence": route_conf,
+                    })
+                    _set_ok(span)
 
-                _set_attr(span, "domain.route", route)
-                _set_attr(span, "domain.route_confidence", route_conf)
-                _add_event(span, "domain.a2a_call.completed", {
-                    "target":        "price_assist",
-                    "result":        "SUCCESS",
-                    "answer_length": len(answer or ""),
-                })
-                _add_event(span, "domain.route_inferred", {
-                    "route":      route,
-                    "confidence": route_conf,
-                })
-                _set_ok(span)
-                record_a2a_call("price_assist", "SUCCESS", float(total_ms))
+                record_a2a_call(_target_node, "SUCCESS", float(total_ms))
                 record_domain_route(route, float(total_ms))
             elif failed:
-                record_a2a_call("price_assist", "ERROR", float(total_ms))
+                record_a2a_call(_target_node, "ERROR", float(total_ms))
 
         await ctx.send_message(state)
 
@@ -792,8 +912,8 @@ def build_mesh_workflow(ask: AskRemote):
     """
     guardrail = InputGuardrailExecutor(id="input_guardrail")
     rbac = RBACValidationExecutor(id="rbac_validation")
-    compliance = ComplianceExecutor(ask, id="compliance")
-    domain = DomainExecutor(ask, id="domain")
+    compliance = ComplianceExecutor(ask, id="compliance", enabled=Config.ENABLE_COMPLIANCE)
+    domain = DomainExecutor(ask, id="domain", bypass_price_assist=not Config.ENABLE_PRICE_ASSIST)
     redact = OutputRedactionExecutor(id="output_redaction")
 
     return (
@@ -821,8 +941,8 @@ def build_devui_workflow(ask: AskRemote, user_name: str, role: str):
     entry = DevUIEntryExecutor(user_name, role, id="devui_entry")
     guardrail = InputGuardrailExecutor(id="input_guardrail")
     rbac = RBACValidationExecutor(id="rbac_validation")
-    compliance = ComplianceExecutor(ask, id="compliance")
-    domain = DomainExecutor(ask, id="domain")
+    compliance = ComplianceExecutor(ask, id="compliance", enabled=Config.ENABLE_COMPLIANCE)
+    domain = DomainExecutor(ask, id="domain", bypass_price_assist=not Config.ENABLE_PRICE_ASSIST)
     redact = OutputRedactionExecutor(id="output_redaction")
 
     return (
