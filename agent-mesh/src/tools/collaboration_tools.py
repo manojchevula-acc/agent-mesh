@@ -94,6 +94,19 @@ async def _consult_peer(node: str, question: str, unavailable_label: str) -> str
                         _pr = []
                         _peer_reasoning.set(_pr)
                     _pr.extend([e.to_dict() for e in _entries])
+                    # Also persist to a temp file keyed by request_id so the API
+                    # server process can read them (ContextVars are process-local).
+                    try:
+                        from src.observability.baggage import get_request_id as _grid
+                        import json as _json
+                        _rid = (_grid() or "").upper().strip()
+                        if _rid and _rid != "-":
+                            _pf = pathlib.Path("data/logs") / f".peer_{_rid}.json"
+                            _pf.parent.mkdir(parents=True, exist_ok=True)
+                            _existing = _json.loads(_pf.read_text()) if _pf.exists() else []
+                            _pf.write_text(_json.dumps(_existing + [e.to_dict() for e in _entries]))
+                    except Exception:
+                        pass
             except Exception:
                 pass
         # Echo detection: if the peer returned the input question verbatim it means

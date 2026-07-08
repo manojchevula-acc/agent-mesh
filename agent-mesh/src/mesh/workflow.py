@@ -672,6 +672,23 @@ class DomainExecutor(Executor):
                             tracer.add_llm_reasoning(_peer_entries)
                     except Exception:
                         pass
+                    # Also read from the request-scoped temp file written by collaboration_tools
+                    # in the PriceAssist A2A server process (ContextVars are process-local so
+                    # the ContextVar above is always empty in the API server process).
+                    try:
+                        import json as _json
+                        import pathlib as _pl
+                        from src.observability.baggage import get_request_id as _grid
+                        _rid = (_grid() or "").upper().strip()
+                        if _rid and _rid != "-":
+                            _pf = _pl.Path("data/logs") / f".peer_{_rid}.json"
+                            if _pf.exists():
+                                _file_entries = _json.loads(_pf.read_text())
+                                if tracer and _file_entries:
+                                    tracer.add_llm_reasoning(_file_entries)
+                                _pf.unlink(missing_ok=True)
+                    except Exception:
+                        pass
             # Belt-and-suspenders: strip any blocks not caught by extract_reasoning
             # (e.g. synthesis placed after the answer text, or blocks on retry path).
             clean = strip_reasoning_markers(answer)
