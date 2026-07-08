@@ -10,6 +10,7 @@ import FeedbackDashboardPage from "@/pages/FeedbackDashboardPage";
 import AuditDashboardPage from "@/pages/AuditDashboardPage";
 import TraceDashboardPage from "@/pages/TraceDashboardPage";
 import ConversationsDashboardPage from "@/pages/ConversationsDashboardPage";
+import LogsDashboardPage from "@/pages/LogsDashboardPage";
 import { EmptyState } from "@/components/ui/EmptyState";
 
 export default function App() {
@@ -30,6 +31,7 @@ export default function App() {
           <Route path="audit" element={<AuditDashboardPage />} />
           <Route path="traces" element={<TraceDashboardPage />} />
           <Route path="conversations" element={<ConversationsDashboardPage />} />
+          <Route path="logs" element={<LogsDashboardPage />} />
         </Route>
       </Route>
 

@@ -33,6 +33,7 @@ import os
 import pathlib
 import sys
 import time
+import uuid
 
 project_root = str(pathlib.Path(__file__).resolve().parent)
 if project_root not in sys.path:
@@ -131,10 +132,11 @@ async def post_query(request: Request) -> JSONResponse:
 
     user = login(username)
 
-    tracer = ExecutionTracer(user=user.username, query=query)
+    shared_request_id = uuid.uuid4().hex[:8].upper()
+    tracer = ExecutionTracer(user=user.username, query=query, request_id=shared_request_id)
     token = set_active_tracer(tracer)
     try:
-        result = await handle_request(user, query, session_id)
+        result = await handle_request(user, query, session_id, request_id=shared_request_id)
     except Exception as exc:
         _log.exception("mesh query error: %s", exc)
         return JSONResponse(
@@ -305,6 +307,156 @@ async def get_feedback_stats(request: Request) -> JSONResponse:
     except Exception as exc:
         _log.warning("feedback stats read failed: %s", exc)
     return JSONResponse({"total": up + down, "up": up, "down": down, "with_comment": commented})
+
+
+async def get_logs_list(request: Request) -> JSONResponse:
+    """Return structured log data from agent_mesh.log grouped by request_id.
+
+    Groups entries by request_id to expose the parent-child (request → pipeline stage → log line)
+    hierarchy. Entries with request_id == "-" (system startup noise) are returned separately.
+    """
+    path = Config.LOG_FILE
+    if not os.path.exists(path):
+        return JSONResponse({
+            "groups": [], "system_entries": [],
+            "total_entries": 0, "unique_requests": 0,
+            "error_count": 0, "warning_count": 0, "loggers": [],
+        })
+
+    entries = []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    if isinstance(rec, dict):
+                        entries.append(rec)
+                except Exception:
+                    pass
+    except Exception as exc:
+        _log.warning("logs list read failed: %s", exc)
+
+    total = len(entries)
+    error_count = sum(1 for e in entries if e.get("level") == "ERROR")
+    warning_count = sum(1 for e in entries if e.get("level") == "WARNING")
+    loggers = sorted(set(e.get("logger", "") for e in entries if e.get("logger")))
+
+    # Separate system/startup entries (no request context) from request-bound entries
+    system_entries = [e for e in entries if e.get("request_id", "-") == "-"]
+    request_entries = [e for e in entries if e.get("request_id", "-") != "-"]
+
+    # Build an audit token index: audit_index[request_id][agent_name] = token counts.
+    # Used below to inject per-step token data into mesh.agent log entries.
+    # For records written before token tracking was added (no token fields), we
+    # back-fill estimates from prompt/response character lengths (~4 chars/token).
+    audit_index: dict[str, dict[str, dict]] = {}
+    audit_path = Config.AUDIT_LOG_FILE
+    if os.path.exists(audit_path):
+        try:
+            with open(audit_path, encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                        rid_a  = str(rec.get("request_id", "-")).upper()
+                        agent  = rec.get("agent_name", "")
+                        if rid_a == "-" or not agent:
+                            continue
+                        it        = int(rec.get("input_tokens",  0) or 0)
+                        ot        = int(rec.get("output_tokens", 0) or 0)
+                        estimated = bool(rec.get("tokens_estimated", False))
+                        # Back-fill from text length for old records with no token data
+                        if it == 0 and ot == 0:
+                            inputs_text = " ".join(rec.get("inputs") or [])
+                            output_text = rec.get("output", "") or ""
+                            it  = max(1, len(inputs_text) // 4) if inputs_text  else 0
+                            ot  = max(1, len(output_text)  // 4) if output_text  else 0
+                            estimated = True
+                        audit_index.setdefault(rid_a, {})[agent] = {
+                            "input_tokens":     it,
+                            "output_tokens":    ot,
+                            "total_tokens":     it + ot,
+                            "tokens_estimated": estimated,
+                        }
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    # Group by request_id; preserve insertion order (entries arrive chronologically)
+    groups_map: dict[str, list] = {}
+    for e in request_entries:
+        rid = e["request_id"]
+        groups_map.setdefault(rid, []).append(e)
+
+    groups = []
+    for rid, ents in groups_map.items():
+        ents_sorted = sorted(ents, key=lambda x: x.get("ts", ""))
+        first_ts = ents_sorted[0].get("ts", "")
+        last_ts = ents_sorted[-1].get("ts", "")
+        # Compute duration in ms from ISO timestamps
+        try:
+            from datetime import datetime, timezone
+            t0 = datetime.fromisoformat(first_ts)
+            t1 = datetime.fromisoformat(last_ts)
+            duration_ms = max(0, int((t1 - t0).total_seconds() * 1000))
+        except Exception:
+            duration_ms = 0
+        user = next((e.get("user") for e in ents_sorted if e.get("user")), None)
+        session_id = next((e.get("session_id") for e in ents_sorted if e.get("session_id")), None)
+
+        # Inject per-step token data onto mesh.agent entries using the audit index.
+        rid_upper = rid.upper()
+        for entry in ents_sorted:
+            agent_name = entry.get("agent", "")
+            if agent_name and rid_upper in audit_index and agent_name in audit_index[rid_upper]:
+                tok = audit_index[rid_upper][agent_name]
+                entry["input_tokens"]     = tok["input_tokens"]
+                entry["output_tokens"]    = tok["output_tokens"]
+                entry["total_tokens"]     = tok["total_tokens"]
+                entry["tokens_estimated"] = tok["tokens_estimated"]
+
+        # Request-level token totals (sum across all agents in this request).
+        tok_map = audit_index.get(rid_upper, {})
+        token_input    = sum(v["input_tokens"]  for v in tok_map.values())
+        token_output   = sum(v["output_tokens"] for v in tok_map.values())
+        token_total    = token_input + token_output
+        token_estimated = any(v.get("tokens_estimated") for v in tok_map.values())
+
+        groups.append({
+            "request_id":      rid,
+            "trace_id":        ents_sorted[0].get("trace_id", ""),
+            "user":            user,
+            "session_id":      session_id,
+            "first_ts":        first_ts,
+            "last_ts":         last_ts,
+            "duration_ms":     duration_ms,
+            "entry_count":     len(ents_sorted),
+            "has_error":       any(e.get("level") == "ERROR"   for e in ents_sorted),
+            "has_warning":     any(e.get("level") == "WARNING" for e in ents_sorted),
+            "token_input":     token_input,
+            "token_output":    token_output,
+            "token_total":     token_total,
+            "token_estimated": token_estimated,
+            "entries":         ents_sorted,
+        })
+    # Sort groups newest-first
+    groups.sort(key=lambda g: g["first_ts"], reverse=True)
+
+    return JSONResponse({
+        "groups": groups,
+        "system_entries": system_entries,
+        "total_entries": total,
+        "unique_requests": len(groups),
+        "error_count": error_count,
+        "warning_count": warning_count,
+        "loggers": loggers,
+    })
 
 
 async def get_audit_list(request: Request) -> JSONResponse:
@@ -558,6 +710,7 @@ app = Starlette(
         Route("/api/users",            get_users,           methods=["GET"]),
         Route("/api/login",            post_login,          methods=["POST"]),
         Route("/api/query",            post_query,          methods=["POST"]),
+        Route("/api/logs",                       get_logs_list,            methods=["GET"]),
         Route("/api/audit",                      get_audit_list,           methods=["GET"]),
         Route("/api/audit/{request_id}",         get_audit_detail,         methods=["GET"]),
         Route("/api/traces",                     get_trace_list,           methods=["GET"]),

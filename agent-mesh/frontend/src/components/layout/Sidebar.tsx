@@ -1,5 +1,5 @@
 import { Link, NavLink } from "react-router-dom";
-import { MessageSquare, Activity, X, SquarePen, ThumbsUp, ShieldCheck, Zap, MessagesSquare } from "lucide-react";
+import { MessageSquare, Activity, X, SquarePen, ThumbsUp, ShieldCheck, Zap, MessagesSquare, ScrollText } from "lucide-react";
 import { ApiStatus } from "./ApiStatus";
 import { Logo } from "@/components/ui/Logo";
 import { cn } from "@/lib/utils";
@@ -40,6 +40,12 @@ const NAV_ITEMS = [
     label: "Conversations",
     icon: MessagesSquare,
     description: "All chat session threads",
+  },
+  {
+    to: "/app/logs",
+    label: "Logs",
+    icon: ScrollText,
+    description: "Live agent_mesh.log viewer",
   },
 ];
 

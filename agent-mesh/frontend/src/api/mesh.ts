@@ -7,6 +7,7 @@ import type {
   FeedbackListResponse,
   FeedbackRequest,
   FeedbackResponse,
+  LogsResponse,
   MeshResult,
   MeshUser,
   NodeHealth,
@@ -75,5 +76,10 @@ export async function getTraces(): Promise<TraceListResponse> {
 
 export async function getConversations(): Promise<ConversationsResponse> {
   const { data } = await apiClient.get<ConversationsResponse>("/api/conversations/list");
+  return data;
+}
+
+export async function getLogs(): Promise<LogsResponse> {
+  const { data } = await apiClient.get<LogsResponse>("/api/logs");
   return data;
 }

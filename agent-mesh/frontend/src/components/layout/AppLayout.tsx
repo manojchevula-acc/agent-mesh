@@ -32,6 +32,10 @@ const PAGE_TITLES: Record<string, { title: string; subtitle: string }> = {
     title: "Conversations",
     subtitle: "All chat sessions with full message history.",
   },
+  "/app/logs": {
+    title: "Logs",
+    subtitle: "agent_mesh.log — requests grouped by pipeline stage with full entry detail.",
+  },
 };
 
 export function AppLayout() {

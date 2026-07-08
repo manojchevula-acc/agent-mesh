@@ -53,7 +53,7 @@ class MeshResult:
     session_id: str = ""
 
 
-async def handle_request(user: User, query: str, session_id: str | None = None) -> MeshResult:
+async def handle_request(user: User, query: str, session_id: str | None = None, request_id: str | None = None) -> MeshResult:
     """Runs one request through the full mesh workflow.
 
     Opens a root ``mesh.request`` span so every downstream executor / agent / A2A
@@ -66,7 +66,7 @@ async def handle_request(user: User, query: str, session_id: str | None = None) 
     """
     if not session_id:
         session_id = f"{user.username}_{uuid.uuid4().hex[:8]}"
-    request_id = uuid.uuid4().hex[:8].upper()
+    request_id = request_id or uuid.uuid4().hex[:8].upper()
     AgentLogger.print_agent_header("Mesh", "Dispatching request through the workflow graph")
 
     # Set W3C baggage BEFORE opening the root span so the baggage is inherited by

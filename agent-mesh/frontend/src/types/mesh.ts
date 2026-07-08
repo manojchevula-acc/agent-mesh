@@ -147,6 +147,54 @@ export interface LoginRequest {
   username: string;
 }
 
+export interface LogEntry {
+  ts: string;
+  level: string;
+  logger: string;
+  trace_id: string;
+  span_id: string;
+  parent_span_id: string;
+  request_id: string;
+  msg: string;
+  session_id?: string;
+  user?: string;
+  status?: string;
+  agent?: string;
+  node?: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
+  tokens_estimated?: boolean;
+}
+
+export interface RequestGroup {
+  request_id: string;
+  trace_id: string;
+  user?: string;
+  session_id?: string;
+  first_ts: string;
+  last_ts: string;
+  duration_ms: number;
+  entry_count: number;
+  has_error: boolean;
+  has_warning: boolean;
+  entries: LogEntry[];
+  token_input?: number;
+  token_output?: number;
+  token_total?: number;
+  token_estimated?: boolean;
+}
+
+export interface LogsResponse {
+  groups: RequestGroup[];
+  system_entries: LogEntry[];
+  total_entries: number;
+  unique_requests: number;
+  error_count: number;
+  warning_count: number;
+  loggers: string[];
+}
+
 export interface AuditRecord {
   timestamp: string;
   request_id: string;
