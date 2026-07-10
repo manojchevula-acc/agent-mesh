@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, CheckCircle2, XCircle, Activity, Brain } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { MeshResult, ExecutionEvent } from "@/types/mesh";
+import type { MeshResult, ExecutionEvent, LLMReasoningEntry } from "@/types/mesh";
 import LLMReasoningPanel from "./LLMReasoningPanel";
 
 // Maps Python stage keys → human-readable step titles (mirrors cli_renderer.py _STAGE_LABELS)
@@ -231,25 +231,26 @@ function SummaryTable({ result }: { result: MeshResult }) {
 interface ExecutionPanelProps {
   result?: MeshResult;
   liveEvents?: ExecutionEvent[];
+  liveReasoning?: LLMReasoningEntry[];
 }
 
 type PanelTab = "trace" | "reasoning";
 
-export default function ExecutionPanel({ result, liveEvents }: ExecutionPanelProps) {
+export default function ExecutionPanel({ result, liveEvents, liveReasoning }: ExecutionPanelProps) {
   const [open, setOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<PanelTab>("trace");
 
-  // Auto-open when live events start arriving so the user sees stages in real time.
-  // Stays open after result arrives; user can manually collapse it.
+  // Auto-open when live events or reasoning start arriving.
   useEffect(() => {
-    if (liveEvents && liveEvents.length > 0 && !open) setOpen(true);
-  }, [liveEvents?.length]); // eslint-disable-line react-hooks/exhaustive-deps
+    if ((liveEvents?.length || liveReasoning?.length) && !open) setOpen(true);
+  }, [liveEvents?.length, liveReasoning?.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Use final result events when available, fall back to live streaming events
   const eventSource = result?.events?.length ? result.events : (liveEvents ?? []);
   const steps = useMemo(() => collapseEvents(eventSource), [eventSource]);
   const stepCount = steps.length;
-  const reasoningCount = result?.llm_reasoning?.length ?? 0;
+  const reasoningEntries = result?.llm_reasoning ?? liveReasoning ?? [];
+  const reasoningCount = reasoningEntries.length;
   const durationLabel = result?.total_duration_ms != null
     ? `${(result.total_duration_ms / 1000).toFixed(1)} s`
     : null;
@@ -348,7 +349,7 @@ export default function ExecutionPanel({ result, liveEvents }: ExecutionPanelPro
 
           {/* ── AI REASONING tab ── */}
           {activeTab === "reasoning" && (
-            <LLMReasoningPanel entries={result?.llm_reasoning ?? []} />
+            <LLMReasoningPanel entries={reasoningEntries} />
           )}
         </div>
       )}

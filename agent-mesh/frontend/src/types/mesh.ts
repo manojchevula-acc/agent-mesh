@@ -116,12 +116,14 @@ export interface ChatMessage {
   // Streaming fields — populated incrementally as SSE events arrive
   streamingStage?: string;
   streamingEvents?: ExecutionEvent[];
+  streamingReasoning?: LLMReasoningEntry[];
 }
 
 // SSE stream event types from POST /api/query/stream
 export type StreamEvent =
   | { type: "stage"; stage: string; status: string; message?: string }
   | { type: "result"; result: MeshResult }
+  | { type: "reasoning"; entries: LLMReasoningEntry[] }
   | { type: "done" }
   | { type: "error"; message: string };
 

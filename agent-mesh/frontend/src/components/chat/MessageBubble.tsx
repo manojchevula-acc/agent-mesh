@@ -238,7 +238,16 @@ const MessageBubble = memo(function MessageBubble({ message, onFeedback }: Messa
           )}
         >
           {message.isLoading ? (
-            <ThinkingIndicator currentStage={message.streamingStage} />
+            <>
+              <ThinkingIndicator currentStage={message.streamingStage} />
+              {/* Execution panel visible during streaming so stages + reasoning appear live */}
+              {!!(message.streamingEvents?.length || message.streamingReasoning?.length) && (
+                <ExecutionPanel
+                  liveEvents={message.streamingEvents}
+                  liveReasoning={message.streamingReasoning}
+                />
+              )}
+            </>
           ) : (
             <>
               {/* Security blocked indicator */}
@@ -297,9 +306,13 @@ const MessageBubble = memo(function MessageBubble({ message, onFeedback }: Messa
                 </div>
               )}
 
-              {/* Execution trace panel — collapsible, mirrors run.py CLIRenderer output */}
-              {(result || message.streamingEvents?.length) && (
-                <ExecutionPanel result={result} liveEvents={message.streamingEvents} />
+              {/* Execution trace panel — switches from live events to final result on completion */}
+              {(result || message.streamingEvents?.length || message.streamingReasoning?.length) && (
+                <ExecutionPanel
+                  result={result}
+                  liveEvents={message.streamingEvents}
+                  liveReasoning={message.streamingReasoning}
+                />
               )}
 
               {/* Feedback bar — shown on non-blocked responses once loaded */}

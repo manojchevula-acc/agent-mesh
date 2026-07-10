@@ -433,6 +433,8 @@ class ComplianceExecutor(Executor):
                 state.compliance_verdict = verdict
                 if tracer and _reasoning_entries:
                     tracer.add_llm_reasoning([e.to_dict() for e in _reasoning_entries])
+                if _reasoning_entries:
+                    _emit_stream_event({"event_type": "reasoning", "entries": [e.to_dict() for e in _reasoning_entries]})
                 elapsed = (time.perf_counter() - t0) * 1000
 
                 if "compliance_failed" in verdict.lower():
@@ -586,24 +588,26 @@ class DomainExecutor(Executor):
             if self._bypass_price_assist:
                 # --- Direct DataAgent path (PriceAssist disabled) ---
                 # Inject routing decision reasoning entry for the frontend AI Reasoning tab.
-                if tracer:
-                    from datetime import datetime, timezone as _tz
-                    tracer.add_llm_reasoning([{
+                from datetime import datetime, timezone as _tz
+                _bypass_entry = {
+                    "agent": "orchestrator",
+                    "phase": "routing_decision",
+                    "timestamp": datetime.now(_tz.utc).isoformat(),
+                    "data": {
                         "agent": "orchestrator",
                         "phase": "routing_decision",
-                        "timestamp": datetime.now(_tz.utc).isoformat(),
-                        "data": {
-                            "agent": "orchestrator",
-                            "phase": "routing_decision",
-                            "decision": "direct_data_agent",
-                            "reason": (
-                                "ENABLE_PRICE_ASSIST=false — PriceAssist orchestration is disabled; "
-                                "routing query directly to Data Agent (structured data path)."
-                            ),
-                            "skipped_nodes": ["price_assist"],
-                            "active_node": "data_agent",
-                        },
-                    }])
+                        "decision": "direct_data_agent",
+                        "reason": (
+                            "ENABLE_PRICE_ASSIST=false — PriceAssist orchestration is disabled; "
+                            "routing query directly to Data Agent (structured data path)."
+                        ),
+                        "skipped_nodes": ["price_assist"],
+                        "active_node": "data_agent",
+                    },
+                }
+                if tracer:
+                    tracer.add_llm_reasoning([_bypass_entry])
+                _emit_stream_event({"event_type": "reasoning", "entries": [_bypass_entry]})
                 try:
                     _add_event(span, "domain.a2a_call.started", {"target": "data_agent", "mode": "direct"})
                     answer = await self._ask("data_agent", base_prompt)
@@ -691,6 +695,8 @@ class DomainExecutor(Executor):
                 _reasoning_entries, answer = extract_reasoning(answer, _target_node)
                 if tracer and _reasoning_entries:
                     tracer.add_llm_reasoning([e.to_dict() for e in _reasoning_entries])
+                if _reasoning_entries:
+                    _emit_stream_event({"event_type": "reasoning", "entries": [e.to_dict() for e in _reasoning_entries]})
                 if not self._bypass_price_assist:
                     # Collect reasoning entries emitted by peer agents (DataAgent, RAGAgent)
                     # that were extracted and cached in collaboration_tools._peer_reasoning.
@@ -701,6 +707,8 @@ class DomainExecutor(Executor):
                         _peer_entries = _pr_ctx.get() or []
                         if tracer and _peer_entries:
                             tracer.add_llm_reasoning(_peer_entries)
+                        if _peer_entries:
+                            _emit_stream_event({"event_type": "reasoning", "entries": _peer_entries})
                     except Exception:
                         pass
                     # Also read from the request-scoped temp file written by collaboration_tools
@@ -717,6 +725,8 @@ class DomainExecutor(Executor):
                                 _file_entries = _json.loads(_pf.read_text())
                                 if tracer and _file_entries:
                                     tracer.add_llm_reasoning(_file_entries)
+                                if _file_entries:
+                                    _emit_stream_event({"event_type": "reasoning", "entries": _file_entries})
                                 _pf.unlink(missing_ok=True)
                     except Exception:
                         pass
@@ -764,6 +774,8 @@ class DomainExecutor(Executor):
                         tracer.add_llm_reasoning(
                             [e.to_dict() for e in _plain_entries]
                         )
+                    if _plain_entries:
+                        _emit_stream_event({"event_type": "reasoning", "entries": [e.to_dict() for e in _plain_entries]})
                     _plain_clean = strip_reasoning_markers(_plain_clean)
                     if (_plain_clean
                             and _plain_clean.strip() != state.query.strip()

@@ -8,6 +8,7 @@ import type {
   FeedbackListResponse,
   FeedbackRequest,
   FeedbackResponse,
+  LLMReasoningEntry,
   LogsResponse,
   MeshResult,
   MeshUser,
@@ -85,6 +86,8 @@ export async function* queryMeshStream(
           const data = JSON.parse(dataLine);
           if (eventType === "stage") {
             yield { type: "stage", stage: data.stage, status: data.status, message: data.message };
+          } else if (eventType === "reasoning") {
+            yield { type: "reasoning", entries: data.entries as LLMReasoningEntry[] };
           } else if (eventType === "result") {
             yield { type: "result", result: data as MeshResult };
           } else if (eventType === "done") {

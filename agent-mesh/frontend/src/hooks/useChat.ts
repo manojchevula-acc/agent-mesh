@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getConversation, queryMeshStream, submitFeedback } from "@/api/mesh";
-import type { ChatMessage, ExecutionEvent } from "@/types/mesh";
+import type { ChatMessage, ExecutionEvent, LLMReasoningEntry } from "@/types/mesh";
 
 const SESSION_ID_KEY = "agent-mesh-session-id";
 
@@ -100,6 +100,14 @@ export function useChat({ username, role }: UseChatOptions) {
                           { stage: event.stage, status: event.status, message: event.message } as ExecutionEvent,
                         ],
                       }
+                    : m
+                )
+              );
+            } else if (event.type === "reasoning") {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId
+                    ? { ...m, streamingReasoning: [...(m.streamingReasoning ?? []), ...(event.entries as LLMReasoningEntry[])] }
                     : m
                 )
               );

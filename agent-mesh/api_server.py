@@ -760,7 +760,11 @@ async def post_query_stream(request: Request) -> StreamingResponse:
                     yield f"event: result\ndata: {json.dumps(result_payload)}\n\n"
                     yield "event: done\ndata: {}\n\n"
                     break
-                yield f"event: stage\ndata: {json.dumps(item)}\n\n"
+                event_type = item.get("event_type", "stage")
+                if event_type == "reasoning":
+                    yield f"event: reasoning\ndata: {json.dumps({'entries': item['entries']})}\n\n"
+                else:
+                    yield f"event: stage\ndata: {json.dumps(item)}\n\n"
         finally:
             clear_active_tracer(token)
 
