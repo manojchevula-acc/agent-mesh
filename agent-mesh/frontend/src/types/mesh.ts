@@ -143,6 +143,15 @@ export interface ConversationHistory {
   messages: ConversationMessage[];
 }
 
+// One entry in the sidebar's session list (mirrors list_sessions() in
+// src/memory/jsonl_backend.py).
+export interface ConversationSummary {
+  session_id: string;
+  preview: string;
+  updated_at: string;
+  message_count: number;
+}
+
 export interface LoginRequest {
   username: string;
 }

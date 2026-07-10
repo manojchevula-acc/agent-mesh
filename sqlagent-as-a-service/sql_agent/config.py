@@ -25,18 +25,48 @@ class Settings(BaseSettings):
     llm_provider: str = "groq"
     llm_model: str = "llama-3.3-70b-versatile"
     llm_temperature: float = 0.0
+    # Groq reasoning models (e.g. openai/gpt-oss-120b) spend part of their output budget
+    # on hidden reasoning before the final answer; left unset, a model can under-invest in
+    # the final answer even with the right tool result in context. "low" biases it toward
+    # actually answering. Applied only to models whose name contains "gpt-oss" (see
+    # llm/factory.py _build_groq) — harmless/ignored for non-reasoning models like llama.
+    groq_reasoning_effort: str = "low"
 
     # --- Per-step LLM overrides (blank = fall back to the default above) -------
     # step: agent (ReAct tool selection) | generation (tier-3 SQL) |
-    #       correction (self-correction retry) | judge (LLM-as-judge)
+    #       correction (self-correction retry) | judge (LLM-as-judge) |
+    #       synthesis (final-answer writer, see below)
     llm_agent_provider: str = ""
     llm_agent_model: str = ""
+    # Tool selection is a precision/decision task, not prose — keep it deterministic
+    # regardless of what llm_temperature (the global default) is set to for other uses.
+    llm_agent_temperature: float = 0.0
     llm_generation_provider: str = ""
     llm_generation_model: str = ""
     llm_correction_provider: str = ""
     llm_correction_model: str = ""
     llm_judge_provider: str = ""
     llm_judge_model: str = ""
+
+    # --- Production upgrade: dedicated response-synthesis step ------------------
+    # Flag-gated, defaults to today's behaviour (the tool-selection model's own text
+    # IS the final answer). When enabled, once the ReAct loop decides no more tools
+    # are needed, a SEPARATE call writes the user-facing answer from ONLY the
+    # question + this turn's retrieved rows — no tool schemas, no rung/tool-choice
+    # rules competing for the model's attention. Added after gpt-oss-120b was
+    # observed to under-synthesize (e.g. reporting one field when a "full profile"
+    # was asked for and all fields were already in the tool result).
+    response_synthesis_enabled: bool = False
+    # Deliberately a smaller/cheaper model than Step.AGENT: this step's only job is
+    # turning already-retrieved rows into prose, not tool selection, so it doesn't
+    # need a large or reasoning model — a smaller plain-instruct model also sidesteps
+    # the gpt-oss-style under-answering quirk entirely.
+    llm_synthesis_provider: str = ""
+    llm_synthesis_model: str = "llama-3.1-8b-instant"
+    # Higher than llm_temperature (0.0, used for deterministic tool selection) — this
+    # step is prose generation, not a decision, so some variation is fine and reads
+    # more natural than a flat, deterministic recitation of fields.
+    llm_synthesis_temperature: float = 0.7
 
     # --- Provider credentials -------------------------------------------------
     groq_api_key: str = ""

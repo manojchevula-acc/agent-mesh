@@ -1,8 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Send, SquarePen, Bot } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import { ChatContext } from "@/contexts/ChatContext";
-import { useChat } from "@/hooks/useChat";
+import { useChatContext } from "@/contexts/ChatContext";
 import MessageBubble from "@/components/chat/MessageBubble";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
@@ -10,12 +9,12 @@ import { SAMPLE_QUERY_GROUPS } from "@/config/constants";
 
 export default function ChatPage() {
   const { user } = useAuth();
-  const username = user?.username ?? "bob";
 
-  const { messages, sendMessage, clearChat, handleFeedback, isLoading } = useChat({
-    username,
-    role: user?.role ?? "customer",
-  });
+  // Chat state is owned by AppLayout (an ancestor of both this page and the
+  // Sidebar) and provided via ChatContext, so the sidebar's "Recent Chats" /
+  // "New Chat" controls and this page's message list share one live source of
+  // truth instead of each holding a separate copy.
+  const { messages, sendMessage, clearChat, handleFeedback, isLoading } = useChatContext();
 
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -50,7 +49,6 @@ export default function ChatPage() {
   }, []);
 
   return (
-    <ChatContext.Provider value={{ clearChat }}>
     <div className="flex flex-col h-full max-h-[calc(100vh-64px)]">
       {/* Header bar */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-line bg-surface/50 backdrop-blur-sm shrink-0">
@@ -124,7 +122,6 @@ export default function ChatPage() {
         </p>
       </div>
     </div>
-    </ChatContext.Provider>
   );
 }
 

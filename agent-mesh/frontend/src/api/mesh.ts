@@ -1,6 +1,7 @@
 import { apiClient } from "@/lib/apiClient";
 import type {
   ConversationHistory,
+  ConversationSummary,
   FeedbackRequest,
   FeedbackResponse,
   MeshResult,
@@ -26,6 +27,14 @@ export async function getConversation(sessionId: string): Promise<ConversationHi
     `/api/conversations/${encodeURIComponent(sessionId)}`,
   );
   return data;
+}
+
+export async function listConversations(username: string): Promise<ConversationSummary[]> {
+  const { data } = await apiClient.get<{ sessions: ConversationSummary[] }>(
+    "/api/conversations",
+    { params: { username } },
+  );
+  return data.sessions;
 }
 
 export async function listUsers(): Promise<MeshUser[]> {

@@ -3,6 +3,20 @@
 Tier routing is mostly DECLARATIVE: it is the set of tools bound to the agent's LLM
 (see agent/graph.py). This module holds the one piece of run-time logic — gating the
 dynamic tool — plus a registry used for tooling/metrics, and the circuit breaker.
+
+TOOL SCOPE: the single-entity base-table lookups (get_customer, get_product,
+get_pricing_policy, get_deal, ...) and the compute_* calculators are commented out
+below rather than deleted: they repeatedly caused the agent to fabricate a required
+argument (a guessed deal_id, product_id, tenor, or customer_segment) when the user's
+question didn't name one, silently returning wrong-population data or a wrong computed
+figure instead of failing loudly. The fab_semantic view tools that remain mirror the
+Data Agent / DataLayer-as-a-Service tool set (mcp_server/tools.py) — every one has the
+same shape (customer_id/deal_id in, pre-built view out, nothing the model has to
+invent). find_* (semi_dynamic) and analytical_query (full_dynamic) are KEPT even though
+Data Agent has no equivalent — they cover genuine search/aggregate needs the view
+tools don't, and haven't shown the same fabrication failure mode. Re-enable a
+commented-out tool only alongside a deterministic guard that the required argument was
+actually supplied by the user.
 """
 
 from sql_agent.config import settings
@@ -10,17 +24,20 @@ from sql_agent.tools.registry import ALL_TOOLS, set_caller_scopes
 from sql_agent.validation.exceptions import SQLAgentError
 
 TOOL_TIER_REGISTRY = {
-    # parameterised
-    "get_customer": "parameterised", "get_customer_by_name": "parameterised",
-    "get_customer_exposure": "parameterised", "get_product": "parameterised",
-    "get_product_by_name": "parameterised",
-    "get_products_for_segment": "parameterised", "get_funding_rate": "parameterised",
-    "get_pricing_policy": "parameterised", "get_deal": "parameterised",
-    "get_deals_for_customer": "parameterised",
-    "compute_recommended_price": "parameterised", "compute_margin_headroom": "parameterised",
-    "compute_approval_required": "parameterised", "compute_rwa": "parameterised",
-    "compute_ticket_eligibility": "parameterised",
-    # parameterised — semantic views (fab_semantic)
+    # -- Removed: base-table lookups and compute_* calculators required arguments
+    # (deal_id, product_id, tenor, segment) that the model fabricated when unstated. See
+    # module docstring. Keep the implementations importable in sql_agent/tools/ in case
+    # one is reinstated behind a proper argument-presence guard.
+    # "get_customer": "parameterised", "get_customer_by_name": "parameterised",
+    # "get_customer_exposure": "parameterised", "get_product": "parameterised",
+    # "get_product_by_name": "parameterised",
+    # "get_products_for_segment": "parameterised", "get_funding_rate": "parameterised",
+    # "get_pricing_policy": "parameterised", "get_deal": "parameterised",
+    # "get_deals_for_customer": "parameterised",
+    # "compute_recommended_price": "parameterised", "compute_margin_headroom": "parameterised",
+    # "compute_approval_required": "parameterised", "compute_rwa": "parameterised",
+    # "compute_ticket_eligibility": "parameterised",
+    # parameterised — semantic views (fab_semantic) — Data Agent parity set
     "get_customer_360": "parameterised",
     "get_deal_pricing_compliance": "parameterised",
     "get_deal_margin_analysis": "parameterised",

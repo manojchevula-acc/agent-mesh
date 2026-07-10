@@ -138,13 +138,18 @@ async def _consult_peer(node: str, question: str, unavailable_label: str) -> str
             pass
 
 
-async def _ask_sql_agent(question: str) -> str:
+async def _ask_sql_agent(question: str, caller_agent: str = "price_assist") -> str:
     """Route a structured-data question to the FAB SQL Agent service.
 
     Posts the natural-language question to POST /v1/sql-agent/ask and returns the
     composed answer. The SQL agent is itself a full ReAct agent (its own LLM +
     routing + SQL tools), so this replaces the DataAgent -> DataLayer MCP leg with
     a single downstream agent.
+
+    caller_agent identifies the hop's origin in the envelope/audit trail — the
+    price_assist tool call (default) or the mesh orchestrator's direct bypass path
+    (see DomainExecutor in mesh/workflow.py, which calls this when PriceAssist is
+    disabled but SQL_AGENT_ENABLED is still true).
 
     Soft-fail contract (matches _consult_peer): any transport/HTTP error, an error
     envelope, or a clarification is returned as a STRING rather than raised, so the
@@ -154,7 +159,7 @@ async def _ask_sql_agent(question: str) -> str:
     """
     payload = {
         "envelope": {
-            "caller_agent": "price_assist",
+            "caller_agent": caller_agent,
             "auth_scope": Config.SQL_AGENT_SCOPES,
         },
         "question": question,

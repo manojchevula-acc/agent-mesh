@@ -203,6 +203,25 @@ async def get_mesh_status(request: Request) -> JSONResponse:
     return JSONResponse(nodes)
 
 
+async def list_conversations(request: Request) -> JSONResponse:
+    """List a user's past conversations for the sidebar session switcher.
+
+    Path: GET /api/conversations?username=<user>
+    Response: {"sessions": [{"session_id", "preview", "updated_at", "message_count"}, ...]}
+    """
+    username = request.query_params.get("username", "").strip()
+    if not username:
+        return JSONResponse({"error": "username is required."}, status_code=400)
+
+    store = ConversationStore()
+    try:
+        sessions = store.list_sessions(username)
+    except Exception as exc:
+        _log.warning("list conversations failed user=%s: %s", username, exc)
+        sessions = []
+    return JSONResponse({"sessions": sessions})
+
+
 async def get_conversation(request: Request) -> JSONResponse:
     """Return the stored message history for a session (for UI restore on reload).
 
@@ -353,6 +372,7 @@ app = Starlette(
         Route("/api/feedback",         post_feedback,       methods=["POST"]),
         Route("/api/feedback/stats",   get_feedback_stats,  methods=["GET"]),
         Route("/api/mesh/status",      get_mesh_status,     methods=["GET"]),
+        Route("/api/conversations",    list_conversations,  methods=["GET"]),
         Route("/api/conversations/{session_id}", get_conversation, methods=["GET"]),
     ],
 )

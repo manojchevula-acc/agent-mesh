@@ -28,6 +28,8 @@ class Step(str, Enum):
     JUDGE = "judge"            # optional LLM-as-judge / evaluation hook
     INTENT = "intent"          # intent classification (small/fast is fine)
     PLAN = "plan"              # schema-link planner — precision task, wants a stronger model
+    SYNTHESIS = "synthesis"    # dedicated final-answer writer (agent/graph.py), gated by
+                               # settings.response_synthesis_enabled
     DEFAULT = "default"
 
 
@@ -41,18 +43,22 @@ class ResolvedModel:
 def _resolve(step: Step) -> ResolvedModel:
     """Apply the per-step override on top of the default, per step."""
     overrides = {
-        Step.AGENT: (settings.llm_agent_provider, settings.llm_agent_model),
-        Step.GENERATION: (settings.llm_generation_provider, settings.llm_generation_model),
-        Step.CORRECTION: (settings.llm_correction_provider, settings.llm_correction_model),
-        Step.JUDGE: (settings.llm_judge_provider, settings.llm_judge_model),
-        Step.INTENT: (settings.llm_intent_provider, settings.llm_intent_model),
-        Step.PLAN: (settings.llm_plan_provider, settings.llm_plan_model),
-        Step.DEFAULT: ("", ""),
+        Step.AGENT: (settings.llm_agent_provider, settings.llm_agent_model,
+                    settings.llm_agent_temperature),
+        Step.GENERATION: (settings.llm_generation_provider, settings.llm_generation_model, None),
+        Step.CORRECTION: (settings.llm_correction_provider, settings.llm_correction_model, None),
+        Step.JUDGE: (settings.llm_judge_provider, settings.llm_judge_model, None),
+        Step.INTENT: (settings.llm_intent_provider, settings.llm_intent_model, None),
+        Step.PLAN: (settings.llm_plan_provider, settings.llm_plan_model, None),
+        Step.SYNTHESIS: (settings.llm_synthesis_provider, settings.llm_synthesis_model,
+                         settings.llm_synthesis_temperature),
+        Step.DEFAULT: ("", "", None),
     }
-    ov_provider, ov_model = overrides.get(step, ("", ""))
+    ov_provider, ov_model, ov_temperature = overrides.get(step, ("", "", None))
     provider = (ov_provider or settings.llm_provider).strip().lower()
     model = (ov_model or settings.llm_model).strip()
-    return ResolvedModel(provider=provider, model=model, temperature=settings.llm_temperature)
+    temperature = settings.llm_temperature if ov_temperature is None else ov_temperature
+    return ResolvedModel(provider=provider, model=model, temperature=temperature)
 
 
 # --- Provider builders --------------------------------------------------------
@@ -61,8 +67,16 @@ def _build_groq(rm: ResolvedModel):
     from langchain_groq import ChatGroq
     if not settings.groq_api_key:
         raise RuntimeError("GROQ_API_KEY is not configured.")
+    kwargs = {}
+    if "gpt-oss" in rm.model:
+        # Reasoning models on Groq (gpt-oss-*) can under-invest in the visible final
+        # answer if left on Groq's default reasoning effort — reasoning_format="parsed"
+        # keeps any reasoning out of .content, and a low effort biases token budget
+        # toward actually answering rather than reasoning at length.
+        kwargs["reasoning_effort"] = settings.groq_reasoning_effort
+        kwargs["reasoning_format"] = "parsed"
     return ChatGroq(model=rm.model, api_key=settings.groq_api_key,
-                    temperature=rm.temperature)
+                    temperature=rm.temperature, **kwargs)
 
 
 def _build_openai(rm: ResolvedModel):

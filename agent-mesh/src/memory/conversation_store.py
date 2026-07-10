@@ -66,6 +66,13 @@ class ConversationStore:
         if hasattr(self._backend, "write_owner"):
             self._backend.write_owner(session_id, user_name)
 
+    def list_sessions(self, owner: str) -> List[Dict]:
+        """List sessions owned by ``owner``, newest first. Empty list if the backend
+        doesn't support listing (e.g. Redis, not yet implemented)."""
+        if hasattr(self._backend, "list_sessions"):
+            return self._backend.list_sessions(owner)
+        return []
+
     def check_owner(self, session_id: str, requesting_user: str) -> bool:
         """Return True if requesting_user owns the session (or no ownership record exists).
 

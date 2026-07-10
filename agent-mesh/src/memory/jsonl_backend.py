@@ -102,3 +102,43 @@ class JsonlBackend(ConversationBackend):
             return path.read_text(encoding="utf-8").strip() or None
         except OSError:
             return None
+
+    def list_sessions(self, owner: str | None = None) -> List[Dict]:
+        """List sessions, newest first, for the sidebar session switcher.
+
+        Scans the store directory for ``.owner`` sidecar files rather than the
+        ``.jsonl`` files themselves, since ownership is what scopes "my sessions" —
+        a session with no ``.owner`` file predates ownership tracking and is skipped
+        here (it still works if opened directly by id via ``load_messages``).
+        """
+        if not self._dir.exists():
+            return []
+        sessions: List[Dict] = []
+        for owner_path in self._dir.glob("*.owner"):
+            session_id = owner_path.stem
+            try:
+                session_owner = owner_path.read_text(encoding="utf-8").strip()
+            except OSError:
+                continue
+            if owner and session_owner != owner:
+                continue
+            jsonl_path = self._dir / f"{session_id}.jsonl"
+            messages = self.load_messages(session_id)
+            first_user_msg = next((m for m in messages if m.get("role") == "user"), None)
+            preview = (first_user_msg or {}).get("content", "").strip()
+            if len(preview) > 80:
+                preview = preview[:80].rstrip() + "…"
+            try:
+                mtime = (jsonl_path if jsonl_path.exists() else owner_path).stat().st_mtime
+            except OSError:
+                mtime = 0.0
+            sessions.append({
+                "session_id": session_id,
+                "preview": preview or "(empty conversation)",
+                "updated_at": datetime.datetime.fromtimestamp(
+                    mtime, tz=datetime.timezone.utc
+                ).isoformat(),
+                "message_count": len(messages),
+            })
+        sessions.sort(key=lambda s: s["updated_at"], reverse=True)
+        return sessions

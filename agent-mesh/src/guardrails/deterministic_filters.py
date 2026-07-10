@@ -34,7 +34,10 @@ _INJECTION_PATTERNS = [
 _PII_PATTERNS = {
     "EMAIL": r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
     "SSN": r"\b\d{3}-\d{2}-\d{4}\b",
-    "CREDIT_CARD": r"\b(?:\d[ -]?){13,16}\b",
+    # Negative lookbehind/lookahead exclude digit runs that are the fractional part of a
+    # plain decimal (e.g. "0.4523875661375661") — those aren't card numbers, but a bare
+    # \b...\b digit-run pattern matches them anyway since "." is a non-word boundary.
+    "CREDIT_CARD": r"(?<!\.)\b(?:\d[ -]?){13,19}\b(?!\.\d)",
     "PHONE": r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b",
 }
 

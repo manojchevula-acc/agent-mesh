@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { getConversation, queryMesh, submitFeedback } from "@/api/mesh";
 import type { ChatMessage, MeshResult } from "@/types/mesh";
 
@@ -32,10 +32,21 @@ interface UseChatOptions {
 }
 
 export function useChat({ username, role }: UseChatOptions) {
+  const queryClient = useQueryClient();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   // Holds the active conversation id. Persisted to localStorage so the thread
   // survives a page refresh; pinned by the first response that returns it.
   const sessionIdRef = useRef<string | null>(readSessionId());
+  // Mirrors sessionIdRef in React state purely so the sidebar can re-render to
+  // highlight the active session — the ref stays the source of truth read inside
+  // the mutation closure to avoid stale-closure bugs.
+  const [sessionId, setSessionIdState] = useState<string | null>(sessionIdRef.current);
+
+  const setSessionId = useCallback((id: string | null) => {
+    sessionIdRef.current = id;
+    writeSessionId(id);
+    setSessionIdState(id);
+  }, []);
 
   // On mount, restore prior turns for the stored session so a refresh doesn't
   // lose the conversation. Best-effort — failure just leaves the chat empty.
@@ -94,9 +105,10 @@ export function useChat({ username, role }: UseChatOptions) {
     onSuccess: (result: MeshResult, _vars, ctx) => {
       // Pin / persist the conversation id returned by the backend.
       if (result.session_id && result.session_id !== sessionIdRef.current) {
-        sessionIdRef.current = result.session_id;
-        writeSessionId(result.session_id);
+        setSessionId(result.session_id);
       }
+      // The sidebar's session list (preview text, timestamp) is now stale — refresh it.
+      queryClient.invalidateQueries({ queryKey: ["sessions", username] });
       if (!ctx) return;
       setMessages((prev) =>
         prev.map((msg) =>
@@ -147,11 +159,32 @@ export function useChat({ username, role }: UseChatOptions) {
 
   const clearChat = useCallback(() => {
     // "New Chat": drop the local transcript AND the session id so the next query
-    // starts a fresh conversation server-side.
+    // starts a fresh conversation server-side. The OLD session's history is left
+    // untouched on the backend — it stays switchable from the session list.
     setMessages([]);
-    sessionIdRef.current = null;
-    writeSessionId(null);
-  }, []);
+    setSessionId(null);
+  }, [setSessionId]);
+
+  const switchSession = useCallback(
+    async (id: string) => {
+      if (id === sessionIdRef.current) return;
+      try {
+        const history = await getConversation(id);
+        setMessages(
+          history.messages.map((m) => ({
+            id: makeId(),
+            role: m.role,
+            content: m.content,
+            timestamp: m.ts ? new Date(m.ts) : new Date(),
+          })),
+        );
+        setSessionId(id);
+      } catch {
+        /* API unreachable or session not found — leave the current chat as-is */
+      }
+    },
+    [setSessionId],
+  );
 
   const handleFeedback = useCallback(
     async (messageId: string, rating: "up" | "down", comment?: string) => {
@@ -185,8 +218,10 @@ export function useChat({ username, role }: UseChatOptions) {
 
   return {
     messages,
+    sessionId,
     sendMessage,
     clearChat,
+    switchSession,
     handleFeedback,
     isLoading: mutation.isPending,
     error: mutation.error,

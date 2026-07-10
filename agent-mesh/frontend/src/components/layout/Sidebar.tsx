@@ -3,6 +3,18 @@ import { MessageSquare, Activity, X, SquarePen } from "lucide-react";
 import { ApiStatus } from "./ApiStatus";
 import { Logo } from "@/components/ui/Logo";
 import { cn } from "@/lib/utils";
+import type { ConversationSummary } from "@/types/mesh";
+
+function relativeTime(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const mins = Math.round(diffMs / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return `${days}d ago`;
+}
 
 const NAV_ITEMS = [
   {
@@ -19,7 +31,23 @@ const NAV_ITEMS = [
   },
 ];
 
-export function Sidebar({ open, onClose, onNewChat }: { open: boolean; onClose: () => void; onNewChat?: () => void }) {
+interface SidebarProps {
+  open: boolean;
+  onClose: () => void;
+  onNewChat?: () => void;
+  sessions?: ConversationSummary[];
+  activeSessionId?: string | null;
+  onSelectSession?: (sessionId: string) => void;
+}
+
+export function Sidebar({
+  open,
+  onClose,
+  onNewChat,
+  sessions = [],
+  activeSessionId = null,
+  onSelectSession,
+}: SidebarProps) {
   return (
     <>
       {/* Mobile backdrop */}
@@ -65,7 +93,7 @@ export function Sidebar({ open, onClose, onNewChat }: { open: boolean; onClose: 
         )}
 
         {/* Nav */}
-        <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
+        <nav className="shrink-0 space-y-1 px-3 pt-3 pb-1">
           {NAV_ITEMS.map(({ to, label, icon: Icon, description }) => (
             <NavLink
               key={to}
@@ -103,6 +131,36 @@ export function Sidebar({ open, onClose, onNewChat }: { open: boolean; onClose: 
             </NavLink>
           ))}
         </nav>
+
+        {/* Recent chats */}
+        {sessions.length > 0 && (
+          <div className="flex-1 min-h-0 flex flex-col border-t border-line pt-2">
+            <p className="px-4 pb-1 text-[11px] font-semibold uppercase tracking-wider text-faint shrink-0">
+              Recent Chats
+            </p>
+            <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-2 space-y-0.5">
+              {sessions.map((s) => {
+                const isActive = s.session_id === activeSessionId;
+                return (
+                  <button
+                    key={s.session_id}
+                    onClick={() => onSelectSession?.(s.session_id)}
+                    title={s.preview}
+                    className={cn(
+                      "w-full flex flex-col items-start gap-0.5 rounded-lg px-3 py-2 text-left text-sm transition-colors",
+                      isActive
+                        ? "bg-brand-50 text-brand-800 dark:bg-brand-500/10 dark:text-brand-200"
+                        : "text-muted hover:bg-surface-2 hover:text-fg",
+                    )}
+                  >
+                    <span className="w-full truncate">{s.preview}</span>
+                    <span className="text-[11px] text-faint">{relativeTime(s.updated_at)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Footer */}
         <div className="border-t border-line px-4 py-4">

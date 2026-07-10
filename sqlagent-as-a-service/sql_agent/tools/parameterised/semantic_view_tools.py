@@ -26,10 +26,44 @@ Why explicit column lists instead of ``SELECT *``:
   as every other parameterised tool in the catalogue does.
 """
 
+import re
+
 from langchain_core.tools import tool
 
 from sql_agent.db import db
 from sql_agent.formatting import format_response
+
+_CUSTOMER_ID_RE = re.compile(r"^CUST\d+$", re.IGNORECASE)
+
+
+def _resolve_customer_id(value: str | None) -> str | None:
+    """Best-effort NAME -> id resolution for a customer_id argument.
+
+    There is no get_customer_by_name tool bound to the agent (it was removed —
+    the model kept fabricating ids with it); when asked about a customer by NAME
+    ("Gulf Star Logistics") it has nothing else to call, so it passes the name
+    straight through as customer_id and the query silently returns zero rows.
+    Every customer-scoped tool below routes its customer_id argument through
+    here first: an already-valid id (CUSTnnn) passes through with no extra
+    query; anything else is looked up by name. Only substitutes on an
+    UNAMBIGUOUS match (exactly one row) — zero or multiple matches return the
+    original value unchanged, so the real query still runs and fails loudly
+    (zero rows) rather than silently picking the wrong customer.
+    """
+    if not value or _CUSTOMER_ID_RE.match(value.strip()):
+        return value
+    name = value.strip()
+    for sql in (
+        "SELECT customer_id FROM customer_master WHERE customer_name = :name LIMIT 2",
+        "SELECT customer_id FROM customer_master WHERE customer_name LIKE :name LIMIT 2",
+    ):
+        rows = db.execute(sql, {"name": name if "= :name" in sql else f"%{name}%"})
+        matches = rows.rows if hasattr(rows, "rows") else rows
+        if len(matches) == 1:
+            return matches[0]["customer_id"]
+        if len(matches) > 1:
+            break  # ambiguous — stop here rather than trying the looser LIKE pass too
+    return value
 
 
 def _filtered_view(view: str, columns: str, filters: dict[str, str], tool: str,
@@ -44,6 +78,8 @@ def _filtered_view(view: str, columns: str, filters: dict[str, str], tool: str,
     parameterised. ``extra_where`` is a caller-owned literal predicate (e.g. a fixed
     boolean flag); ``order_by`` makes multi-row results deterministic.
     """
+    if filters.get("customer_id"):
+        filters = {**filters, "customer_id": _resolve_customer_id(filters["customer_id"])}
     clauses: list[str] = []
     params: dict[str, str] = {}
     for col, val in filters.items():
@@ -63,8 +99,9 @@ def _filtered_view(view: str, columns: str, filters: dict[str, str], tool: str,
 def get_customer_360(customer_id: str) -> dict:
     """Full customer profile plus aggregated deal KPIs (win rate, average margin,
     total volume, deal counts). Use when the question asks for a customer overview
-    that includes historical deal performance — not just the raw profile fields
-    (for those alone, use get_customer)."""
+    that includes historical deal performance. Not for explaining how a price or
+    margin was calculated — for that use get_pricing_trace instead."""
+    customer_id = _resolve_customer_id(customer_id)
     sql = """
         SELECT customer_id, customer_name, customer_segment, industry, region,
                preferred_currency, risk_category, internal_rating,
@@ -133,6 +170,7 @@ def get_customer_profitability(customer_id: str) -> dict:
     average approved price, average funding cost, average net margin, total expected
     margin, and a profitability tier per product type. Use when asked how profitable
     a customer is across their product mix."""
+    customer_id = _resolve_customer_id(customer_id)
     sql = """
         SELECT customer_id, customer_segment, region, risk_category, product_type,
                total_won_deals, total_volume_aed, revenue_aed, funding_cost_aed,
@@ -289,7 +327,9 @@ def get_pricing_trace(customer_id: str = "", deal_id: str = "") -> dict:
     """Step-by-step recommended-price build-up for a deal: the treasury, target-margin,
     risk-premium, operations-cost, and relationship-discount components that sum to the
     recommended price, plus a human-readable explanation sentence. Filter by customer_id
-    and/or deal_id. Use when asked to EXPLAIN how a price was constructed."""
+    and/or deal_id — deal_id is OPTIONAL: if you were not given one, OMIT it rather than
+    guessing a value; customer_id alone returns every deal for that customer. Use when
+    asked to EXPLAIN how a price was constructed."""
     columns = """
         deal_id, customer_id, customer_name, customer_segment, risk_category,
         product_id, product_type, currency, tenor, treasury_rate_component,

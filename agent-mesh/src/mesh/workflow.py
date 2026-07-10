@@ -517,15 +517,26 @@ class DomainExecutor(Executor):
         route = "unknown"
         route_conf = 0.0
 
-        _target_node = "data_agent" if self._bypass_price_assist else "price_assist"
+        # In bypass mode (PriceAssist disabled), prefer the SQL agent service over
+        # the legacy DataAgent -> DataLayer MCP leg when it's enabled — same switch
+        # PriceAssist's own query_structured_data tool uses (collaboration_tools.py).
+        _bypass_to_sql_agent = self._bypass_price_assist and Config.SQL_AGENT_ENABLED
+        if self._bypass_price_assist:
+            _target_node = "sql_agent" if _bypass_to_sql_agent else "data_agent"
+        else:
+            _target_node = "price_assist"
 
         if tracer:
             tracer.record_agent_invoked()
             if self._bypass_price_assist:
-                tracer.add_execution_path("Data Agent (Direct)")
+                tracer.add_execution_path("SQL Agent (Direct)" if _bypass_to_sql_agent else "Data Agent (Direct)")
                 tracer.emit_stage(
                     "domain_classification", "started",
-                    message="Routing directly to Data Agent (PriceAssist disabled)...",
+                    message=(
+                        "Routing directly to SQL Agent (PriceAssist disabled)..."
+                        if _bypass_to_sql_agent
+                        else "Routing directly to Data Agent (PriceAssist disabled)..."
+                    ),
                 )
             else:
                 tracer.add_execution_path("Price Assist")
@@ -553,7 +564,7 @@ class DomainExecutor(Executor):
             )
             _set_attr(span, "domain.history_turns", len(state.conversation_history) // 2)
             if self._bypass_price_assist:
-                # --- Direct DataAgent path (PriceAssist disabled) ---
+                # --- Direct DataAgent/SqlAgent path (PriceAssist disabled) ---
                 # Inject routing decision reasoning entry for the frontend AI Reasoning tab.
                 if tracer:
                     from datetime import datetime, timezone as _tz
@@ -564,28 +575,35 @@ class DomainExecutor(Executor):
                         "data": {
                             "agent": "orchestrator",
                             "phase": "routing_decision",
-                            "decision": "direct_data_agent",
+                            "decision": "direct_sql_agent" if _bypass_to_sql_agent else "direct_data_agent",
                             "reason": (
+                                "ENABLE_PRICE_ASSIST=false — PriceAssist orchestration is disabled; "
+                                "routing query directly to the SQL Agent service (structured data path)."
+                                if _bypass_to_sql_agent else
                                 "ENABLE_PRICE_ASSIST=false — PriceAssist orchestration is disabled; "
                                 "routing query directly to Data Agent (structured data path)."
                             ),
                             "skipped_nodes": ["price_assist"],
-                            "active_node": "data_agent",
+                            "active_node": _target_node,
                         },
                     }])
                 try:
-                    _add_event(span, "domain.a2a_call.started", {"target": "data_agent", "mode": "direct"})
-                    answer = await self._ask("data_agent", base_prompt)
+                    _add_event(span, "domain.a2a_call.started", {"target": _target_node, "mode": "direct"})
+                    if _bypass_to_sql_agent:
+                        from src.tools.collaboration_tools import _ask_sql_agent
+                        answer = await _ask_sql_agent(base_prompt, caller_agent="mesh_bypass")
+                    else:
+                        answer = await self._ask("data_agent", base_prompt)
                 except Exception as exc:
                     answer = f"The banking data service is currently unavailable ({exc})."
                     failed = True
-                    state.trail.append("domain_error:data_agent_direct")
-                    _log.warning("Domain direct hop failed node=data_agent: %s", exc,
+                    state.trail.append(f"domain_error:{_target_node}_direct")
+                    _log.warning("Domain direct hop failed node=%s: %s", _target_node, exc,
                                  extra={"status": "ERROR"})
                     _add_event(span, "domain.error", {"error": str(exc)[:200]})
                     _set_error(span, str(exc)[:200])
                 else:
-                    state.trail.append("domain_answer:data_agent_direct")
+                    state.trail.append(f"domain_answer:{_target_node}_direct")
                     _log.info("Domain direct answer (%d chars)", len(answer or ""),
                               extra={"status": "SUCCESS"})
             else:
@@ -737,32 +755,34 @@ class DomainExecutor(Executor):
 
             if tracer and not failed:
                 if self._bypass_price_assist:
-                    route = "Data Layer Service"
+                    _hop_label = "SQL Agent (Direct)" if _bypass_to_sql_agent else "Data Agent (Direct)"
+                    _service_label = "SQL Agent Service" if _bypass_to_sql_agent else "Data Layer Service"
+                    route = _service_label
                     route_conf = 1.0
-                    tracer.record_domain("Data Agent (Direct)", 1.0)
+                    tracer.record_domain(_hop_label, 1.0)
                     tracer.record_route(route)
-                    tracer.add_execution_path("Data Layer Service")
+                    tracer.add_execution_path(_service_label)
                     tracer.emit_stage(
                         "domain_classification", "completed",
-                        result="Data Agent (Direct)",
+                        result=_hop_label,
                         confidence=1.0,
                         checks=["Direct data routing (ENABLE_PRICE_ASSIST=false)"],
                         rationale=[
                             "PriceAssist orchestration is disabled via ENABLE_PRICE_ASSIST=false.",
-                            "Query routed directly to Data Agent (structured data path).",
+                            f"Query routed directly to {_hop_label} (structured data path).",
                         ],
                     )
                     tracer.emit_stage(
                         "routing", "completed",
                         result=route,
                         confidence=1.0,
-                        checks=["Direct DataAgent routing (bypass mode)"],
+                        checks=[f"Direct {_hop_label} routing (bypass mode)"],
                         rationale=["ENABLE_PRICE_ASSIST=false — no intent classification needed."],
                     )
                     tracer.emit_stage(
                         "agent_handoff", "completed",
                         result="Handoff successful",
-                        handoff_path=["Coordinator Agent", "Data Agent (Direct)", "Data Layer Service", "Response Generator"],
+                        handoff_path=["Coordinator Agent", _hop_label, _service_label, "Response Generator"],
                     )
                     tracer.record_tool_used()
                     retrieval_ms = max(50, int(total_ms * 0.35))
@@ -781,7 +801,7 @@ class DomainExecutor(Executor):
                     _set_attr(span, "domain.route", route)
                     _set_attr(span, "domain.route_confidence", route_conf)
                     _add_event(span, "domain.a2a_call.completed", {
-                        "target":        "data_agent",
+                        "target":        _target_node,
                         "mode":          "direct",
                         "result":        "SUCCESS",
                         "answer_length": len(answer or ""),

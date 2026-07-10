@@ -6,11 +6,13 @@ edges: a validator exception surfaces as a tool error message; the agent node se
 it next iteration and (for retryable errors) re-emits a corrected tool call.
 """
 
-from langchain_core.messages import HumanMessage, ToolMessage
+import json
+
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 
-from sql_agent.agent.prompts import REACT_SYSTEM_PROMPT
+from sql_agent.agent.prompts import REACT_SYSTEM_PROMPT, RESPONSE_SYNTHESIS_PROMPT
 from sql_agent.agent.state import AgentState
 from sql_agent.config import settings
 from sql_agent.formatting.audit_logger import log_invocation
@@ -29,10 +31,71 @@ log = get_logger("agent")
 _TOOL_FAIL_MARKERS = ("tool_use_failed", "not in request.tools",
                       "failed to call a function", "invalid_request_error")
 
+_NO_DATA_ANSWER = (
+    "I couldn't find any data for that — the lookup returned no matching records. "
+    "Double-check the customer/deal name or id and I can try again."
+)
+
 
 def _is_tool_call_failure(exc: Exception) -> bool:
     return any(marker in str(exc).lower() for marker in
                (m.lower() for m in _TOOL_FAIL_MARKERS))
+
+
+def _parse_tool_content(content) -> dict | None:
+    if isinstance(content, dict):
+        return content
+    if isinstance(content, str):
+        try:
+            return json.loads(content)
+        except Exception:
+            return None
+    return None
+
+
+def _all_tool_results_empty(tool_messages: list[ToolMessage]) -> bool:
+    """True only when EVERY tool result this turn is a parseable envelope with zero
+    rows and no computed value — i.e. there is nothing for synthesis to write about.
+    An unparseable message is left to the LLM rather than guessed at."""
+    if not tool_messages:
+        return False
+    for m in tool_messages:
+        parsed = _parse_tool_content(m.content)
+        if not isinstance(parsed, dict):
+            return False
+        if parsed.get("status") == "error":
+            continue
+        if parsed.get("rows_returned") not in (0, None) or parsed.get("calculated"):
+            return False
+    return True
+
+
+def _synthesize_final_answer(question: str, tool_messages: list[ToolMessage], cid: str) -> AIMessage:
+    """Dedicated final-answer step (Step.SYNTHESIS), gated by
+    settings.response_synthesis_enabled. Runs on a separate, smaller model with ONLY the
+    question and this turn's retrieved data — no tool schemas, no tool-choice rules
+    competing for its attention — so it can focus entirely on writing a complete answer.
+    Added after gpt-oss-120b, doing double duty as both tool-selector and answer-writer,
+    was observed to under-synthesize (e.g. reporting one field when a "full profile" was
+    asked for and every field was already sitting in the tool result).
+
+    When every tool result this turn is empty (zero rows, no computed value), the
+    "no data found" call is hard-coded here rather than left to the synthesis LLM: a
+    smaller model asked to write a full answer from an envelope that still reads
+    "status": "success" (just with an empty data array) will happily pad one out
+    instead of reporting the miss."""
+    if _all_tool_results_empty(tool_messages):
+        log.info("[%s] SYNTHESIS skipped | all tool results empty", cid)
+        return AIMessage(content=_NO_DATA_ANSWER)
+    data_block = "\n\n".join(
+        f"[{m.name or 'tool_result'}]\n{m.content}" for m in tool_messages
+    ) or "(no data retrieved)"
+    prompt = RESPONSE_SYNTHESIS_PROMPT.format(question=question, tool_results=data_block)
+    synthesis_llm = get_llm(Step.SYNTHESIS)
+    response = synthesis_llm.invoke(prompt)
+    log_usage(Step.SYNTHESIS, response)
+    log.info("[%s] SYNTHESIS final answer | %d chars", cid, len(response.content or ""))
+    return AIMessage(content=response.content)
 
 
 def build_sql_agent_graph(llm=None, checkpointer=None):
@@ -100,10 +163,14 @@ def build_sql_agent_graph(llm=None, checkpointer=None):
                             "valid tool list", cid, str(exc)[:160])
                 correction = HumanMessage(content=(
                     "Your previous tool call was invalid (you called a tool that does "
-                    "not exist or passed malformed arguments). Call ONLY one of these "
-                    f"tools, by exact name: {', '.join(tool_names)}. Resolve any "
-                    "customer/product NAME to its id with the matching get_*_by_name "
-                    "tool first; never pass a name where an *_id argument is expected."
+                    "not exist or passed malformed arguments — it may have been removed "
+                    "from your tool list). Call ONLY one of these tools, by exact name: "
+                    f"{', '.join(tool_names)}. Do NOT default to analytical_query just "
+                    "because your first choice failed — if the question is about ONE "
+                    "named customer/deal/product's own data, use that entity's specific "
+                    "get_* view tool (e.g. get_customer_pricing_recommendations for a "
+                    "customer's pricing); analytical_query is only for cross-row "
+                    "aggregates no fixed tool covers."
                 ))
                 try:
                     response = llm_with_tools.invoke(messages + [correction])
@@ -152,6 +219,11 @@ def build_sql_agent_graph(llm=None, checkpointer=None):
         if chosen:
             log.info("[%s] AGENT selected | %s", cid,
                      ", ".join(f"{n}[{tier_of(n)}]" for n in chosen))
+        elif settings.response_synthesis_enabled and has_tool_result:
+            log.info("[%s] AGENT final answer | no further tools -> synthesis step", cid)
+            tool_msgs = [m for m in current_turn_messages if isinstance(m, ToolMessage)]
+            question = messages[last_human_idx].content if last_human_idx >= 0 else ""
+            response = _synthesize_final_answer(question, tool_msgs, cid)
         else:
             log.info("[%s] AGENT final answer | no further tools", cid)
 
