@@ -7,41 +7,20 @@ import SecurityBadge from "./SecurityBadge";
 import ExecutionPanel from "./ExecutionPanel";
 import type { ChatMessage } from "@/types/mesh";
 
-// Cycles through pipeline stages shown during loading
-const LOADING_STAGES = [
-  { label: "Running input guardrails…",     delay: 0 },
-  { label: "Routing query to agents…",      delay: 1800 },
-  { label: "Checking access control…",      delay: 3600 },
-  { label: "Verifying compliance…",         delay: 5400 },
-  { label: "Querying domain agents…",       delay: 7200 },
-  { label: "Waiting for response…",         delay: 9500 },
-  { label: "Redacting output…",             delay: 12000 },
-];
+const FALLBACK_STAGE = "Processing…";
 
-function ThinkingIndicator() {
-  const [stageIdx, setStageIdx] = useState(0);
+function ThinkingIndicator({ currentStage }: { currentStage?: string }) {
   const [visible, setVisible] = useState(true);
+  const prevStage = useRef<string | undefined>(undefined);
 
+  // Fade out → in whenever the stage label changes
   useEffect(() => {
-    const timers: ReturnType<typeof setTimeout>[] = [];
-
-    LOADING_STAGES.forEach((stage, idx) => {
-      if (idx === 0) return;
-      timers.push(
-        setTimeout(() => {
-          setVisible(false);
-          setTimeout(() => {
-            setStageIdx(idx);
-            setVisible(true);
-          }, 200);
-        }, stage.delay),
-      );
-    });
-
-    return () => timers.forEach(clearTimeout);
-  }, []);
-
-  const stage = LOADING_STAGES[stageIdx];
+    if (currentStage === prevStage.current) return;
+    prevStage.current = currentStage;
+    setVisible(false);
+    const t = setTimeout(() => setVisible(true), 150);
+    return () => clearTimeout(t);
+  }, [currentStage]);
 
   return (
     <div className="flex items-center gap-2.5 py-1 text-muted">
@@ -51,19 +30,17 @@ function ThinkingIndicator() {
           <span
             key={i}
             className="h-2 w-2 rounded-full bg-brand-400 dark:bg-brand-500"
-            style={{
-              animation: `pulse 1.2s ease-in-out ${i * 0.2}s infinite`,
-            }}
+            style={{ animation: `pulse 1.2s ease-in-out ${i * 0.2}s infinite` }}
           />
         ))}
       </span>
       <span
         className={cn(
-          "text-sm transition-opacity duration-200",
+          "text-sm transition-opacity duration-150",
           visible ? "opacity-100" : "opacity-0",
         )}
       >
-        {stage.label}
+        {currentStage ?? FALLBACK_STAGE}
       </span>
     </div>
   );
@@ -261,7 +238,7 @@ const MessageBubble = memo(function MessageBubble({ message, onFeedback }: Messa
           )}
         >
           {message.isLoading ? (
-            <ThinkingIndicator />
+            <ThinkingIndicator currentStage={message.streamingStage} />
           ) : (
             <>
               {/* Security blocked indicator */}
@@ -321,7 +298,9 @@ const MessageBubble = memo(function MessageBubble({ message, onFeedback }: Messa
               )}
 
               {/* Execution trace panel — collapsible, mirrors run.py CLIRenderer output */}
-              {result && <ExecutionPanel result={result} />}
+              {(result || message.streamingEvents?.length) && (
+                <ExecutionPanel result={result} liveEvents={message.streamingEvents} />
+              )}
 
               {/* Feedback bar — shown on non-blocked responses once loaded */}
               {onFeedback && result?.request_id && !isBlocked && (

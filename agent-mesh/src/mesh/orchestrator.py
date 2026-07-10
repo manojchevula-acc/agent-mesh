@@ -17,6 +17,7 @@ carries the context across process boundaries so every node joins one trace.
 The public surface (``handle_request`` + ``MeshResult``) and the ``ask_remote``
 seam are preserved for the offline test suite.
 """
+import asyncio
 import sys
 import time
 import uuid
@@ -36,7 +37,7 @@ from src.utils.console_logger import AgentLogger
 from src.observability import get_logger, CAT_SYSTEM
 from src.observability.baggage import set_request_baggage, detach_baggage
 from src.observability.metrics import record_mesh_request
-from src.mesh.workflow import MeshState, build_mesh_workflow
+from src.mesh.workflow import MeshState, build_mesh_workflow, _stream_queue
 from src.tracing.execution_trace import get_active_tracer
 from src.tracing.llm_reasoning import strip_reasoning_markers
 from src.memory import ConversationStore
@@ -168,6 +169,35 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
         trail=final.trail,
         session_id=session_id,
     )
+
+
+async def handle_request_stream(
+    user: User,
+    query: str,
+    session_id: str | None = None,
+    request_id: str | None = None,
+    event_queue: "asyncio.Queue | None" = None,
+) -> MeshResult:
+    """Same as handle_request() but pushes per-stage events into event_queue for SSE streaming.
+
+    The caller is responsible for reading from event_queue and formatting SSE chunks.
+    A sentinel ``None`` is pushed when the pipeline finishes (or errors), signalling EOF.
+    """
+    token = None
+    if event_queue is not None:
+        token = _stream_queue.set(event_queue)
+    try:
+        result = await handle_request(user, query, session_id, request_id)
+    except Exception:
+        if event_queue is not None:
+            event_queue.put_nowait(None)
+        raise
+    finally:
+        if token is not None:
+            _stream_queue.reset(token)
+    if event_queue is not None:
+        event_queue.put_nowait(None)
+    return result
 
 
 def _root_span(user: User, query: str, session_id: str, request_id: str = ""):

@@ -113,7 +113,17 @@ export interface ChatMessage {
   timestamp: Date;
   isLoading?: boolean;
   feedback?: { rating: "up" | "down"; comment?: string };
+  // Streaming fields — populated incrementally as SSE events arrive
+  streamingStage?: string;
+  streamingEvents?: ExecutionEvent[];
 }
+
+// SSE stream event types from POST /api/query/stream
+export type StreamEvent =
+  | { type: "stage"; stage: string; status: string; message?: string }
+  | { type: "result"; result: MeshResult }
+  | { type: "done" }
+  | { type: "error"; message: string };
 
 export interface NodeHealth {
   name: string;

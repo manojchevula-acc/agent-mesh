@@ -35,6 +35,7 @@ import re
 import sys
 import time
 import pathlib
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, List, Optional
 
@@ -66,6 +67,20 @@ _log = get_logger(CAT_WORKFLOW)
 
 # Type alias for the injected dependency.
 AskRemote = Callable[..., Awaitable[str]]
+
+# Set by handle_request_stream() to forward per-stage events to the SSE endpoint.
+# None in the normal (non-streaming) request path — all emit calls are no-ops.
+_stream_queue: ContextVar[Optional[asyncio.Queue]] = ContextVar("_stream_queue", default=None)
+
+
+def _emit_stream_event(event: dict) -> None:
+    """Push a pipeline progress event to the active SSE queue. No-op when not streaming."""
+    q = _stream_queue.get()
+    if q is not None:
+        try:
+            q.put_nowait(event)
+        except asyncio.QueueFull:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +215,7 @@ class InputGuardrailExecutor(Executor):
         tracer = get_active_tracer()
         if tracer:
             tracer.emit_stage("guardrail", "started", message="Validating input safety...")
+        _emit_stream_event({"stage": "guardrail", "status": "started", "message": "Validating input safety..."})
 
         otel = _mesh_tracer()
         t0 = time.perf_counter()
@@ -239,6 +255,7 @@ class InputGuardrailExecutor(Executor):
                             rationale=list(screen.categories),
                         )
                     record_guardrail("BLOCK", screen.categories[0] if screen.categories else "none", elapsed)
+                    _emit_stream_event({"stage": "guardrail", "status": "blocked", "message": screen.reason[:120]})
                     await ctx.yield_output(state)
                     return
 
@@ -264,6 +281,7 @@ class InputGuardrailExecutor(Executor):
             except Exception as exc:
                 _set_error(span, str(exc)[:200])
                 raise
+        _emit_stream_event({"stage": "guardrail", "status": "completed", "message": "Input validation passed"})
         await ctx.send_message(state)
 
 
@@ -281,6 +299,7 @@ class RBACValidationExecutor(Executor):
         tracer = get_active_tracer()
         if tracer:
             tracer.emit_stage("rbac", "started")
+        _emit_stream_event({"stage": "rbac", "status": "started", "message": "Checking access control..."})
 
         otel = _mesh_tracer()
         t0 = time.perf_counter()
@@ -315,6 +334,7 @@ class RBACValidationExecutor(Executor):
                             result="ACCESS DENIED",
                         )
                     record_rbac("BLOCK", state.role, elapsed)
+                    _emit_stream_event({"stage": "rbac", "status": "blocked", "message": f"Role '{state.role}' is not recognised"})
                     await ctx.yield_output(state)
                     return
 
@@ -338,6 +358,7 @@ class RBACValidationExecutor(Executor):
             except Exception as exc:
                 _set_error(span, str(exc)[:200])
                 raise
+        _emit_stream_event({"stage": "rbac", "status": "completed", "message": f"Role '{state.role}' authorized"})
         await ctx.send_message(state)
 
 
@@ -368,6 +389,7 @@ class ComplianceExecutor(Executor):
             _set_attr(span, "compliance.bypass", bypass)
             try:
                 if bypass:
+                    _emit_stream_event({"stage": "compliance", "status": "started", "message": "Compliance check (bypassed)..."})
                     elapsed = (time.perf_counter() - t0) * 1000
                     _set_attr(span, "compliance.result", "BYPASSED")
                     _add_event(span, "compliance.bypassed", {
@@ -392,6 +414,7 @@ class ComplianceExecutor(Executor):
                             checks=[_check_msg],
                         )
                     record_compliance("BYPASSED", state.role, elapsed)
+                    _emit_stream_event({"stage": "compliance", "status": "completed", "message": "Compliance bypassed"})
                     await ctx.send_message(state)
                     return
 
@@ -401,6 +424,7 @@ class ComplianceExecutor(Executor):
                         "compliance", "started",
                         message="Running semantic compliance check...",
                     )
+                _emit_stream_event({"stage": "compliance", "status": "started", "message": "Running semantic compliance check..."})
 
                 _add_event(span, "compliance.a2a_call.started", {"target": "compliance"})
                 verdict = await self._ask("compliance", f"Review this request for safety: '{state.query}'")
@@ -437,6 +461,7 @@ class ComplianceExecutor(Executor):
                             rationale=[verdict[:120]],
                         )
                     record_compliance("FAILED", state.role, elapsed)
+                    _emit_stream_event({"stage": "compliance", "status": "blocked", "message": "Compliance check failed"})
                     await ctx.yield_output(state)
                     return
 
@@ -464,6 +489,7 @@ class ComplianceExecutor(Executor):
             except Exception as exc:
                 _set_error(span, str(exc)[:200])
                 raise
+        _emit_stream_event({"stage": "compliance", "status": "completed", "message": "Compliance check passed"})
         await ctx.send_message(state)
 
 
@@ -533,6 +559,11 @@ class DomainExecutor(Executor):
                     "domain_classification", "started",
                     message="Analyzing intent...",
                 )
+        _emit_stream_event({
+            "stage": "domain",
+            "status": "started",
+            "message": "Routing directly to Data Agent..." if self._bypass_price_assist else "Querying domain agents...",
+        })
 
         otel = _mesh_tracer()
         with _span_ctx(otel, "fab.domain.dispatch", kind_internal=False) as span:
@@ -879,6 +910,7 @@ class DomainExecutor(Executor):
             elif failed:
                 record_a2a_call(_target_node, "ERROR", float(total_ms))
 
+        _emit_stream_event({"stage": "domain", "status": "completed", "message": "Domain agent responded"})
         await ctx.send_message(state)
 
 
@@ -887,6 +919,7 @@ class OutputRedactionExecutor(Executor):
 
     @handler
     async def run(self, state: MeshState, ctx: WorkflowContext[Never, MeshState]) -> None:
+        _emit_stream_event({"stage": "output_redaction", "status": "started", "message": "Redacting output..."})
         otel = _mesh_tracer()
         with _span_ctx(otel, "fab.output.redact", kind_internal=True) as span:
             original_len = len(state.answer or "")
@@ -913,6 +946,7 @@ class OutputRedactionExecutor(Executor):
         state.trail.append("output_redacted")
         _log.info("Request complete trail=%s", " -> ".join(state.trail),
                   extra={"user": state.user_name, "status": "SUCCESS"})
+        _emit_stream_event({"stage": "output_redaction", "status": "completed", "message": "Response ready"})
         await ctx.yield_output(state)
 
 

@@ -1,4 +1,5 @@
 import { apiClient } from "@/lib/apiClient";
+import { config } from "@/lib/config";
 import type {
   AuditDetailRecord,
   AuditListResponse,
@@ -11,6 +12,7 @@ import type {
   MeshResult,
   MeshUser,
   NodeHealth,
+  StreamEvent,
   TraceListResponse,
 } from "@/types/mesh";
 
@@ -25,6 +27,80 @@ export async function queryMesh(
     ...(sessionId ? { session_id: sessionId } : {}),
   });
   return data;
+}
+
+/**
+ * Streams pipeline stage events via SSE, then yields a final "result" event
+ * containing the full MeshResult. Uses native fetch (Axios doesn't support SSE).
+ */
+export async function* queryMeshStream(
+  username: string,
+  query: string,
+  sessionId?: string,
+): AsyncGenerator<StreamEvent> {
+  const url = `${config.apiBaseURL}/api/query/stream`;
+  const body = JSON.stringify({ username, query, ...(sessionId ? { session_id: sessionId } : {}) });
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+  } catch {
+    yield { type: "error", message: "Cannot reach the API server. Is the backend running?" };
+    return;
+  }
+
+  if (!response.ok || !response.body) {
+    yield { type: "error", message: `Server error: ${response.status}` };
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // SSE messages are separated by double newlines
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() ?? "";
+
+      for (const part of parts) {
+        if (!part.trim()) continue;
+        let eventType = "message";
+        let dataLine = "";
+        for (const line of part.split("\n")) {
+          if (line.startsWith("event: ")) eventType = line.slice(7).trim();
+          else if (line.startsWith("data: ")) dataLine = line.slice(6).trim();
+        }
+        if (!dataLine) continue;
+        try {
+          const data = JSON.parse(dataLine);
+          if (eventType === "stage") {
+            yield { type: "stage", stage: data.stage, status: data.status, message: data.message };
+          } else if (eventType === "result") {
+            yield { type: "result", result: data as MeshResult };
+          } else if (eventType === "done") {
+            yield { type: "done" };
+            return;
+          } else if (eventType === "error") {
+            yield { type: "error", message: data.message ?? "Unknown error" };
+          }
+        } catch {
+          // Malformed JSON chunk — skip
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 export async function getConversation(sessionId: string): Promise<ConversationHistory> {

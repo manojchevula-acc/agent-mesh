@@ -50,14 +50,14 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 
 from src.a2a.hosting import TraceContextMiddleware
 from src.auth.identity_provider import login, list_users
 from src.config import Config
 from src.feedback.store import record_feedback
-from src.mesh.orchestrator import handle_request
+from src.mesh.orchestrator import handle_request, handle_request_stream
 from src.memory import ConversationStore
 from src.observability import get_logger, CAT_SYSTEM, flush_observability
 from src.tracing.execution_trace import ExecutionTracer, set_active_tracer, clear_active_tracer
@@ -687,6 +687,90 @@ async def _lifespan(app):
 _API_SERVER_HOST = os.getenv("API_SERVER_HOST", "127.0.0.1")
 _API_SERVER_PORT = int(os.getenv("API_SERVER_PORT", "8000"))
 
+async def post_query_stream(request: Request) -> StreamingResponse:
+    """SSE endpoint — streams one event per pipeline stage as it completes.
+
+    Body: same as POST /api/query — {username, query, session_id?}
+
+    SSE event types emitted in order:
+      event: stage   data: {"stage":str, "status":"started"|"completed"|"blocked", "message":str}
+      event: result  data: <full MeshResult JSON — same shape as POST /api/query response>
+      event: done    data: {}
+      event: error   data: {"message": str}
+    """
+    try:
+        body = await request.json()
+        username = str(body.get("username", "bob")).strip() or "bob"
+        query = str(body.get("query", "")).strip()
+        session_id = str(body.get("session_id", "")).strip() or None
+    except Exception:
+        async def _err_body():
+            yield 'event: error\ndata: {"message": "Invalid JSON body"}\n\n'
+        return StreamingResponse(_err_body(), media_type="text/event-stream")
+
+    if not query:
+        async def _err_empty():
+            yield 'event: error\ndata: {"message": "query must not be empty"}\n\n'
+        return StreamingResponse(_err_empty(), media_type="text/event-stream")
+
+    user = login(username)
+    shared_request_id = uuid.uuid4().hex[:8].upper()
+    event_queue: asyncio.Queue = asyncio.Queue(maxsize=64)
+
+    tracer = ExecutionTracer(user=user.username, query=query, request_id=shared_request_id)
+    token = set_active_tracer(tracer)
+
+    # Background task inherits the current context (including active tracer ContextVar),
+    # so handle_request() inside it will see and populate the same tracer instance.
+    pipeline_task = asyncio.ensure_future(
+        handle_request_stream(user, query, session_id, request_id=shared_request_id, event_queue=event_queue)
+    )
+
+    async def _sse_generator():
+        try:
+            while True:
+                item = await event_queue.get()
+                if item is None:
+                    # Sentinel — pipeline finished. Await task for the MeshResult.
+                    try:
+                        result = await pipeline_task
+                    except Exception as exc:
+                        _log.exception("stream pipeline error: %s", exc)
+                        yield f"event: error\ndata: {json.dumps({'message': str(exc)})}\n\n"
+                        yield "event: done\ndata: {}\n\n"
+                        return
+                    summary = tracer.summary()
+                    result_payload = {
+                        "answer": result.answer,
+                        "blocked": result.blocked,
+                        "block_stage": result.block_stage,
+                        "trail": result.trail,
+                        "session_id": result.session_id,
+                        "request_id": summary.request_id,
+                        "domain": summary.domain,
+                        "route": summary.route,
+                        "execution_path": summary.execution_path,
+                        "agents_invoked": summary.agents_invoked,
+                        "tools_used": summary.tools_used,
+                        "total_duration_ms": summary.total_duration_ms,
+                        "confidence": summary.confidence,
+                        "events": [dataclasses.asdict(e) for e in summary.events],
+                        "llm_reasoning": summary.llm_reasoning,
+                    }
+                    yield f"event: result\ndata: {json.dumps(result_payload)}\n\n"
+                    yield "event: done\ndata: {}\n\n"
+                    break
+                yield f"event: stage\ndata: {json.dumps(item)}\n\n"
+        finally:
+            clear_active_tracer(token)
+
+    return StreamingResponse(
+        _sse_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 _CORS_ORIGINS = [
     "http://localhost:5173",   # Vite dev server
     "http://127.0.0.1:5173",
@@ -710,6 +794,7 @@ app = Starlette(
         Route("/api/users",            get_users,           methods=["GET"]),
         Route("/api/login",            post_login,          methods=["POST"]),
         Route("/api/query",            post_query,          methods=["POST"]),
+        Route("/api/query/stream",     post_query_stream,   methods=["POST"]),
         Route("/api/logs",                       get_logs_list,            methods=["GET"]),
         Route("/api/audit",                      get_audit_list,           methods=["GET"]),
         Route("/api/audit/{request_id}",         get_audit_detail,         methods=["GET"]),
