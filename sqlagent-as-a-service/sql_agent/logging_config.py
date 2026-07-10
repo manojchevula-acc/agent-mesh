@@ -40,6 +40,16 @@ def setup_logging(level: str | None = None) -> None:
         datefmt="%H:%M:%S",
     )
 
+    # LLM output routinely contains Unicode typographic characters (non-breaking
+    # hyphens, en/em dashes, curly quotes) that Windows' default cp1252 console/file
+    # encoding cannot represent — left unhandled this raises UnicodeEncodeError from
+    # inside the logging module itself, dropping the log line and spraying a
+    # "--- Logging error ---" traceback in its place. Force UTF-8 on both handlers.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+    except (AttributeError, ValueError):
+        pass  # stream doesn't support reconfigure (e.g. some redirected/piped setups)
+
     stream_handler = logging.StreamHandler(sys.stdout)
     stream_handler.setFormatter(formatter)
 
@@ -54,6 +64,7 @@ def setup_logging(level: str | None = None) -> None:
             settings.log_file,
             maxBytes=settings.log_file_max_bytes,
             backupCount=settings.log_file_backup_count,
+            encoding="utf-8",
         )
         file_handler.setFormatter(formatter)
         root.addHandler(file_handler)

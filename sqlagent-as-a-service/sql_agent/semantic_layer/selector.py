@@ -100,10 +100,20 @@ def _rrf(rankings: list[list[str]], k: int) -> list[str]:
     return sorted(fused, key=lambda t: fused[t], reverse=True)
 
 
-def select_tables(question: str, tables_hint: list[str] | None = None) -> set[str]:
-    """Return the candidate table set for a dynamic-tier question."""
+def select_tables(
+    question: str, tables_hint: list[str] | None = None, top_k: int | None = None
+) -> set[str]:
+    """Return the candidate table set for a dynamic-tier question.
+
+    ``top_k`` overrides ``settings.embedding_top_k`` for this call only — used by the
+    widen-and-retry path (query_engine.py) to pull a bigger-but-still-bounded slice of
+    the SAME already-computed fused ranking, instead of falling back to literally every
+    table in the schema (which is the single largest, most expensive prompt component
+    and was blowing the provider's per-minute token budget on retries)."""
     if not settings.schema_retrieval_enabled:
         return set(ALLOWED_TABLES)  # current behaviour: full schema
+
+    k = top_k if top_k is not None else settings.embedding_top_k
 
     try:
         q = glossary_expand(question)
@@ -114,7 +124,7 @@ def select_tables(question: str, tables_hint: list[str] | None = None) -> set[st
 
     # Core candidates = the top-K by fused RRF rank (kept in rank order, best first),
     # plus any tables the intent classifier hinted.
-    core = [t for t in fused if t in ALLOWED_TABLES][: settings.embedding_top_k]
+    core = [t for t in fused if t in ALLOWED_TABLES][:k]
     for t in tables_hint or []:
         if t in ALLOWED_TABLES and t not in core:
             core.append(t)

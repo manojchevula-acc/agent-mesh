@@ -13,6 +13,7 @@ from sql_agent.config import settings
 from sql_agent.semantic_layer.loader import (
     ALLOWED_TABLES,
     BLOCKED_COLUMNS,
+    VIEW_TABLES,
     table_columns,
 )
 
@@ -57,6 +58,7 @@ class SQLValidator:
         self._check_4_column_filter(ast)
         self._check_5_injection_scan(sql)
         sql = self._check_6_row_cap(sql, ast)
+        self._check_9_view_join_scope(ast)
         if settings.join_graph_check_enabled and allowed_join_pairs is not None:
             self._check_7_join_graph(ast, allowed_join_pairs)
         if settings.column_binding_check_enabled and strict_columns:
@@ -151,6 +153,34 @@ class SQLValidator:
                 raise ColumnNotInTableError(
                     f"Column '{col.name}' does not belong to table '{real}'"
                 )
+
+    # 9. View-join scope check — always on, every tier (defence in depth; hand-written
+    # tool SQL never joins a view anyway, so this only ever fires for the dynamic tier).
+    # A view may be joined to customer_master ONLY — declared per-view in schema.yaml,
+    # for a customer dimension attribute (e.g. industry, region) the view itself lacks —
+    # and NEVER chained to a third table. Without this, check #7's per-edge validation
+    # alone would permit a 2-hop path like view -> customer_master -> historical_deals
+    # (both edges individually declared), which would silently fan out the view's rows
+    # by that customer's deal count instead of just adding lookup columns.
+    def _check_9_view_join_scope(self, ast) -> None:
+        tables = {t.name.lower() for t in ast.find_all(sqlglot.exp.Table)}
+        views_in_query = tables & VIEW_TABLES
+        if not views_in_query:
+            return
+        # Checked BEFORE the "others" early-return: two views with no base table present
+        # (others would be empty) is still exactly the case this must catch.
+        if len(views_in_query) > 1:
+            raise JoinNotAllowedError(
+                f"Cannot join views to each other: {views_in_query}"
+            )
+        others = tables - views_in_query
+        if not others:
+            return  # view queried standalone — the normal case
+        if others != {"customer_master"}:
+            raise JoinNotAllowedError(
+                f"View {views_in_query} may only be joined to customer_master "
+                f"(for a customer attribute it lacks), not {others}"
+            )
 
     @staticmethod
     def _alias_map(ast) -> dict:

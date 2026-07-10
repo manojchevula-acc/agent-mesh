@@ -19,7 +19,8 @@ def _render_column(table_name: str, col) -> str:
         bits.append(f"format={col.format!r}")
     meta = ", ".join(bits)
     desc = f" — {col.desc}" if col.desc else ""
-    return f"    - {col.name} ({meta}){desc}"
+    note = f" [NOTE: {col.note}]" if col.note else ""
+    return f"    - {col.name} ({meta}){desc}{note}"
 
 
 def render_schema_context(
@@ -45,9 +46,14 @@ def render_schema_context(
         # connection's default schema. Views are labelled so the generator prefers a
         # single pre-joined view and never tries to join one.
         if table.is_view:
+            join_note = (
+                " — may ALSO be joined to customer_master (see joins: below) for a "
+                "customer attribute (e.g. industry, region) this view lacks; never to "
+                "anything else" if table.joins else ", do NOT join"
+            )
             lines.append(
                 f"VIEW {table.qualified_name}  (grain: {table.grain}; pk: "
-                f"{table.primary_key})  [pre-joined read model — query STANDALONE, do NOT join]"
+                f"{table.primary_key})  [pre-joined read model — query STANDALONE{join_note}]"
             )
         else:
             lines.append(

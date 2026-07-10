@@ -21,6 +21,7 @@ from sql_agent.formatting import format_error, format_response
 from sql_agent.llm import Step, get_llm, log_usage
 from sql_agent.logging_config import get_logger
 from sql_agent.semantic_layer.joins import resolve_joins
+from sql_agent.semantic_layer.loader import join_closure
 from sql_agent.semantic_layer.renderer import render_schema_context
 from sql_agent.semantic_layer.schema_link import link_schema
 from sql_agent.semantic_layer.selector import select_tables
@@ -81,6 +82,23 @@ def _plan_schema(question: str, tables_hint: list[str] | None):
     return schema_context, join_clauses, allowed_pairs
 
 
+def _widen_schema(question: str, tables_hint: list[str] | None):
+    """Bounded widen for a self-correction retry.
+
+    Re-slices the SAME already-computed retrieval ranking (selector.py) to
+    ``schema_retrieval_widen_top_k`` candidates instead of falling back to literally
+    every table/view in the schema — rendering the full schema is the single largest
+    prompt component and was blowing the provider's per-minute token budget on retries.
+    No extra LLM call: schema-link is deliberately skipped here (a little precision
+    traded for materially fewer tokens on what is already a retry). join_closure is
+    still applied so a widened join target never ends up missing its bridge table.
+    """
+    candidates = select_tables(question, tables_hint, top_k=settings.schema_retrieval_widen_top_k)
+    used_tables = join_closure(candidates)
+    schema_context = render_schema_context(tables=used_tables)
+    return schema_context, [], None
+
+
 def run_dynamic_pipeline(question: str, tables_hint: list[str] | None = None) -> dict:
     """Retrieve -> link -> resolve joins -> render -> generate -> validate ->
     (self-correct) -> execute -> judge -> format, for tier-3.
@@ -107,6 +125,13 @@ def run_dynamic_pipeline(question: str, tables_hint: list[str] | None = None) ->
     max_attempts = settings.max_self_correction_attempts
     previous_sql = ""
     last_error = "unknown"
+    # True until we've widened the schema slice at least once. A CANNOT_ANSWER verdict
+    # against the original retrieval-narrowed slice (Component B) may simply mean the
+    # slice is missing the table/view that actually covers the question, not that no
+    # coverage exists at all — so the first such verdict earns one bounded widen-and-
+    # retry, same as a validator/DB error does below. A second CANNOT_ANSWER, now
+    # against the widened slice, is trusted as a genuine "no coverage" verdict.
+    narrowed = settings.schema_retrieval_enabled
     # A validator-clean result the judge was not satisfied with. It is the best-effort
     # answer to fall back to if self-correction exhausts — an answer-alignment doubt must
     # never turn a safe, executable result into a hard failure.
@@ -123,6 +148,13 @@ def run_dynamic_pipeline(question: str, tables_hint: list[str] | None = None) ->
 
         if sql.startswith("-- CANNOT_ANSWER"):
             reason = sql.split(":", 1)[-1].strip() if ":" in sql else "out of allowed schema"
+            if narrowed:
+                log.info("DYNAMIC cannot-answer on narrowed schema | widening "
+                         "(bounded) and retrying | reason=%s", reason)
+                schema_context, join_clauses, allowed_pairs = _widen_schema(question, tables_hint)
+                narrowed = False
+                prompt = _base_prompt(schema_context, join_clauses)
+                continue
             log.info("DYNAMIC cannot answer | reason=%s", reason)
             return format_error("ValidationError",
                                 f"Cannot answer from allowed schema: {reason}",
@@ -141,10 +173,12 @@ def run_dynamic_pipeline(question: str, tables_hint: list[str] | None = None) ->
             log.warning("DYNAMIC retryable | %s: %s | self-correcting",
                         type(exc).__name__, exc)
             previous_sql, last_error = sql, str(exc)
-            # Widen back to full schema so an under-selection cannot starve the fix; drop
-            # the narrow join constraint accordingly (invented joins still rejected by the
-            # table whitelist). Append the validator's exact error and regenerate.
-            schema_context, join_clauses, allowed_pairs = render_schema_context(), [], None
+            # Widen (bounded — see _widen_schema) so an under-selection cannot starve
+            # the fix; drop the narrow join constraint accordingly (invented joins are
+            # still rejected by the table whitelist). Append the validator's exact
+            # error and regenerate.
+            schema_context, join_clauses, allowed_pairs = _widen_schema(question, tables_hint)
+            narrowed = False
             prompt = (
                 _base_prompt(schema_context, join_clauses)
                 + "\n\n"
@@ -158,12 +192,13 @@ def run_dynamic_pipeline(question: str, tables_hint: list[str] | None = None) ->
             # (e.g. a column referenced on the wrong table -> "Unknown column 'hd.x'"). The
             # validator only checks the global column allow-list, not column-to-table
             # binding, so these surface here. Feed the DB's own error back for a bounded
-            # self-correction instead of failing hard. Full schema so the model can see
-            # which table actually owns the column.
+            # self-correction instead of failing hard. Widened (bounded) schema so the
+            # model can see which table actually owns the column.
             db_error = str(getattr(exc, "orig", exc))
             log.warning("DYNAMIC db-exec error | %s | self-correcting", db_error)
             previous_sql, last_error = sql, db_error
-            schema_context, join_clauses, allowed_pairs = render_schema_context(), [], None
+            schema_context, join_clauses, allowed_pairs = _widen_schema(question, tables_hint)
+            narrowed = False
             prompt = (
                 _base_prompt(schema_context, join_clauses)
                 + "\n\n"

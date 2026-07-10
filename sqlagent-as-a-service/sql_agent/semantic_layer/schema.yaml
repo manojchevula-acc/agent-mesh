@@ -175,12 +175,12 @@ tables:
       won_deals:                    {type: int,   filterable: false, desc: "Number of won deals"}
       lost_deals:                   {type: int,   filterable: false, desc: "Number of lost deals"}
       total_deal_volume_aed:        {type: int,   unit: AED, filterable: false, desc: "Sum of requested amounts across deals"}
-      avg_deal_size_aed:            {type: float, unit: AED, filterable: false, desc: "Average requested amount per deal"}
-      avg_expected_margin_pct:      {type: float, unit: pct, filterable: false, desc: "Average expected margin across deals"}
-      avg_approved_price_pct:       {type: float, unit: pct, filterable: false, desc: "Average final approved price across deals"}
-      avg_relationship_discount_pct: {type: float, unit: pct, filterable: false, desc: "Average relationship discount across deals"}
+      avg_deal_size_aed:            {type: float, unit: AED, filterable: false, desc: "Average requested amount per deal", note: "Pre-aggregated at CUSTOMER grain (one value per customer). For a population-level average across many customers, AVG() of this column is an unweighted average-of-averages, NOT the true deal-weighted average. For a population statistic, aggregate the deal-grain rows in pricing_recommendation_view/margin_analysis instead."}
+      avg_expected_margin_pct:      {type: float, unit: pct, filterable: false, desc: "Average expected margin across deals", note: "Pre-aggregated at CUSTOMER grain. AVG() of this column across customers is an unweighted average-of-averages, NOT the true deal-weighted average. For a population statistic (e.g. 'average margin across all Corporate customers'), aggregate expected_margin_pct from pricing_recommendation_view/margin_analysis (deal grain) instead."}
+      avg_approved_price_pct:       {type: float, unit: pct, filterable: false, desc: "Average final approved price across deals", note: "Pre-aggregated at CUSTOMER grain — do not re-AVG() across customers for a population statistic; use deal-grain pricing_recommendation_view instead."}
+      avg_relationship_discount_pct: {type: float, unit: pct, filterable: false, desc: "Average relationship discount across deals", note: "Pre-aggregated at CUSTOMER grain — do not re-AVG() across customers for a population statistic; use deal-grain data instead."}
       last_deal_date:               {type: date,  filterable: true, desc: "Date of the most recent deal"}
-      win_rate_pct:                 {type: float, unit: pct, filterable: false, desc: "Won deals / total deals * 100"}
+      win_rate_pct:                 {type: float, unit: pct, filterable: false, desc: "Won deals / total deals * 100", note: "Pre-aggregated at CUSTOMER grain — AVG() of this across customers is NOT the true won/total rate for the population; sum won_deals and total_deals separately across the population and divide instead."}
     blocked_columns: []
 
   # V2 ---------------------------------------------------------------------------
@@ -226,6 +226,8 @@ tables:
       discount_exceeds_policy:       {type: bool,  filterable: true, desc: "True if relationship discount > policy cap"}
       policy_compliant:              {type: bool,  filterable: true, desc: "True if the deal breached no policy rule"}
     blocked_columns: []
+    joins:
+      customer_master: "customer_id -> customer_master.customer_id"
 
   # V3 ---------------------------------------------------------------------------
   margin_analysis:
@@ -261,6 +263,8 @@ tables:
       min_expected_margin_pct:     {type: float, unit: pct, filterable: false, desc: "Applicable policy minimum expected margin"}
       margin_below_minimum:        {type: bool,  filterable: true,  desc: "True if expected margin < policy minimum expected margin"}
     blocked_columns: []
+    joins:
+      customer_master: "customer_id -> customer_master.customer_id"
 
   # V4 ---------------------------------------------------------------------------
   profitability_summary:
@@ -281,9 +285,11 @@ tables:
       operating_cost_aed:        {type: float, unit: AED, filterable: false, desc: "Sum of amount * operational cost margin"}
       capital_cost_aed:          {type: float, unit: AED, filterable: false, desc: "Basel III capital cost on RWA for the group"}
       net_profit_aed:            {type: float, unit: AED, filterable: false, desc: "Revenue minus funding, risk premium, discount and ops cost"}
-      avg_net_margin_pct:        {type: float, unit: pct, filterable: false, desc: "Average net margin"}
+      avg_net_margin_pct:        {type: float, unit: pct, filterable: false, desc: "Average net margin", note: "Pre-aggregated at CUSTOMER x PRODUCT_TYPE grain — AVG() of this column across rows is an unweighted average-of-averages, NOT the true deal-weighted average. For a population statistic, aggregate deal-grain net margin from margin_analysis instead, or weight by total_won_deals."}
       profitability_tier:        {type: enum,  values: [Loss-Making, Low, Medium, High], filterable: true, desc: "Tier by average net margin"}
     blocked_columns: []
+    joins:
+      customer_master: "customer_id -> customer_master.customer_id"
 
   # V5 ---------------------------------------------------------------------------
   rwa_impact_view:
@@ -312,6 +318,8 @@ tables:
       final_approved_price_pct: {type: float, unit: pct, filterable: false, desc: "Final approved price"}
       expected_margin_pct:      {type: float, unit: pct, filterable: false, desc: "Expected margin on the deal"}
     blocked_columns: []
+    joins:
+      customer_master: "customer_id -> customer_master.customer_id"
 
   # V6 ---------------------------------------------------------------------------
   segment_pricing_benchmark:
@@ -411,6 +419,8 @@ tables:
       last_agent_recommendation: {type: str,  filterable: false, desc: "Most recent agent recommendation from the negotiation"}
       rm_note:                  {type: str,   filterable: false, desc: "Relationship manager note"}
     blocked_columns: []
+    joins:
+      customer_master: "customer_id -> customer_master.customer_id"
 
   # V10 --------------------------------------------------------------------------
   pricing_trace_view:
@@ -437,6 +447,8 @@ tables:
       approved_price_pct:               {type: float, unit: pct, filterable: false, desc: "Final approved price"}
       explanation_text:                 {type: str,   filterable: false, desc: "Human-readable price build-up sentence"}
     blocked_columns: []
+    joins:
+      customer_master: "customer_id -> customer_master.customer_id"
 
   # V11 --------------------------------------------------------------------------
   relationship_discount_view:
@@ -458,6 +470,8 @@ tables:
       approval_required:                       {type: bool,  filterable: true, desc: "True if discount exceeds the approval threshold"}
       eligibility_reason:                      {type: str,   filterable: false, desc: "Explanation of the eligibility verdict"}
     blocked_columns: []
+    joins:
+      customer_master: "customer_id -> customer_master.customer_id"
 
   # V12 --------------------------------------------------------------------------
   win_loss_insights:
@@ -474,13 +488,15 @@ tables:
       total_deals:                    {type: int,   filterable: false, desc: "Total deals for this customer+product"}
       won_deals:                      {type: int,   filterable: false, desc: "Won deal count"}
       lost_deals:                     {type: int,   filterable: false, desc: "Lost deal count"}
-      win_rate_pct:                   {type: float, unit: pct, filterable: false, desc: "Won / total * 100"}
-      avg_approved_price_pct:         {type: float, unit: pct, filterable: false, desc: "Average final approved price"}
-      avg_recommended_price_pct:      {type: float, unit: pct, filterable: false, desc: "Average recommended price"}
-      avg_price_gap_pct:              {type: float, unit: pct, filterable: false, desc: "Average (approved - recommended) price gap"}
-      avg_expected_margin_pct:        {type: float, unit: pct, filterable: false, desc: "Average expected margin"}
-      avg_competitor_offer_rate_pct:  {type: float, unit: pct, filterable: false, desc: "Average competitor offer rate from negotiation memory"}
+      win_rate_pct:                   {type: float, unit: pct, filterable: false, desc: "Won / total * 100", note: "Pre-aggregated at CUSTOMER x PRODUCT grain — AVG() across rows is NOT the true won/total rate for a broader population; sum won_deals and total_deals across the population and divide instead."}
+      avg_approved_price_pct:         {type: float, unit: pct, filterable: false, desc: "Average final approved price", note: "Pre-aggregated at CUSTOMER x PRODUCT grain — do not re-AVG() across rows for a population statistic; use deal-grain pricing_recommendation_view instead."}
+      avg_recommended_price_pct:      {type: float, unit: pct, filterable: false, desc: "Average recommended price", note: "Pre-aggregated at CUSTOMER x PRODUCT grain — do not re-AVG() across rows for a population statistic; use deal-grain data instead."}
+      avg_price_gap_pct:              {type: float, unit: pct, filterable: false, desc: "Average (approved - recommended) price gap", note: "Pre-aggregated at CUSTOMER x PRODUCT grain — do not re-AVG() across rows for a population statistic."}
+      avg_expected_margin_pct:        {type: float, unit: pct, filterable: false, desc: "Average expected margin", note: "Pre-aggregated at CUSTOMER x PRODUCT grain — do not re-AVG() across rows for a population statistic; use deal-grain pricing_recommendation_view/margin_analysis instead."}
+      avg_competitor_offer_rate_pct:  {type: float, unit: pct, filterable: false, desc: "Average competitor offer rate from negotiation memory", note: "Pre-aggregated at CUSTOMER x PRODUCT grain — do not re-AVG() across rows for a population statistic."}
     blocked_columns: []
+    joins:
+      customer_master: "customer_id -> customer_master.customer_id"
 
   # V13 --------------------------------------------------------------------------
   policy_exception_view:
@@ -511,6 +527,8 @@ tables:
       is_exception:                             {type: bool,  filterable: true, desc: "True if the deal breached any policy rule"}
       exception_reason:                         {type: str,   filterable: false, desc: "Pipe-delimited list of breached rules"}
     blocked_columns: []
+    joins:
+      customer_master: "customer_id -> customer_master.customer_id"
 
   # V14 --------------------------------------------------------------------------
   cross_sell_opportunity:
@@ -555,6 +573,8 @@ tables:
       floating_rate_required_flag:  {type: bool,  filterable: true, desc: "True if a floating rate is now required"}
       credit_review_required_flag:  {type: bool,  filterable: true, desc: "True if a credit review is now required"}
     blocked_columns: []
+    joins:
+      customer_master: "customer_id -> customer_master.customer_id"
 
   # V16 --------------------------------------------------------------------------
   similar_customer_pricing:

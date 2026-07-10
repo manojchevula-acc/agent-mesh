@@ -235,11 +235,27 @@ HARD CONSTRAINTS
   prefix — an unqualified name will resolve to the wrong schema and fail.
 - PREFER a single pre-joined VIEW (marked "VIEW ... query STANDALONE") when one fully
   answers the question — it already has the joined/enriched columns, so no JOIN is needed.
-- NEVER join a VIEW to anything. Views are already joined; a view must appear alone in
-  FROM. Only base TABLEs may be joined. Respect a view's grain/population.
+- A VIEW may be joined to customer_master ONLY when customer_master is listed under that
+  view's own "joins:" line above, AND the question needs a customer attribute (e.g.
+  industry, region) that is NOT already a column on the view — check the view's column
+  list first. This is the ONE exception. Never join a view to any other table, never join
+  two views together, and never add a third table to a view+customer_master join — the
+  view is grain-one-row-per-<entity> and customer_master is grain-one-row-per-customer, so
+  this specific join cannot duplicate or drop rows, but chaining a further table onto
+  customer_master (e.g. historical_deals) WOULD silently fan out the view's rows. Every
+  other VIEW must appear alone in FROM. Only base TABLEs may otherwise be joined. Respect
+  a view's grain/population.
 - When you DO join base tables, qualify every column with the table that actually owns it
   (e.g. customer_segment is on customer_master, not historical_deals).
 - Use the declared join keys exactly. Do not invent relationships.
+- Before applying AVG()/SUM() to any column, check its schema note. A column already named
+  avg_*/win_rate_pct/etc. at a coarser grain (e.g. one row per customer, or per customer x
+  product) is a PRE-AGGREGATE — re-averaging it across rows is an unweighted average-of-
+  averages, NOT the true population statistic, and will give a WRONG number even though the
+  query runs without error. When a column's note flags this, aggregate the underlying
+  deal-grain table/view instead (e.g. pricing_recommendation_view, margin_analysis), never
+  the pre-aggregate, for any question asking about a statistic "across" or "for all" some
+  population.
 - Always include a LIMIT of at most 50 rows.
 - The SQL MUST be valid for {dialect}. Follow these dialect rules exactly:
 {dialect_notes}
@@ -305,8 +321,13 @@ Return a strict JSON query plan:
     "group_by": ["..."], "aggregations": ["AVG(col)"], "filters": ["col = 'value'"]}}
 
 Hard rules:
-- NEVER put a VIEW in join_path. Views are already joined; joining a view is rejected.
-  Only base TABLEs may appear in a join_path. If you pick a view, use it ALONE.
+- A VIEW may appear in join_path paired with customer_master ONLY, and ONLY when the
+  question needs a customer attribute (industry, region, etc.) missing from the view's own
+  columns — check the view's "joins:" line to confirm customer_master is listed there
+  first. Never pair a view with any other table, never pair two views together, and never
+  add a third table to a view+customer_master pair. Otherwise: joining a view is rejected;
+  only base TABLEs may appear in a join_path; if you pick a view for any other reason, use
+  it ALONE.
 - Respect each object's grain/population (e.g. some views contain WON deals only).
 - join_path lists table PAIRS to connect; do NOT specify join keys (resolved elsewhere).
 - If the candidates cannot answer the question, return {{"tables": []}}.

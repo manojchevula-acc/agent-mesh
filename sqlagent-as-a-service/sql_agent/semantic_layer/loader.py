@@ -250,3 +250,8 @@ ALLOWED_COLUMNS: frozenset[str] = frozenset(
     for col in table.columns.values()
 )
 BLOCKED_COLUMNS: frozenset[str] = _LAYER.blocked_columns
+# fab_semantic views (vs base fab_curated tables) — the validator uses this to enforce
+# that a view may only ever be joined to customer_master, never to any other table.
+VIEW_TABLES: frozenset[str] = frozenset(
+    name for name, table in _LAYER.tables.items() if table.is_view
+)

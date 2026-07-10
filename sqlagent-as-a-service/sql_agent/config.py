@@ -137,6 +137,16 @@ class Settings(BaseSettings):
     rrf_k: int = 60                           # Reciprocal Rank Fusion constant
     schema_link_enabled: bool = True          # LLM precision step over candidates
 
+    # Bounded widen for the dynamic-tier self-correction retry (query_engine.py). On a
+    # validator error, DB error, or CANNOT_ANSWER against the narrow retrieval slice,
+    # the retry re-selects this many candidates instead of falling back to literally
+    # every table/view in the schema — the full-schema render is the single biggest
+    # prompt component and was blowing the provider's per-minute token budget on
+    # retries. Keep well under embedding_top_k*3 (the dense-ranking pool size in
+    # selector.py) so there is always enough already-computed candidate depth to widen
+    # into without an extra retrieval pass.
+    schema_retrieval_widen_top_k: int = 14
+
     # Vector index — WHERE the schema embeddings live / are searched (separate from the
     # embedding model, which is HOW documents are vectorised).
     vector_backend: str = "memory"            # memory | faiss | qdrant
