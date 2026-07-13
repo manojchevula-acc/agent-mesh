@@ -166,21 +166,46 @@ class AuditMiddleware(AgentMiddleware):
             except Exception:
                 pass
 
+            # Extract token usage from agent response when the framework exposes it.
+            input_tokens = output_tokens = 0
+            tokens_estimated = False
+            try:
+                usage = getattr(context.result, "usage_details", None)
+                if usage is not None:
+                    input_tokens  = int(getattr(usage, "input_token_count",  0) or 0)
+                    output_tokens = int(getattr(usage, "output_token_count", 0) or 0)
+            except Exception:
+                pass
+
+            # Fallback: estimate from character length when usage_details is unavailable.
+            # ~4 characters per token is a conservative estimate for English LLM text.
+            if input_tokens == 0 and output_tokens == 0:
+                input_text    = " ".join(scrubbed_inputs)
+                input_tokens  = max(1, len(input_text)     // 4) if input_text     else 0
+                output_tokens = max(1, len(scrubbed_output) // 4) if scrubbed_output else 0
+                tokens_estimated = True
+
+            total_tokens = input_tokens + output_tokens
+
             # 4. Formulate the audit log entry (immutable compliance trail).
             #    Correlated with the SDK's invoke_agent span via trace/span ids.
             log_entry = {
-                "timestamp":  timestamp,
-                "request_id": request_id,
-                "trace_id":   trace_id,
-                "span_id":    span_id,
-                "session_id": session_id,
-                "user":       baggage_user,
-                "role":       baggage_role,
-                "agent_name": agent_name,
-                "inputs":     scrubbed_inputs,
-                "output":     scrubbed_output,
-                "status":     status,
-                "latency_ms": latency_ms,
+                "timestamp":        timestamp,
+                "request_id":       request_id,
+                "trace_id":         trace_id,
+                "span_id":          span_id,
+                "session_id":       session_id,
+                "user":             baggage_user,
+                "role":             baggage_role,
+                "agent_name":       agent_name,
+                "inputs":           scrubbed_inputs,
+                "output":           scrubbed_output,
+                "status":           status,
+                "latency_ms":       latency_ms,
+                "input_tokens":     input_tokens,
+                "output_tokens":    output_tokens,
+                "total_tokens":     total_tokens,
+                "tokens_estimated": tokens_estimated,
             }
             if error_message:
                 log_entry["error"] = error_message

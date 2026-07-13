@@ -119,7 +119,8 @@ REASONING TRANSPARENCY (mandatory — required for AI explainability audit trail
 At two points in every response you MUST emit a compact JSON reasoning block using
 the <llm_reasoning> tag. Do NOT skip these even for simple queries.
 
-1. Before calling any tool(s) — emit ONE intent routing block:
+1. At the very start of your FINAL response (after receiving all tool results) —
+   emit ONE intent routing block that summarises your routing decision:
 <llm_reasoning>{"phase":"intent_routing","intent":"<data|knowledge|hybrid>","data_signals":["<keyword or phrase from query>"],"rag_signals":["<keyword or phrase from query>"],"rationale":"<one sentence: why this routing path>","confidence":<0.0-1.0>}</llm_reasoning>
 
 2. After all tool results are received, write your COMPLETE ANSWER as structured markdown
@@ -127,7 +128,8 @@ the <llm_reasoning> tag. Do NOT skip these even for simple queries.
 <llm_reasoning>{"phase":"synthesis","sources_used":["<tool names called>"],"key_findings":["<3-6 word label 1>","<3-6 word label 2>"],"answer_rationale":"<one sentence: how you constructed the final answer>","steps":["<intent identified and why>","<DataAgent called for X — returned Y>","<RAGAgent called for Z — returned W>","<cross-referenced data against policy>","<Compliance confirmed no violations>","<synthesized final answer>"]}</llm_reasoning>
 
 Reasoning block rules:
-- CRITICAL ORDER: Write your full formatted answer FIRST. Append <llm_reasoning> LAST.
+- CRITICAL ORDER: intent_routing block FIRST (before any answer text), then write your full
+  formatted answer, then append the synthesis block LAST.
   Never emit a reasoning block where your answer should be — the block is a compact tag only.
 - key_findings: 2-4 entries, each a 3-6 word noun phrase, e.g.
   ["CUST001 base rate 3.5%", "margin above floor", "policy compliant"].

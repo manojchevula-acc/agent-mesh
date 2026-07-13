@@ -6,6 +6,11 @@ import { LoginPage } from "@/pages/LoginPage";
 import { SignupPage } from "@/pages/SignupPage";
 import ChatPage from "@/pages/ChatPage";
 import MeshStatusPage from "@/pages/MeshStatusPage";
+import FeedbackDashboardPage from "@/pages/FeedbackDashboardPage";
+import AuditDashboardPage from "@/pages/AuditDashboardPage";
+import TraceDashboardPage from "@/pages/TraceDashboardPage";
+import ConversationsDashboardPage from "@/pages/ConversationsDashboardPage";
+import LogsDashboardPage from "@/pages/LogsDashboardPage";
 import { EmptyState } from "@/components/ui/EmptyState";
 
 export default function App() {
@@ -22,6 +27,11 @@ export default function App() {
           <Route index element={<Navigate to="/app/chat" replace />} />
           <Route path="chat" element={<ChatPage />} />
           <Route path="mesh-status" element={<MeshStatusPage />} />
+          <Route path="feedback" element={<FeedbackDashboardPage />} />
+          <Route path="audit" element={<AuditDashboardPage />} />
+          <Route path="traces" element={<TraceDashboardPage />} />
+          <Route path="conversations" element={<ConversationsDashboardPage />} />
+          <Route path="logs" element={<LogsDashboardPage />} />
         </Route>
       </Route>
 

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
-import { getConversation, queryMesh, submitFeedback } from "@/api/mesh";
-import type { ChatMessage, MeshResult } from "@/types/mesh";
+import { getConversation, queryMeshStream, submitFeedback } from "@/api/mesh";
+import type { ChatMessage, ExecutionEvent, LLMReasoningEntry } from "@/types/mesh";
 
 const SESSION_ID_KEY = "agent-mesh-session-id";
 
@@ -65,84 +64,103 @@ export function useChat({ username, role }: UseChatOptions) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const mutation = useMutation({
-    mutationFn: ({ query }: { query: string }) =>
-      queryMesh(username, query, sessionIdRef.current ?? undefined),
-    onMutate: ({ query }: { query: string }) => {
-      const userMsgId = makeId();
-      const assistantPlaceholderId = makeId();
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: userMsgId,
-          role: "user" as const,
-          content: query,
-          timestamp: new Date(),
-        },
-        {
-          id: assistantPlaceholderId,
-          role: "assistant" as const,
-          content: "",
-          isLoading: true,
-          timestamp: new Date(),
-        },
-      ]);
-
-      return { assistantPlaceholderId };
-    },
-    onSuccess: (result: MeshResult, _vars, ctx) => {
-      // Pin / persist the conversation id returned by the backend.
-      if (result.session_id && result.session_id !== sessionIdRef.current) {
-        sessionIdRef.current = result.session_id;
-        writeSessionId(result.session_id);
-      }
-      if (!ctx) return;
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === ctx.assistantPlaceholderId
-            ? {
-                ...msg,
-                content: result.answer,
-                result,
-                isLoading: false,
-                timestamp: new Date(),
-              }
-            : msg
-        )
-      );
-    },
-    onError: (_error: Error, _vars, ctx) => {
-      if (!ctx) return;
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === ctx.assistantPlaceholderId
-            ? {
-                ...msg,
-                content:
-                  "Failed to reach the mesh. Make sure the mesh is running (`python launch_mesh.py`) and the API server is up (`python api_server.py`).",
-                isLoading: false,
-                result: {
-                  answer: "",
-                  blocked: true,
-                  block_stage: "api_error",
-                  trail: [],
-                },
-                timestamp: new Date(),
-              }
-            : msg
-        )
-      );
-    },
-  });
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
 
   const sendMessage = useCallback(
     (query: string) => {
       const trimmed = query.trim();
-      if (!trimmed || mutation.isPending) return;
-      mutation.mutate({ query: trimmed });
+      if (!trimmed || isLoading) return;
+
+      const assistantId = makeId();
+      setIsLoading(true);
+      setError(null);
+
+      setMessages((prev) => [
+        ...prev,
+        { id: makeId(), role: "user" as const, content: trimmed, timestamp: new Date() },
+        { id: assistantId, role: "assistant" as const, content: "", isLoading: true, timestamp: new Date() },
+      ]);
+
+      (async () => {
+        try {
+          const stream = queryMeshStream(username, trimmed, sessionIdRef.current ?? undefined);
+          for await (const event of stream) {
+            if (event.type === "stage") {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId
+                    ? {
+                        ...m,
+                        streamingStage: event.message
+                          ? `${event.message}`
+                          : event.stage,
+                        streamingEvents: [
+                          ...(m.streamingEvents ?? []),
+                          { stage: event.stage, status: event.status, message: event.message } as ExecutionEvent,
+                        ],
+                      }
+                    : m
+                )
+              );
+            } else if (event.type === "reasoning") {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId
+                    ? { ...m, streamingReasoning: [...(m.streamingReasoning ?? []), ...(event.entries as LLMReasoningEntry[])] }
+                    : m
+                )
+              );
+            } else if (event.type === "result") {
+              const result = event.result;
+              if (result.session_id && result.session_id !== sessionIdRef.current) {
+                sessionIdRef.current = result.session_id;
+                writeSessionId(result.session_id);
+              }
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId
+                    ? { ...m, content: result.answer, result, isLoading: false, streamingStage: undefined, timestamp: new Date() }
+                    : m
+                )
+              );
+            } else if (event.type === "error") {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId
+                    ? {
+                        ...m,
+                        content: event.message || "Failed to reach the mesh. Make sure the mesh is running (`python launch_mesh.py`) and the API server is up (`python api_server.py`).",
+                        isLoading: false,
+                        streamingStage: undefined,
+                        result: { answer: "", blocked: true, block_stage: "api_error", trail: [] },
+                      }
+                    : m
+                )
+              );
+            }
+          }
+        } catch (err) {
+          setError(err instanceof Error ? err : new Error(String(err)));
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId
+                ? {
+                    ...m,
+                    content: "Failed to reach the mesh. Make sure the mesh is running (`python launch_mesh.py`) and the API server is up (`python api_server.py`).",
+                    isLoading: false,
+                    streamingStage: undefined,
+                    result: { answer: "", blocked: true, block_stage: "api_error", trail: [] },
+                  }
+                : m
+            )
+          );
+        } finally {
+          setIsLoading(false);
+        }
+      })();
     },
-    [mutation]
+    [isLoading, username]
   );
 
   const clearChat = useCallback(() => {
@@ -188,7 +206,7 @@ export function useChat({ username, role }: UseChatOptions) {
     sendMessage,
     clearChat,
     handleFeedback,
-    isLoading: mutation.isPending,
-    error: mutation.error,
+    isLoading,
+    error,
   };
 }

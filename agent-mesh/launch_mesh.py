@@ -37,7 +37,7 @@ from src.agents.node_registry import NODE_NAMES
 #   Data-only:  START_ORDER = ["data_agent"]   (current)
 #               + ENABLE_PRICE_ASSIST=false, ENABLE_COMPLIANCE=false in .env
 # START_ORDER = ["compliance", "data_agent", "rag_agent", "price_assist"]
-START_ORDER = ["data_agent"]
+START_ORDER = ["data_agent","rag_agent","price_assist"]
 _PORT_READY_TIMEOUT = 30.0  # seconds to wait for each node's port to bind
 
 

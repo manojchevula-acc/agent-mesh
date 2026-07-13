@@ -1,7 +1,7 @@
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, CheckCircle2, XCircle, Activity, Brain } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { MeshResult, ExecutionEvent } from "@/types/mesh";
+import type { MeshResult, ExecutionEvent, LLMReasoningEntry } from "@/types/mesh";
 import LLMReasoningPanel from "./LLMReasoningPanel";
 
 // Maps Python stage keys → human-readable step titles (mirrors cli_renderer.py _STAGE_LABELS)
@@ -229,23 +229,33 @@ function SummaryTable({ result }: { result: MeshResult }) {
 // ── ExecutionPanel (public component) ───────────────────────────────────────
 
 interface ExecutionPanelProps {
-  result: MeshResult;
+  result?: MeshResult;
+  liveEvents?: ExecutionEvent[];
+  liveReasoning?: LLMReasoningEntry[];
 }
 
 type PanelTab = "trace" | "reasoning";
 
-export default function ExecutionPanel({ result }: ExecutionPanelProps) {
+export default function ExecutionPanel({ result, liveEvents, liveReasoning }: ExecutionPanelProps) {
   const [open, setOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<PanelTab>("trace");
 
-  const steps = useMemo(() => collapseEvents(result.events ?? []), [result.events]);
+  // Auto-open when live events or reasoning start arriving.
+  useEffect(() => {
+    if ((liveEvents?.length || liveReasoning?.length) && !open) setOpen(true);
+  }, [liveEvents?.length, liveReasoning?.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Use final result events when available, fall back to live streaming events
+  const eventSource = result?.events?.length ? result.events : (liveEvents ?? []);
+  const steps = useMemo(() => collapseEvents(eventSource), [eventSource]);
   const stepCount = steps.length;
-  const reasoningCount = result.llm_reasoning?.length ?? 0;
-  const durationLabel = result.total_duration_ms != null
+  const reasoningEntries = result?.llm_reasoning ?? liveReasoning ?? [];
+  const reasoningCount = reasoningEntries.length;
+  const durationLabel = result?.total_duration_ms != null
     ? `${(result.total_duration_ms / 1000).toFixed(1)} s`
     : null;
 
-  const hasSummary = result.request_id || result.route || result.domain;
+  const hasSummary = result?.request_id || result?.route || result?.domain;
 
   if (!hasSummary && stepCount === 0 && reasoningCount === 0) return null;
 
@@ -326,7 +336,7 @@ export default function ExecutionPanel({ result }: ExecutionPanelProps) {
               {steps.map((ev, i) => (
                 <Step key={`${ev.stage}-${i}`} index={i + 1} event={ev} />
               ))}
-              {hasSummary && (
+              {hasSummary && result && (
                 <div className="mt-3">
                   <p className="text-[10px] uppercase tracking-wider text-muted mb-1.5 font-semibold">
                     Execution Summary
@@ -339,7 +349,7 @@ export default function ExecutionPanel({ result }: ExecutionPanelProps) {
 
           {/* ── AI REASONING tab ── */}
           {activeTab === "reasoning" && (
-            <LLMReasoningPanel entries={result.llm_reasoning ?? []} />
+            <LLMReasoningPanel entries={reasoningEntries} />
           )}
         </div>
       )}

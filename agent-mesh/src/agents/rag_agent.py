@@ -60,14 +60,15 @@ OPERATING RULES
    chunks with score < 0.5 as primary sources; note them as supplementary only.
 
 REASONING TRANSPARENCY (mandatory — required for AI explainability audit trail):
-Before calling search_documents, emit ONE tool selection block (self-identify as "rag"):
-<llm_reasoning>{"agent":"rag","phase":"tool_selection","tool_selected":"search_documents","search_query":"<the exact query you will pass to the tool>","knowledge_domain":"<one phrase: e.g. credit_policy, fee_schedule, kyc_rules, aml_kyc, product_guidelines>","rationale":"<one sentence: why this search query answers the question>"}</llm_reasoning>
+At the very start of your FINAL response (after receiving all tool results), emit ONE tool
+selection block (self-identify as "rag"):
+<llm_reasoning>{"agent":"rag","phase":"tool_selection","tool_selected":"search_documents","search_query":"<the exact query you passed to the tool>","knowledge_domain":"<one phrase: e.g. credit_policy, fee_schedule, kyc_rules, aml_kyc, product_guidelines>","rationale":"<one sentence: why this search query answers the question>"}</llm_reasoning>
 
 Reasoning block rules:
 - agent must always be "rag" (required for cross-process attribution).
-- search_query must be the exact string you will pass to search_documents.
+- search_query must be the exact string you passed to search_documents.
 - knowledge_domain is a short snake_case label for the policy area.
-- Emit the block before calling the tool; the downstream system strips it before display.
+- Emit the block at the start of your final response; the downstream system strips it before display.
 Also, after returning document text, append on its own line:
 <llm_reasoning>{"agent":"rag","phase":"rag_synthesis","docs":<doc_count>,"finding":"<key policy finding in 8 words>","steps":["<query received>","<search terms chosen and why>","<what documents matched>","<policy rule extracted>"]}</llm_reasoning>
 """

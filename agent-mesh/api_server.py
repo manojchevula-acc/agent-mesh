@@ -33,6 +33,7 @@ import os
 import pathlib
 import sys
 import time
+import uuid
 
 project_root = str(pathlib.Path(__file__).resolve().parent)
 if project_root not in sys.path:
@@ -49,14 +50,14 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 
 from src.a2a.hosting import TraceContextMiddleware
 from src.auth.identity_provider import login, list_users
 from src.config import Config
 from src.feedback.store import record_feedback
-from src.mesh.orchestrator import handle_request
+from src.mesh.orchestrator import handle_request, handle_request_stream
 from src.memory import ConversationStore
 from src.observability import get_logger, CAT_SYSTEM, flush_observability
 from src.tracing.execution_trace import ExecutionTracer, set_active_tracer, clear_active_tracer
@@ -131,10 +132,11 @@ async def post_query(request: Request) -> JSONResponse:
 
     user = login(username)
 
-    tracer = ExecutionTracer(user=user.username, query=query)
+    shared_request_id = uuid.uuid4().hex[:8].upper()
+    tracer = ExecutionTracer(user=user.username, query=query, request_id=shared_request_id)
     token = set_active_tracer(tracer)
     try:
-        result = await handle_request(user, query, session_id)
+        result = await handle_request(user, query, session_id, request_id=shared_request_id)
     except Exception as exc:
         _log.exception("mesh query error: %s", exc)
         return JSONResponse(
@@ -307,6 +309,364 @@ async def get_feedback_stats(request: Request) -> JSONResponse:
     return JSONResponse({"total": up + down, "up": up, "down": down, "with_comment": commented})
 
 
+async def get_logs_list(request: Request) -> JSONResponse:
+    """Return structured log data from agent_mesh.log grouped by request_id.
+
+    Groups entries by request_id to expose the parent-child (request → pipeline stage → log line)
+    hierarchy. Entries with request_id == "-" (system startup noise) are returned separately.
+    """
+    path = Config.LOG_FILE
+    if not os.path.exists(path):
+        return JSONResponse({
+            "groups": [], "system_entries": [],
+            "total_entries": 0, "unique_requests": 0,
+            "error_count": 0, "warning_count": 0, "loggers": [],
+        })
+
+    entries = []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    if isinstance(rec, dict):
+                        entries.append(rec)
+                except Exception:
+                    pass
+    except Exception as exc:
+        _log.warning("logs list read failed: %s", exc)
+
+    total = len(entries)
+    error_count = sum(1 for e in entries if e.get("level") == "ERROR")
+    warning_count = sum(1 for e in entries if e.get("level") == "WARNING")
+    loggers = sorted(set(e.get("logger", "") for e in entries if e.get("logger")))
+
+    # Separate system/startup entries (no request context) from request-bound entries
+    system_entries = [e for e in entries if e.get("request_id", "-") == "-"]
+    request_entries = [e for e in entries if e.get("request_id", "-") != "-"]
+
+    # Build an audit token index: audit_index[request_id][agent_name] = token counts.
+    # Used below to inject per-step token data into mesh.agent log entries.
+    # For records written before token tracking was added (no token fields), we
+    # back-fill estimates from prompt/response character lengths (~4 chars/token).
+    audit_index: dict[str, dict[str, dict]] = {}
+    audit_path = Config.AUDIT_LOG_FILE
+    if os.path.exists(audit_path):
+        try:
+            with open(audit_path, encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                        rid_a  = str(rec.get("request_id", "-")).upper()
+                        agent  = rec.get("agent_name", "")
+                        if rid_a == "-" or not agent:
+                            continue
+                        it        = int(rec.get("input_tokens",  0) or 0)
+                        ot        = int(rec.get("output_tokens", 0) or 0)
+                        estimated = bool(rec.get("tokens_estimated", False))
+                        # Back-fill from text length for old records with no token data
+                        if it == 0 and ot == 0:
+                            inputs_text = " ".join(rec.get("inputs") or [])
+                            output_text = rec.get("output", "") or ""
+                            it  = max(1, len(inputs_text) // 4) if inputs_text  else 0
+                            ot  = max(1, len(output_text)  // 4) if output_text  else 0
+                            estimated = True
+                        audit_index.setdefault(rid_a, {})[agent] = {
+                            "input_tokens":     it,
+                            "output_tokens":    ot,
+                            "total_tokens":     it + ot,
+                            "tokens_estimated": estimated,
+                        }
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    # Group by request_id; preserve insertion order (entries arrive chronologically)
+    groups_map: dict[str, list] = {}
+    for e in request_entries:
+        rid = e["request_id"]
+        groups_map.setdefault(rid, []).append(e)
+
+    groups = []
+    for rid, ents in groups_map.items():
+        ents_sorted = sorted(ents, key=lambda x: x.get("ts", ""))
+        first_ts = ents_sorted[0].get("ts", "")
+        last_ts = ents_sorted[-1].get("ts", "")
+        # Compute duration in ms from ISO timestamps
+        try:
+            from datetime import datetime, timezone
+            t0 = datetime.fromisoformat(first_ts)
+            t1 = datetime.fromisoformat(last_ts)
+            duration_ms = max(0, int((t1 - t0).total_seconds() * 1000))
+        except Exception:
+            duration_ms = 0
+        user = next((e.get("user") for e in ents_sorted if e.get("user")), None)
+        session_id = next((e.get("session_id") for e in ents_sorted if e.get("session_id")), None)
+
+        # Inject per-step token data onto mesh.agent entries using the audit index.
+        rid_upper = rid.upper()
+        for entry in ents_sorted:
+            agent_name = entry.get("agent", "")
+            if agent_name and rid_upper in audit_index and agent_name in audit_index[rid_upper]:
+                tok = audit_index[rid_upper][agent_name]
+                entry["input_tokens"]     = tok["input_tokens"]
+                entry["output_tokens"]    = tok["output_tokens"]
+                entry["total_tokens"]     = tok["total_tokens"]
+                entry["tokens_estimated"] = tok["tokens_estimated"]
+
+        # Request-level token totals (sum across all agents in this request).
+        tok_map = audit_index.get(rid_upper, {})
+        token_input    = sum(v["input_tokens"]  for v in tok_map.values())
+        token_output   = sum(v["output_tokens"] for v in tok_map.values())
+        token_total    = token_input + token_output
+        token_estimated = any(v.get("tokens_estimated") for v in tok_map.values())
+
+        groups.append({
+            "request_id":      rid,
+            "trace_id":        ents_sorted[0].get("trace_id", ""),
+            "user":            user,
+            "session_id":      session_id,
+            "first_ts":        first_ts,
+            "last_ts":         last_ts,
+            "duration_ms":     duration_ms,
+            "entry_count":     len(ents_sorted),
+            "has_error":       any(e.get("level") == "ERROR"   for e in ents_sorted),
+            "has_warning":     any(e.get("level") == "WARNING" for e in ents_sorted),
+            "token_input":     token_input,
+            "token_output":    token_output,
+            "token_total":     token_total,
+            "token_estimated": token_estimated,
+            "entries":         ents_sorted,
+        })
+    # Sort groups newest-first
+    groups.sort(key=lambda g: g["first_ts"], reverse=True)
+
+    return JSONResponse({
+        "groups": groups,
+        "system_entries": system_entries,
+        "total_entries": total,
+        "unique_requests": len(groups),
+        "error_count": error_count,
+        "warning_count": warning_count,
+        "loggers": loggers,
+    })
+
+
+async def get_audit_list(request: Request) -> JSONResponse:
+    """Return all audit trail records newest-first with aggregate stats.
+
+    Strips bulky inputs/output fields — returns previews only.
+    Use GET /api/audit/{request_id} for the full record.
+    """
+    path = Config.AUDIT_LOG_FILE
+    if not os.path.exists(path):
+        return JSONResponse({"records": [], "total": 0, "success_count": 0, "error_count": 0, "avg_latency_ms": 0})
+    records = []
+    success = error = total_latency = 0
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    latency = rec.get("latency_ms", 0) or 0
+                    status = rec.get("status", "UNKNOWN")
+                    if status == "SUCCESS":
+                        success += 1
+                    else:
+                        error += 1
+                    total_latency += latency
+                    # Build a slimmed record with previews instead of full inputs/output
+                    inputs = rec.get("inputs") or []
+                    input_preview = (inputs[0][:200] if inputs else "")
+                    output_preview = (rec.get("output", "") or "")[:200]
+                    slim = {k: v for k, v in rec.items() if k not in ("inputs", "output")}
+                    slim["input_preview"] = input_preview
+                    slim["output_preview"] = output_preview
+                    records.append(slim)
+                except Exception:
+                    pass
+    except Exception as exc:
+        _log.warning("audit list read failed: %s", exc)
+    records.reverse()
+    total = success + error
+    return JSONResponse({
+        "records": records,
+        "total": total,
+        "success_count": success,
+        "error_count": error,
+        "avg_latency_ms": round(total_latency / total) if total else 0,
+    })
+
+
+async def get_audit_detail(request: Request) -> JSONResponse:
+    """Return full inputs + output for a single audit record by request_id."""
+    request_id = request.path_params.get("request_id", "").strip().upper()
+    if not request_id:
+        return JSONResponse({"error": "request_id is required."}, status_code=400)
+    path = Config.AUDIT_LOG_FILE
+    if not os.path.exists(path):
+        return JSONResponse({"error": "Audit log not found."}, status_code=404)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    if str(rec.get("request_id", "")).upper() == request_id:
+                        return JSONResponse(rec)
+                except Exception:
+                    pass
+    except Exception as exc:
+        _log.warning("audit detail read failed: %s", exc)
+    return JSONResponse({"error": f"Record {request_id} not found."}, status_code=404)
+
+
+async def get_trace_list(request: Request) -> JSONResponse:
+    """Return all trace span records newest-first with aggregate stats.
+
+    Handles the known formatting issue where multiple JSON objects may appear
+    on a single line by using raw_decode() to extract them iteratively.
+    """
+    path = Config.TRACE_LOG_FILE
+    if not os.path.exists(path):
+        return JSONResponse({"records": [], "total": 0, "success_count": 0, "avg_duration_ms": 0, "max_duration_ms": 0})
+    records = []
+    success = total_dur = max_dur = 0
+    decoder = json.JSONDecoder()
+    try:
+        with open(path, encoding="utf-8") as fh:
+            content = fh.read()
+        idx = 0
+        while idx < len(content):
+            # Skip whitespace / newlines
+            while idx < len(content) and content[idx] in " \t\r\n":
+                idx += 1
+            if idx >= len(content):
+                break
+            try:
+                rec, length = decoder.raw_decode(content, idx)
+                idx += length
+                dur = rec.get("duration_ms", 0) or 0
+                if rec.get("status") == "SUCCESS":
+                    success += 1
+                total_dur += dur
+                if dur > max_dur:
+                    max_dur = dur
+                records.append(rec)
+            except Exception:
+                idx += 1
+    except Exception as exc:
+        _log.warning("trace list read failed: %s", exc)
+    records.reverse()
+    total = len(records)
+    return JSONResponse({
+        "records": records,
+        "total": total,
+        "success_count": success,
+        "avg_duration_ms": round(total_dur / total) if total else 0,
+        "max_duration_ms": max_dur,
+    })
+
+
+async def get_conversations_list(request: Request) -> JSONResponse:
+    """Return all conversation sessions with full message history."""
+    store_dir = pathlib.Path(Config.CONVERSATION_STORE_DIR)
+    if not store_dir.exists():
+        return JSONResponse({"sessions": [], "total_sessions": 0, "total_messages": 0, "unique_users": 0})
+    sessions = []
+    total_messages = 0
+    users: set[str] = set()
+    try:
+        for jf in sorted(store_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True):
+            session_id = jf.stem  # filename without .jsonl
+            # Infer user from session_id prefix (e.g. "alice_37ce2a8d" → "alice")
+            user = session_id.rsplit("_", 1)[0] if "_" in session_id else session_id
+            messages = []
+            try:
+                with open(jf, encoding="utf-8") as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            messages.append(json.loads(line))
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            if not messages:
+                continue
+            users.add(user)
+            total_messages += len(messages)
+            first_ts = messages[0].get("ts", "")
+            last_ts = messages[-1].get("ts", "")
+            first_query = next(
+                (m.get("content", "")[:200] for m in messages if m.get("role") == "user"),
+                "",
+            )
+            sessions.append({
+                "session_id": session_id,
+                "user": user,
+                "message_count": len(messages),
+                "first_ts": first_ts,
+                "last_ts": last_ts,
+                "first_query": first_query,
+                "messages": messages,
+            })
+    except Exception as exc:
+        _log.warning("conversations list failed: %s", exc)
+    return JSONResponse({
+        "sessions": sessions,
+        "total_sessions": len(sessions),
+        "total_messages": total_messages,
+        "unique_users": len(users),
+    })
+
+
+async def get_feedback_list(request: Request):
+    """Return all feedback records sorted newest-first, with aggregate counts."""
+    path = Config.FEEDBACK_LOG_FILE
+    if not os.path.exists(path):
+        return JSONResponse({"records": [], "total": 0, "up": 0, "down": 0, "with_comment": 0})
+    records = []
+    up = down = commented = 0
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    # Exclude the bulky fine_tune_record from the list response
+                    rec.pop("fine_tune_record", None)
+                    records.append(rec)
+                    if rec.get("rating") == "up":
+                        up += 1
+                    elif rec.get("rating") == "down":
+                        down += 1
+                    if rec.get("comment"):
+                        commented += 1
+                except Exception:
+                    pass
+    except Exception as exc:
+        _log.warning("feedback list read failed: %s", exc)
+    records.reverse()  # newest first
+    return JSONResponse({"records": records, "total": len(records), "up": up, "down": down, "with_comment": commented})
+
+
 # ---------------------------------------------------------------------------
 # App assembly
 # ---------------------------------------------------------------------------
@@ -326,6 +686,94 @@ async def _lifespan(app):
 
 _API_SERVER_HOST = os.getenv("API_SERVER_HOST", "127.0.0.1")
 _API_SERVER_PORT = int(os.getenv("API_SERVER_PORT", "8000"))
+
+async def post_query_stream(request: Request) -> StreamingResponse:
+    """SSE endpoint — streams one event per pipeline stage as it completes.
+
+    Body: same as POST /api/query — {username, query, session_id?}
+
+    SSE event types emitted in order:
+      event: stage   data: {"stage":str, "status":"started"|"completed"|"blocked", "message":str}
+      event: result  data: <full MeshResult JSON — same shape as POST /api/query response>
+      event: done    data: {}
+      event: error   data: {"message": str}
+    """
+    try:
+        body = await request.json()
+        username = str(body.get("username", "bob")).strip() or "bob"
+        query = str(body.get("query", "")).strip()
+        session_id = str(body.get("session_id", "")).strip() or None
+    except Exception:
+        async def _err_body():
+            yield 'event: error\ndata: {"message": "Invalid JSON body"}\n\n'
+        return StreamingResponse(_err_body(), media_type="text/event-stream")
+
+    if not query:
+        async def _err_empty():
+            yield 'event: error\ndata: {"message": "query must not be empty"}\n\n'
+        return StreamingResponse(_err_empty(), media_type="text/event-stream")
+
+    user = login(username)
+    shared_request_id = uuid.uuid4().hex[:8].upper()
+    event_queue: asyncio.Queue = asyncio.Queue(maxsize=64)
+
+    tracer = ExecutionTracer(user=user.username, query=query, request_id=shared_request_id)
+    token = set_active_tracer(tracer)
+
+    # Background task inherits the current context (including active tracer ContextVar),
+    # so handle_request() inside it will see and populate the same tracer instance.
+    pipeline_task = asyncio.ensure_future(
+        handle_request_stream(user, query, session_id, request_id=shared_request_id, event_queue=event_queue)
+    )
+
+    async def _sse_generator():
+        try:
+            while True:
+                item = await event_queue.get()
+                if item is None:
+                    # Sentinel — pipeline finished. Await task for the MeshResult.
+                    try:
+                        result = await pipeline_task
+                    except Exception as exc:
+                        _log.exception("stream pipeline error: %s", exc)
+                        yield f"event: error\ndata: {json.dumps({'message': str(exc)})}\n\n"
+                        yield "event: done\ndata: {}\n\n"
+                        return
+                    summary = tracer.summary()
+                    result_payload = {
+                        "answer": result.answer,
+                        "blocked": result.blocked,
+                        "block_stage": result.block_stage,
+                        "trail": result.trail,
+                        "session_id": result.session_id,
+                        "request_id": summary.request_id,
+                        "domain": summary.domain,
+                        "route": summary.route,
+                        "execution_path": summary.execution_path,
+                        "agents_invoked": summary.agents_invoked,
+                        "tools_used": summary.tools_used,
+                        "total_duration_ms": summary.total_duration_ms,
+                        "confidence": summary.confidence,
+                        "events": [dataclasses.asdict(e) for e in summary.events],
+                        "llm_reasoning": summary.llm_reasoning,
+                    }
+                    yield f"event: result\ndata: {json.dumps(result_payload)}\n\n"
+                    yield "event: done\ndata: {}\n\n"
+                    break
+                event_type = item.get("event_type", "stage")
+                if event_type == "reasoning":
+                    yield f"event: reasoning\ndata: {json.dumps({'entries': item['entries']})}\n\n"
+                else:
+                    yield f"event: stage\ndata: {json.dumps(item)}\n\n"
+        finally:
+            clear_active_tracer(token)
+
+    return StreamingResponse(
+        _sse_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
 
 _CORS_ORIGINS = [
     "http://localhost:5173",   # Vite dev server
@@ -350,8 +798,15 @@ app = Starlette(
         Route("/api/users",            get_users,           methods=["GET"]),
         Route("/api/login",            post_login,          methods=["POST"]),
         Route("/api/query",            post_query,          methods=["POST"]),
-        Route("/api/feedback",         post_feedback,       methods=["POST"]),
-        Route("/api/feedback/stats",   get_feedback_stats,  methods=["GET"]),
+        Route("/api/query/stream",     post_query_stream,   methods=["POST"]),
+        Route("/api/logs",                       get_logs_list,            methods=["GET"]),
+        Route("/api/audit",                      get_audit_list,           methods=["GET"]),
+        Route("/api/audit/{request_id}",         get_audit_detail,         methods=["GET"]),
+        Route("/api/traces",                     get_trace_list,           methods=["GET"]),
+        Route("/api/conversations/list",         get_conversations_list,   methods=["GET"]),
+        Route("/api/feedback",                   post_feedback,            methods=["POST"]),
+        Route("/api/feedback/list",              get_feedback_list,        methods=["GET"]),
+        Route("/api/feedback/stats",             get_feedback_stats,       methods=["GET"]),
         Route("/api/mesh/status",      get_mesh_status,     methods=["GET"]),
         Route("/api/conversations/{session_id}", get_conversation, methods=["GET"]),
     ],

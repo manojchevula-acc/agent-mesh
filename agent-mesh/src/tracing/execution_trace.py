@@ -62,8 +62,8 @@ class ExecutionTracer:
     code on the call stack can emit events without an explicit reference.
     """
 
-    def __init__(self, user: str, query: str) -> None:
-        self.request_id = uuid.uuid4().hex[:8].upper()
+    def __init__(self, user: str, query: str, request_id: str | None = None) -> None:
+        self.request_id = request_id or uuid.uuid4().hex[:8].upper()
         self.user = user
         self.query = query
         self._events: List[ExecutionEvent] = []
