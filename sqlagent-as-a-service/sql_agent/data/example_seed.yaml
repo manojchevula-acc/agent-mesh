@@ -1,0 +1,213 @@
+# Curated few-shot seed set for the dynamic-tier SQL generator (Pattern Retriever).
+#
+# These are persona-driven ANALYTICAL questions (RM / Branch Manager / CFO / pricing
+# desk) that legitimately route to `analytical_query` — genuine cross-row aggregates,
+# rankings, and groupings that no dedicated single-entity tool exposes. Single-customer
+# "quote a rate / is it compliant" questions are NOT here: those are handled by the
+# dedicated pricing tools in the ReAct layer, not by dynamic SQL.
+#
+# Each entry is loaded by scripts/seed_examples.py, which re-validates the SQL through
+# the six-check validator AND runs it live against the governed DB before storing it as
+# an approved example — so a curated example can never contain SQL that would not pass
+# live (architecture parity with scripts/promote_example.py).
+#
+# Conventions enforced here (also the accuracy lessons these examples teach the model):
+#   - MySQL dialect, schema-qualified names (fab_semantic.* / fab_curated.*).
+#   - SELECT only, LIMIT <= 50.
+#   - Prefer a single pre-joined VIEW; the only allowed view join is view -> customer_master.
+#   - NEVER AVG() a pre-aggregated column (e.g. customer_360.win_rate_pct / avg_*): use the
+#     deal-grain view instead, or compute a true rate as SUM(...)/SUM(...).
+#   - `tags` carries the table(s) the example uses (comma-separated); the retriever uses
+#     it to bias selection toward examples touching the same tables as the live question.
+
+examples:
+
+  # ---- Relationship Manager --------------------------------------------------
+  - question: "Which of our Corporate customers have the highest win rate?"
+    sql: "SELECT customer_id, customer_name, win_rate_pct FROM fab_semantic.customer_360 WHERE customer_segment = 'Corporate' ORDER BY win_rate_pct DESC LIMIT 10;"
+    tier: full_dynamic
+    tags: "customer_360"
+
+  - question: "Show me the top 10 customers by total deal volume."
+    sql: "SELECT customer_id, customer_name, total_deal_volume_aed FROM fab_semantic.customer_360 ORDER BY total_deal_volume_aed DESC LIMIT 10;"
+    tier: full_dynamic
+    tags: "customer_360"
+
+  - question: "Which customers have lost the most deals?"
+    sql: "SELECT customer_id, customer_name, lost_deals FROM fab_semantic.customer_360 ORDER BY lost_deals DESC LIMIT 10;"
+    tier: full_dynamic
+    tags: "customer_360"
+
+  - question: "What is the average expected margin across all our SME customers' deals?"
+    sql: "SELECT ROUND(AVG(expected_margin_pct), 2) AS avg_expected_margin_pct FROM fab_semantic.pricing_recommendation_view WHERE customer_segment = 'SME';"
+    tier: full_dynamic
+    tags: "pricing_recommendation_view"
+
+  - question: "Compare win rates between Corporate and SME segments."
+    sql: "SELECT customer_segment, SUM(won_deals) AS won, SUM(total_deals) AS total, ROUND(SUM(won_deals) * 100.0 / SUM(total_deals), 2) AS win_rate_pct FROM fab_semantic.customer_360 GROUP BY customer_segment;"
+    tier: full_dynamic
+    tags: "customer_360"
+
+  - question: "Which customers haven't transacted recently, oldest last deal first?"
+    sql: "SELECT customer_id, customer_name, last_deal_date FROM fab_semantic.customer_360 WHERE last_deal_date IS NOT NULL ORDER BY last_deal_date ASC LIMIT 10;"
+    tier: full_dynamic
+    tags: "customer_360"
+
+  - question: "Which high-risk customers have the largest existing exposure?"
+    sql: "SELECT customer_id, customer_name, existing_exposure_aed FROM fab_curated.customer_master WHERE risk_category = 'High' ORDER BY existing_exposure_aed DESC LIMIT 10;"
+    tier: full_dynamic
+    tags: "customer_master"
+
+  # ---- Branch Manager --------------------------------------------------------
+  - question: "How many deals fell below the minimum margin in each region?"
+    sql: "SELECT region, COUNT(*) AS below_min_deals FROM fab_semantic.margin_analysis WHERE margin_below_minimum = 1 GROUP BY region ORDER BY below_min_deals DESC;"
+    tier: full_dynamic
+    tags: "margin_analysis"
+
+  - question: "What's the average net margin by region?"
+    sql: "SELECT region, ROUND(AVG(net_margin_pct), 2) AS avg_net_margin_pct FROM fab_semantic.margin_analysis GROUP BY region ORDER BY avg_net_margin_pct DESC;"
+    tier: full_dynamic
+    tags: "margin_analysis"
+
+  - question: "Break down won versus lost deals by product type."
+    sql: "SELECT product_type, deal_outcome, COUNT(*) AS deal_count FROM fab_semantic.margin_analysis GROUP BY product_type, deal_outcome ORDER BY product_type, deal_outcome;"
+    tier: full_dynamic
+    tags: "margin_analysis"
+
+  - question: "Which regions have the most non-compliant deals?"
+    sql: "SELECT cm.region, COUNT(*) AS non_compliant_deals FROM fab_semantic.pricing_recommendation_view prv JOIN fab_curated.customer_master cm ON prv.customer_id = cm.customer_id WHERE prv.policy_compliant = 0 GROUP BY cm.region ORDER BY non_compliant_deals DESC;"
+    tier: full_dynamic
+    tags: "pricing_recommendation_view,customer_master"
+
+  - question: "How many won and lost deals came through each sales channel?"
+    sql: "SELECT sales_channel, deal_outcome, COUNT(*) AS deal_count FROM fab_curated.historical_deals GROUP BY sales_channel, deal_outcome ORDER BY sales_channel;"
+    tier: full_dynamic
+    tags: "historical_deals"
+
+  - question: "How many customers do we have in each industry?"
+    sql: "SELECT industry, COUNT(*) AS customer_count FROM fab_curated.customer_master GROUP BY industry ORDER BY customer_count DESC;"
+    tier: full_dynamic
+    tags: "customer_master"
+
+  # ---- CFO / Finance ---------------------------------------------------------
+  - question: "What is the total net profit by product type?"
+    sql: "SELECT product_type, SUM(net_profit_aed) AS total_net_profit_aed FROM fab_semantic.profitability_summary GROUP BY product_type ORDER BY total_net_profit_aed DESC;"
+    tier: full_dynamic
+    tags: "profitability_summary"
+
+  - question: "Which customer segments generate the most revenue?"
+    sql: "SELECT customer_segment, SUM(revenue_aed) AS total_revenue_aed FROM fab_semantic.profitability_summary GROUP BY customer_segment ORDER BY total_revenue_aed DESC;"
+    tier: full_dynamic
+    tags: "profitability_summary"
+
+  - question: "Show total RWA and average return on RWA by product type."
+    sql: "SELECT product_type, SUM(rwa_aed) AS total_rwa_aed, ROUND(AVG(return_on_rwa_pct), 2) AS avg_return_on_rwa_pct FROM fab_semantic.rwa_impact_view GROUP BY product_type ORDER BY total_rwa_aed DESC;"
+    tier: full_dynamic
+    tags: "rwa_impact_view"
+
+  - question: "How much capital are we holding against high-RWA deals?"
+    sql: "SELECT SUM(capital_required_aed) AS total_capital_high_rwa_aed FROM fab_semantic.rwa_impact_view WHERE is_high_rwa = 1;"
+    tier: full_dynamic
+    tags: "rwa_impact_view"
+
+  - question: "What is the total capital required by customer segment?"
+    sql: "SELECT customer_segment, SUM(capital_required_aed) AS total_capital_aed FROM fab_semantic.rwa_impact_view GROUP BY customer_segment ORDER BY total_capital_aed DESC;"
+    tier: full_dynamic
+    tags: "rwa_impact_view"
+
+  - question: "List the customer and product groups in a loss-making profitability tier."
+    sql: "SELECT customer_id, customer_segment, product_type, profitability_tier, net_profit_aed FROM fab_semantic.profitability_summary WHERE profitability_tier = 'Loss-Making' ORDER BY net_profit_aed ASC LIMIT 50;"
+    tier: full_dynamic
+    tags: "profitability_summary"
+
+  - question: "Which regions generate the most net profit?"
+    sql: "SELECT region, SUM(net_profit_aed) AS total_net_profit_aed FROM fab_semantic.profitability_summary GROUP BY region ORDER BY total_net_profit_aed DESC;"
+    tier: full_dynamic
+    tags: "profitability_summary"
+
+  - question: "What percentage of deals are policy compliant overall?"
+    sql: "SELECT ROUND(SUM(policy_compliant) * 100.0 / COUNT(*), 2) AS pct_compliant, COUNT(*) AS total_deals FROM fab_semantic.pricing_recommendation_view;"
+    tier: full_dynamic
+    tags: "pricing_recommendation_view"
+
+  # ---- Pricing desk (portfolio pricing + compliance) -------------------------
+  - question: "Which deals were priced below the policy floor?"
+    sql: "SELECT deal_id, customer_id, product_type, recommended_price_pct, policy_min_margin_pct FROM fab_semantic.pricing_recommendation_view WHERE price_below_policy_floor = 1 LIMIT 50;"
+    tier: full_dynamic
+    tags: "pricing_recommendation_view"
+
+  - question: "How many deals exceeded the relationship discount cap, by segment?"
+    sql: "SELECT customer_segment, COUNT(*) AS discount_breaches FROM fab_semantic.pricing_recommendation_view WHERE discount_exceeds_policy = 1 GROUP BY customer_segment ORDER BY discount_breaches DESC;"
+    tier: full_dynamic
+    tags: "pricing_recommendation_view"
+
+  - question: "What's the average spread over benchmark for won Loan deals?"
+    sql: "SELECT ROUND(AVG(spread_over_benchmark_pct), 2) AS avg_spread_pct FROM fab_semantic.margin_analysis WHERE deal_outcome = 'Won' AND product_type = 'Loan';"
+    tier: full_dynamic
+    tags: "margin_analysis"
+
+  - question: "Compare the average approved price by risk category."
+    sql: "SELECT risk_category, ROUND(AVG(approved_price_pct), 2) AS avg_approved_price_pct FROM fab_semantic.pricing_recommendation_view GROUP BY risk_category ORDER BY risk_category;"
+    tier: full_dynamic
+    tags: "pricing_recommendation_view"
+
+  - question: "What are the target margins for Corporate customers across products?"
+    sql: "SELECT product_type, product_name, risk_category, target_margin_pct FROM fab_semantic.segment_pricing_benchmark WHERE customer_segment = 'Corporate' ORDER BY product_type, risk_category LIMIT 50;"
+    tier: full_dynamic
+    tags: "segment_pricing_benchmark"
+
+  - question: "Which product and segment combinations have the highest operational cost margin?"
+    sql: "SELECT product_name, customer_segment, ops_cost_margin_pct FROM fab_semantic.operations_cost_impact ORDER BY ops_cost_margin_pct DESC LIMIT 10;"
+    tier: full_dynamic
+    tags: "operations_cost_impact"
+
+  - question: "Show the USD funding cost across all tenors, latest first."
+    sql: "SELECT tenor, benchmark_index, funding_cost_pct, effective_date FROM fab_curated.treasury_rate_sheet WHERE currency = 'USD' ORDER BY effective_date DESC, tenor LIMIT 50;"
+    tier: full_dynamic
+    tags: "treasury_rate_sheet"
+
+  - question: "For SME Loan deals, what's the average recommended price and how many breached the policy floor?"
+    sql: "SELECT ROUND(AVG(recommended_price_pct), 2) AS avg_recommended_price_pct, SUM(price_below_policy_floor) AS below_floor_count, COUNT(*) AS total_deals FROM fab_semantic.pricing_recommendation_view WHERE customer_segment = 'SME' AND product_type = 'Loan';"
+    tier: full_dynamic
+    tags: "pricing_recommendation_view"
+
+  - question: "Compare recommended versus approved price by product type."
+    sql: "SELECT product_type, ROUND(AVG(recommended_price_pct), 2) AS avg_recommended_price_pct, ROUND(AVG(approved_price_pct), 2) AS avg_approved_price_pct FROM fab_semantic.pricing_recommendation_view GROUP BY product_type ORDER BY product_type;"
+    tier: full_dynamic
+    tags: "pricing_recommendation_view"
+
+  - question: "What recommended prices are we quoting new customers, by segment and product?"
+    sql: "SELECT customer_segment, product_type, ROUND(AVG(recommended_price_pct), 2) AS avg_recommended_price_pct FROM fab_semantic.new_customer_pricing_view GROUP BY customer_segment, product_type ORDER BY customer_segment, product_type;"
+    tier: full_dynamic
+    tags: "new_customer_pricing_view"
+
+  - question: "How many deals per segment are non-compliant on price, margin, or discount?"
+    sql: "SELECT customer_segment, SUM(price_below_policy_floor) AS price_breaches, SUM(margin_below_min) AS margin_breaches, SUM(discount_exceeds_policy) AS discount_breaches, COUNT(*) AS total_deals FROM fab_semantic.pricing_recommendation_view GROUP BY customer_segment;"
+    tier: full_dynamic
+    tags: "pricing_recommendation_view"
+
+  - question: "Which product types have the highest share of below-floor pricing?"
+    sql: "SELECT product_type, ROUND(SUM(price_below_policy_floor) * 100.0 / COUNT(*), 2) AS pct_below_floor, COUNT(*) AS total_deals FROM fab_semantic.pricing_recommendation_view GROUP BY product_type ORDER BY pct_below_floor DESC;"
+    tier: full_dynamic
+    tags: "pricing_recommendation_view"
+
+  - question: "For high-risk customers, what's the average risk premium and approved price?"
+    sql: "SELECT ROUND(AVG(risk_premium_pct), 2) AS avg_risk_premium_pct, ROUND(AVG(approved_price_pct), 2) AS avg_approved_price_pct FROM fab_semantic.pricing_recommendation_view WHERE risk_category = 'High';"
+    tier: full_dynamic
+    tags: "pricing_recommendation_view"
+
+  - question: "What are the floor and target margins for SME Trade Finance at each risk level?"
+    sql: "SELECT risk_category, base_margin_floor_pct, target_margin_pct, max_relationship_discount_pct FROM fab_semantic.segment_pricing_benchmark WHERE customer_segment = 'SME' AND product_type = 'Trade Finance' ORDER BY risk_category;"
+    tier: full_dynamic
+    tags: "segment_pricing_benchmark"
+
+  # ---- Portfolio / exposure --------------------------------------------------
+  - question: "What is the total existing exposure by risk category?"
+    sql: "SELECT risk_category, SUM(existing_exposure_aed) AS total_exposure_aed FROM fab_curated.customer_master GROUP BY risk_category ORDER BY total_exposure_aed DESC;"
+    tier: full_dynamic
+    tags: "customer_master"
+
+  - question: "What's the total requested amount of deals by product type?"
+    sql: "SELECT product_type, SUM(requested_amount) AS total_requested_amount FROM fab_curated.historical_deals GROUP BY product_type ORDER BY total_requested_amount DESC;"
+    tier: full_dynamic
+    tags: "historical_deals"

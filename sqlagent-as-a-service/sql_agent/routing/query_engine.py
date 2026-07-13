@@ -20,6 +20,7 @@ from sql_agent.db.dialect import dialect_label, dialect_notes
 from sql_agent.formatting import format_error, format_response
 from sql_agent.llm import Step, get_llm, log_usage
 from sql_agent.logging_config import get_logger
+from sql_agent.memory import relevant_examples, render_examples_block
 from sql_agent.semantic_layer.joins import resolve_joins
 from sql_agent.semantic_layer.loader import join_closure
 from sql_agent.semantic_layer.renderer import render_schema_context
@@ -119,6 +120,16 @@ def run_dynamic_pipeline(question: str, tables_hint: list[str] | None = None) ->
         if joins:
             prompt += ("\n\nJOIN HINTS — use ONLY these declared relationships:\n"
                        + "\n".join(joins))
+        # Intent-aware few-shot (Pattern Retriever): append the most RELEVANT approved
+        # worked examples for THIS question, biased toward the tables retrieval already
+        # selected. No-op (byte-identical prompt) when examples are disabled or none are
+        # stored. tables_hint doubles as the intent signal that steers example selection.
+        if settings.examples_enabled:
+            block = render_examples_block(
+                relevant_examples(question, tier="full_dynamic", tables_hint=tables_hint)
+            )
+            if block:
+                prompt += "\n\n" + block
         return prompt
 
     prompt = _base_prompt(schema_context, join_clauses)

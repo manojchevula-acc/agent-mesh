@@ -128,14 +128,10 @@ class QdrantIndex:
     """
 
     def __init__(self, url: str, path: str, api_key: str, collection: str) -> None:
-        from qdrant_client import QdrantClient
-
-        if url:
-            self._client = QdrantClient(url=url, api_key=api_key or None)
-        elif path:
-            self._client = QdrantClient(path=path)          # local, on-disk, no server
-        else:
-            self._client = QdrantClient(location=":memory:")  # local, in-RAM
+        # A SHARED client per connection (url/path): Qdrant local/on-disk mode file-locks
+        # per path, so the schema and examples collections MUST reuse one client in the
+        # same process. _qdrant_client caches it.
+        self._client = _qdrant_client(url, path, api_key)
         self._collection = collection
         self._names: list[str] = []
 
@@ -191,7 +187,10 @@ class QdrantIndex:
 
     def close(self) -> None:
         """Release the client (and, in local mode, the file lock) deterministically —
-        avoids the noisy __del__-at-interpreter-shutdown traceback on Windows."""
+        avoids the noisy __del__-at-interpreter-shutdown traceback on Windows. Because the
+        client is SHARED across collections, this also evicts the cached client so a fresh
+        one is created next time (safe: close() is only called by the offline build
+        scripts, which use one index at a time)."""
         client = getattr(self, "_client", None)
         if client is not None:
             try:
@@ -199,15 +198,45 @@ class QdrantIndex:
             except Exception:  # noqa: BLE001 — best-effort teardown
                 pass
             self._client = None
+            _qdrant_client.cache_clear()
+
+
+@lru_cache(maxsize=4)
+def _qdrant_client(url: str, path: str, api_key: str):
+    """One QdrantClient per connection (url/path), shared across collections.
+
+    Qdrant local (``path``) and in-memory modes hold an exclusive lock, so a single
+    process must reuse ONE client for every collection it touches (schema + examples).
+    """
+    from qdrant_client import QdrantClient
+
+    if url:
+        return QdrantClient(url=url, api_key=api_key or None)
+    if path:
+        return QdrantClient(path=path)              # local, on-disk, no server
+    return QdrantClient(location=":memory:")          # local, in-RAM
+
+
+def _make_index(collection: str, index_path: str) -> VectorIndex:
+    """Build the configured backend for a specific collection / faiss path."""
+    backend = settings.vector_backend.strip().lower()
+    if backend == "faiss":
+        return FaissIndex(index_path)
+    if backend == "qdrant":
+        return QdrantIndex(settings.qdrant_url, settings.qdrant_path,
+                           settings.qdrant_api_key, collection)
+    return MemoryIndex()
 
 
 @lru_cache(maxsize=1)
 def get_vector_index() -> VectorIndex:
-    """Resolve the configured vector index backend (one instance per process)."""
-    backend = settings.vector_backend.strip().lower()
-    if backend == "faiss":
-        return FaissIndex(settings.vector_index_path)
-    if backend == "qdrant":
-        return QdrantIndex(settings.qdrant_url, settings.qdrant_path,
-                           settings.qdrant_api_key, settings.qdrant_collection)
-    return MemoryIndex()
+    """Resolve the configured vector index backend for the SCHEMA (one per process)."""
+    return _make_index(settings.qdrant_collection, settings.vector_index_path)
+
+
+@lru_cache(maxsize=1)
+def get_example_vector_index() -> VectorIndex:
+    """Resolve the vector index backend for the few-shot EXAMPLE vectors (Pattern
+    Retriever). Same backend/connection as the schema index but a SEPARATE collection."""
+    return _make_index(settings.examples_qdrant_collection,
+                       settings.examples_vector_index_path)

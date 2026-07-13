@@ -1634,3 +1634,660 @@
 2026-07-10 12:12:32,280 | INFO     | mesh.system      | trace=- span=- req=- | Observability profile=off: file logging only, OTel disabled.
 2026-07-10 12:12:33,516 | INFO     | mcp.client.streamable_http | trace=- span=- req=- | Received session ID: 8fda038f9cae48b4b63cf2c751f3e769
 2026-07-10 12:12:33,519 | INFO     | mcp.client.streamable_http | trace=- span=- req=- | Negotiated protocol version: 2025-11-25
+2026-07-10 12:12:51,224 | INFO     | agent_framework._workflows._validation | trace=- span=- req=E85D6A82 | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-10 12:12:51,226 | INFO     | mesh.system      | trace=- span=- req=E85D6A82 | Request start user=alice role=relationship_manager query_len=91 req=E85D6A82
+2026-07-10 12:12:51,226 | INFO     | mesh.workflow    | trace=- span=- req=E85D6A82 | Input guardrail PASS
+2026-07-10 12:12:51,226 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E85D6A82 | Yielding pre-loop events
+2026-07-10 12:12:51,226 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E85D6A82 | Starting superstep 1
+2026-07-10 12:12:51,227 | INFO     | mesh.workflow    | trace=- span=- req=E85D6A82 | RBAC PASS role=relationship_manager
+2026-07-10 12:12:51,281 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E85D6A82 | Completed superstep 1
+2026-07-10 12:12:51,281 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E85D6A82 | Starting superstep 2
+2026-07-10 12:12:51,282 | INFO     | mesh.workflow    | trace=- span=- req=E85D6A82 | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-10 12:12:51,346 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E85D6A82 | Completed superstep 2
+2026-07-10 12:12:51,347 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E85D6A82 | Starting superstep 3
+2026-07-10 12:14:02,993 | INFO     | mesh.a2a         | trace=- span=- req=E85D6A82 | SQL agent replied status=error tool=None rows=None (71640 ms)
+2026-07-10 12:14:02,994 | INFO     | mesh.workflow    | trace=- span=- req=E85D6A82 | Domain direct answer (425 chars)
+2026-07-10 12:14:03,055 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E85D6A82 | Completed superstep 3
+2026-07-10 12:14:03,056 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E85D6A82 | Starting superstep 4
+2026-07-10 12:14:03,057 | INFO     | mesh.workflow    | trace=- span=- req=E85D6A82 | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-10 12:14:03,122 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E85D6A82 | Completed superstep 4
+2026-07-10 12:14:03,122 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E85D6A82 | Workflow completed after 4 supersteps
+2026-07-10 12:15:09,818 | INFO     | agent_framework._workflows._validation | trace=- span=- req=60A73D58 | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-10 12:15:09,819 | INFO     | mesh.system      | trace=- span=- req=60A73D58 | Request start user=alice role=relationship_manager query_len=91 req=60A73D58
+2026-07-10 12:15:09,819 | INFO     | mesh.workflow    | trace=- span=- req=60A73D58 | Input guardrail PASS
+2026-07-10 12:15:09,820 | INFO     | agent_framework._workflows._runner | trace=- span=- req=60A73D58 | Yielding pre-loop events
+2026-07-10 12:15:09,820 | INFO     | agent_framework._workflows._runner | trace=- span=- req=60A73D58 | Starting superstep 1
+2026-07-10 12:15:09,820 | INFO     | mesh.workflow    | trace=- span=- req=60A73D58 | RBAC PASS role=relationship_manager
+2026-07-10 12:15:09,883 | INFO     | agent_framework._workflows._runner | trace=- span=- req=60A73D58 | Completed superstep 1
+2026-07-10 12:15:09,884 | INFO     | agent_framework._workflows._runner | trace=- span=- req=60A73D58 | Starting superstep 2
+2026-07-10 12:15:09,884 | INFO     | mesh.workflow    | trace=- span=- req=60A73D58 | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-10 12:15:09,949 | INFO     | agent_framework._workflows._runner | trace=- span=- req=60A73D58 | Completed superstep 2
+2026-07-10 12:15:09,950 | INFO     | agent_framework._workflows._runner | trace=- span=- req=60A73D58 | Starting superstep 3
+2026-07-10 12:16:24,827 | INFO     | mesh.a2a         | trace=- span=- req=60A73D58 | SQL agent replied status=success tool=analytical_query rows=1 (74857 ms)
+2026-07-10 12:16:24,827 | INFO     | mesh.workflow    | trace=- span=- req=60A73D58 | Domain direct answer (320 chars)
+2026-07-10 12:16:24,890 | INFO     | agent_framework._workflows._runner | trace=- span=- req=60A73D58 | Completed superstep 3
+2026-07-10 12:16:24,890 | INFO     | agent_framework._workflows._runner | trace=- span=- req=60A73D58 | Starting superstep 4
+2026-07-10 12:16:24,891 | INFO     | mesh.workflow    | trace=- span=- req=60A73D58 | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-10 12:16:24,957 | INFO     | agent_framework._workflows._runner | trace=- span=- req=60A73D58 | Completed superstep 4
+2026-07-10 12:16:24,958 | INFO     | agent_framework._workflows._runner | trace=- span=- req=60A73D58 | Workflow completed after 4 supersteps
+2026-07-10 12:17:05,327 | INFO     | agent_framework._workflows._validation | trace=- span=- req=91767134 | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-10 12:17:05,328 | INFO     | mesh.system      | trace=- span=- req=91767134 | Request start user=alice role=relationship_manager query_len=91 req=91767134
+2026-07-10 12:17:05,328 | INFO     | mesh.workflow    | trace=- span=- req=91767134 | Input guardrail PASS
+2026-07-10 12:17:05,329 | INFO     | agent_framework._workflows._runner | trace=- span=- req=91767134 | Yielding pre-loop events
+2026-07-10 12:17:05,329 | INFO     | agent_framework._workflows._runner | trace=- span=- req=91767134 | Starting superstep 1
+2026-07-10 12:17:05,330 | INFO     | mesh.workflow    | trace=- span=- req=91767134 | RBAC PASS role=relationship_manager
+2026-07-10 12:17:05,385 | INFO     | agent_framework._workflows._runner | trace=- span=- req=91767134 | Completed superstep 1
+2026-07-10 12:17:05,385 | INFO     | agent_framework._workflows._runner | trace=- span=- req=91767134 | Starting superstep 2
+2026-07-10 12:17:05,387 | INFO     | mesh.workflow    | trace=- span=- req=91767134 | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-10 12:17:05,452 | INFO     | agent_framework._workflows._runner | trace=- span=- req=91767134 | Completed superstep 2
+2026-07-10 12:17:05,453 | INFO     | agent_framework._workflows._runner | trace=- span=- req=91767134 | Starting superstep 3
+2026-07-10 12:18:47,492 | INFO     | mesh.a2a         | trace=- span=- req=91767134 | SQL agent replied status=success tool=analytical_query rows=5 (102010 ms)
+2026-07-10 12:18:47,493 | INFO     | mesh.workflow    | trace=- span=- req=91767134 | Domain direct answer (718 chars)
+2026-07-10 12:18:47,544 | INFO     | agent_framework._workflows._runner | trace=- span=- req=91767134 | Completed superstep 3
+2026-07-10 12:18:47,545 | INFO     | agent_framework._workflows._runner | trace=- span=- req=91767134 | Starting superstep 4
+2026-07-10 12:18:47,545 | INFO     | mesh.workflow    | trace=- span=- req=91767134 | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-10 12:18:47,610 | INFO     | agent_framework._workflows._runner | trace=- span=- req=91767134 | Completed superstep 4
+2026-07-10 12:18:47,611 | INFO     | agent_framework._workflows._runner | trace=- span=- req=91767134 | Workflow completed after 4 supersteps
+2026-07-10 12:19:33,407 | INFO     | agent_framework._workflows._validation | trace=- span=- req=C77ED701 | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-10 12:19:33,408 | INFO     | mesh.system      | trace=- span=- req=C77ED701 | Request start user=alice role=relationship_manager query_len=87 req=C77ED701
+2026-07-10 12:19:33,408 | INFO     | mesh.workflow    | trace=- span=- req=C77ED701 | Input guardrail PASS
+2026-07-10 12:19:33,409 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C77ED701 | Yielding pre-loop events
+2026-07-10 12:19:33,409 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C77ED701 | Starting superstep 1
+2026-07-10 12:19:33,409 | INFO     | mesh.workflow    | trace=- span=- req=C77ED701 | RBAC PASS role=relationship_manager
+2026-07-10 12:19:33,469 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C77ED701 | Completed superstep 1
+2026-07-10 12:19:33,470 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C77ED701 | Starting superstep 2
+2026-07-10 12:19:33,470 | INFO     | mesh.workflow    | trace=- span=- req=C77ED701 | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-10 12:19:33,536 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C77ED701 | Completed superstep 2
+2026-07-10 12:19:33,536 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C77ED701 | Starting superstep 3
+2026-07-10 12:23:21,581 | INFO     | mesh.a2a         | trace=- span=- req=C77ED701 | SQL agent replied status=success tool=analytical_query rows=1 (228013 ms)
+2026-07-10 12:23:21,582 | INFO     | mesh.workflow    | trace=- span=- req=C77ED701 | Domain direct answer (390 chars)
+2026-07-10 12:23:21,645 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C77ED701 | Completed superstep 3
+2026-07-10 12:23:21,645 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C77ED701 | Starting superstep 4
+2026-07-10 12:23:21,647 | INFO     | mesh.workflow    | trace=- span=- req=C77ED701 | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-10 12:23:21,706 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C77ED701 | Completed superstep 4
+2026-07-10 12:23:21,707 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C77ED701 | Workflow completed after 4 supersteps
+2026-07-10 12:25:05,410 | INFO     | agent_framework._workflows._validation | trace=- span=- req=0A8DE028 | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-10 12:25:05,411 | INFO     | mesh.system      | trace=- span=- req=0A8DE028 | Request start user=alice role=relationship_manager query_len=107 req=0A8DE028
+2026-07-10 12:25:05,412 | INFO     | mesh.workflow    | trace=- span=- req=0A8DE028 | Input guardrail PASS
+2026-07-10 12:25:05,413 | INFO     | agent_framework._workflows._runner | trace=- span=- req=0A8DE028 | Yielding pre-loop events
+2026-07-10 12:25:05,413 | INFO     | agent_framework._workflows._runner | trace=- span=- req=0A8DE028 | Starting superstep 1
+2026-07-10 12:25:05,413 | INFO     | mesh.workflow    | trace=- span=- req=0A8DE028 | RBAC PASS role=relationship_manager
+2026-07-10 12:25:05,472 | INFO     | agent_framework._workflows._runner | trace=- span=- req=0A8DE028 | Completed superstep 1
+2026-07-10 12:25:05,472 | INFO     | agent_framework._workflows._runner | trace=- span=- req=0A8DE028 | Starting superstep 2
+2026-07-10 12:25:05,473 | INFO     | mesh.workflow    | trace=- span=- req=0A8DE028 | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-10 12:25:05,524 | INFO     | agent_framework._workflows._runner | trace=- span=- req=0A8DE028 | Completed superstep 2
+2026-07-10 12:25:05,525 | INFO     | agent_framework._workflows._runner | trace=- span=- req=0A8DE028 | Starting superstep 3
+2026-07-10 12:29:16,309 | INFO     | mesh.a2a         | trace=- span=- req=0A8DE028 | SQL agent replied status=success tool=find_deals rows=0 (250770 ms)
+2026-07-10 12:29:16,309 | INFO     | mesh.workflow    | trace=- span=- req=0A8DE028 | Domain direct answer (431 chars)
+2026-07-10 12:29:16,360 | INFO     | agent_framework._workflows._runner | trace=- span=- req=0A8DE028 | Completed superstep 3
+2026-07-10 12:29:16,360 | INFO     | agent_framework._workflows._runner | trace=- span=- req=0A8DE028 | Starting superstep 4
+2026-07-10 12:29:16,361 | INFO     | mesh.workflow    | trace=- span=- req=0A8DE028 | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-10 12:29:16,427 | INFO     | agent_framework._workflows._runner | trace=- span=- req=0A8DE028 | Completed superstep 4
+2026-07-10 12:29:16,427 | INFO     | agent_framework._workflows._runner | trace=- span=- req=0A8DE028 | Workflow completed after 4 supersteps
+2026-07-10 12:29:50,792 | INFO     | agent_framework._workflows._validation | trace=- span=- req=CE4AC70A | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-10 12:29:50,793 | INFO     | mesh.system      | trace=- span=- req=CE4AC70A | Request start user=alice role=relationship_manager query_len=107 req=CE4AC70A
+2026-07-10 12:29:50,793 | INFO     | mesh.workflow    | trace=- span=- req=CE4AC70A | Input guardrail PASS
+2026-07-10 12:29:50,794 | INFO     | agent_framework._workflows._runner | trace=- span=- req=CE4AC70A | Yielding pre-loop events
+2026-07-10 12:29:50,794 | INFO     | agent_framework._workflows._runner | trace=- span=- req=CE4AC70A | Starting superstep 1
+2026-07-10 12:29:50,795 | INFO     | mesh.workflow    | trace=- span=- req=CE4AC70A | RBAC PASS role=relationship_manager
+2026-07-10 12:29:50,851 | INFO     | agent_framework._workflows._runner | trace=- span=- req=CE4AC70A | Completed superstep 1
+2026-07-10 12:29:50,851 | INFO     | agent_framework._workflows._runner | trace=- span=- req=CE4AC70A | Starting superstep 2
+2026-07-10 12:29:50,852 | INFO     | mesh.workflow    | trace=- span=- req=CE4AC70A | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-10 12:29:50,905 | INFO     | agent_framework._workflows._runner | trace=- span=- req=CE4AC70A | Completed superstep 2
+2026-07-10 12:29:50,905 | INFO     | agent_framework._workflows._runner | trace=- span=- req=CE4AC70A | Starting superstep 3
+2026-07-10 12:32:49,742 | INFO     | mesh.a2a         | trace=- span=- req=CE4AC70A | SQL agent replied status=error tool=None rows=None (178832 ms)
+2026-07-10 12:32:49,742 | INFO     | mesh.workflow    | trace=- span=- req=CE4AC70A | Domain direct answer (139 chars)
+2026-07-10 12:32:49,800 | INFO     | agent_framework._workflows._runner | trace=- span=- req=CE4AC70A | Completed superstep 3
+2026-07-10 12:32:49,800 | INFO     | agent_framework._workflows._runner | trace=- span=- req=CE4AC70A | Starting superstep 4
+2026-07-10 12:32:49,801 | INFO     | mesh.workflow    | trace=- span=- req=CE4AC70A | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-10 12:32:49,861 | INFO     | agent_framework._workflows._runner | trace=- span=- req=CE4AC70A | Completed superstep 4
+2026-07-10 12:32:49,862 | INFO     | agent_framework._workflows._runner | trace=- span=- req=CE4AC70A | Workflow completed after 4 supersteps
+2026-07-10 13:26:56,178 | INFO     | agent_framework._workflows._validation | trace=- span=- req=A03064AF | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-10 13:26:56,199 | INFO     | mesh.system      | trace=- span=- req=A03064AF | Request start user=alice role=relationship_manager query_len=107 req=A03064AF
+2026-07-10 13:26:56,208 | INFO     | mesh.workflow    | trace=- span=- req=A03064AF | Input guardrail PASS
+2026-07-10 13:26:56,212 | INFO     | agent_framework._workflows._runner | trace=- span=- req=A03064AF | Yielding pre-loop events
+2026-07-10 13:26:56,213 | INFO     | agent_framework._workflows._runner | trace=- span=- req=A03064AF | Starting superstep 1
+2026-07-10 13:26:56,219 | INFO     | mesh.workflow    | trace=- span=- req=A03064AF | RBAC PASS role=relationship_manager
+2026-07-10 13:26:56,280 | INFO     | agent_framework._workflows._runner | trace=- span=- req=A03064AF | Completed superstep 1
+2026-07-10 13:26:56,281 | INFO     | agent_framework._workflows._runner | trace=- span=- req=A03064AF | Starting superstep 2
+2026-07-10 13:26:56,282 | INFO     | mesh.workflow    | trace=- span=- req=A03064AF | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-10 13:26:56,339 | INFO     | agent_framework._workflows._runner | trace=- span=- req=A03064AF | Completed superstep 2
+2026-07-10 13:26:56,340 | INFO     | agent_framework._workflows._runner | trace=- span=- req=A03064AF | Starting superstep 3
+2026-07-10 13:28:04,334 | INFO     | mesh.a2a         | trace=- span=- req=A03064AF | SQL agent replied status=error tool=None rows=None (67990 ms)
+2026-07-10 13:28:04,336 | INFO     | mesh.workflow    | trace=- span=- req=A03064AF | Domain direct answer (427 chars)
+2026-07-10 13:28:04,389 | INFO     | agent_framework._workflows._runner | trace=- span=- req=A03064AF | Completed superstep 3
+2026-07-10 13:28:04,391 | INFO     | agent_framework._workflows._runner | trace=- span=- req=A03064AF | Starting superstep 4
+2026-07-10 13:28:04,394 | INFO     | mesh.workflow    | trace=- span=- req=A03064AF | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-10 13:28:04,460 | INFO     | agent_framework._workflows._runner | trace=- span=- req=A03064AF | Completed superstep 4
+2026-07-10 13:28:04,460 | INFO     | agent_framework._workflows._runner | trace=- span=- req=A03064AF | Workflow completed after 4 supersteps
+2026-07-10 13:28:39,375 | INFO     | agent_framework._workflows._validation | trace=- span=- req=47FE7031 | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-10 13:28:39,379 | INFO     | mesh.system      | trace=- span=- req=47FE7031 | Request start user=alice role=relationship_manager query_len=107 req=47FE7031
+2026-07-10 13:28:39,389 | INFO     | mesh.workflow    | trace=- span=- req=47FE7031 | Input guardrail PASS
+2026-07-10 13:28:39,392 | INFO     | agent_framework._workflows._runner | trace=- span=- req=47FE7031 | Yielding pre-loop events
+2026-07-10 13:28:39,394 | INFO     | agent_framework._workflows._runner | trace=- span=- req=47FE7031 | Starting superstep 1
+2026-07-10 13:28:39,396 | INFO     | mesh.workflow    | trace=- span=- req=47FE7031 | RBAC PASS role=relationship_manager
+2026-07-10 13:28:39,458 | INFO     | agent_framework._workflows._runner | trace=- span=- req=47FE7031 | Completed superstep 1
+2026-07-10 13:28:39,460 | INFO     | agent_framework._workflows._runner | trace=- span=- req=47FE7031 | Starting superstep 2
+2026-07-10 13:28:39,461 | INFO     | mesh.workflow    | trace=- span=- req=47FE7031 | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-10 13:28:39,521 | INFO     | agent_framework._workflows._runner | trace=- span=- req=47FE7031 | Completed superstep 2
+2026-07-10 13:28:39,522 | INFO     | agent_framework._workflows._runner | trace=- span=- req=47FE7031 | Starting superstep 3
+2026-07-10 13:30:01,474 | INFO     | mesh.a2a         | trace=- span=- req=47FE7031 | SQL agent replied status=error tool=None rows=None (81949 ms)
+2026-07-10 13:30:01,475 | INFO     | mesh.workflow    | trace=- span=- req=47FE7031 | Domain direct answer (425 chars)
+2026-07-10 13:30:01,536 | INFO     | agent_framework._workflows._runner | trace=- span=- req=47FE7031 | Completed superstep 3
+2026-07-10 13:30:01,537 | INFO     | agent_framework._workflows._runner | trace=- span=- req=47FE7031 | Starting superstep 4
+2026-07-10 13:30:01,538 | INFO     | mesh.workflow    | trace=- span=- req=47FE7031 | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-10 13:30:01,655 | INFO     | agent_framework._workflows._runner | trace=- span=- req=47FE7031 | Completed superstep 4
+2026-07-10 13:30:01,695 | INFO     | agent_framework._workflows._runner | trace=- span=- req=47FE7031 | Workflow completed after 4 supersteps
+2026-07-10 17:34:42,083 | INFO     | agent_framework._workflows._validation | trace=- span=- req=FACB561C | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-10 17:34:42,126 | INFO     | mesh.system      | trace=- span=- req=FACB561C | Request start user=alice role=relationship_manager query_len=61 req=FACB561C
+2026-07-10 17:34:42,150 | INFO     | mesh.workflow    | trace=- span=- req=FACB561C | Input guardrail PASS
+2026-07-10 17:34:42,162 | INFO     | agent_framework._workflows._runner | trace=- span=- req=FACB561C | Yielding pre-loop events
+2026-07-10 17:34:42,163 | INFO     | agent_framework._workflows._runner | trace=- span=- req=FACB561C | Starting superstep 1
+2026-07-10 17:34:42,167 | INFO     | mesh.workflow    | trace=- span=- req=FACB561C | RBAC PASS role=relationship_manager
+2026-07-10 17:34:42,229 | INFO     | agent_framework._workflows._runner | trace=- span=- req=FACB561C | Completed superstep 1
+2026-07-10 17:34:42,232 | INFO     | agent_framework._workflows._runner | trace=- span=- req=FACB561C | Starting superstep 2
+2026-07-10 17:34:42,234 | INFO     | mesh.workflow    | trace=- span=- req=FACB561C | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-10 17:34:42,291 | INFO     | agent_framework._workflows._runner | trace=- span=- req=FACB561C | Completed superstep 2
+2026-07-10 17:34:42,293 | INFO     | agent_framework._workflows._runner | trace=- span=- req=FACB561C | Starting superstep 3
+2026-07-10 17:36:18,285 | INFO     | mesh.a2a         | trace=- span=- req=FACB561C | SQL agent replied status=success tool=analytical_query rows=10 (95987 ms)
+2026-07-10 17:36:18,286 | INFO     | mesh.workflow    | trace=- span=- req=FACB561C | Domain direct answer (656 chars)
+2026-07-10 17:36:18,358 | INFO     | agent_framework._workflows._runner | trace=- span=- req=FACB561C | Completed superstep 3
+2026-07-10 17:36:18,359 | INFO     | agent_framework._workflows._runner | trace=- span=- req=FACB561C | Starting superstep 4
+2026-07-10 17:36:18,360 | INFO     | mesh.workflow    | trace=- span=- req=FACB561C | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-10 17:36:18,419 | INFO     | agent_framework._workflows._runner | trace=- span=- req=FACB561C | Completed superstep 4
+2026-07-10 17:36:18,420 | INFO     | agent_framework._workflows._runner | trace=- span=- req=FACB561C | Workflow completed after 4 supersteps
+2026-07-10 17:36:47,007 | INFO     | agent_framework._workflows._validation | trace=- span=- req=9A694F70 | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-10 17:36:47,020 | INFO     | mesh.system      | trace=- span=- req=9A694F70 | Request start user=alice role=relationship_manager query_len=53 req=9A694F70
+2026-07-10 17:36:47,023 | INFO     | mesh.workflow    | trace=- span=- req=9A694F70 | Input guardrail PASS
+2026-07-10 17:36:47,025 | INFO     | agent_framework._workflows._runner | trace=- span=- req=9A694F70 | Yielding pre-loop events
+2026-07-10 17:36:47,026 | INFO     | agent_framework._workflows._runner | trace=- span=- req=9A694F70 | Starting superstep 1
+2026-07-10 17:36:47,029 | INFO     | mesh.workflow    | trace=- span=- req=9A694F70 | RBAC PASS role=relationship_manager
+2026-07-10 17:36:47,087 | INFO     | agent_framework._workflows._runner | trace=- span=- req=9A694F70 | Completed superstep 1
+2026-07-10 17:36:47,089 | INFO     | agent_framework._workflows._runner | trace=- span=- req=9A694F70 | Starting superstep 2
+2026-07-10 17:36:47,092 | INFO     | mesh.workflow    | trace=- span=- req=9A694F70 | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-10 17:36:47,148 | INFO     | agent_framework._workflows._runner | trace=- span=- req=9A694F70 | Completed superstep 2
+2026-07-10 17:36:47,155 | INFO     | agent_framework._workflows._runner | trace=- span=- req=9A694F70 | Starting superstep 3
+2026-07-10 17:38:24,986 | INFO     | mesh.a2a         | trace=- span=- req=9A694F70 | SQL agent replied status=error tool=None rows=None (97829 ms)
+2026-07-10 17:38:24,987 | INFO     | mesh.workflow    | trace=- span=- req=9A694F70 | Domain direct answer (424 chars)
+2026-07-10 17:38:25,053 | INFO     | agent_framework._workflows._runner | trace=- span=- req=9A694F70 | Completed superstep 3
+2026-07-10 17:38:25,054 | INFO     | agent_framework._workflows._runner | trace=- span=- req=9A694F70 | Starting superstep 4
+2026-07-10 17:38:25,057 | INFO     | mesh.workflow    | trace=- span=- req=9A694F70 | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-10 17:38:25,116 | INFO     | agent_framework._workflows._runner | trace=- span=- req=9A694F70 | Completed superstep 4
+2026-07-10 17:38:25,118 | INFO     | agent_framework._workflows._runner | trace=- span=- req=9A694F70 | Workflow completed after 4 supersteps
+2026-07-10 17:42:25,954 | INFO     | mcp.client.streamable_http | trace=- span=- req=- | GET stream disconnected, reconnecting in 1000ms...
+2026-07-13 12:23:11,632 | INFO     | mesh.system      | trace=- span=- req=- | Logging configured (service=agent_mesh, level=INFO, file=data/logs/agent_mesh.log, json=False)
+2026-07-13 12:23:17,553 | INFO     | mesh.system      | trace=- span=- req=- | Logging configured (service=agent_mesh, level=INFO, file=data/logs/agent_mesh.log, json=False)
+2026-07-13 12:23:19,685 | INFO     | mesh.system      | trace=- span=- req=- | Observability profile=off: file logging only, OTel disabled.
+2026-07-13 12:23:20,590 | INFO     | mcp.client.streamable_http | trace=- span=- req=- | Received session ID: 24352ca349524470bdb87777600f2b09
+2026-07-13 12:23:20,591 | INFO     | mcp.client.streamable_http | trace=- span=- req=- | Negotiated protocol version: 2025-11-25
+2026-07-13 12:23:31,731 | INFO     | mesh.system      | trace=- span=- req=- | Logging configured (service=agent_mesh_api, level=INFO, file=data/logs/agent_mesh.log, json=False)
+2026-07-13 12:23:31,767 | INFO     | mesh.system      | trace=- span=- req=- | Observability profile=off: file logging only, OTel disabled.
+2026-07-13 12:25:24,362 | INFO     | agent_framework._workflows._validation | trace=- span=- req=C8069D18 | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-13 12:25:24,364 | INFO     | mesh.system      | trace=- span=- req=C8069D18 | Request start user=alice role=relationship_manager query_len=55 req=C8069D18
+2026-07-13 12:25:24,365 | INFO     | mesh.workflow    | trace=- span=- req=C8069D18 | Input guardrail PASS
+2026-07-13 12:25:24,366 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C8069D18 | Yielding pre-loop events
+2026-07-13 12:25:24,366 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C8069D18 | Starting superstep 1
+2026-07-13 12:25:24,367 | INFO     | mesh.workflow    | trace=- span=- req=C8069D18 | RBAC PASS role=relationship_manager
+2026-07-13 12:25:24,423 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C8069D18 | Completed superstep 1
+2026-07-13 12:25:24,424 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C8069D18 | Starting superstep 2
+2026-07-13 12:25:24,425 | INFO     | mesh.workflow    | trace=- span=- req=C8069D18 | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-13 12:25:24,488 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C8069D18 | Completed superstep 2
+2026-07-13 12:25:24,489 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C8069D18 | Starting superstep 3
+2026-07-13 12:26:23,239 | INFO     | mesh.a2a         | trace=- span=- req=C8069D18 | SQL agent replied status=error tool=None rows=None (58739 ms)
+2026-07-13 12:26:23,240 | INFO     | mesh.workflow    | trace=- span=- req=C8069D18 | Domain direct answer (1864 chars)
+2026-07-13 12:26:23,293 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C8069D18 | Completed superstep 3
+2026-07-13 12:26:23,294 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C8069D18 | Starting superstep 4
+2026-07-13 12:26:23,295 | INFO     | mesh.workflow    | trace=- span=- req=C8069D18 | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-13 12:26:23,356 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C8069D18 | Completed superstep 4
+2026-07-13 12:26:23,357 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C8069D18 | Workflow completed after 4 supersteps
+2026-07-13 12:26:57,057 | INFO     | agent_framework._workflows._validation | trace=- span=- req=62221DCF | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-13 12:26:57,058 | INFO     | mesh.system      | trace=- span=- req=62221DCF | Request start user=alice role=relationship_manager query_len=61 req=62221DCF
+2026-07-13 12:26:57,059 | INFO     | mesh.workflow    | trace=- span=- req=62221DCF | Input guardrail PASS
+2026-07-13 12:26:57,059 | INFO     | agent_framework._workflows._runner | trace=- span=- req=62221DCF | Yielding pre-loop events
+2026-07-13 12:26:57,059 | INFO     | agent_framework._workflows._runner | trace=- span=- req=62221DCF | Starting superstep 1
+2026-07-13 12:26:57,060 | INFO     | mesh.workflow    | trace=- span=- req=62221DCF | RBAC PASS role=relationship_manager
+2026-07-13 12:26:57,115 | INFO     | agent_framework._workflows._runner | trace=- span=- req=62221DCF | Completed superstep 1
+2026-07-13 12:26:57,115 | INFO     | agent_framework._workflows._runner | trace=- span=- req=62221DCF | Starting superstep 2
+2026-07-13 12:26:57,116 | INFO     | mesh.workflow    | trace=- span=- req=62221DCF | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-13 12:26:57,167 | INFO     | agent_framework._workflows._runner | trace=- span=- req=62221DCF | Completed superstep 2
+2026-07-13 12:26:57,167 | INFO     | agent_framework._workflows._runner | trace=- span=- req=62221DCF | Starting superstep 3
+2026-07-13 12:28:48,180 | INFO     | mesh.a2a         | trace=- span=- req=62221DCF | SQL agent replied status=success tool=analytical_query rows=10 (111008 ms)
+2026-07-13 12:28:48,181 | INFO     | mesh.workflow    | trace=- span=- req=62221DCF | Domain direct answer (691 chars)
+2026-07-13 12:28:48,234 | INFO     | agent_framework._workflows._runner | trace=- span=- req=62221DCF | Completed superstep 3
+2026-07-13 12:28:48,234 | INFO     | agent_framework._workflows._runner | trace=- span=- req=62221DCF | Starting superstep 4
+2026-07-13 12:28:48,235 | INFO     | mesh.workflow    | trace=- span=- req=62221DCF | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-13 12:28:48,296 | INFO     | agent_framework._workflows._runner | trace=- span=- req=62221DCF | Completed superstep 4
+2026-07-13 12:28:48,297 | INFO     | agent_framework._workflows._runner | trace=- span=- req=62221DCF | Workflow completed after 4 supersteps
+2026-07-13 12:29:45,111 | INFO     | agent_framework._workflows._validation | trace=- span=- req=E62DFDB7 | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-13 12:29:45,112 | INFO     | mesh.system      | trace=- span=- req=E62DFDB7 | Request start user=alice role=relationship_manager query_len=54 req=E62DFDB7
+2026-07-13 12:29:45,113 | INFO     | mesh.workflow    | trace=- span=- req=E62DFDB7 | Input guardrail PASS
+2026-07-13 12:29:45,114 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E62DFDB7 | Yielding pre-loop events
+2026-07-13 12:29:45,115 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E62DFDB7 | Starting superstep 1
+2026-07-13 12:29:45,117 | INFO     | mesh.workflow    | trace=- span=- req=E62DFDB7 | RBAC PASS role=relationship_manager
+2026-07-13 12:29:45,184 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E62DFDB7 | Completed superstep 1
+2026-07-13 12:29:45,185 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E62DFDB7 | Starting superstep 2
+2026-07-13 12:29:45,185 | INFO     | mesh.workflow    | trace=- span=- req=E62DFDB7 | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-13 12:29:45,251 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E62DFDB7 | Completed superstep 2
+2026-07-13 12:29:45,251 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E62DFDB7 | Starting superstep 3
+2026-07-13 12:31:53,335 | INFO     | mesh.a2a         | trace=- span=- req=E62DFDB7 | SQL agent replied status=success tool=analytical_query rows=20 (128080 ms)
+2026-07-13 12:31:53,336 | INFO     | mesh.workflow    | trace=- span=- req=E62DFDB7 | Domain direct answer (1135 chars)
+2026-07-13 12:31:53,397 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E62DFDB7 | Completed superstep 3
+2026-07-13 12:31:53,399 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E62DFDB7 | Starting superstep 4
+2026-07-13 12:31:53,403 | INFO     | mesh.workflow    | trace=- span=- req=E62DFDB7 | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-13 12:31:53,469 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E62DFDB7 | Completed superstep 4
+2026-07-13 12:31:53,470 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E62DFDB7 | Workflow completed after 4 supersteps
+2026-07-13 12:32:19,980 | INFO     | agent_framework._workflows._validation | trace=- span=- req=3CD73001 | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-13 12:32:19,981 | INFO     | mesh.system      | trace=- span=- req=3CD73001 | Request start user=alice role=relationship_manager query_len=37 req=3CD73001
+2026-07-13 12:32:19,982 | INFO     | mesh.workflow    | trace=- span=- req=3CD73001 | Input guardrail PASS
+2026-07-13 12:32:19,982 | INFO     | agent_framework._workflows._runner | trace=- span=- req=3CD73001 | Yielding pre-loop events
+2026-07-13 12:32:19,982 | INFO     | agent_framework._workflows._runner | trace=- span=- req=3CD73001 | Starting superstep 1
+2026-07-13 12:32:19,983 | INFO     | mesh.workflow    | trace=- span=- req=3CD73001 | RBAC PASS role=relationship_manager
+2026-07-13 12:32:20,042 | INFO     | agent_framework._workflows._runner | trace=- span=- req=3CD73001 | Completed superstep 1
+2026-07-13 12:32:20,043 | INFO     | agent_framework._workflows._runner | trace=- span=- req=3CD73001 | Starting superstep 2
+2026-07-13 12:32:20,043 | INFO     | mesh.workflow    | trace=- span=- req=3CD73001 | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-13 12:32:20,109 | INFO     | agent_framework._workflows._runner | trace=- span=- req=3CD73001 | Completed superstep 2
+2026-07-13 12:32:20,110 | INFO     | agent_framework._workflows._runner | trace=- span=- req=3CD73001 | Starting superstep 3
+2026-07-13 12:32:22,373 | INFO     | mesh.a2a         | trace=- span=- req=3CD73001 | SQL agent replied status=error tool=None rows=None (2261 ms)
+2026-07-13 12:32:22,374 | INFO     | mesh.workflow    | trace=- span=- req=3CD73001 | Domain direct answer (427 chars)
+2026-07-13 12:32:22,436 | INFO     | agent_framework._workflows._runner | trace=- span=- req=3CD73001 | Completed superstep 3
+2026-07-13 12:32:22,436 | INFO     | agent_framework._workflows._runner | trace=- span=- req=3CD73001 | Starting superstep 4
+2026-07-13 12:32:22,437 | INFO     | mesh.workflow    | trace=- span=- req=3CD73001 | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-13 12:32:22,495 | INFO     | agent_framework._workflows._runner | trace=- span=- req=3CD73001 | Completed superstep 4
+2026-07-13 12:32:22,496 | INFO     | agent_framework._workflows._runner | trace=- span=- req=3CD73001 | Workflow completed after 4 supersteps
+2026-07-13 12:45:32,769 | INFO     | agent_framework._workflows._validation | trace=- span=- req=919BCC3E | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-13 12:45:32,777 | INFO     | mesh.system      | trace=- span=- req=919BCC3E | Request start user=alice role=relationship_manager query_len=37 req=919BCC3E
+2026-07-13 12:45:32,778 | INFO     | mesh.workflow    | trace=- span=- req=919BCC3E | Input guardrail PASS
+2026-07-13 12:45:32,779 | INFO     | agent_framework._workflows._runner | trace=- span=- req=919BCC3E | Yielding pre-loop events
+2026-07-13 12:45:32,779 | INFO     | agent_framework._workflows._runner | trace=- span=- req=919BCC3E | Starting superstep 1
+2026-07-13 12:45:32,780 | INFO     | mesh.workflow    | trace=- span=- req=919BCC3E | RBAC PASS role=relationship_manager
+2026-07-13 12:45:32,833 | INFO     | agent_framework._workflows._runner | trace=- span=- req=919BCC3E | Completed superstep 1
+2026-07-13 12:45:32,833 | INFO     | agent_framework._workflows._runner | trace=- span=- req=919BCC3E | Starting superstep 2
+2026-07-13 12:45:32,834 | INFO     | mesh.workflow    | trace=- span=- req=919BCC3E | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-13 12:45:32,897 | INFO     | agent_framework._workflows._runner | trace=- span=- req=919BCC3E | Completed superstep 2
+2026-07-13 12:45:32,897 | INFO     | agent_framework._workflows._runner | trace=- span=- req=919BCC3E | Starting superstep 3
+2026-07-13 12:45:34,744 | INFO     | mesh.a2a         | trace=- span=- req=919BCC3E | SQL agent replied status=error tool=None rows=None (1846 ms)
+2026-07-13 12:45:34,745 | INFO     | mesh.workflow    | trace=- span=- req=919BCC3E | Domain direct answer (428 chars)
+2026-07-13 12:45:34,812 | INFO     | agent_framework._workflows._runner | trace=- span=- req=919BCC3E | Completed superstep 3
+2026-07-13 12:45:34,813 | INFO     | agent_framework._workflows._runner | trace=- span=- req=919BCC3E | Starting superstep 4
+2026-07-13 12:45:34,814 | INFO     | mesh.workflow    | trace=- span=- req=919BCC3E | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-13 12:45:34,876 | INFO     | agent_framework._workflows._runner | trace=- span=- req=919BCC3E | Completed superstep 4
+2026-07-13 12:45:34,877 | INFO     | agent_framework._workflows._runner | trace=- span=- req=919BCC3E | Workflow completed after 4 supersteps
+2026-07-13 12:45:53,267 | INFO     | agent_framework._workflows._validation | trace=- span=- req=D2935952 | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-13 12:45:53,268 | INFO     | mesh.system      | trace=- span=- req=D2935952 | Request start user=alice role=relationship_manager query_len=37 req=D2935952
+2026-07-13 12:45:53,268 | INFO     | mesh.workflow    | trace=- span=- req=D2935952 | Input guardrail PASS
+2026-07-13 12:45:53,269 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D2935952 | Yielding pre-loop events
+2026-07-13 12:45:53,269 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D2935952 | Starting superstep 1
+2026-07-13 12:45:53,269 | INFO     | mesh.workflow    | trace=- span=- req=D2935952 | RBAC PASS role=relationship_manager
+2026-07-13 12:45:53,330 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D2935952 | Completed superstep 1
+2026-07-13 12:45:53,330 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D2935952 | Starting superstep 2
+2026-07-13 12:45:53,331 | INFO     | mesh.workflow    | trace=- span=- req=D2935952 | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-13 12:45:53,383 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D2935952 | Completed superstep 2
+2026-07-13 12:45:53,383 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D2935952 | Starting superstep 3
+2026-07-13 12:46:42,440 | INFO     | mesh.a2a         | trace=- span=- req=D2935952 | SQL agent replied status=success tool=analytical_query rows=1 (49056 ms)
+2026-07-13 12:46:42,441 | INFO     | mesh.workflow    | trace=- span=- req=D2935952 | Domain direct answer (337 chars)
+2026-07-13 12:46:42,501 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D2935952 | Completed superstep 3
+2026-07-13 12:46:42,502 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D2935952 | Starting superstep 4
+2026-07-13 12:46:42,503 | INFO     | mesh.workflow    | trace=- span=- req=D2935952 | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-13 12:46:42,555 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D2935952 | Completed superstep 4
+2026-07-13 12:46:42,556 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D2935952 | Workflow completed after 4 supersteps
+2026-07-13 12:49:24,727 | INFO     | agent_framework._workflows._validation | trace=- span=- req=47BA2F43 | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-13 12:49:24,728 | INFO     | mesh.system      | trace=- span=- req=47BA2F43 | Request start user=alice role=relationship_manager query_len=46 req=47BA2F43
+2026-07-13 12:49:24,729 | INFO     | mesh.workflow    | trace=- span=- req=47BA2F43 | Input guardrail PASS
+2026-07-13 12:49:24,730 | INFO     | agent_framework._workflows._runner | trace=- span=- req=47BA2F43 | Yielding pre-loop events
+2026-07-13 12:49:24,730 | INFO     | agent_framework._workflows._runner | trace=- span=- req=47BA2F43 | Starting superstep 1
+2026-07-13 12:49:24,731 | INFO     | mesh.workflow    | trace=- span=- req=47BA2F43 | RBAC PASS role=relationship_manager
+2026-07-13 12:49:24,790 | INFO     | agent_framework._workflows._runner | trace=- span=- req=47BA2F43 | Completed superstep 1
+2026-07-13 12:49:24,791 | INFO     | agent_framework._workflows._runner | trace=- span=- req=47BA2F43 | Starting superstep 2
+2026-07-13 12:49:24,791 | INFO     | mesh.workflow    | trace=- span=- req=47BA2F43 | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-13 12:49:24,842 | INFO     | agent_framework._workflows._runner | trace=- span=- req=47BA2F43 | Completed superstep 2
+2026-07-13 12:49:24,843 | INFO     | agent_framework._workflows._runner | trace=- span=- req=47BA2F43 | Starting superstep 3
+2026-07-13 12:50:01,363 | INFO     | mesh.a2a         | trace=- span=- req=47BA2F43 | SQL agent replied status=success tool=analytical_query rows=1 (36519 ms)
+2026-07-13 12:50:01,363 | INFO     | mesh.workflow    | trace=- span=- req=47BA2F43 | Domain direct answer (268 chars)
+2026-07-13 12:50:01,425 | INFO     | agent_framework._workflows._runner | trace=- span=- req=47BA2F43 | Completed superstep 3
+2026-07-13 12:50:01,426 | INFO     | agent_framework._workflows._runner | trace=- span=- req=47BA2F43 | Starting superstep 4
+2026-07-13 12:50:01,427 | INFO     | mesh.workflow    | trace=- span=- req=47BA2F43 | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-13 12:50:01,484 | INFO     | agent_framework._workflows._runner | trace=- span=- req=47BA2F43 | Completed superstep 4
+2026-07-13 12:50:01,485 | INFO     | agent_framework._workflows._runner | trace=- span=- req=47BA2F43 | Workflow completed after 4 supersteps
+2026-07-13 12:50:57,321 | INFO     | agent_framework._workflows._validation | trace=- span=- req=D12AAEF8 | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-13 12:50:57,323 | INFO     | mesh.system      | trace=- span=- req=D12AAEF8 | Request start user=alice role=relationship_manager query_len=66 req=D12AAEF8
+2026-07-13 12:50:57,323 | INFO     | mesh.workflow    | trace=- span=- req=D12AAEF8 | Input guardrail PASS
+2026-07-13 12:50:57,323 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D12AAEF8 | Yielding pre-loop events
+2026-07-13 12:50:57,324 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D12AAEF8 | Starting superstep 1
+2026-07-13 12:50:57,324 | INFO     | mesh.workflow    | trace=- span=- req=D12AAEF8 | RBAC PASS role=relationship_manager
+2026-07-13 12:50:57,381 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D12AAEF8 | Completed superstep 1
+2026-07-13 12:50:57,381 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D12AAEF8 | Starting superstep 2
+2026-07-13 12:50:57,382 | INFO     | mesh.workflow    | trace=- span=- req=D12AAEF8 | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-13 12:50:57,447 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D12AAEF8 | Completed superstep 2
+2026-07-13 12:50:57,448 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D12AAEF8 | Starting superstep 3
+2026-07-13 12:51:37,424 | INFO     | mesh.a2a         | trace=- span=- req=D12AAEF8 | SQL agent replied status=success tool=analytical_query rows=1 (39974 ms)
+2026-07-13 12:51:37,424 | INFO     | mesh.workflow    | trace=- span=- req=D12AAEF8 | Domain direct answer (445 chars)
+2026-07-13 12:51:37,480 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D12AAEF8 | Completed superstep 3
+2026-07-13 12:51:37,481 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D12AAEF8 | Starting superstep 4
+2026-07-13 12:51:37,481 | INFO     | mesh.workflow    | trace=- span=- req=D12AAEF8 | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-13 12:51:37,547 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D12AAEF8 | Completed superstep 4
+2026-07-13 12:51:37,548 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D12AAEF8 | Workflow completed after 4 supersteps
+2026-07-13 12:52:16,657 | INFO     | agent_framework._workflows._validation | trace=- span=- req=FDBF9EE6 | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-13 12:52:16,658 | INFO     | mesh.system      | trace=- span=- req=FDBF9EE6 | Request start user=alice role=relationship_manager query_len=50 req=FDBF9EE6
+2026-07-13 12:52:16,659 | INFO     | mesh.workflow    | trace=- span=- req=FDBF9EE6 | Input guardrail PASS
+2026-07-13 12:52:16,659 | INFO     | agent_framework._workflows._runner | trace=- span=- req=FDBF9EE6 | Yielding pre-loop events
+2026-07-13 12:52:16,660 | INFO     | agent_framework._workflows._runner | trace=- span=- req=FDBF9EE6 | Starting superstep 1
+2026-07-13 12:52:16,660 | INFO     | mesh.workflow    | trace=- span=- req=FDBF9EE6 | RBAC PASS role=relationship_manager
+2026-07-13 12:52:16,714 | INFO     | agent_framework._workflows._runner | trace=- span=- req=FDBF9EE6 | Completed superstep 1
+2026-07-13 12:52:16,719 | INFO     | agent_framework._workflows._runner | trace=- span=- req=FDBF9EE6 | Starting superstep 2
+2026-07-13 12:52:16,721 | INFO     | mesh.workflow    | trace=- span=- req=FDBF9EE6 | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-13 12:52:16,785 | INFO     | agent_framework._workflows._runner | trace=- span=- req=FDBF9EE6 | Completed superstep 2
+2026-07-13 12:52:16,786 | INFO     | agent_framework._workflows._runner | trace=- span=- req=FDBF9EE6 | Starting superstep 3
+2026-07-13 12:53:23,496 | INFO     | mesh.a2a         | trace=- span=- req=FDBF9EE6 | SQL agent replied status=success tool=analytical_query rows=1 (66708 ms)
+2026-07-13 12:53:23,496 | INFO     | mesh.workflow    | trace=- span=- req=FDBF9EE6 | Domain direct answer (533 chars)
+2026-07-13 12:53:23,558 | INFO     | agent_framework._workflows._runner | trace=- span=- req=FDBF9EE6 | Completed superstep 3
+2026-07-13 12:53:23,559 | INFO     | agent_framework._workflows._runner | trace=- span=- req=FDBF9EE6 | Starting superstep 4
+2026-07-13 12:53:23,560 | INFO     | mesh.workflow    | trace=- span=- req=FDBF9EE6 | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-13 12:53:23,612 | INFO     | agent_framework._workflows._runner | trace=- span=- req=FDBF9EE6 | Completed superstep 4
+2026-07-13 12:53:23,612 | INFO     | agent_framework._workflows._runner | trace=- span=- req=FDBF9EE6 | Workflow completed after 4 supersteps
+2026-07-13 12:53:51,763 | INFO     | agent_framework._workflows._validation | trace=- span=- req=04F3C6C4 | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-13 12:53:51,764 | INFO     | mesh.system      | trace=- span=- req=04F3C6C4 | Request start user=alice role=relationship_manager query_len=56 req=04F3C6C4
+2026-07-13 12:53:51,765 | INFO     | mesh.workflow    | trace=- span=- req=04F3C6C4 | Input guardrail PASS
+2026-07-13 12:53:51,765 | INFO     | agent_framework._workflows._runner | trace=- span=- req=04F3C6C4 | Yielding pre-loop events
+2026-07-13 12:53:51,765 | INFO     | agent_framework._workflows._runner | trace=- span=- req=04F3C6C4 | Starting superstep 1
+2026-07-13 12:53:51,766 | INFO     | mesh.workflow    | trace=- span=- req=04F3C6C4 | RBAC PASS role=relationship_manager
+2026-07-13 12:53:51,820 | INFO     | agent_framework._workflows._runner | trace=- span=- req=04F3C6C4 | Completed superstep 1
+2026-07-13 12:53:51,820 | INFO     | agent_framework._workflows._runner | trace=- span=- req=04F3C6C4 | Starting superstep 2
+2026-07-13 12:53:51,821 | INFO     | mesh.workflow    | trace=- span=- req=04F3C6C4 | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-13 12:53:51,872 | INFO     | agent_framework._workflows._runner | trace=- span=- req=04F3C6C4 | Completed superstep 2
+2026-07-13 12:53:51,873 | INFO     | agent_framework._workflows._runner | trace=- span=- req=04F3C6C4 | Starting superstep 3
+2026-07-13 12:54:23,725 | INFO     | mesh.a2a         | trace=- span=- req=04F3C6C4 | SQL agent replied status=error tool=None rows=None (31849 ms)
+2026-07-13 12:54:23,725 | INFO     | mesh.workflow    | trace=- span=- req=04F3C6C4 | Domain direct answer (427 chars)
+2026-07-13 12:54:23,789 | INFO     | agent_framework._workflows._runner | trace=- span=- req=04F3C6C4 | Completed superstep 3
+2026-07-13 12:54:23,789 | INFO     | agent_framework._workflows._runner | trace=- span=- req=04F3C6C4 | Starting superstep 4
+2026-07-13 12:54:23,790 | INFO     | mesh.workflow    | trace=- span=- req=04F3C6C4 | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-13 12:54:23,856 | INFO     | agent_framework._workflows._runner | trace=- span=- req=04F3C6C4 | Completed superstep 4
+2026-07-13 12:54:23,856 | INFO     | agent_framework._workflows._runner | trace=- span=- req=04F3C6C4 | Workflow completed after 4 supersteps
+2026-07-13 12:55:36,649 | INFO     | agent_framework._workflows._validation | trace=- span=- req=4AF11671 | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-13 12:55:36,651 | INFO     | mesh.system      | trace=- span=- req=4AF11671 | Request start user=alice role=relationship_manager query_len=56 req=4AF11671
+2026-07-13 12:55:36,652 | INFO     | mesh.workflow    | trace=- span=- req=4AF11671 | Input guardrail PASS
+2026-07-13 12:55:36,652 | INFO     | agent_framework._workflows._runner | trace=- span=- req=4AF11671 | Yielding pre-loop events
+2026-07-13 12:55:36,652 | INFO     | agent_framework._workflows._runner | trace=- span=- req=4AF11671 | Starting superstep 1
+2026-07-13 12:55:36,671 | INFO     | mesh.workflow    | trace=- span=- req=4AF11671 | RBAC PASS role=relationship_manager
+2026-07-13 12:55:36,736 | INFO     | agent_framework._workflows._runner | trace=- span=- req=4AF11671 | Completed superstep 1
+2026-07-13 12:55:36,736 | INFO     | agent_framework._workflows._runner | trace=- span=- req=4AF11671 | Starting superstep 2
+2026-07-13 12:55:36,737 | INFO     | mesh.workflow    | trace=- span=- req=4AF11671 | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-13 12:55:36,800 | INFO     | agent_framework._workflows._runner | trace=- span=- req=4AF11671 | Completed superstep 2
+2026-07-13 12:55:36,801 | INFO     | agent_framework._workflows._runner | trace=- span=- req=4AF11671 | Starting superstep 3
+2026-07-13 12:56:45,268 | INFO     | mesh.a2a         | trace=- span=- req=4AF11671 | SQL agent replied status=success tool=analytical_query rows=27 (68466 ms)
+2026-07-13 12:56:45,268 | INFO     | mesh.workflow    | trace=- span=- req=4AF11671 | Domain direct answer (1463 chars)
+2026-07-13 12:56:45,327 | INFO     | agent_framework._workflows._runner | trace=- span=- req=4AF11671 | Completed superstep 3
+2026-07-13 12:56:45,327 | INFO     | agent_framework._workflows._runner | trace=- span=- req=4AF11671 | Starting superstep 4
+2026-07-13 12:56:45,328 | INFO     | mesh.workflow    | trace=- span=- req=4AF11671 | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-13 12:56:45,395 | INFO     | agent_framework._workflows._runner | trace=- span=- req=4AF11671 | Completed superstep 4
+2026-07-13 12:56:45,395 | INFO     | agent_framework._workflows._runner | trace=- span=- req=4AF11671 | Workflow completed after 4 supersteps
+2026-07-13 12:56:54,286 | INFO     | agent_framework._workflows._validation | trace=- span=- req=EFE89A0D | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-13 12:56:54,288 | INFO     | mesh.system      | trace=- span=- req=EFE89A0D | Request start user=alice role=relationship_manager query_len=72 req=EFE89A0D
+2026-07-13 12:56:54,289 | INFO     | mesh.workflow    | trace=- span=- req=EFE89A0D | Input guardrail PASS
+2026-07-13 12:56:54,289 | INFO     | agent_framework._workflows._runner | trace=- span=- req=EFE89A0D | Yielding pre-loop events
+2026-07-13 12:56:54,289 | INFO     | agent_framework._workflows._runner | trace=- span=- req=EFE89A0D | Starting superstep 1
+2026-07-13 12:56:54,290 | INFO     | mesh.workflow    | trace=- span=- req=EFE89A0D | RBAC PASS role=relationship_manager
+2026-07-13 12:56:54,355 | INFO     | agent_framework._workflows._runner | trace=- span=- req=EFE89A0D | Completed superstep 1
+2026-07-13 12:56:54,356 | INFO     | agent_framework._workflows._runner | trace=- span=- req=EFE89A0D | Starting superstep 2
+2026-07-13 12:56:54,356 | INFO     | mesh.workflow    | trace=- span=- req=EFE89A0D | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-13 12:56:54,407 | INFO     | agent_framework._workflows._runner | trace=- span=- req=EFE89A0D | Completed superstep 2
+2026-07-13 12:56:54,408 | INFO     | agent_framework._workflows._runner | trace=- span=- req=EFE89A0D | Starting superstep 3
+2026-07-13 12:59:12,739 | INFO     | mesh.a2a         | trace=- span=- req=EFE89A0D | SQL agent replied status=success tool=analytical_query rows=3 (138330 ms)
+2026-07-13 12:59:12,740 | INFO     | mesh.workflow    | trace=- span=- req=EFE89A0D | Domain direct answer (629 chars)
+2026-07-13 12:59:12,806 | INFO     | agent_framework._workflows._runner | trace=- span=- req=EFE89A0D | Completed superstep 3
+2026-07-13 12:59:12,806 | INFO     | agent_framework._workflows._runner | trace=- span=- req=EFE89A0D | Starting superstep 4
+2026-07-13 12:59:12,808 | INFO     | mesh.workflow    | trace=- span=- req=EFE89A0D | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-13 12:59:12,873 | INFO     | agent_framework._workflows._runner | trace=- span=- req=EFE89A0D | Completed superstep 4
+2026-07-13 12:59:12,874 | INFO     | agent_framework._workflows._runner | trace=- span=- req=EFE89A0D | Workflow completed after 4 supersteps
+2026-07-13 13:02:23,153 | INFO     | agent_framework._workflows._validation | trace=- span=- req=DBCC4C34 | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-13 13:02:23,154 | INFO     | mesh.system      | trace=- span=- req=DBCC4C34 | Request start user=alice role=relationship_manager query_len=52 req=DBCC4C34
+2026-07-13 13:02:23,155 | INFO     | mesh.workflow    | trace=- span=- req=DBCC4C34 | Input guardrail PASS
+2026-07-13 13:02:23,155 | INFO     | agent_framework._workflows._runner | trace=- span=- req=DBCC4C34 | Yielding pre-loop events
+2026-07-13 13:02:23,155 | INFO     | agent_framework._workflows._runner | trace=- span=- req=DBCC4C34 | Starting superstep 1
+2026-07-13 13:02:23,156 | INFO     | mesh.workflow    | trace=- span=- req=DBCC4C34 | RBAC PASS role=relationship_manager
+2026-07-13 13:02:23,219 | INFO     | agent_framework._workflows._runner | trace=- span=- req=DBCC4C34 | Completed superstep 1
+2026-07-13 13:02:23,220 | INFO     | agent_framework._workflows._runner | trace=- span=- req=DBCC4C34 | Starting superstep 2
+2026-07-13 13:02:23,220 | INFO     | mesh.workflow    | trace=- span=- req=DBCC4C34 | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-13 13:02:23,285 | INFO     | agent_framework._workflows._runner | trace=- span=- req=DBCC4C34 | Completed superstep 2
+2026-07-13 13:02:23,285 | INFO     | agent_framework._workflows._runner | trace=- span=- req=DBCC4C34 | Starting superstep 3
+2026-07-13 13:02:23,500 | INFO     | mesh.a2a         | trace=- span=- req=DBCC4C34 | SQL agent replied status=error tool=None rows=None (212 ms)
+2026-07-13 13:02:23,500 | INFO     | mesh.workflow    | trace=- span=- req=DBCC4C34 | Domain direct answer (427 chars)
+2026-07-13 13:02:23,552 | INFO     | agent_framework._workflows._runner | trace=- span=- req=DBCC4C34 | Completed superstep 3
+2026-07-13 13:02:23,552 | INFO     | agent_framework._workflows._runner | trace=- span=- req=DBCC4C34 | Starting superstep 4
+2026-07-13 13:02:23,553 | INFO     | mesh.workflow    | trace=- span=- req=DBCC4C34 | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-13 13:02:23,618 | INFO     | agent_framework._workflows._runner | trace=- span=- req=DBCC4C34 | Completed superstep 4
+2026-07-13 13:02:23,618 | INFO     | agent_framework._workflows._runner | trace=- span=- req=DBCC4C34 | Workflow completed after 4 supersteps
+2026-07-13 13:02:54,196 | INFO     | agent_framework._workflows._validation | trace=- span=- req=2F8A8392 | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-13 13:02:54,197 | INFO     | mesh.system      | trace=- span=- req=2F8A8392 | Request start user=alice role=relationship_manager query_len=52 req=2F8A8392
+2026-07-13 13:02:54,197 | INFO     | mesh.workflow    | trace=- span=- req=2F8A8392 | Input guardrail PASS
+2026-07-13 13:02:54,197 | INFO     | agent_framework._workflows._runner | trace=- span=- req=2F8A8392 | Yielding pre-loop events
+2026-07-13 13:02:54,198 | INFO     | agent_framework._workflows._runner | trace=- span=- req=2F8A8392 | Starting superstep 1
+2026-07-13 13:02:54,198 | INFO     | mesh.workflow    | trace=- span=- req=2F8A8392 | RBAC PASS role=relationship_manager
+2026-07-13 13:02:54,260 | INFO     | agent_framework._workflows._runner | trace=- span=- req=2F8A8392 | Completed superstep 1
+2026-07-13 13:02:54,260 | INFO     | agent_framework._workflows._runner | trace=- span=- req=2F8A8392 | Starting superstep 2
+2026-07-13 13:02:54,260 | INFO     | mesh.workflow    | trace=- span=- req=2F8A8392 | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-13 13:02:54,326 | INFO     | agent_framework._workflows._runner | trace=- span=- req=2F8A8392 | Completed superstep 2
+2026-07-13 13:02:54,327 | INFO     | agent_framework._workflows._runner | trace=- span=- req=2F8A8392 | Starting superstep 3
+2026-07-13 13:04:15,418 | INFO     | mesh.a2a         | trace=- span=- req=2F8A8392 | SQL agent replied status=success tool=analytical_query rows=2 (81090 ms)
+2026-07-13 13:04:15,419 | INFO     | mesh.workflow    | trace=- span=- req=2F8A8392 | Domain direct answer (652 chars)
+2026-07-13 13:04:15,478 | INFO     | agent_framework._workflows._runner | trace=- span=- req=2F8A8392 | Completed superstep 3
+2026-07-13 13:04:15,478 | INFO     | agent_framework._workflows._runner | trace=- span=- req=2F8A8392 | Starting superstep 4
+2026-07-13 13:04:15,479 | INFO     | mesh.workflow    | trace=- span=- req=2F8A8392 | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-13 13:04:15,538 | INFO     | agent_framework._workflows._runner | trace=- span=- req=2F8A8392 | Completed superstep 4
+2026-07-13 13:04:15,539 | INFO     | agent_framework._workflows._runner | trace=- span=- req=2F8A8392 | Workflow completed after 4 supersteps
+2026-07-13 13:04:38,418 | INFO     | agent_framework._workflows._validation | trace=- span=- req=AEF733B2 | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-13 13:04:38,421 | INFO     | mesh.system      | trace=- span=- req=AEF733B2 | Request start user=alice role=relationship_manager query_len=51 req=AEF733B2
+2026-07-13 13:04:38,425 | INFO     | mesh.workflow    | trace=- span=- req=AEF733B2 | Input guardrail PASS
+2026-07-13 13:04:38,427 | INFO     | agent_framework._workflows._runner | trace=- span=- req=AEF733B2 | Yielding pre-loop events
+2026-07-13 13:04:38,428 | INFO     | agent_framework._workflows._runner | trace=- span=- req=AEF733B2 | Starting superstep 1
+2026-07-13 13:04:38,430 | INFO     | mesh.workflow    | trace=- span=- req=AEF733B2 | RBAC PASS role=relationship_manager
+2026-07-13 13:04:38,508 | INFO     | agent_framework._workflows._runner | trace=- span=- req=AEF733B2 | Completed superstep 1
+2026-07-13 13:04:38,509 | INFO     | agent_framework._workflows._runner | trace=- span=- req=AEF733B2 | Starting superstep 2
+2026-07-13 13:04:38,510 | INFO     | mesh.workflow    | trace=- span=- req=AEF733B2 | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-13 13:04:38,573 | INFO     | agent_framework._workflows._runner | trace=- span=- req=AEF733B2 | Completed superstep 2
+2026-07-13 13:04:38,575 | INFO     | agent_framework._workflows._runner | trace=- span=- req=AEF733B2 | Starting superstep 3
+2026-07-13 13:06:28,525 | INFO     | mesh.a2a         | trace=- span=- req=AEF733B2 | SQL agent replied status=success tool=analytical_query rows=1 (109942 ms)
+2026-07-13 13:06:28,525 | INFO     | mesh.workflow    | trace=- span=- req=AEF733B2 | Domain direct answer (521 chars)
+2026-07-13 13:06:28,587 | INFO     | agent_framework._workflows._runner | trace=- span=- req=AEF733B2 | Completed superstep 3
+2026-07-13 13:06:28,588 | INFO     | agent_framework._workflows._runner | trace=- span=- req=AEF733B2 | Starting superstep 4
+2026-07-13 13:06:28,589 | INFO     | mesh.workflow    | trace=- span=- req=AEF733B2 | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-13 13:06:28,653 | INFO     | agent_framework._workflows._runner | trace=- span=- req=AEF733B2 | Completed superstep 4
+2026-07-13 13:06:28,653 | INFO     | agent_framework._workflows._runner | trace=- span=- req=AEF733B2 | Workflow completed after 4 supersteps
+2026-07-13 13:06:53,558 | INFO     | agent_framework._workflows._validation | trace=- span=- req=C995E1B0 | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-13 13:06:53,560 | INFO     | mesh.system      | trace=- span=- req=C995E1B0 | Request start user=alice role=relationship_manager query_len=49 req=C995E1B0
+2026-07-13 13:06:53,561 | INFO     | mesh.workflow    | trace=- span=- req=C995E1B0 | Input guardrail PASS
+2026-07-13 13:06:53,561 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C995E1B0 | Yielding pre-loop events
+2026-07-13 13:06:53,561 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C995E1B0 | Starting superstep 1
+2026-07-13 13:06:53,562 | INFO     | mesh.workflow    | trace=- span=- req=C995E1B0 | RBAC PASS role=relationship_manager
+2026-07-13 13:06:53,618 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C995E1B0 | Completed superstep 1
+2026-07-13 13:06:53,619 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C995E1B0 | Starting superstep 2
+2026-07-13 13:06:53,619 | INFO     | mesh.workflow    | trace=- span=- req=C995E1B0 | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-13 13:06:53,672 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C995E1B0 | Completed superstep 2
+2026-07-13 13:06:53,673 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C995E1B0 | Starting superstep 3
+2026-07-13 13:08:05,799 | INFO     | mesh.a2a         | trace=- span=- req=C995E1B0 | SQL agent replied status=success tool=analytical_query rows=5 (72119 ms)
+2026-07-13 13:08:05,799 | INFO     | mesh.workflow    | trace=- span=- req=C995E1B0 | Domain direct answer (639 chars)
+2026-07-13 13:08:05,863 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C995E1B0 | Completed superstep 3
+2026-07-13 13:08:05,863 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C995E1B0 | Starting superstep 4
+2026-07-13 13:08:05,864 | INFO     | mesh.workflow    | trace=- span=- req=C995E1B0 | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-13 13:08:05,930 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C995E1B0 | Completed superstep 4
+2026-07-13 13:08:05,930 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C995E1B0 | Workflow completed after 4 supersteps
+2026-07-13 13:09:37,913 | INFO     | agent_framework._workflows._validation | trace=- span=- req=A72F77A2 | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-13 13:09:37,914 | INFO     | mesh.system      | trace=- span=- req=A72F77A2 | Request start user=alice role=relationship_manager query_len=58 req=A72F77A2
+2026-07-13 13:09:37,916 | INFO     | mesh.workflow    | trace=- span=- req=A72F77A2 | Input guardrail PASS
+2026-07-13 13:09:37,916 | INFO     | agent_framework._workflows._runner | trace=- span=- req=A72F77A2 | Yielding pre-loop events
+2026-07-13 13:09:37,917 | INFO     | agent_framework._workflows._runner | trace=- span=- req=A72F77A2 | Starting superstep 1
+2026-07-13 13:09:37,918 | INFO     | mesh.workflow    | trace=- span=- req=A72F77A2 | RBAC PASS role=relationship_manager
+2026-07-13 13:09:37,977 | INFO     | agent_framework._workflows._runner | trace=- span=- req=A72F77A2 | Completed superstep 1
+2026-07-13 13:09:37,978 | INFO     | agent_framework._workflows._runner | trace=- span=- req=A72F77A2 | Starting superstep 2
+2026-07-13 13:09:37,979 | INFO     | mesh.workflow    | trace=- span=- req=A72F77A2 | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-13 13:09:38,045 | INFO     | agent_framework._workflows._runner | trace=- span=- req=A72F77A2 | Completed superstep 2
+2026-07-13 13:09:38,046 | INFO     | agent_framework._workflows._runner | trace=- span=- req=A72F77A2 | Starting superstep 3
+2026-07-13 13:10:17,405 | INFO     | mesh.a2a         | trace=- span=- req=A72F77A2 | SQL agent replied status=error tool=None rows=None (39356 ms)
+2026-07-13 13:10:17,418 | INFO     | mesh.workflow    | trace=- span=- req=A72F77A2 | Domain direct answer (427 chars)
+2026-07-13 13:10:17,499 | INFO     | agent_framework._workflows._runner | trace=- span=- req=A72F77A2 | Completed superstep 3
+2026-07-13 13:10:17,500 | INFO     | agent_framework._workflows._runner | trace=- span=- req=A72F77A2 | Starting superstep 4
+2026-07-13 13:10:17,501 | INFO     | mesh.workflow    | trace=- span=- req=A72F77A2 | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-13 13:10:17,577 | INFO     | agent_framework._workflows._runner | trace=- span=- req=A72F77A2 | Completed superstep 4
+2026-07-13 13:10:17,577 | INFO     | agent_framework._workflows._runner | trace=- span=- req=A72F77A2 | Workflow completed after 4 supersteps
+2026-07-13 13:11:00,514 | INFO     | agent_framework._workflows._validation | trace=- span=- req=675A243C | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-13 13:11:00,515 | INFO     | mesh.system      | trace=- span=- req=675A243C | Request start user=alice role=relationship_manager query_len=58 req=675A243C
+2026-07-13 13:11:00,516 | INFO     | mesh.workflow    | trace=- span=- req=675A243C | Input guardrail PASS
+2026-07-13 13:11:00,516 | INFO     | agent_framework._workflows._runner | trace=- span=- req=675A243C | Yielding pre-loop events
+2026-07-13 13:11:00,516 | INFO     | agent_framework._workflows._runner | trace=- span=- req=675A243C | Starting superstep 1
+2026-07-13 13:11:00,516 | INFO     | mesh.workflow    | trace=- span=- req=675A243C | RBAC PASS role=relationship_manager
+2026-07-13 13:11:00,581 | INFO     | agent_framework._workflows._runner | trace=- span=- req=675A243C | Completed superstep 1
+2026-07-13 13:11:00,582 | INFO     | agent_framework._workflows._runner | trace=- span=- req=675A243C | Starting superstep 2
+2026-07-13 13:11:00,583 | INFO     | mesh.workflow    | trace=- span=- req=675A243C | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-13 13:11:00,635 | INFO     | agent_framework._workflows._runner | trace=- span=- req=675A243C | Completed superstep 2
+2026-07-13 13:11:00,635 | INFO     | agent_framework._workflows._runner | trace=- span=- req=675A243C | Starting superstep 3
+2026-07-13 13:12:11,778 | INFO     | mesh.a2a         | trace=- span=- req=675A243C | SQL agent replied status=success tool=analytical_query rows=1 (71139 ms)
+2026-07-13 13:12:11,779 | INFO     | mesh.workflow    | trace=- span=- req=675A243C | Domain direct answer (236 chars)
+2026-07-13 13:12:11,842 | INFO     | agent_framework._workflows._runner | trace=- span=- req=675A243C | Completed superstep 3
+2026-07-13 13:12:11,842 | INFO     | agent_framework._workflows._runner | trace=- span=- req=675A243C | Starting superstep 4
+2026-07-13 13:12:11,843 | INFO     | mesh.workflow    | trace=- span=- req=675A243C | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-13 13:12:11,908 | INFO     | agent_framework._workflows._runner | trace=- span=- req=675A243C | Completed superstep 4
+2026-07-13 13:12:11,908 | INFO     | agent_framework._workflows._runner | trace=- span=- req=675A243C | Workflow completed after 4 supersteps
+2026-07-13 13:12:22,585 | INFO     | agent_framework._workflows._validation | trace=- span=- req=444B2510 | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-13 13:12:22,586 | INFO     | mesh.system      | trace=- span=- req=444B2510 | Request start user=alice role=relationship_manager query_len=81 req=444B2510
+2026-07-13 13:12:22,586 | INFO     | mesh.workflow    | trace=- span=- req=444B2510 | Input guardrail PASS
+2026-07-13 13:12:22,587 | INFO     | agent_framework._workflows._runner | trace=- span=- req=444B2510 | Yielding pre-loop events
+2026-07-13 13:12:22,587 | INFO     | agent_framework._workflows._runner | trace=- span=- req=444B2510 | Starting superstep 1
+2026-07-13 13:12:22,588 | INFO     | mesh.workflow    | trace=- span=- req=444B2510 | RBAC PASS role=relationship_manager
+2026-07-13 13:12:22,657 | INFO     | agent_framework._workflows._runner | trace=- span=- req=444B2510 | Completed superstep 1
+2026-07-13 13:12:22,658 | INFO     | agent_framework._workflows._runner | trace=- span=- req=444B2510 | Starting superstep 2
+2026-07-13 13:12:22,659 | INFO     | mesh.workflow    | trace=- span=- req=444B2510 | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-13 13:12:22,722 | INFO     | agent_framework._workflows._runner | trace=- span=- req=444B2510 | Completed superstep 2
+2026-07-13 13:12:22,723 | INFO     | agent_framework._workflows._runner | trace=- span=- req=444B2510 | Starting superstep 3
+2026-07-13 13:13:27,590 | INFO     | mesh.a2a         | trace=- span=- req=444B2510 | SQL agent replied status=error tool=None rows=None (64865 ms)
+2026-07-13 13:13:27,591 | INFO     | mesh.workflow    | trace=- span=- req=444B2510 | Domain direct answer (427 chars)
+2026-07-13 13:13:27,647 | INFO     | agent_framework._workflows._runner | trace=- span=- req=444B2510 | Completed superstep 3
+2026-07-13 13:13:27,647 | INFO     | agent_framework._workflows._runner | trace=- span=- req=444B2510 | Starting superstep 4
+2026-07-13 13:13:27,648 | INFO     | mesh.workflow    | trace=- span=- req=444B2510 | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-13 13:13:27,713 | INFO     | agent_framework._workflows._runner | trace=- span=- req=444B2510 | Completed superstep 4
+2026-07-13 13:13:27,714 | INFO     | agent_framework._workflows._runner | trace=- span=- req=444B2510 | Workflow completed after 4 supersteps
+2026-07-13 13:14:20,237 | INFO     | agent_framework._workflows._validation | trace=- span=- req=D25C47E7 | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-13 13:14:20,239 | INFO     | mesh.system      | trace=- span=- req=D25C47E7 | Request start user=alice role=relationship_manager query_len=81 req=D25C47E7
+2026-07-13 13:14:20,241 | INFO     | mesh.workflow    | trace=- span=- req=D25C47E7 | Input guardrail PASS
+2026-07-13 13:14:20,241 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D25C47E7 | Yielding pre-loop events
+2026-07-13 13:14:20,242 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D25C47E7 | Starting superstep 1
+2026-07-13 13:14:20,242 | INFO     | mesh.workflow    | trace=- span=- req=D25C47E7 | RBAC PASS role=relationship_manager
+2026-07-13 13:14:20,307 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D25C47E7 | Completed superstep 1
+2026-07-13 13:14:20,308 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D25C47E7 | Starting superstep 2
+2026-07-13 13:14:20,309 | INFO     | mesh.workflow    | trace=- span=- req=D25C47E7 | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-13 13:14:20,375 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D25C47E7 | Completed superstep 2
+2026-07-13 13:14:20,375 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D25C47E7 | Starting superstep 3
+2026-07-13 13:15:15,175 | INFO     | mesh.a2a         | trace=- span=- req=D25C47E7 | SQL agent replied status=success tool=analytical_query rows=4 (54797 ms)
+2026-07-13 13:15:15,175 | INFO     | mesh.workflow    | trace=- span=- req=D25C47E7 | Domain direct answer (459 chars)
+2026-07-13 13:15:15,231 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D25C47E7 | Completed superstep 3
+2026-07-13 13:15:15,232 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D25C47E7 | Starting superstep 4
+2026-07-13 13:15:15,233 | INFO     | mesh.workflow    | trace=- span=- req=D25C47E7 | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-13 13:15:15,296 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D25C47E7 | Completed superstep 4
+2026-07-13 13:15:15,296 | INFO     | agent_framework._workflows._runner | trace=- span=- req=D25C47E7 | Workflow completed after 4 supersteps
+2026-07-13 13:34:31,280 | INFO     | agent_framework._workflows._validation | trace=- span=- req=6A57EB4F | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-13 13:34:31,284 | INFO     | mesh.system      | trace=- span=- req=6A57EB4F | Request start user=alice role=relationship_manager query_len=50 req=6A57EB4F
+2026-07-13 13:34:31,286 | INFO     | mesh.workflow    | trace=- span=- req=6A57EB4F | Input guardrail PASS
+2026-07-13 13:34:31,286 | INFO     | agent_framework._workflows._runner | trace=- span=- req=6A57EB4F | Yielding pre-loop events
+2026-07-13 13:34:31,286 | INFO     | agent_framework._workflows._runner | trace=- span=- req=6A57EB4F | Starting superstep 1
+2026-07-13 13:34:31,287 | INFO     | mesh.workflow    | trace=- span=- req=6A57EB4F | RBAC PASS role=relationship_manager
+2026-07-13 13:34:31,339 | INFO     | agent_framework._workflows._runner | trace=- span=- req=6A57EB4F | Completed superstep 1
+2026-07-13 13:34:31,339 | INFO     | agent_framework._workflows._runner | trace=- span=- req=6A57EB4F | Starting superstep 2
+2026-07-13 13:34:31,340 | INFO     | mesh.workflow    | trace=- span=- req=6A57EB4F | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-13 13:34:31,405 | INFO     | agent_framework._workflows._runner | trace=- span=- req=6A57EB4F | Completed superstep 2
+2026-07-13 13:34:31,406 | INFO     | agent_framework._workflows._runner | trace=- span=- req=6A57EB4F | Starting superstep 3
+2026-07-13 13:35:17,333 | INFO     | mesh.a2a         | trace=- span=- req=6A57EB4F | SQL agent replied status=success tool=analytical_query rows=10 (45926 ms)
+2026-07-13 13:35:17,334 | INFO     | mesh.workflow    | trace=- span=- req=6A57EB4F | Domain direct answer (867 chars)
+2026-07-13 13:35:17,399 | INFO     | agent_framework._workflows._runner | trace=- span=- req=6A57EB4F | Completed superstep 3
+2026-07-13 13:35:17,400 | INFO     | agent_framework._workflows._runner | trace=- span=- req=6A57EB4F | Starting superstep 4
+2026-07-13 13:35:17,400 | INFO     | mesh.workflow    | trace=- span=- req=6A57EB4F | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-13 13:35:17,451 | INFO     | agent_framework._workflows._runner | trace=- span=- req=6A57EB4F | Completed superstep 4
+2026-07-13 13:35:17,451 | INFO     | agent_framework._workflows._runner | trace=- span=- req=6A57EB4F | Workflow completed after 4 supersteps
+2026-07-13 13:36:11,319 | INFO     | agent_framework._workflows._validation | trace=- span=- req=C56949C3 | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-13 13:36:11,320 | INFO     | mesh.system      | trace=- span=- req=C56949C3 | Request start user=alice role=relationship_manager query_len=40 req=C56949C3
+2026-07-13 13:36:11,321 | INFO     | mesh.workflow    | trace=- span=- req=C56949C3 | Input guardrail PASS
+2026-07-13 13:36:11,321 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C56949C3 | Yielding pre-loop events
+2026-07-13 13:36:11,321 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C56949C3 | Starting superstep 1
+2026-07-13 13:36:11,322 | INFO     | mesh.workflow    | trace=- span=- req=C56949C3 | RBAC PASS role=relationship_manager
+2026-07-13 13:36:11,374 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C56949C3 | Completed superstep 1
+2026-07-13 13:36:11,375 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C56949C3 | Starting superstep 2
+2026-07-13 13:36:11,375 | INFO     | mesh.workflow    | trace=- span=- req=C56949C3 | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-13 13:36:11,441 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C56949C3 | Completed superstep 2
+2026-07-13 13:36:11,442 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C56949C3 | Starting superstep 3
+2026-07-13 13:37:31,728 | INFO     | mesh.a2a         | trace=- span=- req=C56949C3 | SQL agent replied status=success tool=analytical_query rows=2 (80285 ms)
+2026-07-13 13:37:31,729 | INFO     | mesh.workflow    | trace=- span=- req=C56949C3 | Domain direct answer (358 chars)
+2026-07-13 13:37:31,795 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C56949C3 | Completed superstep 3
+2026-07-13 13:37:31,796 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C56949C3 | Starting superstep 4
+2026-07-13 13:37:31,798 | INFO     | mesh.workflow    | trace=- span=- req=C56949C3 | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-13 13:37:31,861 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C56949C3 | Completed superstep 4
+2026-07-13 13:37:31,861 | INFO     | agent_framework._workflows._runner | trace=- span=- req=C56949C3 | Workflow completed after 4 supersteps
+2026-07-13 13:38:26,704 | INFO     | agent_framework._workflows._validation | trace=- span=- req=0233D02A | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-13 13:38:26,706 | INFO     | mesh.system      | trace=- span=- req=0233D02A | Request start user=alice role=relationship_manager query_len=66 req=0233D02A
+2026-07-13 13:38:26,707 | INFO     | mesh.workflow    | trace=- span=- req=0233D02A | Input guardrail PASS
+2026-07-13 13:38:26,707 | INFO     | agent_framework._workflows._runner | trace=- span=- req=0233D02A | Yielding pre-loop events
+2026-07-13 13:38:26,707 | INFO     | agent_framework._workflows._runner | trace=- span=- req=0233D02A | Starting superstep 1
+2026-07-13 13:38:26,707 | INFO     | mesh.workflow    | trace=- span=- req=0233D02A | RBAC PASS role=relationship_manager
+2026-07-13 13:38:26,763 | INFO     | agent_framework._workflows._runner | trace=- span=- req=0233D02A | Completed superstep 1
+2026-07-13 13:38:26,764 | INFO     | agent_framework._workflows._runner | trace=- span=- req=0233D02A | Starting superstep 2
+2026-07-13 13:38:26,765 | INFO     | mesh.workflow    | trace=- span=- req=0233D02A | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-13 13:38:26,830 | INFO     | agent_framework._workflows._runner | trace=- span=- req=0233D02A | Completed superstep 2
+2026-07-13 13:38:26,830 | INFO     | agent_framework._workflows._runner | trace=- span=- req=0233D02A | Starting superstep 3
+2026-07-13 13:39:28,349 | INFO     | mesh.a2a         | trace=- span=- req=0233D02A | SQL agent replied status=error tool=None rows=None (61518 ms)
+2026-07-13 13:39:28,350 | INFO     | mesh.workflow    | trace=- span=- req=0233D02A | Domain direct answer (425 chars)
+2026-07-13 13:39:28,413 | INFO     | agent_framework._workflows._runner | trace=- span=- req=0233D02A | Completed superstep 3
+2026-07-13 13:39:28,414 | INFO     | agent_framework._workflows._runner | trace=- span=- req=0233D02A | Starting superstep 4
+2026-07-13 13:39:28,416 | INFO     | mesh.workflow    | trace=- span=- req=0233D02A | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-13 13:39:28,480 | INFO     | agent_framework._workflows._runner | trace=- span=- req=0233D02A | Completed superstep 4
+2026-07-13 13:39:28,480 | INFO     | agent_framework._workflows._runner | trace=- span=- req=0233D02A | Workflow completed after 4 supersteps
+2026-07-13 13:58:54,273 | INFO     | agent_framework._workflows._validation | trace=- span=- req=2BDF4B6F | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-13 13:58:54,278 | INFO     | mesh.system      | trace=- span=- req=2BDF4B6F | Request start user=alice role=relationship_manager query_len=66 req=2BDF4B6F
+2026-07-13 13:58:54,281 | INFO     | mesh.workflow    | trace=- span=- req=2BDF4B6F | Input guardrail PASS
+2026-07-13 13:58:54,281 | INFO     | agent_framework._workflows._runner | trace=- span=- req=2BDF4B6F | Yielding pre-loop events
+2026-07-13 13:58:54,281 | INFO     | agent_framework._workflows._runner | trace=- span=- req=2BDF4B6F | Starting superstep 1
+2026-07-13 13:58:54,282 | INFO     | mesh.workflow    | trace=- span=- req=2BDF4B6F | RBAC PASS role=relationship_manager
+2026-07-13 13:58:54,339 | INFO     | agent_framework._workflows._runner | trace=- span=- req=2BDF4B6F | Completed superstep 1
+2026-07-13 13:58:54,340 | INFO     | agent_framework._workflows._runner | trace=- span=- req=2BDF4B6F | Starting superstep 2
+2026-07-13 13:58:54,340 | INFO     | mesh.workflow    | trace=- span=- req=2BDF4B6F | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-13 13:58:54,406 | INFO     | agent_framework._workflows._runner | trace=- span=- req=2BDF4B6F | Completed superstep 2
+2026-07-13 13:58:54,407 | INFO     | agent_framework._workflows._runner | trace=- span=- req=2BDF4B6F | Starting superstep 3
+2026-07-13 13:58:58,379 | INFO     | mesh.a2a         | trace=- span=- req=2BDF4B6F | SQL agent replied status=error tool=None rows=None (3970 ms)
+2026-07-13 13:58:58,379 | INFO     | mesh.workflow    | trace=- span=- req=2BDF4B6F | Domain direct answer (427 chars)
+2026-07-13 13:58:58,435 | INFO     | agent_framework._workflows._runner | trace=- span=- req=2BDF4B6F | Completed superstep 3
+2026-07-13 13:58:58,435 | INFO     | agent_framework._workflows._runner | trace=- span=- req=2BDF4B6F | Starting superstep 4
+2026-07-13 13:58:58,436 | INFO     | mesh.workflow    | trace=- span=- req=2BDF4B6F | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-13 13:58:58,501 | INFO     | agent_framework._workflows._runner | trace=- span=- req=2BDF4B6F | Completed superstep 4
+2026-07-13 13:58:58,502 | INFO     | agent_framework._workflows._runner | trace=- span=- req=2BDF4B6F | Workflow completed after 4 supersteps
+2026-07-13 13:59:08,157 | INFO     | agent_framework._workflows._validation | trace=- span=- req=E2002CD1 | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-13 13:59:08,167 | INFO     | mesh.system      | trace=- span=- req=E2002CD1 | Request start user=alice role=relationship_manager query_len=66 req=E2002CD1
+2026-07-13 13:59:08,169 | INFO     | mesh.workflow    | trace=- span=- req=E2002CD1 | Input guardrail PASS
+2026-07-13 13:59:08,170 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E2002CD1 | Yielding pre-loop events
+2026-07-13 13:59:08,177 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E2002CD1 | Starting superstep 1
+2026-07-13 13:59:08,189 | INFO     | mesh.workflow    | trace=- span=- req=E2002CD1 | RBAC PASS role=relationship_manager
+2026-07-13 13:59:08,251 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E2002CD1 | Completed superstep 1
+2026-07-13 13:59:08,252 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E2002CD1 | Starting superstep 2
+2026-07-13 13:59:08,253 | INFO     | mesh.workflow    | trace=- span=- req=E2002CD1 | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-13 13:59:08,304 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E2002CD1 | Completed superstep 2
+2026-07-13 13:59:08,305 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E2002CD1 | Starting superstep 3
+2026-07-13 13:59:10,873 | INFO     | mesh.a2a         | trace=- span=- req=E2002CD1 | SQL agent replied status=error tool=None rows=None (2550 ms)
+2026-07-13 13:59:10,874 | INFO     | mesh.workflow    | trace=- span=- req=E2002CD1 | Domain direct answer (425 chars)
+2026-07-13 13:59:10,932 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E2002CD1 | Completed superstep 3
+2026-07-13 13:59:10,932 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E2002CD1 | Starting superstep 4
+2026-07-13 13:59:10,934 | INFO     | mesh.workflow    | trace=- span=- req=E2002CD1 | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-13 13:59:11,014 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E2002CD1 | Completed superstep 4
+2026-07-13 13:59:11,015 | INFO     | agent_framework._workflows._runner | trace=- span=- req=E2002CD1 | Workflow completed after 4 supersteps
+2026-07-13 14:57:40,871 | INFO     | mcp.client.streamable_http | trace=- span=- req=- | GET stream disconnected, reconnecting in 1000ms...
+2026-07-13 15:08:59,510 | INFO     | agent_framework._workflows._validation | trace=- span=- req=48191663 | Dead-end executors detected (no outgoing edges): ['output_redaction']. Verify these are intended as final nodes in the workflow.
+2026-07-13 15:08:59,518 | INFO     | mesh.system      | trace=- span=- req=48191663 | Request start user=alice role=relationship_manager query_len=66 req=48191663
+2026-07-13 15:08:59,525 | INFO     | mesh.workflow    | trace=- span=- req=48191663 | Input guardrail PASS
+2026-07-13 15:08:59,525 | INFO     | agent_framework._workflows._runner | trace=- span=- req=48191663 | Yielding pre-loop events
+2026-07-13 15:08:59,525 | INFO     | agent_framework._workflows._runner | trace=- span=- req=48191663 | Starting superstep 1
+2026-07-13 15:08:59,526 | INFO     | mesh.workflow    | trace=- span=- req=48191663 | RBAC PASS role=relationship_manager
+2026-07-13 15:08:59,579 | INFO     | agent_framework._workflows._runner | trace=- span=- req=48191663 | Completed superstep 1
+2026-07-13 15:08:59,580 | INFO     | agent_framework._workflows._runner | trace=- span=- req=48191663 | Starting superstep 2
+2026-07-13 15:08:59,581 | INFO     | mesh.workflow    | trace=- span=- req=48191663 | Compliance BYPASS reason=service_disabled role=relationship_manager
+2026-07-13 15:08:59,638 | INFO     | agent_framework._workflows._runner | trace=- span=- req=48191663 | Completed superstep 2
+2026-07-13 15:08:59,639 | INFO     | agent_framework._workflows._runner | trace=- span=- req=48191663 | Starting superstep 3
+2026-07-13 15:09:05,495 | INFO     | mesh.a2a         | trace=- span=- req=48191663 | SQL agent replied status=error tool=None rows=None (5852 ms)
+2026-07-13 15:09:05,495 | INFO     | mesh.workflow    | trace=- span=- req=48191663 | Domain direct answer (427 chars)
+2026-07-13 15:09:05,556 | INFO     | agent_framework._workflows._runner | trace=- span=- req=48191663 | Completed superstep 3
+2026-07-13 15:09:05,556 | INFO     | agent_framework._workflows._runner | trace=- span=- req=48191663 | Starting superstep 4
+2026-07-13 15:09:05,557 | INFO     | mesh.workflow    | trace=- span=- req=48191663 | Request complete trail=guardrail_pass -> rbac_pass:relationship_manager -> compliance_pass:service_disabled:relationship_manager -> domain_answer:sql_agent_direct -> output_redacted
+2026-07-13 15:09:05,618 | INFO     | agent_framework._workflows._runner | trace=- span=- req=48191663 | Completed superstep 4
+2026-07-13 15:09:05,619 | INFO     | agent_framework._workflows._runner | trace=- span=- req=48191663 | Workflow completed after 4 supersteps

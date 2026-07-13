@@ -18,8 +18,9 @@ def _tool_names(tools):
 def test_gated_tool_omitted_without_scope():
     tools = tools_for_caller("pricing_agent", set())
     assert "analytical_query" not in _tool_names(tools)
-    # The safe tiers are always present.
-    assert "get_customer" in _tool_names(tools)
+    # The safe tiers are always present. (Base-table get_customer was retired from the
+    # registry — see tier_router docstring — so assert on a bound semantic-view tool.)
+    assert "get_customer_360" in _tool_names(tools)
     assert "find_customers" in _tool_names(tools)
 
 
@@ -29,7 +30,7 @@ def test_gated_tool_present_with_scope():
 
 
 def test_tier_of():
-    assert tier_of("get_customer") == "parameterised"
+    assert tier_of("get_customer_360") == "parameterised"
     assert tier_of("find_deals") == "semi_dynamic"
     assert tier_of("analytical_query") == "full_dynamic"
     assert tier_of("does_not_exist") == "unknown"

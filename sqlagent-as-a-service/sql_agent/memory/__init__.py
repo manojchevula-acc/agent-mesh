@@ -6,7 +6,7 @@ metadata DB is configured (dev), so the agent runs with just the in-memory check
 
 from .checkpointer import get_checkpointer
 from .db import init_tables
-from .examples import approved_examples, render_examples_block
+from .examples import approved_examples, relevant_examples, render_examples_block
 from .sessions import (
     delete_session,
     list_sessions,
@@ -21,5 +21,5 @@ __all__ = [
     "new_session_id", "touch_session", "list_sessions",
     "rename_session", "delete_session",
     "record_turn", "list_turns",
-    "approved_examples", "render_examples_block",
+    "approved_examples", "relevant_examples", "render_examples_block",
 ]

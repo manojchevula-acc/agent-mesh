@@ -70,6 +70,17 @@ class Settings(BaseSettings):
 
     # --- Provider credentials -------------------------------------------------
     groq_api_key: str = ""
+    # Optional PER-STEP Groq API keys. Spread pipeline steps across several Groq keys to
+    # raise the effective per-minute token/request limit (each key has its own quota).
+    # Blank => that step falls back to groq_api_key. Resolved in llm/factory.py; only
+    # used when the step's resolved provider is groq.
+    groq_api_key_agent: str = ""
+    groq_api_key_generation: str = ""
+    groq_api_key_correction: str = ""
+    groq_api_key_judge: str = ""
+    groq_api_key_intent: str = ""
+    groq_api_key_plan: str = ""
+    groq_api_key_synthesis: str = ""
     openai_api_key: str = ""
     anthropic_api_key: str = ""
     azure_openai_endpoint: str = ""
@@ -116,7 +127,17 @@ class Settings(BaseSettings):
     # --- Feedback / examples --------------------------------------------------
     feedback_enabled: bool = True
     examples_enabled: bool = True         # inject approved few-shot examples into generation
-    max_fewshot_examples: int = 5
+    max_fewshot_examples: int = 5         # static ReAct grounding (tool selection)
+    # Intent-aware Pattern Retriever: how many RELEVANT examples to inject into the
+    # dynamic-tier SQL generator prompt. Kept small (few-shot, not many-shot) so the
+    # examples steer the model without blowing the provider's per-minute token budget.
+    examples_top_k: int = 3
+    # Confidence floor for example injection: the best retrieved example must have a
+    # cosine similarity >= this to the question, else NO examples are injected (the
+    # generator falls back to schema-only, today's baseline) — so a novel question that
+    # isn't in the example set never gets a misleading example. 0.0 => gate off. Only
+    # applies when the dense embedding backend is available (it is the confidence signal).
+    examples_min_score: float = 0.0
 
     # --- Production upgrade: intent detection (Component A) --------------------
     # Every new stage below is flag-gated and defaults to today's behaviour.
@@ -157,6 +178,12 @@ class Settings(BaseSettings):
     qdrant_path: str = ""                      # local on-disk mode, e.g. ./qdrant_data
     qdrant_api_key: str = ""
     qdrant_collection: str = "sql_agent_schema"
+    # Separate collection for the few-shot example vectors (Pattern Retriever). Shares the
+    # SAME Qdrant client/connection as the schema collection — Qdrant local/on-disk mode
+    # file-locks per path, so one client hosts both collections. Blank faiss path => the
+    # faiss backend keeps example vectors in-RAM.
+    examples_qdrant_collection: str = "sql_agent_examples"
+    examples_vector_index_path: str = ""       # faiss backend for examples; blank = in-RAM
 
     # --- Production upgrade: validation (Component C) --------------------------
     join_graph_check_enabled: bool = True     # validator check #7 (only fires w/ join pairs)

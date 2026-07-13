@@ -38,6 +38,27 @@ class ResolvedModel:
     provider: str
     model: str
     temperature: float
+    api_key: str = ""
+
+
+# Per-step Groq API keys (blank => fall back to the default groq_api_key). Only applied
+# when the step's resolved provider is groq. Spreads load across keys to raise the
+# effective per-minute rate limit.
+_GROQ_STEP_KEYS = {
+    Step.AGENT: "groq_api_key_agent",
+    Step.GENERATION: "groq_api_key_generation",
+    Step.CORRECTION: "groq_api_key_correction",
+    Step.JUDGE: "groq_api_key_judge",
+    Step.INTENT: "groq_api_key_intent",
+    Step.PLAN: "groq_api_key_plan",
+    Step.SYNTHESIS: "groq_api_key_synthesis",
+}
+
+
+def _resolve_groq_key(step: Step) -> str:
+    """Per-step Groq key, falling back to the shared default when the step has none."""
+    per_step = getattr(settings, _GROQ_STEP_KEYS.get(step, ""), "") if step in _GROQ_STEP_KEYS else ""
+    return (per_step or settings.groq_api_key).strip()
 
 
 def _resolve(step: Step) -> ResolvedModel:
@@ -58,14 +79,18 @@ def _resolve(step: Step) -> ResolvedModel:
     provider = (ov_provider or settings.llm_provider).strip().lower()
     model = (ov_model or settings.llm_model).strip()
     temperature = settings.llm_temperature if ov_temperature is None else ov_temperature
-    return ResolvedModel(provider=provider, model=model, temperature=temperature)
+    # Only groq consumes a per-step key here; other providers use their own credential.
+    api_key = _resolve_groq_key(step) if provider == "groq" else ""
+    return ResolvedModel(provider=provider, model=model, temperature=temperature,
+                         api_key=api_key)
 
 
 # --- Provider builders --------------------------------------------------------
 
 def _build_groq(rm: ResolvedModel):
     from langchain_groq import ChatGroq
-    if not settings.groq_api_key:
+    api_key = rm.api_key or settings.groq_api_key
+    if not api_key:
         raise RuntimeError("GROQ_API_KEY is not configured.")
     kwargs = {}
     if "gpt-oss" in rm.model:
@@ -75,7 +100,7 @@ def _build_groq(rm: ResolvedModel):
         # toward actually answering rather than reasoning at length.
         kwargs["reasoning_effort"] = settings.groq_reasoning_effort
         kwargs["reasoning_format"] = "parsed"
-    return ChatGroq(model=rm.model, api_key=settings.groq_api_key,
+    return ChatGroq(model=rm.model, api_key=api_key,
                     temperature=rm.temperature, **kwargs)
 
 
@@ -119,8 +144,9 @@ _PROVIDER_BUILDERS = {
 
 
 @lru_cache(maxsize=None)
-def _get_cached(provider: str, model: str, temperature: float):
-    rm = ResolvedModel(provider=provider, model=model, temperature=temperature)
+def _get_cached(provider: str, model: str, temperature: float, api_key: str = ""):
+    rm = ResolvedModel(provider=provider, model=model, temperature=temperature,
+                       api_key=api_key)
     builder = _PROVIDER_BUILDERS.get(provider)
     if builder is None:
         raise ValueError(
@@ -133,13 +159,13 @@ def _get_cached(provider: str, model: str, temperature: float):
 def get_llm(step: Step | str = Step.DEFAULT):
     """Return a LangChain chat model for the given pipeline step.
 
-    Models are cached per (provider, model, temperature) so repeated calls for the
-    same step reuse one client.
+    Models are cached per (provider, model, temperature, api_key) so repeated calls for
+    the same step reuse one client, and different per-step Groq keys get their own client.
     """
     if isinstance(step, str):
         step = Step(step)
     rm = _resolve(step)
-    return _get_cached(rm.provider, rm.model, rm.temperature)
+    return _get_cached(rm.provider, rm.model, rm.temperature, rm.api_key)
 
 
 def log_usage(step: Step | str, response) -> None:

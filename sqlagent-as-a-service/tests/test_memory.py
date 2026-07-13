@@ -8,6 +8,7 @@ Covers two things:
 
 from typing import Annotated, TypedDict
 
+import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
@@ -122,3 +123,101 @@ def test_render_examples_block_formats_rows():
     assert "avg margin?" in block
     assert "SELECT 1" in block
     assert render_examples_block([]) == ""
+
+
+# --- (4) intent-aware Pattern Retriever (few-shot example ranking) -----------
+
+_EXAMPLE_ROWS = [
+    {"question": "total net profit by product type",
+     "validated_sql": "SELECT 1", "tier": "full_dynamic", "tags": "profitability_summary"},
+    {"question": "average net margin by region",
+     "validated_sql": "SELECT 2", "tier": "full_dynamic", "tags": "margin_analysis"},
+    {"question": "top customers by total deal volume",
+     "validated_sql": "SELECT 3", "tier": "full_dynamic", "tags": "customer_360"},
+    {"question": "deals priced below the policy floor",
+     "validated_sql": "SELECT 4", "tier": "full_dynamic", "tags": "pricing_recommendation_view"},
+]
+
+
+def _dense_off(monkeypatch):
+    """Force the dense backend off so tests never download an embedding model."""
+    import sql_agent.semantic_layer.embeddings as emb
+    from sql_agent.memory import example_index
+
+    monkeypatch.setattr(emb, "get_backend", lambda: None)
+    example_index._CACHE = {"sig": None, "names": None, "bm25": None,
+                            "name_to_idx": None, "dense_ok": False}
+
+
+def test_rank_examples_empty_corpus():
+    from sql_agent.memory.example_index import rank_examples
+
+    assert rank_examples("anything", []) == []
+
+
+def test_rank_examples_respects_k(monkeypatch):
+    _dense_off(monkeypatch)
+    from sql_agent.memory.example_index import rank_examples
+
+    out = rank_examples("net profit", _EXAMPLE_ROWS, k=2)
+    assert len(out) == 2
+    assert all(r in _EXAMPLE_ROWS for r in out)
+
+
+def test_rank_examples_tables_hint_biases_selection(monkeypatch):
+    pytest.importorskip("rank_bm25")  # boosting needs a working ranker
+    _dense_off(monkeypatch)
+    from sql_agent.memory.example_index import rank_examples
+
+    # A question whose text does NOT clearly match the pricing example, but the intent
+    # hint points at its table — the boost should surface it in the top-k.
+    out = rank_examples(
+        "show me pricing exceptions", _EXAMPLE_ROWS, k=1,
+        tables_hint=["pricing_recommendation_view"],
+    )
+    assert out[0]["tags"] == "pricing_recommendation_view"
+
+
+def _patch_dense(monkeypatch, rows, scores):
+    """Skip the real build and force controlled dense cosine scores per row index, so the
+    confidence-gate logic can be tested without an embedding model or vector store."""
+    from sql_agent.memory import example_index
+
+    example_index._CACHE = {
+        "sig": example_index._corpus_signature(rows),
+        "names": [r["question"] for r in rows],
+        "bm25": None,
+        "name_to_idx": {r["question"]: i for i, r in enumerate(rows)},
+        "dense_ok": True,
+    }
+    monkeypatch.setattr(example_index, "_dense_scores", lambda q: dict(scores))
+
+
+_GATE_ROWS = [
+    {"question": "capital on high rwa deals", "validated_sql": "SELECT 1",
+     "tier": "full_dynamic", "tags": "rwa_impact_view"},
+    {"question": "customers by industry", "validated_sql": "SELECT 2",
+     "tier": "full_dynamic", "tags": "customer_master"},
+]
+
+
+def test_threshold_gate_drops_low_confidence(monkeypatch):
+    from sql_agent.config import settings
+    from sql_agent.memory.example_index import rank_examples
+
+    # Row 0 clears the floor (cosine 1.0), row 1 does not (0.0).
+    _patch_dense(monkeypatch, _GATE_ROWS, {0: 1.0, 1: 0.0})
+    monkeypatch.setattr(settings, "examples_min_score", 0.5)
+    out = rank_examples("anything", _GATE_ROWS, k=5)
+    assert [r["tags"] for r in out] == ["rwa_impact_view"]  # row 1 gated out
+
+
+def test_threshold_gate_suppresses_all_when_nothing_clears(monkeypatch):
+    from sql_agent.config import settings
+    from sql_agent.memory.example_index import rank_examples
+
+    _patch_dense(monkeypatch, _GATE_ROWS, {0: 0.4, 1: 0.2})
+    monkeypatch.setattr(settings, "examples_min_score", 0.9)  # nothing clears
+    assert rank_examples("anything", _GATE_ROWS, k=5) == []
+
+
