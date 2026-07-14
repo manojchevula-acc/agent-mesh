@@ -37,6 +37,26 @@ export async function listConversations(username: string): Promise<ConversationS
   return data.sessions;
 }
 
+export async function renameConversation(
+  sessionId: string,
+  username: string,
+  title: string,
+): Promise<void> {
+  await apiClient.patch(
+    `/api/conversations/${encodeURIComponent(sessionId)}`,
+    { username, title },
+  );
+}
+
+export async function deleteConversation(
+  sessionId: string,
+  username: string,
+): Promise<void> {
+  await apiClient.delete(`/api/conversations/${encodeURIComponent(sessionId)}`, {
+    params: { username },
+  });
+}
+
 export async function listUsers(): Promise<MeshUser[]> {
   const { data } = await apiClient.get<MeshUser[]>("/api/users");
   return data;

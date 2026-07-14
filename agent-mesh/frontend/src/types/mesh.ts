@@ -148,6 +148,9 @@ export interface ConversationHistory {
 export interface ConversationSummary {
   session_id: string;
   preview: string;
+  // User-defined title (from the sidebar "rename" action). When set, the UI
+  // shows this instead of the auto-generated preview.
+  title?: string | null;
   updated_at: string;
   message_count: number;
 }

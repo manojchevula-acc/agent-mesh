@@ -73,6 +73,22 @@ class ConversationStore:
             return self._backend.list_sessions(owner)
         return []
 
+    def set_title(self, session_id: str, title: str) -> None:
+        """Set a user-defined title for a session. No-op if the backend lacks support."""
+        if hasattr(self._backend, "write_title"):
+            self._backend.write_title(session_id, title)
+
+    def delete(self, session_id: str) -> None:
+        """Delete a session entirely (messages + sidecar metadata).
+
+        Falls back to ``clear`` (message removal only) for backends that don't
+        implement full deletion.
+        """
+        if hasattr(self._backend, "delete"):
+            self._backend.delete(session_id)
+        else:
+            self._backend.clear(session_id)
+
     def check_owner(self, session_id: str, requesting_user: str) -> bool:
         """Return True if requesting_user owns the session (or no ownership record exists).
 

@@ -7,6 +7,8 @@ interface ChatContextValue {
   sendMessage: (query: string) => void;
   clearChat: () => void;
   switchSession: (sessionId: string) => void;
+  renameSession: (sessionId: string, title: string) => void | Promise<void>;
+  deleteSession: (sessionId: string) => void | Promise<void>;
   handleFeedback: (messageId: string, rating: "up" | "down", comment?: string) => void;
   isLoading: boolean;
   sessions: ConversationSummary[];
@@ -20,6 +22,8 @@ export const ChatContext = createContext<ChatContextValue>({
   sendMessage: noop,
   clearChat: noop,
   switchSession: noop,
+  renameSession: noop,
+  deleteSession: noop,
   handleFeedback: noop,
   isLoading: false,
   sessions: [],

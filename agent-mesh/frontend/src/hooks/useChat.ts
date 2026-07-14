@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { getConversation, queryMesh, submitFeedback } from "@/api/mesh";
-import type { ChatMessage, MeshResult } from "@/types/mesh";
+import {
+  deleteConversation,
+  getConversation,
+  queryMesh,
+  renameConversation,
+  submitFeedback,
+} from "@/api/mesh";
+import type { ChatMessage, ConversationSummary, MeshResult } from "@/types/mesh";
 
 const SESSION_ID_KEY = "agent-mesh-session-id";
 
@@ -186,6 +192,42 @@ export function useChat({ username, role }: UseChatOptions) {
     [setSessionId],
   );
 
+  const renameSession = useCallback(
+    async (id: string, title: string) => {
+      // Optimistically update the cached session list so the sidebar re-renders
+      // immediately; the invalidate below reconciles with the server truth.
+      queryClient.setQueryData<ConversationSummary[]>(
+        ["sessions", username],
+        (prev) =>
+          prev?.map((s) =>
+            s.session_id === id ? { ...s, title: title.trim() || null } : s,
+          ),
+      );
+      try {
+        await renameConversation(id, username, title.trim());
+      } finally {
+        queryClient.invalidateQueries({ queryKey: ["sessions", username] });
+      }
+    },
+    [queryClient, username],
+  );
+
+  const deleteSession = useCallback(
+    async (id: string) => {
+      try {
+        await deleteConversation(id, username);
+      } finally {
+        queryClient.invalidateQueries({ queryKey: ["sessions", username] });
+      }
+      // If the deleted session is the one on screen, reset to a fresh chat.
+      if (id === sessionIdRef.current) {
+        setMessages([]);
+        setSessionId(null);
+      }
+    },
+    [queryClient, username, setSessionId],
+  );
+
   const handleFeedback = useCallback(
     async (messageId: string, rating: "up" | "down", comment?: string) => {
       const msgIndex = messages.findIndex((m) => m.id === messageId);
@@ -222,6 +264,8 @@ export function useChat({ username, role }: UseChatOptions) {
     sendMessage,
     clearChat,
     switchSession,
+    renameSession,
+    deleteSession,
     handleFeedback,
     isLoading: mutation.isPending,
     error: mutation.error,

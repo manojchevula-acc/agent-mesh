@@ -222,6 +222,23 @@ async def list_conversations(request: Request) -> JSONResponse:
     return JSONResponse({"sessions": sessions})
 
 
+async def conversation_by_id(request: Request) -> JSONResponse:
+    """Dispatch /api/conversations/{session_id} by HTTP method.
+
+    Starlette matches a request to the first Route whose path matches, then 405s
+    if that route doesn't list the method — sibling Routes on the same path are
+    never tried. So GET/PATCH/DELETE must share one Route and fan out here.
+    """
+    method = request.method.upper()
+    if method == "GET":
+        return await get_conversation(request)
+    if method == "PATCH":
+        return await rename_conversation(request)
+    if method == "DELETE":
+        return await delete_conversation(request)
+    return JSONResponse({"error": "Method not allowed."}, status_code=405)
+
+
 async def get_conversation(request: Request) -> JSONResponse:
     """Return the stored message history for a session (for UI restore on reload).
 
@@ -254,6 +271,73 @@ async def get_conversation(request: Request) -> JSONResponse:
         _log.warning("conversation load failed session=%s: %s", session_id, exc)
         messages = []
     return JSONResponse({"session_id": session_id, "messages": messages})
+
+
+async def rename_conversation(request: Request) -> JSONResponse:
+    """Set a user-defined title for a session (sidebar "rename chat").
+
+    Path: PATCH /api/conversations/{session_id}
+    Body: {"username": str, "title": str}  — a blank title clears the custom
+    name, reverting to the auto-generated preview.
+    """
+    session_id = request.path_params.get("session_id", "").strip()
+    if not session_id:
+        return JSONResponse({"error": "session_id is required."}, status_code=400)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body."}, status_code=400)
+
+    requesting_user = str(body.get("username", "")).strip()
+    title = str(body.get("title", "")).strip()
+
+    store = ConversationStore()
+    if requesting_user and not store.check_owner(session_id, requesting_user):
+        _log.warning(
+            "conversation rename denied session=%s requesting_user=%s",
+            session_id, requesting_user,
+        )
+        return JSONResponse(
+            {"error": "Access denied: this conversation belongs to a different user."},
+            status_code=403,
+        )
+
+    try:
+        store.set_title(session_id, title)
+    except Exception as exc:
+        _log.warning("conversation rename failed session=%s: %s", session_id, exc)
+        return JSONResponse({"error": "Failed to rename conversation."}, status_code=500)
+    return JSONResponse({"session_id": session_id, "title": title or None})
+
+
+async def delete_conversation(request: Request) -> JSONResponse:
+    """Delete a session and all its stored history (sidebar "delete chat").
+
+    Path: DELETE /api/conversations/{session_id}?username=<user>
+    """
+    session_id = request.path_params.get("session_id", "").strip()
+    if not session_id:
+        return JSONResponse({"error": "session_id is required."}, status_code=400)
+
+    requesting_user = request.query_params.get("username", "").strip()
+    store = ConversationStore()
+    if requesting_user and not store.check_owner(session_id, requesting_user):
+        _log.warning(
+            "conversation delete denied session=%s requesting_user=%s",
+            session_id, requesting_user,
+        )
+        return JSONResponse(
+            {"error": "Access denied: this conversation belongs to a different user."},
+            status_code=403,
+        )
+
+    try:
+        store.delete(session_id)
+    except Exception as exc:
+        _log.warning("conversation delete failed session=%s: %s", session_id, exc)
+        return JSONResponse({"error": "Failed to delete conversation."}, status_code=500)
+    return JSONResponse({"session_id": session_id, "deleted": True})
 
 
 async def post_feedback(request: Request) -> JSONResponse:
@@ -359,7 +443,7 @@ app = Starlette(
         Middleware(
             CORSMiddleware,
             allow_origins=_CORS_ORIGINS,
-            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
             allow_headers=["*"],
         ),
         Middleware(TraceContextMiddleware),
@@ -373,7 +457,7 @@ app = Starlette(
         Route("/api/feedback/stats",   get_feedback_stats,  methods=["GET"]),
         Route("/api/mesh/status",      get_mesh_status,     methods=["GET"]),
         Route("/api/conversations",    list_conversations,  methods=["GET"]),
-        Route("/api/conversations/{session_id}", get_conversation, methods=["GET"]),
+        Route("/api/conversations/{session_id}", conversation_by_id, methods=["GET", "PATCH", "DELETE"]),
     ],
 )
 

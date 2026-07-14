@@ -40,6 +40,8 @@ export function AppLayout() {
           sessions={sessions}
           activeSessionId={chat.sessionId}
           onSelectSession={(id) => { chat.switchSession(id); setSidebarOpen(false); }}
+          onRenameSession={chat.renameSession}
+          onDeleteSession={chat.deleteSession}
         />
 
         <div className="flex min-w-0 flex-1 flex-col">

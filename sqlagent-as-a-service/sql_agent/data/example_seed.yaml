@@ -201,6 +201,56 @@ examples:
     tier: full_dynamic
     tags: "segment_pricing_benchmark"
 
+  # ---- Cross-table / JOINs ---------------------------------------------------
+  # A VIEW may be joined ONLY to customer_master (customer_id), and only for a
+  # customer attribute the view lacks (industry, credit_score, tenure, ...). Base
+  # tables join on their declared FK keys. These teach the model the valid join shapes.
+
+  - question: "What is the average expected margin by customer industry?"
+    sql: "SELECT cm.industry, ROUND(AVG(prv.expected_margin_pct), 2) AS avg_expected_margin_pct FROM fab_semantic.pricing_recommendation_view prv JOIN fab_curated.customer_master cm ON prv.customer_id = cm.customer_id GROUP BY cm.industry ORDER BY avg_expected_margin_pct DESC;"
+    tier: full_dynamic
+    tags: "pricing_recommendation_view,customer_master"
+
+  - question: "Which industries have the most policy-non-compliant deals?"
+    sql: "SELECT cm.industry, COUNT(*) AS non_compliant_deals FROM fab_semantic.pricing_recommendation_view prv JOIN fab_curated.customer_master cm ON prv.customer_id = cm.customer_id WHERE prv.policy_compliant = 0 GROUP BY cm.industry ORDER BY non_compliant_deals DESC;"
+    tier: full_dynamic
+    tags: "pricing_recommendation_view,customer_master"
+
+  - question: "Compare average net margin for customers with relationship tenure over 5 years versus 5 years or less."
+    sql: "SELECT CASE WHEN cm.relationship_tenure_years > 5 THEN 'Over 5 years' ELSE '5 years or less' END AS tenure_band, ROUND(AVG(ma.net_margin_pct), 2) AS avg_net_margin_pct FROM fab_semantic.margin_analysis ma JOIN fab_curated.customer_master cm ON ma.customer_id = cm.customer_id GROUP BY tenure_band ORDER BY avg_net_margin_pct DESC;"
+    tier: full_dynamic
+    tags: "margin_analysis,customer_master"
+
+  - question: "Average approved price by customer credit-score band."
+    sql: "SELECT CASE WHEN cm.credit_score >= 700 THEN 'High (>=700)' WHEN cm.credit_score >= 600 THEN 'Medium (600-699)' ELSE 'Low (<600)' END AS credit_band, ROUND(AVG(prv.approved_price_pct), 2) AS avg_approved_price_pct FROM fab_semantic.pricing_recommendation_view prv JOIN fab_curated.customer_master cm ON prv.customer_id = cm.customer_id GROUP BY credit_band ORDER BY credit_band;"
+    tier: full_dynamic
+    tags: "pricing_recommendation_view,customer_master"
+
+  - question: "What is the total requested deal amount by customer industry?"
+    sql: "SELECT cm.industry, SUM(hd.requested_amount) AS total_requested_amount FROM fab_curated.historical_deals hd JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id GROUP BY cm.industry ORDER BY total_requested_amount DESC;"
+    tier: full_dynamic
+    tags: "historical_deals,customer_master"
+
+  - question: "Average deal size by customer internal rating."
+    sql: "SELECT cm.internal_rating, ROUND(AVG(hd.requested_amount), 0) AS avg_deal_size FROM fab_curated.historical_deals hd JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id GROUP BY cm.internal_rating ORDER BY avg_deal_size DESC;"
+    tier: full_dynamic
+    tags: "historical_deals,customer_master"
+
+  - question: "List deals whose requested amount exceeds the product's maximum ticket size."
+    sql: "SELECT hd.deal_id, hd.customer_id, pm.product_name, hd.requested_amount, pm.max_ticket_size FROM fab_curated.historical_deals hd JOIN fab_curated.product_master pm ON hd.product_id = pm.product_id WHERE hd.requested_amount > pm.max_ticket_size LIMIT 50;"
+    tier: full_dynamic
+    tags: "historical_deals,product_master"
+
+  - question: "Compare each product's standard margin to the average expected margin booked on its deals."
+    sql: "SELECT pm.product_name, pm.standard_margin_pct, ROUND(AVG(hd.expected_margin_pct), 2) AS avg_booked_margin_pct FROM fab_curated.historical_deals hd JOIN fab_curated.product_master pm ON hd.product_id = pm.product_id GROUP BY pm.product_name, pm.standard_margin_pct ORDER BY pm.product_name LIMIT 50;"
+    tier: full_dynamic
+    tags: "historical_deals,product_master"
+
+  - question: "Which customer segment and risk band have the most deals priced below their policy minimum margin?"
+    sql: "SELECT cm.customer_segment, cm.risk_category, COUNT(*) AS deals_below_floor FROM fab_curated.historical_deals hd JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id JOIN fab_curated.pricing_policy pp ON cm.customer_segment = pp.customer_segment AND hd.product_type = pp.product_type AND cm.risk_category = pp.risk_category WHERE hd.expected_margin_pct < pp.min_margin_pct GROUP BY cm.customer_segment, cm.risk_category ORDER BY deals_below_floor DESC;"
+    tier: full_dynamic
+    tags: "historical_deals,customer_master,pricing_policy"
+
   # ---- Portfolio / exposure --------------------------------------------------
   - question: "What is the total existing exposure by risk category?"
     sql: "SELECT risk_category, SUM(existing_exposure_aed) AS total_exposure_aed FROM fab_curated.customer_master GROUP BY risk_category ORDER BY total_exposure_aed DESC;"

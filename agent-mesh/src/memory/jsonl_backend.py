@@ -103,6 +103,52 @@ class JsonlBackend(ConversationBackend):
         except OSError:
             return None
 
+    # ------------------------------------------------------------------
+    # Custom session titles — stored in a sidecar file alongside the
+    # ``.owner`` record, keeping the JSONL message format untouched.
+    # ------------------------------------------------------------------
+
+    def _title_path(self, session_id: str) -> pathlib.Path:
+        safe = _UNSAFE.sub("_", session_id or "default_session")
+        self._dir.mkdir(parents=True, exist_ok=True)
+        return self._dir / f"{safe}.title"
+
+    def write_title(self, session_id: str, title: str) -> None:
+        """Set (or overwrite) the user-defined title for a session.
+
+        An empty/blank title removes the sidecar so the session falls back to
+        its auto-generated preview.
+        """
+        path = self._title_path(session_id)
+        cleaned = (title or "").strip()
+        if not cleaned:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return
+        path.write_text(cleaned, encoding="utf-8")
+
+    def read_title(self, session_id: str) -> str | None:
+        """Return the user-defined title, or None if none is set."""
+        path = self._title_path(session_id)
+        try:
+            return path.read_text(encoding="utf-8").strip() or None
+        except OSError:
+            return None
+
+    def delete(self, session_id: str) -> None:
+        """Remove a session entirely — messages, ownership, and title sidecars."""
+        for path in (
+            self._path(session_id),
+            self._owner_path(session_id),
+            self._title_path(session_id),
+        ):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
     def list_sessions(self, owner: str | None = None) -> List[Dict]:
         """List sessions, newest first, for the sidebar session switcher.
 
@@ -135,6 +181,7 @@ class JsonlBackend(ConversationBackend):
             sessions.append({
                 "session_id": session_id,
                 "preview": preview or "(empty conversation)",
+                "title": self.read_title(session_id),
                 "updated_at": datetime.datetime.fromtimestamp(
                     mtime, tz=datetime.timezone.utc
                 ).isoformat(),
