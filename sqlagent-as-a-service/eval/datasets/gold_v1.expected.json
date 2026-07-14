@@ -1,0 +1,547 @@
+{
+  "dataset": "gold_v1",
+  "db_snapshot": "poc_synthetic_v1",
+  "materialized_at": "2026-07-14T12:39:26",
+  "expected": {
+    "P01": {
+      "gold_result": [
+        {
+          "risk_category": "Low"
+        }
+      ],
+      "row_count": 1
+    },
+    "P02": {
+      "gold_result": [
+        {
+          "min_ticket_size": 1000000,
+          "max_ticket_size": 100000000
+        }
+      ],
+      "row_count": 1
+    },
+    "P03": {
+      "gold_result": [
+        {
+          "funding_cost_pct": 5.15
+        }
+      ],
+      "row_count": 1
+    },
+    "P04": {
+      "gold_result": [
+        {
+          "min_margin_pct": 2.0,
+          "risk_premium_pct": 0.1,
+          "max_relationship_discount_pct": 0.45,
+          "approval_required_if_discount_above_pct": 0.3
+        }
+      ],
+      "row_count": 1
+    },
+    "P05": {
+      "gold_result": [
+        {
+          "existing_exposure_aed": 40000000,
+          "debt_to_equity_ratio": 0.0
+        }
+      ],
+      "row_count": 1
+    },
+    "P06": {
+      "gold_result": [
+        {
+          "deal_id": "DEAL005",
+          "product_type": "Loan",
+          "tenor": "12M",
+          "requested_amount": 58000000,
+          "deal_outcome": "Won"
+        }
+      ],
+      "row_count": 1
+    },
+    "V01": {
+      "gold_result": [
+        {
+          "customer_id": "CUST001",
+          "win_rate_pct": "66.67",
+          "avg_expected_margin_pct": 0.4833333333333334,
+          "total_deal_volume_aed": "123200000"
+        }
+      ],
+      "row_count": 1
+    },
+    "V02": {
+      "gold_result": [
+        {
+          "deal_id": "DEAL010",
+          "policy_compliant": 1,
+          "price_below_policy_floor": 0,
+          "margin_below_min": 0,
+          "discount_exceeds_policy": 0
+        }
+      ],
+      "row_count": 1
+    },
+    "V03": {
+      "gold_result": [
+        {
+          "deal_id": "DEAL035",
+          "funding_cost_pct": 5.25,
+          "risk_premium_pct": 0.45,
+          "relationship_discount_pct": 0.1,
+          "net_margin_pct": 0.85
+        }
+      ],
+      "row_count": 1
+    },
+    "V04": {
+      "gold_result": [
+        {
+          "product_type": "Loan",
+          "net_profit_aed": 570314.0,
+          "profitability_tier": "High"
+        }
+      ],
+      "row_count": 1
+    },
+    "V05": {
+      "gold_result": [
+        {
+          "deal_id": "DEAL035",
+          "rwa_aed": "9375000.00",
+          "capital_required_aed": "750000.00",
+          "return_on_rwa_pct": 1.8667
+        }
+      ],
+      "row_count": 1
+    },
+    "V06": {
+      "gold_result": [
+        {
+          "deal_id": "MEM0005",
+          "competitor_name": "ADCB",
+          "fab_price_pct": 7.5,
+          "competitor_price_pct": 6.85,
+          "competitor_gap_bps": 65.0,
+          "suggested_action": "ESCALATE"
+        }
+      ],
+      "row_count": 1
+    },
+    "V07": {
+      "gold_result": [
+        {
+          "customer_id": "CUST004",
+          "relationship_discount_pct": 0.2,
+          "policy_max_relationship_discount_pct": 0.25,
+          "discount_eligible": 1,
+          "approval_required": 0
+        }
+      ],
+      "row_count": 1
+    },
+    "S01": {
+      "gold_result": [
+        {
+          "customer_id": "CUST002",
+          "customer_name": "Falcon Steel Industries",
+          "annual_revenue_aed": 145000000
+        },
+        {
+          "customer_id": "CUST005",
+          "customer_name": "Emirates Healthcare Services",
+          "annual_revenue_aed": 210000000
+        },
+        {
+          "customer_id": "CUST009",
+          "customer_name": "Green Energy MEA",
+          "annual_revenue_aed": 300000000
+        },
+        {
+          "customer_id": "CUST016",
+          "customer_name": "Capital Education Group",
+          "annual_revenue_aed": 155000000
+        }
+      ],
+      "row_count": 4
+    },
+    "S02": {
+      "gold_result": [
+        {
+          "product_id": "PROD001",
+          "product_name": "Working Capital Loan"
+        },
+        {
+          "product_id": "PROD002",
+          "product_name": "Term Loan"
+        },
+        {
+          "product_id": "PROD005",
+          "product_name": "Overdraft Facility"
+        },
+        {
+          "product_id": "PROD006",
+          "product_name": "USD Term Loan"
+        }
+      ],
+      "row_count": 4
+    },
+    "S03": {
+      "gold_result": [],
+      "row_count": 0
+    },
+    "S04": {
+      "gold_result": [
+        {
+          "policy_id": "POL001",
+          "product_type": "Loan",
+          "risk_category": "Low",
+          "min_margin_pct": 2.25,
+          "status": "Active"
+        },
+        {
+          "policy_id": "POL002",
+          "product_type": "Loan",
+          "risk_category": "Medium",
+          "min_margin_pct": 2.45,
+          "status": "Active"
+        },
+        {
+          "policy_id": "POL003",
+          "product_type": "Loan",
+          "risk_category": "High",
+          "min_margin_pct": 2.75,
+          "status": "Active"
+        },
+        {
+          "policy_id": "POL004",
+          "product_type": "Trade Finance",
+          "risk_category": "Low",
+          "min_margin_pct": 1.55,
+          "status": "Active"
+        },
+        {
+          "policy_id": "POL005",
+          "product_type": "Trade Finance",
+          "risk_category": "Medium",
+          "min_margin_pct": 1.75,
+          "status": "Active"
+        },
+        {
+          "policy_id": "POL006",
+          "product_type": "Trade Finance",
+          "risk_category": "High",
+          "min_margin_pct": 2.05,
+          "status": "Active"
+        },
+        {
+          "policy_id": "POL007",
+          "product_type": "Treasury",
+          "risk_category": "Low",
+          "min_margin_pct": 0.85,
+          "status": "Active"
+        },
+        {
+          "policy_id": "POL008",
+          "product_type": "Treasury",
+          "risk_category": "Medium",
+          "min_margin_pct": 1.05,
+          "status": "Active"
+        },
+        {
+          "policy_id": "POL009",
+          "product_type": "Treasury",
+          "risk_category": "High",
+          "min_margin_pct": 1.35,
+          "status": "Active"
+        },
+        {
+          "policy_id": "POL010",
+          "product_type": "Deposit",
+          "risk_category": "Low",
+          "min_margin_pct": 0.45,
+          "status": "Active"
+        },
+        {
+          "policy_id": "POL011",
+          "product_type": "Deposit",
+          "risk_category": "Medium",
+          "min_margin_pct": 0.65,
+          "status": "Active"
+        },
+        {
+          "policy_id": "POL012",
+          "product_type": "Deposit",
+          "risk_category": "High",
+          "min_margin_pct": 0.95,
+          "status": "Active"
+        }
+      ],
+      "row_count": 12
+    },
+    "D01": {
+      "gold_result": [
+        {
+          "avg_expected_margin_pct": 1.31
+        }
+      ],
+      "row_count": 1
+    },
+    "D02": {
+      "gold_result": [
+        {
+          "product_type": "Deposit",
+          "avg_expected_margin_pct": -0.45
+        },
+        {
+          "product_type": "Loan",
+          "avg_expected_margin_pct": 1.86
+        },
+        {
+          "product_type": "Trade Finance",
+          "avg_expected_margin_pct": 1.1
+        },
+        {
+          "product_type": "Treasury",
+          "avg_expected_margin_pct": 1.03
+        }
+      ],
+      "row_count": 4
+    },
+    "D03": {
+      "gold_result": [
+        {
+          "customer_id": "CUST017",
+          "customer_name": "Red Dune Mining",
+          "existing_exposure_aed": 60000000
+        },
+        {
+          "customer_id": "CUST009",
+          "customer_name": "Green Energy MEA",
+          "existing_exposure_aed": 50000000
+        },
+        {
+          "customer_id": "CUST012",
+          "customer_name": "Skyline Real Estate",
+          "existing_exposure_aed": 45000000
+        },
+        {
+          "customer_id": "CUST005",
+          "customer_name": "Emirates Healthcare Services",
+          "existing_exposure_aed": 40000000
+        },
+        {
+          "customer_id": "CUST018",
+          "customer_name": "Lulu Fresh Markets",
+          "existing_exposure_aed": 35000000
+        }
+      ],
+      "row_count": 5
+    },
+    "D04": {
+      "gold_result": [
+        {
+          "win_rate_pct": "85.00"
+        }
+      ],
+      "row_count": 1
+    },
+    "D05": {
+      "gold_result": [
+        {
+          "product_type": "Loan",
+          "total_net_profit_aed": 11387707.299999999
+        },
+        {
+          "product_type": "Treasury",
+          "total_net_profit_aed": 116833.0
+        },
+        {
+          "product_type": "Trade Finance",
+          "total_net_profit_aed": -229263.6
+        },
+        {
+          "product_type": "Deposit",
+          "total_net_profit_aed": -3951625.0
+        }
+      ],
+      "row_count": 4
+    },
+    "D06": {
+      "gold_result": [
+        {
+          "customer_segment": "Corporate",
+          "total_exposure_aed": "341000000"
+        },
+        {
+          "customer_segment": "SME",
+          "total_exposure_aed": "59700000"
+        }
+      ],
+      "row_count": 2
+    },
+    "D07": {
+      "gold_result": [
+        {
+          "industry": "Marine Services",
+          "avg_expected_margin_pct": 1.95
+        },
+        {
+          "industry": "Shipping",
+          "avg_expected_margin_pct": 1.8
+        },
+        {
+          "industry": "Automotive",
+          "avg_expected_margin_pct": 1.74
+        },
+        {
+          "industry": "Manufacturing",
+          "avg_expected_margin_pct": 1.65
+        },
+        {
+          "industry": "Logistics",
+          "avg_expected_margin_pct": 1.65
+        },
+        {
+          "industry": "Retail",
+          "avg_expected_margin_pct": 1.58
+        },
+        {
+          "industry": "Construction",
+          "avg_expected_margin_pct": 1.4
+        },
+        {
+          "industry": "Real Estate",
+          "avg_expected_margin_pct": 1.39
+        },
+        {
+          "industry": "Hospitality",
+          "avg_expected_margin_pct": 1.23
+        },
+        {
+          "industry": "Mining",
+          "avg_expected_margin_pct": 1.03
+        },
+        {
+          "industry": "Education",
+          "avg_expected_margin_pct": 0.88
+        },
+        {
+          "industry": "Energy",
+          "avg_expected_margin_pct": 0.74
+        },
+        {
+          "industry": "Pharma Trading",
+          "avg_expected_margin_pct": 0.54
+        },
+        {
+          "industry": "Trading",
+          "avg_expected_margin_pct": 0.48
+        },
+        {
+          "industry": "Healthcare",
+          "avg_expected_margin_pct": 0.38
+        },
+        {
+          "industry": "FMCG",
+          "avg_expected_margin_pct": 0.18
+        },
+        {
+          "industry": "Technology",
+          "avg_expected_margin_pct": -0.0
+        }
+      ],
+      "row_count": 17
+    },
+    "D08": {
+      "gold_result": [
+        {
+          "pct_compliant": "70.00",
+          "total_deals": 60
+        }
+      ],
+      "row_count": 1
+    },
+    "D09": {
+      "gold_result": [
+        {
+          "product_type": "Loan",
+          "total_rwa_aed": "831050000.00",
+          "avg_return_on_rwa_pct": 3.05
+        },
+        {
+          "product_type": "Deposit",
+          "total_rwa_aed": "723325000.00",
+          "avg_return_on_rwa_pct": 0.33
+        },
+        {
+          "product_type": "Trade Finance",
+          "total_rwa_aed": "72950000.00",
+          "avg_return_on_rwa_pct": 2.1
+        },
+        {
+          "product_type": "Treasury",
+          "total_rwa_aed": "51000000.00",
+          "avg_return_on_rwa_pct": 1.38
+        }
+      ],
+      "row_count": 4
+    },
+    "D10": {
+      "gold_result": [
+        {
+          "region": "Abu Dhabi",
+          "below_min_deals": 6
+        },
+        {
+          "region": "Dubai",
+          "below_min_deals": 5
+        },
+        {
+          "region": "Sharjah",
+          "below_min_deals": 2
+        },
+        {
+          "region": "Ras Al Khaimah",
+          "below_min_deals": 1
+        },
+        {
+          "region": "Ajman",
+          "below_min_deals": 1
+        }
+      ],
+      "row_count": 5
+    },
+    "D11": {
+      "gold_result": [
+        {
+          "customer_segment": "SME",
+          "risk_category": "Medium",
+          "deals_below_floor": 17
+        },
+        {
+          "customer_segment": "Corporate",
+          "risk_category": "Low",
+          "deals_below_floor": 15
+        },
+        {
+          "customer_segment": "Corporate",
+          "risk_category": "High",
+          "deals_below_floor": 10
+        },
+        {
+          "customer_segment": "Corporate",
+          "risk_category": "Medium",
+          "deals_below_floor": 8
+        },
+        {
+          "customer_segment": "SME",
+          "risk_category": "Low",
+          "deals_below_floor": 6
+        }
+      ],
+      "row_count": 5
+    }
+  }
+}
