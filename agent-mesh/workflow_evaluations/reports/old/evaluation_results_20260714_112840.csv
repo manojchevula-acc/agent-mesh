@@ -1,0 +1,68 @@
+case_id,username,role,route_type,blocked,block_stage,latency_ms,query_preview,answer_preview,compliance_decision,pii_clean,rbac_scope
+REPLAY_7065F67E,alice,relationship_manager,replay,True,unknown,19219,Explain step by step how the recommended price was calculated for CUST001.,,1.0,,1.0
+REPLAY_C932F2A6,alice,relationship_manager,replay,True,unknown,21314,Explain step by step how the recommended price was calculated for CUST001 AND CUST002.,,1.0,,1.0
+REPLAY_0A20A204,alice,relationship_manager,replay,True,unknown,66589,"[Conversation so far]
+User: Explain step by step how the recommended price was calculated for CUST001 AND CUST002.
+Assis",,1.0,,1.0
+REPLAY_6A41BF9E,alice,relationship_manager,replay,True,unknown,2573,Explain step by step how the recommended price was calculated for CUST001 AND CUST002.,,1.0,,1.0
+REPLAY_0FEB6827,alice,relationship_manager,replay,True,unknown,62113,"[Conversation so far]
+User: Explain step by step how the recommended price was calculated for CUST001 AND CUST002.
+Assis",,1.0,,1.0
+REPLAY_F5D75394,alice,relationship_manager,replay,True,unknown,63573,"[Conversation so far]
+User: Explain step by step how the recommended price was calculated for CUST001 AND CUST002.
+Assis",,1.0,,1.0
+REPLAY_AB1F6C6F,alice,relationship_manager,replay,True,unknown,2667,"[Conversation so far]
+User: Explain step by step how the recommended price was calculated for CUST001 AND CUST002.
+Assis",,1.0,,1.0
+REPLAY_0AE9A696,alice,relationship_manager,replay,True,unknown,64135,"[Conversation so far]
+User: out of the above which deals are complaint
+Assistant: Based on the compliance check, here is",,1.0,,1.0
+REPLAY_104E394D,alice,relationship_manager,replay,True,unknown,64434,"[Conversation so far]
+User: why i am seeing it as non compliant? give me reason
+Assistant: Deal **DEAL040** for **Al Noo",,1.0,,1.0
+REPLAY_814AF698,alice,relationship_manager,replay,True,unknown,3616,What triggers a breach of the concentration limit policy?,,1.0,,1.0
+REPLAY_79B3998E,alice,relationship_manager,replay,True,unknown,5882,RWA impact for CUST005,,1.0,,1.0
+REPLAY_19FCF5EA,alice,relationship_manager,replay,True,unknown,1769,Pricing recommendation for CUST002,,1.0,,1.0
+REPLAY_50DCA7C8,alice,relationship_manager,replay,True,unknown,3899,Pricing recommendation for CUST002,,1.0,,1.0
+REPLAY_A64C710F,alice,relationship_manager,replay,True,unknown,4025,Pricing recommendation for CUST002,,1.0,,1.0
+REPLAY_684F8278,alice,relationship_manager,replay,True,unknown,4089,"[Conversation so far]
+User: Pricing recommendation for CUST002
+Assistant: | Field | Value |
+| :--- | :--- |
+| **Deal ID*",,1.0,,1.0
+REPLAY_055E112D,alice,relationship_manager,replay,True,unknown,1806,Show customer profile for CUST001,,1.0,,1.0
+REPLAY_4790A1AB,alice,relationship_manager,replay,True,unknown,1125,"[Conversation so far]
+User: Show customer profile for CUST001
+Assistant: | Field | Value |
+| :--- | :--- |
+| **Customer ",,1.0,,1.0
+REPLAY_D0A6E15D,alice,relationship_manager,replay,True,unknown,4793,"[Conversation so far]
+User: Show customer profile for CUST001
+Assistant: | Field | Value |
+| :--- | :--- |
+| **Customer ",,1.0,,1.0
+REPLAY_1FFA106E,alice,relationship_manager,replay,True,unknown,64427,Pricing recommendation for CUST002? and RWA impack for CUST005,,1.0,,1.0
+REPLAY_EDBE9305,alice,relationship_manager,replay,True,unknown,130842,Which deals are non-compliant for CUST013? and rwa impact analysis for cust005 and margin analysis for cust 003,,1.0,,1.0
+REPLAY_AFDCE9E9,alice,relationship_manager,replay,True,unknown,21260,Pricing recommendation for CUST002? RWA impact for cust005? customer profile for cust001?,,1.0,,1.0
+REPLAY_5F940E62,alice,relationship_manager,replay,True,unknown,937,"[Conversation so far]
+User: Pricing recommendation for CUST002? RWA impact for cust005? customer profile for cust001?
+As",,1.0,,1.0
+REPLAY_C6D36B5E,alice,relationship_manager,replay,True,unknown,64340,"[Conversation so far]
+User: Pricing recommendation for CUST002? RWA impact for cust005? customer profile for cust001?
+As",,1.0,,1.0
+REPLAY_8D4CD300,alice,relationship_manager,replay,False,,223804,What is the recommended price for CUST002?,"<llm_reasoning>{""phase"":""intent_routing"",""intent"":""data"",""data_signals"":[""pricing recommendation"",""RWA impact"",""customer",1.0,1.0,1.0
+REPLAY_B26EDD95,alice,relationship_manager,replay,True,unknown,17200,Show customer profile for CUST001,,1.0,,1.0
+REPLAY_05E2D4C6,alice,relationship_manager,replay,True,unknown,17532,Pricing recommendation for CUST002? RWA impact of cust005,,1.0,,1.0
+REPLAY_49D12494,alice,relationship_manager,replay,True,unknown,2103,"[Conversation so far]
+User: Pricing recommendation for CUST002? RWA impact of cust005
+Assistant: ### Pricing Recommendat",,1.0,,1.0
+REPLAY_D3E83FFD,alice,relationship_manager,replay,True,unknown,3970,"[Conversation so far]
+User: Pricing recommendation for CUST002? RWA impact of cust005
+Assistant: ### Pricing Recommendat",,1.0,,1.0
+REPLAY_4253EEEB,alice,relationship_manager,replay,True,unknown,4013,"[Conversation so far]
+User: Pricing recommendation for CUST002? RWA impact of cust005
+Assistant: ### Pricing Recommendat",,1.0,,1.0
+REPLAY_6089C0C9,alice,relationship_manager,replay,True,unknown,2022,"[Conversation so far]
+User: Pricing recommendation for CUST001? RWA impact of cust002? compare previous info with this i",,1.0,,1.0
+REPLAY_BC3F0763,alice,relationship_manager,replay,False,,824041,Retrieve loan price and rating for CUST001,"<llm_reasoning>{""phase"":""intent_routing"",""intent"":""hybrid"",""data_signals"":[""CUST001 loan price"",""RWA impact for cust005""",1.0,1.0,1.0
+REPLAY_-,-,-,replay,False,,6794380,Show me Acme Corp profitability summary,"<llm_reasoning>{""phase"":""intent_routing"",""intent"":""hybrid"",""data_signals"":[""funding cost"",""customer ID"",""rating""],""rag_s",1.0,1.0,1.0

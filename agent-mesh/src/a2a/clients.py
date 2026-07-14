@@ -40,6 +40,7 @@ def get_remote_agent(name: str) -> A2AAgent:
     propagated via OpenTelemetry httpx instrumentation (enabled at startup), so
     the remote node joins this caller's distributed trace.
     """
+    
     return A2AAgent(
         name=name,
         url=Config.agent_url(name),

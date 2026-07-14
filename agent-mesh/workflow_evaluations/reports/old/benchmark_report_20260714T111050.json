@@ -1,0 +1,192 @@
+{
+  "run_timestamp": "2026-07-14T11:10:50Z",
+  "system_version": "AgentMesh 15.0.6.2026",
+  "flare": {
+    "flare_ner": {
+      "task_name": "flare_ner",
+      "dataset_id": "TheFinAI/flare-ner",
+      "n_samples": 150,
+      "metrics": {
+        "f1_approx": 0.0
+      },
+      "error": null
+    },
+    "flare_finred": {
+      "task_name": "flare_finred",
+      "dataset_id": "TheFinAI/flare-finred",
+      "n_samples": 100,
+      "metrics": {
+        "f1_approx": 0.0
+      },
+      "error": null
+    },
+    "flare_fnxl": {
+      "task_name": "flare_fnxl",
+      "dataset_id": "TheFinAI/flare-fnxl",
+      "n_samples": 100,
+      "metrics": {
+        "f1_approx": 0.003333333333333333
+      },
+      "error": null
+    },
+    "flare_fsrl": {
+      "task_name": "flare_fsrl",
+      "dataset_id": "TheFinAI/flare-fsrl",
+      "n_samples": 50,
+      "metrics": {
+        "f1_approx": 0.014564102564102564
+      },
+      "error": null
+    },
+    "flare_tsa": {
+      "task_name": "flare_tsa",
+      "dataset_id": "TheFinAI/flare-tsa",
+      "n_samples": 100,
+      "metrics": {
+        "mse": 1.07894831,
+        "pearson": 0.0
+      },
+      "error": null
+    },
+    "flare_headlines": {
+      "task_name": "flare_headlines",
+      "dataset_id": "TheFinAI/flare-headlines",
+      "n_samples": 100,
+      "metrics": {
+        "accuracy": 0.68,
+        "f1_weighted": 0.5504761904761906,
+        "mcc": 0.0
+      },
+      "error": null
+    },
+    "flare_ma": {
+      "task_name": "flare_ma",
+      "dataset_id": "TheFinAI/flare-ma",
+      "n_samples": 100,
+      "metrics": {
+        "accuracy": 1.0,
+        "f1_weighted": 1.0
+      },
+      "error": null
+    },
+    "flare_mlesg": {
+      "task_name": "flare_mlesg",
+      "dataset_id": "TheFinAI/flare-mlesg",
+      "n_samples": 100,
+      "metrics": {
+        "accuracy": 0.03,
+        "f1_weighted": 0.0017475728155339806
+      },
+      "error": null
+    },
+    "flare_tatqa": {
+      "task_name": "flare_tatqa",
+      "dataset_id": "TheFinAI/flare-tatqa",
+      "n_samples": 100,
+      "metrics": {
+        "exact_match": 0.0,
+        "token_f1": 0.005113060637650803
+      },
+      "error": null
+    },
+    "flare_convfinqa": {
+      "task_name": "flare_convfinqa",
+      "dataset_id": "TheFinAI/ConvFinQA",
+      "n_samples": 50,
+      "metrics": {},
+      "error": "DATASET_UNAVAILABLE: TheFinAI/ConvFinQA does not exist on the Hub"
+    },
+    "flare_german": {
+      "task_name": "flare_german",
+      "dataset_id": "TheFinAI/flare-german",
+      "n_samples": 100,
+      "metrics": {
+        "accuracy": 0.69,
+        "f1_weighted": 0.5634319526627218,
+        "mcc": 0.0
+      },
+      "error": null
+    },
+    "flare_australian": {
+      "task_name": "flare_australian",
+      "dataset_id": "TheFinAI/flare-australian",
+      "n_samples": 100,
+      "metrics": {
+        "accuracy": 0.44,
+        "f1_weighted": 0.26888888888888896,
+        "mcc": 0.0
+      },
+      "error": null
+    },
+    "flare_bigdata22": {
+      "task_name": "flare_bigdata22",
+      "dataset_id": "TheFinAI/flare-sm-bigdata",
+      "n_samples": 100,
+      "metrics": {
+        "accuracy": 0.85,
+        "f1_weighted": 0.7810810810810811,
+        "mcc": 0.0
+      },
+      "error": null
+    },
+    "flare_acl18": {
+      "task_name": "flare_acl18",
+      "dataset_id": "TheFinAI/flare-sm-acl",
+      "n_samples": 100,
+      "metrics": {
+        "accuracy": 0.76,
+        "f1_weighted": 0.6563636363636364,
+        "mcc": 0.0
+      },
+      "error": null
+    },
+    "flare_cikm18": {
+      "task_name": "flare_cikm18",
+      "dataset_id": "TheFinAI/flare-sm-cikm",
+      "n_samples": 100,
+      "metrics": {
+        "accuracy": 0.55,
+        "f1_weighted": 0.3903225806451613,
+        "mcc": 0.0
+      },
+      "error": null
+    }
+  },
+  "finben": {
+    "finben_fiqa": {
+      "task_name": "finben_fiqa",
+      "dataset_id": "TheFinAI/fiqa-sentiment-classification",
+      "n_samples": 150,
+      "metrics": {
+        "f1_weighted": 1.0
+      },
+      "error": null
+    },
+    "finben_finqa": {
+      "task_name": "finben_finqa",
+      "dataset_id": "TheFinAI/flare-finqa",
+      "n_samples": 100,
+      "metrics": {},
+      "error": "DATASET_UNAVAILABLE: TheFinAI/flare-finqa requires access approval \u2014 visit https://huggingface.co/datasets/TheFinAI/flare-finqa and accept the terms, then re-run"
+    },
+    "finben_ectsum": {
+      "task_name": "finben_ectsum",
+      "dataset_id": "TheFinAI/flare-ectsum",
+      "n_samples": 50,
+      "metrics": {},
+      "error": "DATASET_UNAVAILABLE: TheFinAI/flare-ectsum requires access approval \u2014 visit https://huggingface.co/datasets/TheFinAI/flare-ectsum and accept the terms, then re-run"
+    }
+  },
+  "workflow": {
+    "compliance_accuracy": 0.8,
+    "pii_pass_rate": 1.0,
+    "rbac_enforcement_rate": 1.0,
+    "citation_present_rate": 0.6666666666666666,
+    "keyword_coverage": 0.880952380952381
+  },
+  "errors": [
+    "flare_convfinqa: DATASET_UNAVAILABLE: TheFinAI/ConvFinQA does not exist on the Hub",
+    "finben_finqa: DATASET_UNAVAILABLE: TheFinAI/flare-finqa requires access approval \u2014 visit https://huggingface.co/datasets/TheFinAI/flare-finqa and accept the terms, then re-run",
+    "finben_ectsum: DATASET_UNAVAILABLE: TheFinAI/flare-ectsum requires access approval \u2014 visit https://huggingface.co/datasets/TheFinAI/flare-ectsum and accept the terms, then re-run"
+  ]
+}

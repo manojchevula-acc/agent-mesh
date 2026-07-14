@@ -22,10 +22,9 @@ project_root = str(pathlib.Path(__file__).resolve().parents[2])
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from agent_framework import MCPStreamableHTTPTool
+from agent_framework import MCPStreamableHTTPTool, tool
 
 from src.config import Config
-
 
 def make_datalayer_mcp_tool() -> MCPStreamableHTTPTool:
     """Builds an (unconnected) MCP client for the DataLayer FastMCP server."""
@@ -38,7 +37,6 @@ def make_datalayer_mcp_tool() -> MCPStreamableHTTPTool:
         ),
         request_timeout=Config.MCP_REQUEST_TIMEOUT,
     )
-
 
 def make_rag_mcp_tool() -> MCPStreamableHTTPTool:
     """Builds an (unconnected) MCP client for the RAG service's MCP server."""
