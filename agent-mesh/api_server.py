@@ -717,16 +717,16 @@ async def post_query_stream(request: Request) -> StreamingResponse:
     shared_request_id = uuid.uuid4().hex[:8].upper()
     event_queue: asyncio.Queue = asyncio.Queue(maxsize=64)
 
-    tracer = ExecutionTracer(user=user.username, query=query, request_id=shared_request_id)
-    token = set_active_tracer(tracer)
-
-    # Background task inherits the current context (including active tracer ContextVar),
-    # so handle_request() inside it will see and populate the same tracer instance.
-    pipeline_task = asyncio.ensure_future(
-        handle_request_stream(user, query, session_id, request_id=shared_request_id, event_queue=event_queue)
-    )
-
     async def _sse_generator():
+        # Create tracer, set ContextVar, and fire the pipeline task all inside the
+        # generator so the token is created and reset in the same async context.
+        # ensure_future snapshots the context after set_active_tracer, so the
+        # pipeline task still inherits _active_tracer correctly.
+        tracer = ExecutionTracer(user=user.username, query=query, request_id=shared_request_id)
+        token = set_active_tracer(tracer)
+        pipeline_task = asyncio.ensure_future(
+            handle_request_stream(user, query, session_id, request_id=shared_request_id, event_queue=event_queue)
+        )
         try:
             while True:
                 item = await event_queue.get()
