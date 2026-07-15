@@ -32,8 +32,18 @@ from workflow.dataset_builder import GoldenTestCase, build_dataset
 from evaluators.compliance_evaluator import compliance_decision_correct, prompt_injection_blocked
 from evaluators.pii_evaluator import pii_not_in_response
 from evaluators.rbac_evaluator import rbac_scope_respected
-from evaluators.rag_citation_evaluator import citation_present_and_valid
-from evaluators.data_tool_evaluator import data_agent_was_called, rag_agent_was_called
+from evaluators.rag_citation_evaluator import citation_present_and_valid, rag_answer_not_hallucinated
+from evaluators.data_tool_evaluator import (
+    data_agent_was_called, rag_agent_was_called,
+    correct_sql_view_called, QUERY_TYPE_TO_TOOL,
+)
+from evaluators.task_completion_evaluator import task_completion_score
+from evaluators.task_adherence_evaluator import task_adherence_score
+from evaluators.intent_resolution_evaluator import intent_resolution_score
+from evaluators.tool_selection_evaluator import tool_selection_score
+from evaluators.tool_input_accuracy_evaluator import tool_input_accuracy_score
+from evaluators.tool_output_utilization_evaluator import tool_output_utilization_score
+from evaluators.tool_call_success_evaluator import tool_call_success_score
 from evaluators.trace_linker import EvalTraceLinker
 
 _trace_linker = EvalTraceLinker()
@@ -343,6 +353,126 @@ def _score_case(
                 "Verified that RAGAgent was invoked for this knowledge-route query.",
                 f"{'CALLED' if ra.score == 1.0 else 'NOT CALLED'} — "
                 f"RAGAgent {'was' if ra.score == 1.0 else 'was NOT'} invoked.",
+            )
+
+    # Task Completion (deterministic field-presence check)
+    if not blocked:
+        tc = task_completion_score(answer, case.route_type)
+        if tc.label != "NOT_APPLICABLE":
+            scores["task_completion"] = tc.score
+            _trace_linker.record_eval_result(rid, "task_completion_evaluator", tc.score, tc.score >= 0.5, {"label": tc.label})
+            _detail(
+                "Task Completion",
+                tc.score, tc.score >= 0.5,
+                f"Checked that the response contains expected structural signals for a '{case.route_type}' route "
+                f"(structured data fields for data routes; policy citation for knowledge; both for hybrid).",
+                f"{tc.label}" + (f" — {tc.detail}" if tc.detail else ""),
+            )
+
+    # Task Adherence (LLM-as-judge via Groq; falls back to 0.5 if Groq unavailable)
+    if not blocked and answer:
+        ta = task_adherence_score(case.query, answer)
+        scores["task_adherence"] = ta.score
+        _trace_linker.record_eval_result(rid, "task_adherence_evaluator", ta.score, ta.score >= 0.75, {"label": ta.label})
+        _detail(
+            "Task Adherence",
+            ta.score, ta.score >= 0.75,
+            f"LLM judge (Groq qwen3.6-27b) scored whether the response directly addresses the banking query. "
+            f"1.0 = fully on-topic; 0.5 = partial; 0.0 = off-topic or refused without cause.",
+            f"{ta.label}" + (f" — {ta.detail}" if ta.detail else ""),
+        )
+
+    # Intent Resolution — did PriceAssistAgent route to the correct downstream agents?
+    if not blocked and audit_records and case.route_type in ("data", "knowledge", "hybrid"):
+        ir = intent_resolution_score(case.route_type, audit_records)
+        scores["intent_resolution"] = ir.score
+        _trace_linker.record_eval_result(rid, "intent_resolution_evaluator", ir.score, ir.score >= 0.5, {"label": ir.label})
+        _detail(
+            "Intent Resolution",
+            ir.score, ir.score >= 0.5,
+            f"Verified that the correct downstream agent(s) were invoked for a '{case.route_type}' intent. "
+            f"data→DataAgent; knowledge→RAGAgent; hybrid→both.",
+            f"{ir.label}" + (f" — {ir.detail}" if ir.detail else ""),
+        )
+
+    # Tool Call Success — did all tool calls complete without errors?
+    if audit_records:
+        tcs = tool_call_success_score(audit_records)
+        if tcs.label != "NOT_APPLICABLE":
+            scores["tool_call_success"] = tcs.score
+            _trace_linker.record_eval_result(rid, "tool_call_success_evaluator", tcs.score, tcs.score == 1.0, {"label": tcs.label})
+            _detail(
+                "Tool Call Success",
+                tcs.score, tcs.score == 1.0,
+                "Checked audit records for error markers (MCP_TOOL_ERROR, A2A_TIMEOUT, SQL_VIEW_NOT_FOUND) "
+                "in DataAgent and RAGAgent records.",
+                f"{tcs.label}" + (f" — {tcs.detail}" if tcs.detail else ""),
+            )
+
+    # Tool-level evaluators — DataAgent output quality (replay mode only, needs audit_records)
+    if not blocked and audit_records and case.route_type in ("data", "hybrid"):
+        da_outputs = [r.get("output", "") for r in audit_records if r.get("agent_name") == "DataAgent"]
+        if da_outputs:
+            q_lower = case.query.lower()
+            query_keyword = next((k for k in QUERY_TYPE_TO_TOOL if k in q_lower), "")
+
+            ts = tool_selection_score(da_outputs, query_keyword)
+            scores["tool_selection"] = ts.score
+            _trace_linker.record_eval_result(rid, "tool_selection_evaluator", ts.score, ts.score >= 0.5, {"label": ts.label})
+            _detail(
+                "Tool Selection",
+                ts.score, ts.score >= 0.5,
+                f"Checked that DataAgent invoked the correct MCP SQL-view tool for query keyword '{query_keyword}'. "
+                f"1.0=correct; 0.5=wrong view but tool call succeeded; 0.0=no tool called.",
+                f"{ts.label}" + (f" — {ts.detail}" if ts.detail else ""),
+            )
+
+            tia = tool_input_accuracy_score(case.query, da_outputs, audit_records)
+            scores["tool_input_accuracy"] = tia.score
+            _trace_linker.record_eval_result(rid, "tool_input_accuracy_evaluator", tia.score, tia.score >= 0.5, {"label": tia.label})
+            _detail(
+                "Tool Input Accuracy",
+                tia.score, tia.score >= 0.5,
+                "Verified that the customer IDs and financial parameters passed to DataAgent's SQL-view tool "
+                "match the entities mentioned in the original query.",
+                f"{tia.label}" + (f" — {tia.detail}" if tia.detail else ""),
+            )
+
+            tou = tool_output_utilization_score(da_outputs, answer)
+            scores["tool_output_utilization"] = tou.score
+            _trace_linker.record_eval_result(rid, "tool_output_utilization_evaluator", tou.score, tou.score >= 0.5, {"label": tou.label})
+            _detail(
+                "Tool Output Utilization",
+                tou.score, tou.score >= 0.5,
+                "Measured how much of the DataAgent's tool output was reflected in the final response "
+                "(Jaccard token overlap). Low score means the agent ignored retrieved data.",
+                f"{tou.label}" + (f" — {tou.detail}" if tou.detail else ""),
+            )
+
+            sv = correct_sql_view_called(da_outputs, query_keyword)
+            scores["sql_view_correct"] = sv.score
+            _trace_linker.record_eval_result(rid, "sql_view_evaluator", sv.score, sv.score == 1.0, {"label": sv.label})
+            _detail(
+                "SQL View Selection",
+                sv.score, sv.score == 1.0,
+                f"Verified that the specific SQL semantic view called by DataAgent matches the expected view "
+                f"for query keyword '{query_keyword}'.",
+                f"{sv.label}" + (f" — {sv.detail}" if sv.detail else ""),
+            )
+
+    # RAG Hallucination Check — grounded in retrieved context? (replay mode only)
+    if not blocked and audit_records and case.route_type in ("knowledge", "hybrid"):
+        rag_outputs = [r.get("output", "") for r in audit_records if r.get("agent_name") == "RAGAgent"]
+        if rag_outputs:
+            hal = rag_answer_not_hallucinated(answer, rag_outputs)
+            scores["rag_not_hallucinated"] = hal.score
+            _trace_linker.record_eval_result(rid, "rag_hallucination_evaluator", hal.score, hal.score >= 0.5, {"label": hal.label})
+            _detail(
+                "RAG Hallucination Check",
+                hal.score, hal.score >= 0.5,
+                "Measured Jaccard token overlap between the final answer and the RAGAgent's retrieved context. "
+                "Score ≥0.30 = well-grounded; 0.10-0.30 = partial; <0.10 = potential hallucination.",
+                f"{hal.label}" + (f" — {hal.detail}" if hal.detail else ""),
             )
 
     all_passed = all(d["passed"] for d in eval_details)

@@ -334,9 +334,7 @@ async def run_all_finben_tasks(
     from workflow_evaluations.config import BENCHMARK_SAMPLE_SIZES
     from financial_benchmarks.task_registry import TASK_REGISTRY, RUNNER_DISPATCH
     sizes = sample_sizes or BENCHMARK_SAMPLE_SIZES
-    fallback = endpoints.get("api", "http://localhost:8000")
-    _agent_key = {"RAGAgent": "rag", "ComplianceAgent": "compliance",
-                  "DataAgent": "data", "PriceAssistAgent": "price_assist"}
+    api_url = endpoints.get("api", "http://127.0.0.1:8000")
 
     finben_tasks = [
         name for name, info in TASK_REGISTRY.items()
@@ -348,7 +346,7 @@ async def run_all_finben_tasks(
     for name in finben_tasks:
         info = TASK_REGISTRY[name]
         n    = sizes.get(name, 100)
-        api  = endpoints.get(_agent_key.get(info["agent"], "api"), fallback)
+        api  = api_url
         if name == "finben_fiqa":
             # The fiqa-sentiment-classification dataset uses {label: int, sentence: str}
             # schema, not the FLARE MC {choices, gold} schema. Use the legacy runner

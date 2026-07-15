@@ -48,7 +48,7 @@ def _parse_args():
     )
     parser.add_argument(
         "--mode",
-        choices=["ci", "full", "benchmarks", "replay", "single", "demo", "redteam"],
+        choices=["ci", "full", "benchmarks", "replay", "single", "demo", "redteam", "workflow"],
         default="ci",
         help="Evaluation mode (default: ci)",
     )
@@ -386,6 +386,8 @@ async def main() -> None:
         )
     elif args.mode == "redteam":
         await run_redteam_mode(output_dir)
+    elif args.mode == "workflow":
+        await run_workflow_live(output_dir)
     else:
         print(f"Unknown mode: {args.mode}")
 

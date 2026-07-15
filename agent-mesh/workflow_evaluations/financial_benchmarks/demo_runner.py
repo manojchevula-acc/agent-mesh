@@ -221,14 +221,7 @@ async def run_demo(
     from workflow_evaluations.config import DEMO_SAMPLE_SIZES
     sizes = sample_sizes or DEMO_SAMPLE_SIZES
 
-    # Map task agent names to config endpoint keys
-    _AGENT_KEY = {
-        "RAGAgent":         "rag",
-        "ComplianceAgent":  "compliance",
-        "DataAgent":        "data",
-        "PriceAssistAgent": "price_assist",
-    }
-    fallback_api = endpoints.get("api", "http://localhost:8000")
+    fallback_api = endpoints.get("api", "http://127.0.0.1:8000")
 
     tasks_to_run = [
         (name, info)
@@ -266,8 +259,7 @@ async def run_demo(
         n = sizes.get(name, 5)
         _print_task_header(name, idx, total)
 
-        agent_key  = _AGENT_KEY.get(info["agent"], "api")
-        task_api   = endpoints.get(agent_key, fallback_api)
+        task_api   = fallback_api
         runner     = runner_map[info["type"]]
         result = await runner(name, task_api, n_samples=n, dry_run=dry_run)
 

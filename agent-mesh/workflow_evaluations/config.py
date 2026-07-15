@@ -1,11 +1,11 @@
 """Shared configuration for the FAB AgentMesh evaluation suite."""
 
 AGENT_ENDPOINTS = {
-    "compliance":   "http://localhost:8015",
-    "data":         "http://localhost:8016",
-    "rag":          "http://localhost:8017",
-    "price_assist": "http://localhost:8018",
-    "api":          "http://localhost:8000",
+    "compliance":   "http://127.0.0.1:8015",
+    "data":         "http://127.0.0.1:8016",
+    "rag":          "http://127.0.0.1:8017",
+    "price_assist": "http://127.0.0.1:8018",
+    "api":          "http://127.0.0.1:8000",
 }
 
 # Full benchmark sample sizes (--mode benchmarks / --mode full)

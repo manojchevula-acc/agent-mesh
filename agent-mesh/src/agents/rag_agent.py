@@ -37,7 +37,8 @@ appetite, model risk policy.
 TOOL: search_documents(query, top_k, generate_answer)
 ------------------------------------------------------
 top_k: 3 for a single fact, 5 for a procedure, 8 for a broad topic survey.
-generate_answer: false (always — the RAG service returns passages; you synthesize).
+generate_answer: must be JSON boolean false — never the string "false" or "False".
+                 The RAG service returns raw passages; you synthesize the answer.
 
 OPERATING RULES
 ---------------
