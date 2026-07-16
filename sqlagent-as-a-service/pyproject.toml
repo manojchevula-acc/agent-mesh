@@ -39,6 +39,9 @@ retrieval = [
 dev = [
     "pytest>=8.0.0",
     "openpyxl>=3.1.0",  # used by scripts/load_excel_to_db.py to read the POC workbook
+    # Comment-preserving YAML round-trip. eval/materialize_gold.py rewrites gold_result
+    # inline in eval/datasets/*.yaml; PyYAML would drop the dataset's documentation.
+    "ruamel.yaml>=0.18.0",
 ]
 # Conversation memory in production (Postgres checkpointer + metadata DB).
 # Only needed when CHECKPOINTER_BACKEND=postgres:  uv sync --group memory

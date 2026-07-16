@@ -31,3 +31,4 @@ qdrant_data/
 documentation/
 logs/
 agent_test/
+eval/results/

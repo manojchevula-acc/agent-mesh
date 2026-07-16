@@ -1,0 +1,881 @@
+# =============================================================================
+# FAB SQL Agent — Gold Evaluation Set, DYNAMIC TIER  (gold_dynamic)
+# =============================================================================
+# Scope: full_dynamic (tier-3) ONLY — the free-text-to-SQL path through
+# analytical_query -> run_dynamic_pipeline. Parameterised / semantic-view / calculation
+# / safety items are deliberately NOT here: those are routing and refusal tests, not
+# text-to-SQL accuracy tests, and they answer from fixed SQL the agent never writes.
+#
+# SELF-CONTAINED BY DESIGN ----------------------------------------------------
+# Every item carries all three things the evaluation needs:
+#   question     — what the user asks
+#   gold_sql     — the reference query
+#   gold_result  — the ACTUAL ROWS gold_sql returned from the live database
+# gold_result is NOT hand-written. It is materialized by eval/materialize_gold.py, which
+# executes each gold_sql through the same validated read path the agent uses
+# (sql_agent.db.Executor -> six-check validator -> live DB) and rewrites this file in
+# place. Re-run it whenever the DB snapshot changes.
+#
+# GROUNDING -------------------------------------------------------------------
+# Every table/column referenced is declared in sql_agent/semantic_layer/schema.yaml, and
+# every gold_sql has been executed against the snapshot and returns a NON-EMPTY result —
+# a gold returning zero rows cannot distinguish a correct agent from one that filters
+# everything away.
+#
+# Gold SQL obeys the same rules the tier-3 generator must obey:
+#   * MySQL dialect, schema-qualified names (fab_curated.* / fab_semantic.*)
+#   * SELECT only, LIMIT <= 50 (the validator force-appends LIMIT 50 otherwise)
+#   * NEVER AVG() a pre-aggregated column (customer_360.win_rate_pct / avg_*,
+#     profitability_summary.avg_net_margin_pct) — compute the true population statistic
+#     from the deal-grain view, or as SUM(x)/SUM(y).
+#   * A fab_semantic VIEW may be joined ONLY to customer_master, never to another view or
+#     a second base table (validator check #9) — this applies to SUBQUERIES too.
+#
+# TIE-SAFETY ------------------------------------------------------------------
+# Every LIMIT-ed ranking was checked to have NO tie straddling the cutoff, so the returned
+# row SET is deterministic however the agent breaks ties. Questions whose natural answer
+# WOULD straddle a tie are phrased as full group-bys instead (D23, D29, D33).
+#
+# HOW THE EVALUATION USES THIS ------------------------------------------------
+#   1. eval/run_agent.py     sends `question` through the live agent, captures the SQL it
+#                            generated and the rows that SQL returns.
+#   2. eval/compare_llm.py   diffs agent vs gold — deterministic row comparison plus an
+#                            LLM verdict on whether the two QUERIES are literally
+#                            identical, logically equivalent, or genuinely different.
+#   gold_sql is NEVER string-matched against the agent's SQL: many different queries
+#   answer the same question correctly.
+#
+#   gold_tables / gold_columns : parsed back out of gold_sql by eval/sql_introspect.py and
+#                            verified against it by materialize_gold.py --check, so they
+#                            cannot drift. Output aliases (`... AS foo`) are not columns.
+#   order_sensitive          : true only when the question asks for a RANKING (row order IS
+#                            the answer). Otherwise results compare as an unordered SET.
+#   variants                 : extra surface forms (paraphrase / other language) that
+#                            inherit this item's gold — same meaning, same answer.
+# =============================================================================
+
+meta:
+  version: gold_dynamic
+  tier: full_dynamic
+  dialect: mysql
+  db_snapshot: "poc_synthetic_v1"          # gold_result is only valid against this snapshot
+  scopes_required: [dynamic_sql]
+  entity_space:
+    customers: "CUST001-CUST020"
+    products:  "PROD001-PROD008"
+    deals:     "DEAL001-DEAL060"
+    deal_dates: "2025-01-02 .. 2026-05-05"
+  defaults:
+    order_sensitive: false                  # result sets compared as a SET unless overridden
+    numeric_tolerance: 0.01                 # 2.14 == 2.144 ; rounding-insensitive
+
+items:
+
+
+  # --- AGGREGATES / GROUP-BY -----------------------------------------------
+
+  - id: D01
+    question: "What is the average expected margin across all Won deals?"
+    domain: margin
+    persona: pricing-desk
+    difficulty: aggregate
+    gold_sql: >
+      SELECT ROUND(AVG(expected_margin_pct), 2) AS avg_expected_margin_pct
+      FROM fab_semantic.margin_analysis
+      WHERE deal_outcome = 'Won'
+    gold_tables: [margin_analysis]
+    gold_columns: [expected_margin_pct, deal_outcome]
+    row_count: 1
+    gold_result:
+      - {avg_expected_margin_pct: 1.31}
+
+  - id: D02
+    question: "What is the average expected margin by product type across all Won deals?"
+    domain: margin
+    persona: pricing-desk
+    difficulty: group-by
+    gold_sql: >
+      SELECT product_type, ROUND(AVG(expected_margin_pct), 2) AS avg_expected_margin_pct
+      FROM fab_semantic.margin_analysis
+      WHERE deal_outcome = 'Won'
+      GROUP BY product_type
+      ORDER BY product_type
+    gold_tables: [margin_analysis]
+    gold_columns: [product_type, expected_margin_pct, deal_outcome]
+    row_count: 4
+    gold_result:
+      - {product_type: 'Deposit', avg_expected_margin_pct: -0.45}
+      - {product_type: 'Loan', avg_expected_margin_pct: 1.86}
+      - {product_type: 'Trade Finance', avg_expected_margin_pct: 1.1}
+      - {product_type: 'Treasury', avg_expected_margin_pct: 1.03}
+    variants:
+      - {lang: en, text: "avg expected margin per product type for won deals"}
+      - {lang: en, text: "won deals — average margine by prodcut type"}
+      - {lang: ar, text: "ما متوسط الهامش المتوقع لكل نوع منتج للصفقات الرابحة؟"}
+
+  - id: D03
+    question: "Which five customers have the highest existing exposure, and how much?"
+    domain: risk-capital
+    persona: cfo
+    difficulty: ranking
+    order_sensitive: true
+    note: >-
+      tie-safe: 5th=35m, 6th=30m — no tie straddles the cutoff.
+    gold_sql: >
+      SELECT customer_id, customer_name, existing_exposure_aed
+      FROM fab_curated.customer_master
+      ORDER BY existing_exposure_aed DESC
+      LIMIT 5
+    gold_tables: [customer_master]
+    gold_columns: [customer_id, customer_name, existing_exposure_aed]
+    row_count: 5
+    gold_result:
+      - {customer_id: 'CUST017', customer_name: 'Red Dune Mining', existing_exposure_aed: 60000000}
+      - {customer_id: 'CUST009', customer_name: 'Green Energy MEA', existing_exposure_aed: 50000000}
+      - {customer_id: 'CUST012', customer_name: 'Skyline Real Estate', existing_exposure_aed: 45000000}
+      - {customer_id: 'CUST005', customer_name: 'Emirates Healthcare Services', existing_exposure_aed: 40000000}
+      - {customer_id: 'CUST018', customer_name: 'Lulu Fresh Markets', existing_exposure_aed: 35000000}
+    variants:
+      - {lang: en, text: "top 5 customers by exposure"}
+      - {lang: ar, text: "من هم أكبر 5 عملاء من حيث التعرض الحالي وكم قيمته؟"}
+
+  - id: D04
+    question: "What is the average customer win rate across all customers?"
+    domain: deals-pricing
+    persona: relationship-manager
+    difficulty: pre-aggregate-trap
+    note: >-
+      win_rate_pct is pre-aggregated at customer grain; AVG() of it is wrong. True rate = SUM(won)/SUM(total).
+    gold_sql: >
+      SELECT ROUND(SUM(won_deals) * 100.0 / SUM(total_deals), 2) AS win_rate_pct
+      FROM fab_semantic.customer_360
+    gold_tables: [customer_360]
+    gold_columns: [won_deals, total_deals]
+    row_count: 1
+    gold_result:
+      - {win_rate_pct: 85}
+
+  - id: D05
+    question: "What is the total net profit by product type?"
+    domain: profitability
+    persona: cfo
+    difficulty: group-by
+    gold_sql: >
+      SELECT product_type, SUM(net_profit_aed) AS total_net_profit_aed
+      FROM fab_semantic.profitability_summary
+      GROUP BY product_type
+      ORDER BY total_net_profit_aed DESC
+    gold_tables: [profitability_summary]
+    gold_columns: [product_type, net_profit_aed]
+    row_count: 4
+    gold_result:
+      - {product_type: 'Loan', total_net_profit_aed: 11387707.299999999}
+      - {product_type: 'Treasury', total_net_profit_aed: 116833.0}
+      - {product_type: 'Trade Finance', total_net_profit_aed: -229263.6}
+      - {product_type: 'Deposit', total_net_profit_aed: -3951625.0}
+
+  - id: D06
+    question: "What is the total existing exposure for each customer segment?"
+    domain: risk-capital
+    persona: cfo
+    difficulty: single-table-group-by
+    gold_sql: >
+      SELECT customer_segment, SUM(existing_exposure_aed) AS total_exposure_aed
+      FROM fab_curated.customer_master
+      GROUP BY customer_segment
+      ORDER BY total_exposure_aed DESC
+    gold_tables: [customer_master]
+    gold_columns: [customer_segment, existing_exposure_aed]
+    row_count: 2
+    gold_result:
+      - {customer_segment: 'Corporate', total_exposure_aed: 341000000}
+      - {customer_segment: 'SME', total_exposure_aed: 59700000}
+
+  - id: D07
+    question: "What is the average expected margin by customer industry?"
+    domain: margin
+    persona: branch-manager
+    difficulty: cross-table-join
+    note: >-
+      view -> customer_master is the one allowed view join (industry is not on the view).
+    gold_sql: >
+      SELECT cm.industry, ROUND(AVG(prv.expected_margin_pct), 2) AS avg_expected_margin_pct
+      FROM fab_semantic.pricing_recommendation_view prv
+      JOIN fab_curated.customer_master cm ON prv.customer_id = cm.customer_id
+      GROUP BY cm.industry
+      ORDER BY avg_expected_margin_pct DESC
+    gold_tables: [pricing_recommendation_view, customer_master]
+    gold_columns: [industry, expected_margin_pct, customer_id]
+    row_count: 17
+    gold_result:
+      - {industry: 'Marine Services', avg_expected_margin_pct: 1.95}
+      - {industry: 'Shipping', avg_expected_margin_pct: 1.8}
+      - {industry: 'Automotive', avg_expected_margin_pct: 1.74}
+      - {industry: 'Manufacturing', avg_expected_margin_pct: 1.65}
+      - {industry: 'Logistics', avg_expected_margin_pct: 1.65}
+      - {industry: 'Retail', avg_expected_margin_pct: 1.58}
+      - {industry: 'Construction', avg_expected_margin_pct: 1.4}
+      - {industry: 'Real Estate', avg_expected_margin_pct: 1.39}
+      - {industry: 'Hospitality', avg_expected_margin_pct: 1.23}
+      - {industry: 'Mining', avg_expected_margin_pct: 1.03}
+      - {industry: 'Education', avg_expected_margin_pct: 0.88}
+      - {industry: 'Energy', avg_expected_margin_pct: 0.74}
+      - {industry: 'Pharma Trading', avg_expected_margin_pct: 0.54}
+      - {industry: 'Trading', avg_expected_margin_pct: 0.48}
+      - {industry: 'Healthcare', avg_expected_margin_pct: 0.38}
+      - {industry: 'FMCG', avg_expected_margin_pct: 0.18}
+      - {industry: 'Technology', avg_expected_margin_pct: -0.0}
+
+  - id: D08
+    question: "What percentage of deals are policy compliant overall?"
+    domain: compliance
+    persona: pricing-desk
+    difficulty: ratio-aggregate
+    gold_sql: >
+      SELECT ROUND(SUM(policy_compliant) * 100.0 / COUNT(*), 2) AS pct_compliant,
+             COUNT(*) AS total_deals
+      FROM fab_semantic.pricing_recommendation_view
+    gold_tables: [pricing_recommendation_view]
+    gold_columns: [policy_compliant]
+    row_count: 1
+    gold_result:
+      - {pct_compliant: 70, total_deals: 60}
+    variants:
+      - {lang: en, text: "what share of our deals comply with policy?"}
+      - {lang: ar, text: "ما نسبة الصفقات المتوافقة مع السياسة بشكل عام؟"}
+
+  - id: D09
+    question: "Show total RWA and average return on RWA by product type."
+    domain: risk-capital
+    persona: cfo
+    difficulty: group-by
+    gold_sql: >
+      SELECT product_type, SUM(rwa_aed) AS total_rwa_aed, ROUND(AVG(return_on_rwa_pct),
+             2) AS avg_return_on_rwa_pct
+      FROM fab_semantic.rwa_impact_view
+      GROUP BY product_type
+      ORDER BY total_rwa_aed DESC
+    gold_tables: [rwa_impact_view]
+    gold_columns: [product_type, rwa_aed, return_on_rwa_pct]
+    row_count: 4
+    gold_result:
+      - {product_type: 'Loan', total_rwa_aed: 831050000, avg_return_on_rwa_pct: 3.05}
+      - {product_type: 'Deposit', total_rwa_aed: 723325000, avg_return_on_rwa_pct: 0.33}
+      - {product_type: 'Trade Finance', total_rwa_aed: 72950000, avg_return_on_rwa_pct: 2.1}
+      - {product_type: 'Treasury', total_rwa_aed: 51000000, avg_return_on_rwa_pct: 1.38}
+
+  - id: D10
+    question: "How many deals fell below the minimum margin in each region?"
+    domain: compliance
+    persona: branch-manager
+    difficulty: group-by-count
+    gold_sql: >
+      SELECT region, COUNT(*) AS below_min_deals
+      FROM fab_semantic.margin_analysis
+      WHERE margin_below_minimum = 1
+      GROUP BY region
+      ORDER BY below_min_deals DESC
+    gold_tables: [margin_analysis]
+    gold_columns: [region, margin_below_minimum]
+    row_count: 5
+    gold_result:
+      - {region: 'Abu Dhabi', below_min_deals: 6}
+      - {region: 'Dubai', below_min_deals: 5}
+      - {region: 'Sharjah', below_min_deals: 2}
+      - {region: 'Ras Al Khaimah', below_min_deals: 1}
+      - {region: 'Ajman', below_min_deals: 1}
+
+  - id: D11
+    question: "Which customer segment and risk band have the most deals priced below their policy minimum margin?"
+    domain: compliance
+    persona: pricing-desk
+    difficulty: multi-table-join
+    gold_sql: >
+      SELECT cm.customer_segment, cm.risk_category, COUNT(*) AS deals_below_floor
+      FROM fab_curated.historical_deals hd
+      JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id
+      JOIN fab_curated.pricing_policy pp ON cm.customer_segment = pp.customer_segment AND hd.product_type = pp.product_type AND cm.risk_category = pp.risk_category
+      WHERE hd.expected_margin_pct < pp.min_margin_pct
+      GROUP BY cm.customer_segment, cm.risk_category
+      ORDER BY deals_below_floor DESC
+    gold_tables: [historical_deals, customer_master, pricing_policy]
+    gold_columns: [customer_segment, risk_category, customer_id, product_type, expected_margin_pct, min_margin_pct]
+    row_count: 5
+    gold_result:
+      - {customer_segment: 'SME', risk_category: 'Medium', deals_below_floor: 17}
+      - {customer_segment: 'Corporate', risk_category: 'Low', deals_below_floor: 15}
+      - {customer_segment: 'Corporate', risk_category: 'High', deals_below_floor: 10}
+      - {customer_segment: 'Corporate', risk_category: 'Medium', deals_below_floor: 8}
+      - {customer_segment: 'SME', risk_category: 'Low', deals_below_floor: 6}
+
+
+  # --- DATE / TIME-BASED ANALYSIS ------------------------------------------
+  # deal_date spans 2025-01-02 .. 2026-05-05, stored ISO-formatted, so MySQL's
+  # YEAR()/QUARTER()/DATE_FORMAT() apply directly.
+
+  - id: D12
+    question: "How many deals were booked in each quarter of 2025, and what was the total requested amount?"
+    domain: deals-pricing
+    persona: branch-manager
+    difficulty: date-bucketing
+    gold_sql: >
+      SELECT QUARTER(deal_date) AS quarter, COUNT(*) AS deal_count,
+             SUM(requested_amount) AS total_requested_amount
+      FROM fab_curated.historical_deals
+      WHERE YEAR(deal_date) = 2025
+      GROUP BY QUARTER(deal_date)
+      ORDER BY quarter
+    gold_tables: [historical_deals]
+    gold_columns: [deal_date, requested_amount]
+    row_count: 4
+    gold_result:
+      - {quarter: 1, deal_count: 8, total_requested_amount: 485400000}
+      - {quarter: 2, deal_count: 12, total_requested_amount: 564400000}
+      - {quarter: 3, deal_count: 10, total_requested_amount: 570400000}
+      - {quarter: 4, deal_count: 10, total_requested_amount: 277700000}
+    variants:
+      - {lang: en, text: "quarterly deal count and volume for 2025"}
+
+  - id: D13
+    question: "Show the monthly won-deal count and volume for 2026."
+    domain: deals-pricing
+    persona: cfo
+    difficulty: date-series
+    gold_sql: >
+      SELECT DATE_FORMAT(deal_date, '%Y-%m') AS month, COUNT(*) AS won_deals,
+             SUM(requested_amount) AS won_volume_aed
+      FROM fab_curated.historical_deals
+      WHERE deal_outcome = 'Won' AND YEAR(deal_date) = 2026
+      GROUP BY DATE_FORMAT(deal_date, '%Y-%m')
+      ORDER BY month
+    gold_tables: [historical_deals]
+    gold_columns: [deal_date, deal_outcome, requested_amount]
+    row_count: 4
+    gold_result:
+      - {month: '2026-01', won_deals: 6, won_volume_aed: 285500000}
+      - {month: '2026-02', won_deals: 3, won_volume_aed: 190700000}
+      - {month: '2026-03', won_deals: 4, won_volume_aed: 28300000}
+      - {month: '2026-04', won_deals: 5, won_volume_aed: 112500000}
+
+
+  # --- RATIOS / CONDITIONAL AGGREGATION ------------------------------------
+
+  - id: D14
+    question: "For each sales channel, how many deals were booked in total, how many were won, and what is the win rate as a percentage?"
+    domain: deals-pricing
+    persona: branch-manager
+    difficulty: conditional-aggregate
+    note: >-
+      requires SUM(CASE WHEN outcome='Won') / COUNT(*) — a conditional ratio, not a column
+      that exists anywhere. The question names all three outputs and says "as a percentage"
+      on purpose: asking only for "the win rate" left gold demanding four columns the
+      question never requested, and left a fraction (0.88) as defensible an answer as 88.24.
+      An eval question must ask for exactly what its gold returns.
+    gold_sql: >
+      SELECT sales_channel, COUNT(*) AS total_deals,
+             SUM(CASE WHEN deal_outcome = 'Won' THEN 1 ELSE 0 END) AS won_deals,
+             ROUND(SUM(CASE WHEN deal_outcome = 'Won' THEN 1 ELSE 0 END) * 100.0 / COUNT(*),
+             2) AS win_rate_pct
+      FROM fab_curated.historical_deals
+      GROUP BY sales_channel
+      ORDER BY win_rate_pct DESC
+    gold_tables: [historical_deals]
+    gold_columns: [sales_channel, deal_outcome]
+    row_count: 4
+    gold_result:
+      - {sales_channel: 'Branch', total_deals: 13, won_deals: 13, win_rate_pct: 100}
+      - {sales_channel: 'API Quote', total_deals: 17, won_deals: 15, win_rate_pct: 88.24}
+      - {sales_channel: 'Relationship Manager', total_deals: 19, won_deals: 15, win_rate_pct: 78.95}
+      - {sales_channel: 'Digital Upload', total_deals: 11, won_deals: 8, win_rate_pct: 72.73}
+    variants:
+      - {lang: en, text: "which origination channel wins the most deals, proportionally?"}
+
+  - id: D15
+    question: "Compare the average expected margin between Corporate and SME deals."
+    domain: margin
+    persona: cfo
+    difficulty: segment-comparison
+    gold_sql: >
+      SELECT customer_segment, COUNT(*) AS deal_count, ROUND(AVG(expected_margin_pct),
+             2) AS avg_expected_margin_pct
+      FROM fab_semantic.pricing_recommendation_view
+      GROUP BY customer_segment
+      ORDER BY avg_expected_margin_pct DESC
+    gold_tables: [pricing_recommendation_view]
+    gold_columns: [customer_segment, expected_margin_pct]
+    row_count: 2
+    gold_result:
+      - {customer_segment: 'Corporate', deal_count: 37, avg_expected_margin_pct: 1.13}
+      - {customer_segment: 'SME', deal_count: 23, avg_expected_margin_pct: 1.04}
+
+
+  # --- TOP-N / BOTTOM-N ----------------------------------------------------
+
+  - id: D16
+    question: "Which five deals have the worst expected margin?"
+    domain: margin
+    persona: pricing-desk
+    difficulty: bottom-n
+    order_sensitive: true
+    note: >-
+      tie-safe: 5th=-0.58, 6th=-0.5. Tests ASC ordering — the mirror of D03.
+    gold_sql: >
+      SELECT deal_id, customer_id, product_type, expected_margin_pct
+      FROM fab_semantic.margin_analysis
+      ORDER BY expected_margin_pct ASC
+      LIMIT 5
+    gold_tables: [margin_analysis]
+    gold_columns: [deal_id, customer_id, product_type, expected_margin_pct]
+    row_count: 5
+    gold_result:
+      - {deal_id: 'DEAL013', customer_id: 'CUST012', product_type: 'Deposit', expected_margin_pct: -1.1}
+      - {deal_id: 'DEAL002', customer_id: 'CUST012', product_type: 'Deposit', expected_margin_pct: -1.05}
+      - {deal_id: 'DEAL029', customer_id: 'CUST006', product_type: 'Deposit', expected_margin_pct: -1.0}
+      - {deal_id: 'DEAL050', customer_id: 'CUST007', product_type: 'Deposit', expected_margin_pct: -0.7}
+      - {deal_id: 'DEAL045', customer_id: 'CUST011', product_type: 'Deposit', expected_margin_pct: -0.58}
+    variants:
+      - {lang: en, text: "bottom 5 deals by margin"}
+      - {lang: ar, text: "ما هي أسوأ خمس صفقات من حيث الهامش المتوقع؟"}
+
+  - id: D17
+    question: "Which three customers generated the most total net profit?"
+    domain: profitability
+    persona: cfo
+    difficulty: aggregate-then-rank
+    order_sensitive: true
+    note: >-
+      profitability_summary is at customer x product_type grain — the customer total must be SUMmed first, then ranked. tie-safe: 3rd=1.256m, 4th=1.247m.
+    gold_sql: >
+      SELECT customer_id, SUM(net_profit_aed) AS total_net_profit_aed
+      FROM fab_semantic.profitability_summary
+      GROUP BY customer_id
+      ORDER BY total_net_profit_aed DESC
+      LIMIT 3
+    gold_tables: [profitability_summary]
+    gold_columns: [customer_id, net_profit_aed]
+    row_count: 3
+    gold_result:
+      - {customer_id: 'CUST012', total_net_profit_aed: 2263812.3}
+      - {customer_id: 'CUST009', total_net_profit_aed: 1571676.9}
+      - {customer_id: 'CUST018', total_net_profit_aed: 1255648.2}
+
+
+  # --- COMPUTED RATIO / CASE BANDING ---------------------------------------
+
+  - id: D18
+    question: "Which customers have existing exposure worth more than 20% of their annual revenue?"
+    domain: risk-capital
+    persona: cfo
+    difficulty: computed-ratio-filter
+    order_sensitive: true
+    note: >-
+      the ratio exists in no column — it must be computed in both SELECT and WHERE.
+    gold_sql: >
+      SELECT customer_id, customer_name,
+             ROUND(existing_exposure_aed * 100.0 / annual_revenue_aed,
+             2) AS exposure_to_revenue_pct
+      FROM fab_curated.customer_master
+      WHERE annual_revenue_aed > 0 AND existing_exposure_aed * 100.0 / annual_revenue_aed > 20
+      ORDER BY exposure_to_revenue_pct DESC, customer_id
+    gold_tables: [customer_master]
+    gold_columns: [customer_id, customer_name, existing_exposure_aed, annual_revenue_aed]
+    row_count: 6
+    gold_result:
+      - {customer_id: 'CUST006', customer_name: 'Desert Sands Construction', exposure_to_revenue_pct: 25}
+      - {customer_id: 'CUST012', customer_name: 'Skyline Real Estate', exposure_to_revenue_pct: 25}
+      - {customer_id: 'CUST017', customer_name: 'Red Dune Mining', exposure_to_revenue_pct: 25}
+      - {customer_id: 'CUST019', customer_name: 'Coastal Marine Services', exposure_to_revenue_pct: 22.73}
+      - {customer_id: 'CUST020', customer_name: 'Nile General Supplies', exposure_to_revenue_pct: 20.83}
+      - {customer_id: 'CUST004', customer_name: 'Oasis Retail Group', exposure_to_revenue_pct: 20.31}
+
+  - id: D19
+    question: "Bucket customers into Large (>= 40m AED), Mid (>= 15m) and Small exposure bands, and show how many customers and how much total exposure sit in each."
+    domain: risk-capital
+    persona: cfo
+    difficulty: case-banding
+    note: >-
+      the band is defined in the QUESTION — the agent must build the CASE from the thresholds given, not find a band column (none exists).
+    gold_sql: >
+      SELECT CASE WHEN existing_exposure_aed >= 40000000 THEN 'Large' WHEN existing_exposure_aed >= 15000000 THEN 'Mid' ELSE 'Small' END AS exposure_band, COUNT(*) AS customer_count, SUM(existing_exposure_aed) AS total_exposure_aed
+      FROM fab_curated.customer_master
+      GROUP BY exposure_band
+      ORDER BY total_exposure_aed DESC
+    gold_tables: [customer_master]
+    gold_columns: [existing_exposure_aed]
+    row_count: 3
+    gold_result:
+      - {exposure_band: 'Large', customer_count: 4, total_exposure_aed: 195000000}
+      - {exposure_band: 'Mid', customer_count: 6, total_exposure_aed: 146000000}
+      - {exposure_band: 'Small', customer_count: 10, total_exposure_aed: 59700000}
+
+
+  # --- COMPETITOR ----------------------------------------------------------
+
+  - id: D20
+    question: "Which competitors undercut our pricing the most on average, and across how many negotiations?"
+    domain: competitor
+    persona: pricing-desk
+    difficulty: group-by
+    gold_sql: >
+      SELECT competitor_name, COUNT(*) AS interactions, ROUND(AVG(competitor_gap_bps),
+             1) AS avg_gap_bps
+      FROM fab_semantic.competitor_price_analysis
+      GROUP BY competitor_name
+      ORDER BY avg_gap_bps DESC
+    gold_tables: [competitor_price_analysis]
+    gold_columns: [competitor_name, competitor_gap_bps]
+    row_count: 6
+    gold_result:
+      - {competitor_name: 'Dubai Islamic Bank', interactions: 1, avg_gap_bps: 65.0}
+      - {competitor_name: 'Mashreq Bank', interactions: 3, avg_gap_bps: 60.0}
+      - {competitor_name: 'Emirates NBD', interactions: 3, avg_gap_bps: 45.0}
+      - {competitor_name: 'Standard Chartered UAE', interactions: 4, avg_gap_bps: 43.8}
+      - {competitor_name: 'ADCB', interactions: 5, avg_gap_bps: 41.0}
+      - {competitor_name: 'HSBC UAE', interactions: 4, avg_gap_bps: 16.2}
+
+
+  # --- MULTI-TABLE JOINS ---------------------------------------------------
+
+  - id: D21
+    question: "For won deals, how many were booked per product and what was the average margin on each?"
+    domain: product
+    persona: pricing-desk
+    difficulty: join-aggregate
+    note: >-
+      product_NAME lives only on product_master; the deal grain only carries product_id — the join is mandatory, not cosmetic.
+    gold_sql: >
+      SELECT pm.product_name, COUNT(hd.deal_id) AS deal_count, ROUND(AVG(hd.expected_margin_pct),
+             2) AS avg_margin_pct
+      FROM fab_curated.historical_deals hd
+      JOIN fab_curated.product_master pm ON hd.product_id = pm.product_id
+      WHERE hd.deal_outcome = 'Won'
+      GROUP BY pm.product_name
+      ORDER BY deal_count DESC
+    gold_tables: [historical_deals, product_master]
+    gold_columns: [product_name, deal_id, expected_margin_pct, product_id, deal_outcome]
+    row_count: 8
+    gold_result:
+      - {product_name: 'Term Loan', deal_count: 11, avg_margin_pct: 1.91}
+      - {product_name: 'Working Capital Loan', deal_count: 8, avg_margin_pct: 1.54}
+      - {product_name: 'Corporate Deposit', deal_count: 7, avg_margin_pct: -0.45}
+      - {product_name: 'Trade Finance LC', deal_count: 6, avg_margin_pct: 1.1}
+      - {product_name: 'Invoice Discounting', deal_count: 5, avg_margin_pct: 1.09}
+      - {product_name: 'Overdraft Facility', deal_count: 5, avg_margin_pct: 2.42}
+      - {product_name: 'USD Term Loan', deal_count: 5, avg_margin_pct: 1.71}
+      - {product_name: 'FX Forward Facility', deal_count: 4, avg_margin_pct: 1.03}
+
+  - id: D22
+    question: "Break down deal count and total volume by region and customer segment."
+    domain: deals-pricing
+    persona: branch-manager
+    difficulty: join-multi-group-by
+    gold_sql: >
+      SELECT cm.region, cm.customer_segment, COUNT(hd.deal_id) AS deals,
+             SUM(hd.requested_amount) AS volume_aed
+      FROM fab_curated.customer_master cm
+      JOIN fab_curated.historical_deals hd ON cm.customer_id = hd.customer_id
+      GROUP BY cm.region, cm.customer_segment
+      ORDER BY volume_aed DESC
+    gold_tables: [customer_master, historical_deals]
+    gold_columns: [region, customer_segment, deal_id, requested_amount, customer_id]
+    row_count: 8
+    gold_result:
+      - {region: 'Dubai', customer_segment: 'Corporate', deals: 18, volume_aed: 833000000}
+      - {region: 'Abu Dhabi', customer_segment: 'Corporate', deals: 15, volume_aed: 735500000}
+      - {region: 'Ajman', customer_segment: 'SME', deals: 5, volume_aed: 253400000}
+      - {region: 'Ras Al Khaimah', customer_segment: 'SME', deals: 3, volume_aed: 251900000}
+      - {region: 'Dubai', customer_segment: 'SME', deals: 6, volume_aed: 235400000}
+      - {region: 'Sharjah', customer_segment: 'SME', deals: 8, volume_aed: 109100000}
+      - {region: 'Abu Dhabi', customer_segment: 'SME', deals: 1, volume_aed: 65000000}
+      - {region: 'Fujairah', customer_segment: 'Corporate', deals: 4, volume_aed: 51000000}
+
+  - id: D23
+    question: "What is the total risk-weighted assets and capital requirement by customer industry?"
+    domain: risk-capital
+    persona: cfo
+    difficulty: view-to-dimension-join
+    note: >-
+      industry is not on rwa_impact_view — needs the one permitted view join.
+    gold_sql: >
+      SELECT cm.industry, ROUND(SUM(rw.rwa_aed), 2) AS total_rwa_aed,
+             ROUND(SUM(rw.capital_required_aed), 2) AS total_capital_aed
+      FROM fab_semantic.rwa_impact_view rw
+      JOIN fab_curated.customer_master cm ON rw.customer_id = cm.customer_id
+      GROUP BY cm.industry
+      ORDER BY total_rwa_aed DESC
+    gold_tables: [rwa_impact_view, customer_master]
+    gold_columns: [industry, rwa_aed, capital_required_aed, customer_id]
+    row_count: 16
+    gold_result:
+      - {industry: 'Real Estate', total_rwa_aed: 463100000, total_capital_aed: 37048000}
+      - {industry: 'Healthcare', total_rwa_aed: 198700000, total_capital_aed: 15896000}
+      - {industry: 'Hospitality', total_rwa_aed: 188925000, total_capital_aed: 15114000}
+      - {industry: 'Retail', total_rwa_aed: 135450000, total_capital_aed: 10836000}
+      - {industry: 'FMCG', total_rwa_aed: 130500000, total_capital_aed: 10440000}
+      - {industry: 'Manufacturing', total_rwa_aed: 88550000, total_capital_aed: 7084000}
+      - {industry: 'Construction', total_rwa_aed: 77900000, total_capital_aed: 6232000}
+      - {industry: 'Automotive', total_rwa_aed: 70800000, total_capital_aed: 5664000}
+      - {industry: 'Education', total_rwa_aed: 60800000, total_capital_aed: 4864000}
+      - {industry: 'Energy', total_rwa_aed: 59650000, total_capital_aed: 4772000}
+      - {industry: 'Mining', total_rwa_aed: 51000000, total_capital_aed: 4080000}
+      - {industry: 'Marine Services', total_rwa_aed: 48750000, total_capital_aed: 3900000}
+      - {industry: 'Logistics', total_rwa_aed: 47625000, total_capital_aed: 3810000}
+      - {industry: 'Shipping', total_rwa_aed: 37575000, total_capital_aed: 3006000}
+      - {industry: 'Trading', total_rwa_aed: 10800000, total_capital_aed: 864000}
+      - {industry: 'Pharma Trading', total_rwa_aed: 8200000, total_capital_aed: 656000}
+
+
+  # --- MULTI-STEP / SUBQUERY / HAVING --------------------------------------
+
+  - id: D24
+    question: "Which customer and product combinations fall in the Loss-Making profitability tier, and how big is the loss?"
+    domain: profitability
+    persona: cfo
+    difficulty: flag-filter-rank
+    order_sensitive: true
+    gold_sql: >
+      SELECT customer_id, product_type, net_profit_aed, avg_net_margin_pct
+      FROM fab_semantic.profitability_summary
+      WHERE profitability_tier = 'Loss-Making'
+      ORDER BY net_profit_aed ASC
+    gold_tables: [profitability_summary]
+    gold_columns: [customer_id, product_type, net_profit_aed, avg_net_margin_pct, profitability_tier]
+    row_count: 3
+    gold_result:
+      - {customer_id: 'CUST005', product_type: 'Deposit', net_profit_aed: -2519016.0, avg_net_margin_pct: -0.6833}
+      - {customer_id: 'CUST011', product_type: 'Deposit', net_profit_aed: -791840.0, avg_net_margin_pct: -0.19}
+      - {customer_id: 'CUST012', product_type: 'Deposit', net_profit_aed: -237019.0, avg_net_margin_pct: -0.025}
+
+  - id: D25
+    question: "For the product type with the largest won volume, what is its average expected margin?"
+    domain: margin
+    persona: cfo
+    difficulty: multi-step-subquery
+    note: >-
+      two steps: rank product types by won volume, THEN average margin for the winner. Must stay inside historical_deals — mixing a view with a base-table subquery trips validator check #9.
+    gold_sql: >
+      SELECT product_type, COUNT(*) AS won_deals, ROUND(AVG(expected_margin_pct),
+             2) AS avg_expected_margin_pct
+      FROM fab_curated.historical_deals
+      WHERE deal_outcome = 'Won' AND product_type = ( SELECT product_type
+      FROM fab_curated.historical_deals
+      WHERE deal_outcome = 'Won'
+      GROUP BY product_type
+      ORDER BY SUM(requested_amount) DESC
+      LIMIT 1)
+      GROUP BY product_type
+    gold_tables: [historical_deals]
+    gold_columns: [product_type, expected_margin_pct, deal_outcome, requested_amount]
+    row_count: 1
+    gold_result:
+      - {product_type: 'Loan', won_deals: 29, avg_expected_margin_pct: 1.86}
+
+  - id: D26
+    question: "Which customers have booked at least four deals, and what is their total deal amount?"
+    domain: deals-pricing
+    persona: relationship-manager
+    difficulty: having-clause
+    note: >-
+      the '>= 4' threshold applies AFTER aggregation — a HAVING, not a WHERE.
+    gold_sql: >
+      SELECT customer_id, COUNT(*) AS deal_count, SUM(requested_amount) AS total_amount
+      FROM fab_curated.historical_deals
+      GROUP BY customer_id
+      HAVING COUNT(*) >= 4
+      ORDER BY deal_count DESC, customer_id
+    gold_tables: [historical_deals]
+    gold_columns: [customer_id, requested_amount]
+    row_count: 7
+    gold_result:
+      - {customer_id: 'CUST012', deal_count: 7, total_amount: 463100000}
+      - {customer_id: 'CUST009', deal_count: 6, total_amount: 154700000}
+      - {customer_id: 'CUST013', deal_count: 5, total_amount: 63900000}
+      - {customer_id: 'CUST003', deal_count: 4, total_amount: 63500000}
+      - {customer_id: 'CUST005', deal_count: 4, total_amount: 397400000}
+      - {customer_id: 'CUST016', deal_count: 4, total_amount: 125400000}
+      - {customer_id: 'CUST017', deal_count: 4, total_amount: 51000000}
+
+  - id: D27
+    question: "What are the most common reasons deals breach policy, and how many deals hit each?"
+    domain: compliance
+    persona: pricing-desk
+    difficulty: group-by-count
+    gold_sql: >
+      SELECT exception_reason, COUNT(*) AS deals
+      FROM fab_semantic.policy_exception_view
+      WHERE is_exception = 1
+      GROUP BY exception_reason
+      ORDER BY deals DESC
+    gold_tables: [policy_exception_view]
+    gold_columns: [exception_reason, is_exception]
+    row_count: 6
+    gold_result:
+      - {exception_reason: 'high_rwa_requires_approval', deals: 11}
+      - {exception_reason: 'margin_below_min', deals: 8}
+      - {exception_reason: 'margin_below_min | high_rwa_requires_approval', deals: 3}
+      - {exception_reason: 'margin_below_min | discount_exceeds_policy', deals: 3}
+      - {exception_reason: 'discount_exceeds_policy', deals: 3}
+      - {exception_reason: 'margin_below_min | competitor_match_requires_approval', deals: 1}
+
+  - id: D28
+    question: "Which customers are getting a relationship discount above their policy cap?"
+    domain: policy
+    persona: pricing-desk
+    difficulty: flag-filter
+    gold_sql: >
+      SELECT customer_id, customer_name, relationship_discount_pct,
+             policy_max_relationship_discount_pct
+      FROM fab_semantic.relationship_discount_view
+      WHERE discount_eligible = 0
+      ORDER BY customer_id
+    gold_tables: [relationship_discount_view]
+    gold_columns: [customer_id, customer_name, relationship_discount_pct, policy_max_relationship_discount_pct, discount_eligible]
+    row_count: 2
+    gold_result:
+      - {customer_id: 'CUST013', customer_name: 'Union Pharma Trading', relationship_discount_pct: 0.35, policy_max_relationship_discount_pct: 0.25}
+      - {customer_id: 'CUST015', customer_name: 'Prime Tech Solutions', relationship_discount_pct: 0.3, policy_max_relationship_discount_pct: 0.25}
+
+  - id: D29
+    question: "How many rating downgrades landed in each new risk category, and what extra risk premium do they carry on average?"
+    domain: risk-capital
+    persona: cfo
+    difficulty: group-by
+    note: >-
+      phrased as a full group-by rather than a top-N: all 20 events are downgrades requiring review, so any LIMIT would straddle a tie and make the gold flaky.
+    gold_sql: >
+      SELECT new_risk_category, COUNT(*) AS downgrade_events,
+             ROUND(AVG(additional_risk_premium_pct), 3) AS avg_additional_risk_premium_pct
+      FROM fab_semantic.credit_rating_events
+      WHERE rating_change_direction = 'Downgrade'
+      GROUP BY new_risk_category
+      ORDER BY downgrade_events DESC
+    gold_tables: [credit_rating_events]
+    gold_columns: [new_risk_category, additional_risk_premium_pct, rating_change_direction]
+    row_count: 3
+    gold_result:
+      - {new_risk_category: 'Medium', downgrade_events: 10, avg_additional_risk_premium_pct: 0.26}
+      - {new_risk_category: 'High', downgrade_events: 7, avg_additional_risk_premium_pct: 0.529}
+      - {new_risk_category: 'Low', downgrade_events: 3, avg_additional_risk_premium_pct: 0.25}
+
+
+  # --- MIN / MAX / PIVOT / SHARE-OF-TOTAL ----------------------------------
+
+  - id: D30
+    question: "For each customer segment, what are the minimum, maximum and average expected margins?"
+    domain: margin
+    persona: pricing-desk
+    difficulty: multi-aggregate
+    gold_sql: >
+      SELECT customer_segment, MIN(expected_margin_pct) AS min_margin_pct,
+             MAX(expected_margin_pct) AS max_margin_pct, ROUND(AVG(expected_margin_pct),
+             2) AS avg_margin_pct
+      FROM fab_semantic.margin_analysis
+      GROUP BY customer_segment
+    gold_tables: [margin_analysis]
+    gold_columns: [customer_segment, expected_margin_pct]
+    row_count: 2
+    gold_result:
+      - {customer_segment: 'SME', min_margin_pct: -0.7, max_margin_pct: 2.28, avg_margin_pct: 1.04}
+      - {customer_segment: 'Corporate', min_margin_pct: -1.1, max_margin_pct: 2.95, avg_margin_pct: 1.13}
+
+  - id: D31
+    question: "For active cross-sell rules, what is the total expected incremental revenue by priority?"
+    domain: product
+    persona: relationship-manager
+    difficulty: group-by
+    gold_sql: >
+      SELECT cross_sell_priority, COUNT(*) AS rules,
+             SUM(expected_incremental_revenue_aed) AS total_expected_revenue_aed
+      FROM fab_semantic.cross_sell_opportunity
+      WHERE rule_status = 'Active'
+      GROUP BY cross_sell_priority
+      ORDER BY total_expected_revenue_aed DESC
+    gold_tables: [cross_sell_opportunity]
+    gold_columns: [cross_sell_priority, expected_incremental_revenue_aed, rule_status]
+    row_count: 3
+    gold_result:
+      - {cross_sell_priority: 'Medium', rules: 33, total_expected_revenue_aed: 4025000}
+      - {cross_sell_priority: 'High', rules: 15, total_expected_revenue_aed: 2045000}
+      - {cross_sell_priority: 'Low', rules: 16, total_expected_revenue_aed: 1825000}
+
+  - id: D32
+    question: "Compare the AED and USD funding cost at each tenor."
+    domain: treasury
+    persona: pricing-desk
+    difficulty: pivot
+    note: >-
+      a pivot — one row per tenor with the two currencies side by side, which needs conditional aggregation rather than a plain GROUP BY currency, tenor.
+    gold_sql: >
+      SELECT tenor,
+             MAX(CASE WHEN currency = 'AED' THEN funding_cost_pct END) AS aed_funding_cost_pct,
+             MAX(CASE WHEN currency = 'USD' THEN funding_cost_pct END) AS usd_funding_cost_pct
+      FROM fab_curated.treasury_rate_sheet
+      GROUP BY tenor
+      ORDER BY tenor
+    gold_tables: [treasury_rate_sheet]
+    gold_columns: [tenor, currency, funding_cost_pct]
+    row_count: 7
+    gold_result:
+      - {tenor: '12M', aed_funding_cost_pct: 5.55, usd_funding_cost_pct: 5.15}
+      - {tenor: '1M', aed_funding_cost_pct: 5.05, usd_funding_cost_pct: 4.95}
+      - {tenor: '24M', aed_funding_cost_pct: 5.7, usd_funding_cost_pct: 5.3}
+      - {tenor: '36M', aed_funding_cost_pct: 5.85, usd_funding_cost_pct: 5.4}
+      - {tenor: '3M', aed_funding_cost_pct: 5.25, usd_funding_cost_pct: 5.0}
+      - {tenor: '60M', aed_funding_cost_pct: 6.0, usd_funding_cost_pct: 5.55}
+      - {tenor: '6M', aed_funding_cost_pct: 5.4, usd_funding_cost_pct: 5.08}
+
+  - id: D33
+    question: "For customers with at least three deals, what is their win rate?"
+    domain: deals-pricing
+    persona: relationship-manager
+    difficulty: filtered-lookup
+    note: >-
+      13 customers qualify and many tie at 100% — returned as a full SET rather than a top-N, so the comparison cannot depend on how ties are broken.
+    gold_sql: >
+      SELECT customer_id, total_deals, won_deals, win_rate_pct
+      FROM fab_semantic.customer_360
+      WHERE total_deals >= 3
+      ORDER BY win_rate_pct DESC, customer_id
+    gold_tables: [customer_360]
+    gold_columns: [customer_id, total_deals, won_deals, win_rate_pct]
+    row_count: 13
+    gold_result:
+      - {customer_id: 'CUST003', total_deals: 4, won_deals: 4, win_rate_pct: 100}
+      - {customer_id: 'CUST004', total_deals: 3, won_deals: 3, win_rate_pct: 100}
+      - {customer_id: 'CUST005', total_deals: 4, won_deals: 4, win_rate_pct: 100}
+      - {customer_id: 'CUST011', total_deals: 3, won_deals: 3, win_rate_pct: 100}
+      - {customer_id: 'CUST012', total_deals: 7, won_deals: 7, win_rate_pct: 100}
+      - {customer_id: 'CUST014', total_deals: 3, won_deals: 3, win_rate_pct: 100}
+      - {customer_id: 'CUST017', total_deals: 4, won_deals: 4, win_rate_pct: 100}
+      - {customer_id: 'CUST018', total_deals: 3, won_deals: 3, win_rate_pct: 100}
+      - {customer_id: 'CUST016', total_deals: 4, won_deals: 3, win_rate_pct: 75}
+      - {customer_id: 'CUST001', total_deals: 3, won_deals: 2, win_rate_pct: 66.67}
+      - {customer_id: 'CUST006', total_deals: 3, won_deals: 2, win_rate_pct: 66.67}
+      - {customer_id: 'CUST013', total_deals: 5, won_deals: 3, win_rate_pct: 60}
+      - {customer_id: 'CUST009', total_deals: 6, won_deals: 3, win_rate_pct: 50}
+
+  - id: D34
+    question: "What share of total deal volume sits in each tenor?"
+    domain: deals-pricing
+    persona: cfo
+    difficulty: share-of-total
+    note: >-
+      each row's share needs the grand total — a scalar subquery over the same table.
+    gold_sql: >
+      SELECT tenor, SUM(requested_amount) AS volume_aed,
+             ROUND(SUM(requested_amount) * 100.0 / (SELECT SUM(requested_amount)
+      FROM fab_curated.historical_deals), 2) AS pct_of_total
+      FROM fab_curated.historical_deals
+      GROUP BY tenor
+      ORDER BY volume_aed DESC
+    gold_tables: [historical_deals]
+    gold_columns: [tenor, requested_amount]
+    row_count: 7
+    gold_result:
+      - {tenor: '1M', volume_aed: 817300000, pct_of_total: 32.25}
+      - {tenor: '12M', volume_aed: 699000000, pct_of_total: 27.58}
+      - {tenor: '24M', volume_aed: 318200000, pct_of_total: 12.56}
+      - {tenor: '3M', volume_aed: 254600000, pct_of_total: 10.05}
+      - {tenor: '6M', volume_aed: 221200000, pct_of_total: 8.73}
+      - {tenor: '60M', volume_aed: 124300000, pct_of_total: 4.9}
+      - {tenor: '36M', volume_aed: 99700000, pct_of_total: 3.93}

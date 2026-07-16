@@ -251,6 +251,39 @@ examples:
     tier: full_dynamic
     tags: "historical_deals,customer_master,pricing_policy"
 
+  # ---- Multi-table joins (3-4 tables) ----------------------------------------
+  # historical_deals is the hub: join out to customer_master (customer_id),
+  # product_master (product_id), and pricing_policy (the 3-key join
+  # customer_segment + product_type + risk_category — segment/risk come from
+  # customer_master, product_type from the deal). These teach the model the join
+  # KEYS for the base-table shapes the single-join view examples above don't cover.
+  # All verified live (validator + executed) before seeding.
+
+  - question: "What is the average expected margin on won deals by customer industry and product type?"
+    sql: "SELECT cm.industry, hd.product_type, ROUND(AVG(hd.expected_margin_pct),2) AS avg_expected_margin_pct FROM fab_curated.historical_deals hd JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id JOIN fab_curated.product_master pm ON hd.product_id = pm.product_id WHERE hd.deal_outcome = 'Won' GROUP BY cm.industry, hd.product_type ORDER BY avg_expected_margin_pct DESC LIMIT 50;"
+    tier: full_dynamic
+    tags: "historical_deals,customer_master,product_master"
+
+  - question: "What is the average deal size by customer internal rating and product type?"
+    sql: "SELECT cm.internal_rating, hd.product_type, ROUND(AVG(hd.requested_amount),0) AS avg_deal_size FROM fab_curated.historical_deals hd JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id JOIN fab_curated.product_master pm ON hd.product_id = pm.product_id GROUP BY cm.internal_rating, hd.product_type ORDER BY avg_deal_size DESC LIMIT 50;"
+    tier: full_dynamic
+    tags: "historical_deals,customer_master,product_master"
+
+  - question: "How many deals exceeded the policy discount cap in each customer segment and risk band?"
+    sql: "SELECT cm.customer_segment, cm.risk_category, COUNT(*) AS discount_breaches FROM fab_curated.historical_deals hd JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id JOIN fab_curated.pricing_policy pp ON cm.customer_segment = pp.customer_segment AND hd.product_type = pp.product_type AND cm.risk_category = pp.risk_category WHERE hd.relationship_discount_pct > pp.max_relationship_discount_pct GROUP BY cm.customer_segment, cm.risk_category ORDER BY discount_breaches DESC LIMIT 50;"
+    tier: full_dynamic
+    tags: "historical_deals,customer_master,pricing_policy"
+
+  - question: "How many deals fell below the policy minimum expected margin, by region and product type?"
+    sql: "SELECT cm.region, hd.product_type, COUNT(*) AS below_min_expected FROM fab_curated.historical_deals hd JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id JOIN fab_curated.pricing_policy pp ON cm.customer_segment = pp.customer_segment AND hd.product_type = pp.product_type AND cm.risk_category = pp.risk_category WHERE hd.expected_margin_pct < pp.min_expected_margin_pct GROUP BY cm.region, hd.product_type ORDER BY below_min_expected DESC LIMIT 50;"
+    tier: full_dynamic
+    tags: "historical_deals,customer_master,pricing_policy"
+
+  - question: "List won deals priced below their policy floor margin, with the customer and product names."
+    sql: "SELECT hd.deal_id, cm.customer_name, pm.product_name, cm.risk_category, hd.expected_margin_pct, pp.min_margin_pct FROM fab_curated.historical_deals hd JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id JOIN fab_curated.product_master pm ON hd.product_id = pm.product_id JOIN fab_curated.pricing_policy pp ON cm.customer_segment = pp.customer_segment AND hd.product_type = pp.product_type AND cm.risk_category = pp.risk_category WHERE hd.deal_outcome = 'Won' AND hd.expected_margin_pct < pp.min_margin_pct LIMIT 50;"
+    tier: full_dynamic
+    tags: "historical_deals,customer_master,product_master,pricing_policy"
+
   # ---- Portfolio / exposure --------------------------------------------------
   - question: "What is the total existing exposure by risk category?"
     sql: "SELECT risk_category, SUM(existing_exposure_aed) AS total_exposure_aed FROM fab_curated.customer_master GROUP BY risk_category ORDER BY total_exposure_aed DESC;"
