@@ -11,9 +11,14 @@ datasets — gold_dynamic questions and the curated example seed set — were bu
 independently), so retrieval quality is judged with two PROXY signals per gold item:
 
   TABLE match   — a retrieved example's ``tags`` (table names) intersect gold_tables.
-  PATTERN match — a retrieved example's SQL query-logic bucket (ranking / aggregation /
-                  trend / lookup — sql_agent.memory.example_index.sql_pattern) equals
-                  the gold SQL's own bucket.
+  PATTERN match — a retrieved example's MULTI-TAG SQL pattern set (see
+                  sql_agent.memory.sql_pattern.classify_sql — aggregation, comparison,
+                  ranking, trend, policy_violation, threshold, top_n/bottom_n, join,
+                  window_function, cte, subquery, exists, case_when) OVERLAPS the gold
+                  SQL's own pattern set (any shared tag counts, not exact equality —
+                  this is what tells "compares two columns" apart from "aggregates one
+                  column", the gap that let a lexically-similar-but-logically-different
+                  example outrank the right one).
 
 Neither proxy is ground truth by itself (two different tables can legitimately need the
 same SQL shape; two examples on the same table can teach a different shape) — read the
@@ -56,8 +61,9 @@ sys.path.insert(0, str(HERE.parent))
 import yaml  # noqa: E402
 
 from sql_agent.config import settings  # noqa: E402
-from sql_agent.memory.example_index import _example_tables, rank_examples, sql_pattern  # noqa: E402
+from sql_agent.memory.example_index import _example_tables, rank_examples  # noqa: E402
 from sql_agent.memory.examples import all_approved_examples  # noqa: E402
+from sql_agent.memory.sql_pattern import classify_sql, sql_pattern  # noqa: E402
 
 OUT_DIR = HERE / "results"
 OUT_PATH = OUT_DIR / "example_retrieval.yaml"
@@ -130,20 +136,25 @@ def main() -> int:
     print(f"dense/bm25 wt   : {settings.examples_dense_weight}/{settings.examples_bm25_weight}")
     print(f"min_score gate  : {settings.examples_min_score}\n")
 
+    def _patterns(sql: str | None) -> set[str]:
+        shape = classify_sql(sql)
+        return set(shape["patterns"]) if shape else set()
+
     table_hits = pattern_hits = either_hits = no_retrieval = 0
     records: list[dict] = []
     for it in items:
         question = it["question"]
         gold_tables = set(it.get("gold_tables") or [])
-        gold_pattern = sql_pattern(it.get("gold_sql"))
+        gold_pattern = sql_pattern(it.get("gold_sql"))       # primary bucket, for display
+        gold_patterns = _patterns(it.get("gold_sql"))        # full multi-tag set, for matching
 
         retrieved = rank_examples(question, corpus, tier="full_dynamic", k=args.k)
 
         if not retrieved:
             no_retrieval += 1
         table_hit = any(_example_tables(r) & gold_tables for r in retrieved)
-        pattern_hit = bool(gold_pattern) and any(
-            sql_pattern(r.get("validated_sql")) == gold_pattern for r in retrieved)
+        pattern_hit = bool(gold_patterns) and any(
+            _patterns(r.get("validated_sql")) & gold_patterns for r in retrieved)
         table_hits += table_hit
         pattern_hits += pattern_hit
         either_hits += (table_hit or pattern_hit)
@@ -156,13 +167,15 @@ def main() -> int:
         retrieved_records = []
         for r in retrieved:
             r_tables = sorted(_example_tables(r))
+            r_patterns = _patterns(r.get("validated_sql"))
             r_pattern = sql_pattern(r.get("validated_sql"))
-            hit = bool((_example_tables(r) & gold_tables) or (r_pattern == gold_pattern and gold_pattern))
+            hit = bool((_example_tables(r) & gold_tables) or (r_patterns & gold_patterns))
             retrieved_records.append({"question": r["question"], "tables": r_tables,
-                                      "pattern": r_pattern, "hit": hit})
+                                      "pattern": r_pattern, "patterns": sorted(r_patterns),
+                                      "hit": hit})
             if args.verbose:
                 mark = "+" if hit else " "
-                print(f"       {mark}  [{r_pattern or '?':11s}] "
+                print(f"       {mark}  [{','.join(sorted(r_patterns)) or '?':30s}] "
                       f"{', '.join(r_tables) or '-':30s} {r['question'][:55]}")
         if args.verbose and not retrieved:
             print("         (no examples retrieved — confidence gate suppressed all, "

@@ -21,325 +21,1480 @@
 #     it to bias selection toward examples touching the same tables as the live question.
 
 examples:
-
-  # ---- Relationship Manager --------------------------------------------------
-  - question: "Which of our Corporate customers have the highest win rate?"
-    sql: "SELECT customer_id, customer_name, win_rate_pct FROM fab_semantic.customer_360 WHERE customer_segment = 'Corporate' ORDER BY win_rate_pct DESC LIMIT 10;"
-    tier: full_dynamic
-    tags: "customer_360"
-
-  - question: "Show me the top 10 customers by total deal volume."
-    sql: "SELECT customer_id, customer_name, total_deal_volume_aed FROM fab_semantic.customer_360 ORDER BY total_deal_volume_aed DESC LIMIT 10;"
-    tier: full_dynamic
-    tags: "customer_360"
-
-  - question: "Which customers have lost the most deals?"
-    sql: "SELECT customer_id, customer_name, lost_deals FROM fab_semantic.customer_360 ORDER BY lost_deals DESC LIMIT 10;"
-    tier: full_dynamic
-    tags: "customer_360"
-
-  - question: "What is the average expected margin across all our SME customers' deals?"
-    sql: "SELECT ROUND(AVG(expected_margin_pct), 2) AS avg_expected_margin_pct FROM fab_semantic.pricing_recommendation_view WHERE customer_segment = 'SME';"
-    tier: full_dynamic
-    tags: "pricing_recommendation_view"
-
-  - question: "Compare win rates between Corporate and SME segments."
-    sql: "SELECT customer_segment, SUM(won_deals) AS won, SUM(total_deals) AS total, ROUND(SUM(won_deals) * 100.0 / SUM(total_deals), 2) AS win_rate_pct FROM fab_semantic.customer_360 GROUP BY customer_segment;"
-    tier: full_dynamic
-    tags: "customer_360"
-
-  - question: "Which customers haven't transacted recently, oldest last deal first?"
-    sql: "SELECT customer_id, customer_name, last_deal_date FROM fab_semantic.customer_360 WHERE last_deal_date IS NOT NULL ORDER BY last_deal_date ASC LIMIT 10;"
-    tier: full_dynamic
-    tags: "customer_360"
-
-  - question: "Which high-risk customers have the largest existing exposure?"
-    sql: "SELECT customer_id, customer_name, existing_exposure_aed FROM fab_curated.customer_master WHERE risk_category = 'High' ORDER BY existing_exposure_aed DESC LIMIT 10;"
-    tier: full_dynamic
-    tags: "customer_master"
-
-  # ---- Branch Manager --------------------------------------------------------
-  - question: "How many deals fell below the minimum margin in each region?"
-    sql: "SELECT region, COUNT(*) AS below_min_deals FROM fab_semantic.margin_analysis WHERE margin_below_minimum = 1 GROUP BY region ORDER BY below_min_deals DESC;"
-    tier: full_dynamic
-    tags: "margin_analysis"
-
-  - question: "What's the average net margin by region?"
-    sql: "SELECT region, ROUND(AVG(net_margin_pct), 2) AS avg_net_margin_pct FROM fab_semantic.margin_analysis GROUP BY region ORDER BY avg_net_margin_pct DESC;"
-    tier: full_dynamic
-    tags: "margin_analysis"
-
-  - question: "Break down won versus lost deals by product type."
-    sql: "SELECT product_type, deal_outcome, COUNT(*) AS deal_count FROM fab_semantic.margin_analysis GROUP BY product_type, deal_outcome ORDER BY product_type, deal_outcome;"
-    tier: full_dynamic
-    tags: "margin_analysis"
-
-  - question: "Which regions have the most non-compliant deals?"
-    sql: "SELECT cm.region, COUNT(*) AS non_compliant_deals FROM fab_semantic.pricing_recommendation_view prv JOIN fab_curated.customer_master cm ON prv.customer_id = cm.customer_id WHERE prv.policy_compliant = 0 GROUP BY cm.region ORDER BY non_compliant_deals DESC;"
-    tier: full_dynamic
-    tags: "pricing_recommendation_view,customer_master"
-
-  - question: "How many won and lost deals came through each sales channel?"
-    sql: "SELECT sales_channel, deal_outcome, COUNT(*) AS deal_count FROM fab_curated.historical_deals GROUP BY sales_channel, deal_outcome ORDER BY sales_channel;"
-    tier: full_dynamic
-    tags: "historical_deals"
-
-  - question: "How many customers do we have in each industry?"
-    sql: "SELECT industry, COUNT(*) AS customer_count FROM fab_curated.customer_master GROUP BY industry ORDER BY customer_count DESC;"
-    tier: full_dynamic
-    tags: "customer_master"
-
-  # ---- CFO / Finance ---------------------------------------------------------
-  - question: "What is the total net profit by product type?"
-    sql: "SELECT product_type, SUM(net_profit_aed) AS total_net_profit_aed FROM fab_semantic.profitability_summary GROUP BY product_type ORDER BY total_net_profit_aed DESC;"
-    tier: full_dynamic
-    tags: "profitability_summary"
-
-  - question: "Which customer segments generate the most revenue?"
-    sql: "SELECT customer_segment, SUM(revenue_aed) AS total_revenue_aed FROM fab_semantic.profitability_summary GROUP BY customer_segment ORDER BY total_revenue_aed DESC;"
-    tier: full_dynamic
-    tags: "profitability_summary"
-
-  - question: "Show total RWA and average return on RWA by product type."
-    sql: "SELECT product_type, SUM(rwa_aed) AS total_rwa_aed, ROUND(AVG(return_on_rwa_pct), 2) AS avg_return_on_rwa_pct FROM fab_semantic.rwa_impact_view GROUP BY product_type ORDER BY total_rwa_aed DESC;"
-    tier: full_dynamic
-    tags: "rwa_impact_view"
-
-  - question: "How much capital are we holding against high-RWA deals?"
-    sql: "SELECT SUM(capital_required_aed) AS total_capital_high_rwa_aed FROM fab_semantic.rwa_impact_view WHERE is_high_rwa = 1;"
-    tier: full_dynamic
-    tags: "rwa_impact_view"
-
-  - question: "What is the total capital required by customer segment?"
-    sql: "SELECT customer_segment, SUM(capital_required_aed) AS total_capital_aed FROM fab_semantic.rwa_impact_view GROUP BY customer_segment ORDER BY total_capital_aed DESC;"
-    tier: full_dynamic
-    tags: "rwa_impact_view"
-
-  - question: "List the customer and product groups in a loss-making profitability tier."
-    sql: "SELECT customer_id, customer_segment, product_type, profitability_tier, net_profit_aed FROM fab_semantic.profitability_summary WHERE profitability_tier = 'Loss-Making' ORDER BY net_profit_aed ASC LIMIT 50;"
-    tier: full_dynamic
-    tags: "profitability_summary"
-
-  - question: "Which regions generate the most net profit?"
-    sql: "SELECT region, SUM(net_profit_aed) AS total_net_profit_aed FROM fab_semantic.profitability_summary GROUP BY region ORDER BY total_net_profit_aed DESC;"
-    tier: full_dynamic
-    tags: "profitability_summary"
-
-  - question: "What percentage of deals are policy compliant overall?"
-    sql: "SELECT ROUND(SUM(policy_compliant) * 100.0 / COUNT(*), 2) AS pct_compliant, COUNT(*) AS total_deals FROM fab_semantic.pricing_recommendation_view;"
-    tier: full_dynamic
-    tags: "pricing_recommendation_view"
-
-  # ---- Pricing desk (portfolio pricing + compliance) -------------------------
-  - question: "Which deals were priced below the policy floor?"
-    sql: "SELECT deal_id, customer_id, product_type, recommended_price_pct, policy_min_margin_pct FROM fab_semantic.pricing_recommendation_view WHERE price_below_policy_floor = 1 LIMIT 50;"
-    tier: full_dynamic
-    tags: "pricing_recommendation_view"
-
-  - question: "How many deals exceeded the relationship discount cap, by segment?"
-    sql: "SELECT customer_segment, COUNT(*) AS discount_breaches FROM fab_semantic.pricing_recommendation_view WHERE discount_exceeds_policy = 1 GROUP BY customer_segment ORDER BY discount_breaches DESC;"
-    tier: full_dynamic
-    tags: "pricing_recommendation_view"
-
-  - question: "What's the average spread over benchmark for won Loan deals?"
-    sql: "SELECT ROUND(AVG(spread_over_benchmark_pct), 2) AS avg_spread_pct FROM fab_semantic.margin_analysis WHERE deal_outcome = 'Won' AND product_type = 'Loan';"
-    tier: full_dynamic
-    tags: "margin_analysis"
-
-  - question: "Compare the average approved price by risk category."
-    sql: "SELECT risk_category, ROUND(AVG(approved_price_pct), 2) AS avg_approved_price_pct FROM fab_semantic.pricing_recommendation_view GROUP BY risk_category ORDER BY risk_category;"
-    tier: full_dynamic
-    tags: "pricing_recommendation_view"
-
-  - question: "What are the target margins for Corporate customers across products?"
-    sql: "SELECT product_type, product_name, risk_category, target_margin_pct FROM fab_semantic.segment_pricing_benchmark WHERE customer_segment = 'Corporate' ORDER BY product_type, risk_category LIMIT 50;"
-    tier: full_dynamic
-    tags: "segment_pricing_benchmark"
-
-  - question: "Which product and segment combinations have the highest operational cost margin?"
-    sql: "SELECT product_name, customer_segment, ops_cost_margin_pct FROM fab_semantic.operations_cost_impact ORDER BY ops_cost_margin_pct DESC LIMIT 10;"
-    tier: full_dynamic
-    tags: "operations_cost_impact"
-
-  - question: "Show the USD funding cost across all tenors, latest first."
-    sql: "SELECT tenor, benchmark_index, funding_cost_pct, effective_date FROM fab_curated.treasury_rate_sheet WHERE currency = 'USD' ORDER BY effective_date DESC, tenor LIMIT 50;"
-    tier: full_dynamic
-    tags: "treasury_rate_sheet"
-
-  - question: "For SME Loan deals, what's the average recommended price and how many breached the policy floor?"
-    sql: "SELECT ROUND(AVG(recommended_price_pct), 2) AS avg_recommended_price_pct, SUM(price_below_policy_floor) AS below_floor_count, COUNT(*) AS total_deals FROM fab_semantic.pricing_recommendation_view WHERE customer_segment = 'SME' AND product_type = 'Loan';"
-    tier: full_dynamic
-    tags: "pricing_recommendation_view"
-
-  - question: "Compare recommended versus approved price by product type."
-    sql: "SELECT product_type, ROUND(AVG(recommended_price_pct), 2) AS avg_recommended_price_pct, ROUND(AVG(approved_price_pct), 2) AS avg_approved_price_pct FROM fab_semantic.pricing_recommendation_view GROUP BY product_type ORDER BY product_type;"
-    tier: full_dynamic
-    tags: "pricing_recommendation_view"
-
-  - question: "What recommended prices are we quoting new customers, by segment and product?"
-    sql: "SELECT customer_segment, product_type, ROUND(AVG(recommended_price_pct), 2) AS avg_recommended_price_pct FROM fab_semantic.new_customer_pricing_view GROUP BY customer_segment, product_type ORDER BY customer_segment, product_type;"
-    tier: full_dynamic
-    tags: "new_customer_pricing_view"
-
-  - question: "How many deals per segment are non-compliant on price, margin, or discount?"
-    sql: "SELECT customer_segment, SUM(price_below_policy_floor) AS price_breaches, SUM(margin_below_min) AS margin_breaches, SUM(discount_exceeds_policy) AS discount_breaches, COUNT(*) AS total_deals FROM fab_semantic.pricing_recommendation_view GROUP BY customer_segment;"
-    tier: full_dynamic
-    tags: "pricing_recommendation_view"
-
-  - question: "Which product types have the highest share of below-floor pricing?"
-    sql: "SELECT product_type, ROUND(SUM(price_below_policy_floor) * 100.0 / COUNT(*), 2) AS pct_below_floor, COUNT(*) AS total_deals FROM fab_semantic.pricing_recommendation_view GROUP BY product_type ORDER BY pct_below_floor DESC;"
-    tier: full_dynamic
-    tags: "pricing_recommendation_view"
-
-  - question: "For high-risk customers, what's the average risk premium and approved price?"
-    sql: "SELECT ROUND(AVG(risk_premium_pct), 2) AS avg_risk_premium_pct, ROUND(AVG(approved_price_pct), 2) AS avg_approved_price_pct FROM fab_semantic.pricing_recommendation_view WHERE risk_category = 'High';"
-    tier: full_dynamic
-    tags: "pricing_recommendation_view"
-
-  - question: "What are the floor and target margins for SME Trade Finance at each risk level?"
-    sql: "SELECT risk_category, base_margin_floor_pct, target_margin_pct, max_relationship_discount_pct FROM fab_semantic.segment_pricing_benchmark WHERE customer_segment = 'SME' AND product_type = 'Trade Finance' ORDER BY risk_category;"
-    tier: full_dynamic
-    tags: "segment_pricing_benchmark"
-
-  # ---- Cross-table / JOINs ---------------------------------------------------
-  # A VIEW may be joined ONLY to customer_master (customer_id), and only for a
-  # customer attribute the view lacks (industry, credit_score, tenure, ...). Base
-  # tables join on their declared FK keys. These teach the model the valid join shapes.
-
-  - question: "What is the average expected margin by customer industry?"
-    sql: "SELECT cm.industry, ROUND(AVG(prv.expected_margin_pct), 2) AS avg_expected_margin_pct FROM fab_semantic.pricing_recommendation_view prv JOIN fab_curated.customer_master cm ON prv.customer_id = cm.customer_id GROUP BY cm.industry ORDER BY avg_expected_margin_pct DESC;"
-    tier: full_dynamic
-    tags: "pricing_recommendation_view,customer_master"
-
-  - question: "Which industries have the most policy-non-compliant deals?"
-    sql: "SELECT cm.industry, COUNT(*) AS non_compliant_deals FROM fab_semantic.pricing_recommendation_view prv JOIN fab_curated.customer_master cm ON prv.customer_id = cm.customer_id WHERE prv.policy_compliant = 0 GROUP BY cm.industry ORDER BY non_compliant_deals DESC;"
-    tier: full_dynamic
-    tags: "pricing_recommendation_view,customer_master"
-
-  - question: "Compare average net margin for customers with relationship tenure over 5 years versus 5 years or less."
-    sql: "SELECT CASE WHEN cm.relationship_tenure_years > 5 THEN 'Over 5 years' ELSE '5 years or less' END AS tenure_band, ROUND(AVG(ma.net_margin_pct), 2) AS avg_net_margin_pct FROM fab_semantic.margin_analysis ma JOIN fab_curated.customer_master cm ON ma.customer_id = cm.customer_id GROUP BY tenure_band ORDER BY avg_net_margin_pct DESC;"
-    tier: full_dynamic
-    tags: "margin_analysis,customer_master"
-
-  - question: "Average approved price by customer credit-score band."
-    sql: "SELECT CASE WHEN cm.credit_score >= 700 THEN 'High (>=700)' WHEN cm.credit_score >= 600 THEN 'Medium (600-699)' ELSE 'Low (<600)' END AS credit_band, ROUND(AVG(prv.approved_price_pct), 2) AS avg_approved_price_pct FROM fab_semantic.pricing_recommendation_view prv JOIN fab_curated.customer_master cm ON prv.customer_id = cm.customer_id GROUP BY credit_band ORDER BY credit_band;"
-    tier: full_dynamic
-    tags: "pricing_recommendation_view,customer_master"
-
-  - question: "What is the total requested deal amount by customer industry?"
-    sql: "SELECT cm.industry, SUM(hd.requested_amount) AS total_requested_amount FROM fab_curated.historical_deals hd JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id GROUP BY cm.industry ORDER BY total_requested_amount DESC;"
-    tier: full_dynamic
-    tags: "historical_deals,customer_master"
-
-  - question: "Average deal size by customer internal rating."
-    sql: "SELECT cm.internal_rating, ROUND(AVG(hd.requested_amount), 0) AS avg_deal_size FROM fab_curated.historical_deals hd JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id GROUP BY cm.internal_rating ORDER BY avg_deal_size DESC;"
-    tier: full_dynamic
-    tags: "historical_deals,customer_master"
-
-  - question: "List deals whose requested amount exceeds the product's maximum ticket size."
-    sql: "SELECT hd.deal_id, hd.customer_id, pm.product_name, hd.requested_amount, pm.max_ticket_size FROM fab_curated.historical_deals hd JOIN fab_curated.product_master pm ON hd.product_id = pm.product_id WHERE hd.requested_amount > pm.max_ticket_size LIMIT 50;"
-    tier: full_dynamic
-    tags: "historical_deals,product_master"
-
-  - question: "Compare each product's standard margin to the average expected margin booked on its deals."
-    sql: "SELECT pm.product_name, pm.standard_margin_pct, ROUND(AVG(hd.expected_margin_pct), 2) AS avg_booked_margin_pct FROM fab_curated.historical_deals hd JOIN fab_curated.product_master pm ON hd.product_id = pm.product_id GROUP BY pm.product_name, pm.standard_margin_pct ORDER BY pm.product_name LIMIT 50;"
-    tier: full_dynamic
-    tags: "historical_deals,product_master"
-
-  - question: "Which customer segment and risk band have the most deals priced below their policy minimum margin?"
-    sql: "SELECT cm.customer_segment, cm.risk_category, COUNT(*) AS deals_below_floor FROM fab_curated.historical_deals hd JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id JOIN fab_curated.pricing_policy pp ON cm.customer_segment = pp.customer_segment AND hd.product_type = pp.product_type AND cm.risk_category = pp.risk_category WHERE hd.expected_margin_pct < pp.min_margin_pct GROUP BY cm.customer_segment, cm.risk_category ORDER BY deals_below_floor DESC;"
-    tier: full_dynamic
-    tags: "historical_deals,customer_master,pricing_policy"
-
-  # ---- Multi-table joins (3-4 tables) ----------------------------------------
-  # historical_deals is the hub: join out to customer_master (customer_id),
-  # product_master (product_id), and pricing_policy (the 3-key join
-  # customer_segment + product_type + risk_category — segment/risk come from
-  # customer_master, product_type from the deal). These teach the model the join
-  # KEYS for the base-table shapes the single-join view examples above don't cover.
-  # All verified live (validator + executed) before seeding.
-
-  - question: "What is the average expected margin on won deals by customer industry and product type?"
-    sql: "SELECT cm.industry, hd.product_type, ROUND(AVG(hd.expected_margin_pct),2) AS avg_expected_margin_pct FROM fab_curated.historical_deals hd JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id JOIN fab_curated.product_master pm ON hd.product_id = pm.product_id WHERE hd.deal_outcome = 'Won' GROUP BY cm.industry, hd.product_type ORDER BY avg_expected_margin_pct DESC LIMIT 50;"
-    tier: full_dynamic
-    tags: "historical_deals,customer_master,product_master"
-
-  - question: "What is the average deal size by customer internal rating and product type?"
-    sql: "SELECT cm.internal_rating, hd.product_type, ROUND(AVG(hd.requested_amount),0) AS avg_deal_size FROM fab_curated.historical_deals hd JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id JOIN fab_curated.product_master pm ON hd.product_id = pm.product_id GROUP BY cm.internal_rating, hd.product_type ORDER BY avg_deal_size DESC LIMIT 50;"
-    tier: full_dynamic
-    tags: "historical_deals,customer_master,product_master"
-
-  - question: "How many deals exceeded the policy discount cap in each customer segment and risk band?"
-    sql: "SELECT cm.customer_segment, cm.risk_category, COUNT(*) AS discount_breaches FROM fab_curated.historical_deals hd JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id JOIN fab_curated.pricing_policy pp ON cm.customer_segment = pp.customer_segment AND hd.product_type = pp.product_type AND cm.risk_category = pp.risk_category WHERE hd.relationship_discount_pct > pp.max_relationship_discount_pct GROUP BY cm.customer_segment, cm.risk_category ORDER BY discount_breaches DESC LIMIT 50;"
-    tier: full_dynamic
-    tags: "historical_deals,customer_master,pricing_policy"
-
-  - question: "How many deals fell below the policy minimum expected margin, by region and product type?"
-    sql: "SELECT cm.region, hd.product_type, COUNT(*) AS below_min_expected FROM fab_curated.historical_deals hd JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id JOIN fab_curated.pricing_policy pp ON cm.customer_segment = pp.customer_segment AND hd.product_type = pp.product_type AND cm.risk_category = pp.risk_category WHERE hd.expected_margin_pct < pp.min_expected_margin_pct GROUP BY cm.region, hd.product_type ORDER BY below_min_expected DESC LIMIT 50;"
-    tier: full_dynamic
-    tags: "historical_deals,customer_master,pricing_policy"
-
-  - question: "List won deals priced below their policy floor margin, with the customer and product names."
-    sql: "SELECT hd.deal_id, cm.customer_name, pm.product_name, cm.risk_category, hd.expected_margin_pct, pp.min_margin_pct FROM fab_curated.historical_deals hd JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id JOIN fab_curated.product_master pm ON hd.product_id = pm.product_id JOIN fab_curated.pricing_policy pp ON cm.customer_segment = pp.customer_segment AND hd.product_type = pp.product_type AND cm.risk_category = pp.risk_category WHERE hd.deal_outcome = 'Won' AND hd.expected_margin_pct < pp.min_margin_pct LIMIT 50;"
-    tier: full_dynamic
-    tags: "historical_deals,customer_master,product_master,pricing_policy"
-
-  # ---- Portfolio / exposure --------------------------------------------------
-  - question: "What is the total existing exposure by risk category?"
-    sql: "SELECT risk_category, SUM(existing_exposure_aed) AS total_exposure_aed FROM fab_curated.customer_master GROUP BY risk_category ORDER BY total_exposure_aed DESC;"
-    tier: full_dynamic
-    tags: "customer_master"
-
-  - question: "What's the total requested amount of deals by product type?"
-    sql: "SELECT product_type, SUM(requested_amount) AS total_requested_amount FROM fab_curated.historical_deals GROUP BY product_type ORDER BY total_requested_amount DESC;"
-    tier: full_dynamic
-    tags: "historical_deals"
-
-  # ---- Trend / time-series ----------------------------------------------------
-  # The Pattern Retriever had ZERO examples of this shape (GROUP BY a date/time
-  # dimension) — any genuinely trend-shaped question had nothing to retrieve.
-
-  - question: "How many deals were booked each quarter, and what was the total requested amount?"
-    sql: "SELECT YEAR(deal_date) AS deal_year, QUARTER(deal_date) AS deal_quarter, COUNT(*) AS deal_count, SUM(requested_amount) AS total_requested_amount FROM fab_curated.historical_deals GROUP BY YEAR(deal_date), QUARTER(deal_date) ORDER BY deal_year, deal_quarter;"
-    tier: full_dynamic
-    tags: "historical_deals"
-
-  - question: "Show the monthly count and volume of won deals over time."
-    sql: "SELECT YEAR(deal_date) AS deal_year, MONTH(deal_date) AS deal_month, COUNT(*) AS won_deal_count, SUM(requested_amount) AS total_volume_aed FROM fab_curated.historical_deals WHERE deal_outcome = 'Won' GROUP BY YEAR(deal_date), MONTH(deal_date) ORDER BY deal_year, deal_month;"
-    tier: full_dynamic
-    tags: "historical_deals"
-
-  # ---- Ranking (worst-case, not just top-N) ------------------------------------
-  # Existing ranking examples were all "highest/most" on customer_master /
-  # customer_360; margin_analysis and pricing_recommendation_view had none, so a
-  # margin-ranking question competed against same-table AGGREGATION examples
-  # instead of a same-PATTERN one.
-
-  - question: "Which five deals have the lowest net margin?"
-    sql: "SELECT deal_id, customer_name, product_type, net_margin_pct FROM fab_semantic.margin_analysis ORDER BY net_margin_pct ASC LIMIT 5;"
-    tier: full_dynamic
-    tags: "margin_analysis"
-
-  - question: "Which ten deals have the largest gap between recommended and approved price?"
-    sql: "SELECT deal_id, customer_name, product_name, recommended_price_pct, approved_price_pct, (approved_price_pct - recommended_price_pct) AS price_gap_pct FROM fab_semantic.pricing_recommendation_view ORDER BY ABS(approved_price_pct - recommended_price_pct) DESC LIMIT 10;"
-    tier: full_dynamic
-    tags: "pricing_recommendation_view"
-
-  # ---- Filtered lookups (no aggregation, no ranking) ---------------------------
-  # A plain WHERE-filtered list — the corpus was thin here relative to aggregation,
-  # so a same-table AGGREGATION example could out-compete the one true lookup match.
-
-  - question: "Which customers have more than two lost deals?"
-    sql: "SELECT customer_id, customer_name, lost_deals FROM fab_semantic.customer_360 WHERE lost_deals > 2 LIMIT 50;"
-    tier: full_dynamic
-    tags: "customer_360"
-
-  - question: "Which deals have a final approved price below their system-recommended price?"
-    sql: "SELECT deal_id, customer_name, product_name, system_recommended_price_pct, approved_price_pct FROM fab_semantic.pricing_recommendation_view WHERE approved_price_pct < system_recommended_price_pct LIMIT 50;"
-    tier: full_dynamic
-    tags: "pricing_recommendation_view"
-
-  - question: "Which customers require approval for their relationship discount?"
-    sql: "SELECT customer_id, customer_name, relationship_discount_pct, policy_max_relationship_discount_pct, approval_required FROM fab_semantic.relationship_discount_view WHERE approval_required = 1 LIMIT 50;"
-    tier: full_dynamic
-    tags: "relationship_discount_view"
+- question: Which of our Corporate customers have the highest win rate?
+  sql: SELECT customer_id, customer_name, win_rate_pct FROM fab_semantic.customer_360 WHERE customer_segment
+    = 'Corporate' ORDER BY win_rate_pct DESC LIMIT 10;
+  tier: full_dynamic
+  tags: customer_360
+  metadata:
+    tables:
+    - customer_360
+    columns:
+    - customer_id
+    - customer_name
+    - customer_segment
+    - win_rate_pct
+    joins: []
+    intent: ranking
+    sql_pattern:
+    - ranking
+    - top_n
+    aggregations: []
+    filters:
+    - customer_segment
+    business_terms:
+    - corporate
+    - win rate
+    complexity: low
+- question: Show me the top 10 customers by total deal volume.
+  sql: SELECT customer_id, customer_name, total_deal_volume_aed FROM fab_semantic.customer_360 ORDER BY
+    total_deal_volume_aed DESC LIMIT 10;
+  tier: full_dynamic
+  tags: customer_360
+  metadata:
+    tables:
+    - customer_360
+    columns:
+    - customer_id
+    - customer_name
+    - total_deal_volume_aed
+    joins: []
+    intent: ranking
+    sql_pattern:
+    - ranking
+    - top_n
+    aggregations: []
+    filters: []
+    business_terms: []
+    complexity: low
+- question: Which customers have lost the most deals?
+  sql: SELECT customer_id, customer_name, lost_deals FROM fab_semantic.customer_360 ORDER BY lost_deals
+    DESC LIMIT 10;
+  tier: full_dynamic
+  tags: customer_360
+  metadata:
+    tables:
+    - customer_360
+    columns:
+    - customer_id
+    - customer_name
+    - lost_deals
+    joins: []
+    intent: ranking
+    sql_pattern:
+    - ranking
+    - top_n
+    aggregations: []
+    filters: []
+    business_terms: []
+    complexity: low
+- question: What is the average expected margin across all our SME customers' deals?
+  sql: SELECT ROUND(AVG(expected_margin_pct), 2) AS avg_expected_margin_pct FROM fab_semantic.pricing_recommendation_view
+    WHERE customer_segment = 'SME';
+  tier: full_dynamic
+  tags: pricing_recommendation_view
+  metadata:
+    tables:
+    - pricing_recommendation_view
+    columns:
+    - customer_segment
+    - expected_margin_pct
+    joins: []
+    intent: aggregation
+    sql_pattern:
+    - aggregation
+    aggregations:
+    - AVG
+    filters:
+    - customer_segment
+    business_terms:
+    - expected margin
+    - margin
+    - sme
+    complexity: medium
+- question: Compare win rates between Corporate and SME segments.
+  sql: SELECT customer_segment, SUM(won_deals) AS won, SUM(total_deals) AS total, ROUND(SUM(won_deals)
+    * 100.0 / SUM(total_deals), 2) AS win_rate_pct FROM fab_semantic.customer_360 GROUP BY customer_segment;
+  tier: full_dynamic
+  tags: customer_360
+  metadata:
+    tables:
+    - customer_360
+    columns:
+    - customer_segment
+    - total_deals
+    - won_deals
+    joins: []
+    intent: comparison
+    sql_pattern:
+    - aggregation
+    aggregations:
+    - SUM
+    filters: []
+    business_terms:
+    - corporate
+    - sme
+    complexity: medium
+- question: Which customers haven't transacted recently, oldest last deal first?
+  sql: SELECT customer_id, customer_name, last_deal_date FROM fab_semantic.customer_360 WHERE last_deal_date
+    IS NOT NULL ORDER BY last_deal_date ASC LIMIT 10;
+  tier: full_dynamic
+  tags: customer_360
+  metadata:
+    tables:
+    - customer_360
+    columns:
+    - customer_id
+    - customer_name
+    - last_deal_date
+    joins: []
+    intent: ranking
+    sql_pattern:
+    - ranking
+    - bottom_n
+    aggregations: []
+    filters:
+    - last_deal_date
+    business_terms: []
+    complexity: low
+- question: Which high-risk customers have the largest existing exposure?
+  sql: SELECT customer_id, customer_name, existing_exposure_aed FROM fab_curated.customer_master WHERE
+    risk_category = 'High' ORDER BY existing_exposure_aed DESC LIMIT 10;
+  tier: full_dynamic
+  tags: customer_master
+  metadata:
+    tables:
+    - customer_master
+    columns:
+    - customer_id
+    - customer_name
+    - existing_exposure_aed
+    - risk_category
+    joins: []
+    intent: ranking
+    sql_pattern:
+    - ranking
+    - top_n
+    aggregations: []
+    filters:
+    - risk_category
+    business_terms:
+    - exposure
+    complexity: low
+- question: How many deals fell below the minimum margin in each region?
+  sql: SELECT region, COUNT(*) AS below_min_deals FROM fab_semantic.margin_analysis WHERE margin_below_minimum
+    = 1 GROUP BY region ORDER BY below_min_deals DESC;
+  tier: full_dynamic
+  tags: margin_analysis
+  metadata:
+    tables:
+    - margin_analysis
+    columns:
+    - below_min_deals
+    - margin_below_minimum
+    - region
+    joins: []
+    intent: policy_violation
+    sql_pattern:
+    - policy_violation
+    - aggregation
+    aggregations:
+    - COUNT
+    filters:
+    - margin_below_minimum
+    business_terms:
+    - minimum margin
+    - margin
+    complexity: medium
+- question: What's the average net margin by region?
+  sql: SELECT region, ROUND(AVG(net_margin_pct), 2) AS avg_net_margin_pct FROM fab_semantic.margin_analysis
+    GROUP BY region ORDER BY avg_net_margin_pct DESC;
+  tier: full_dynamic
+  tags: margin_analysis
+  metadata:
+    tables:
+    - margin_analysis
+    columns:
+    - avg_net_margin_pct
+    - net_margin_pct
+    - region
+    joins: []
+    intent: aggregation
+    sql_pattern:
+    - aggregation
+    aggregations:
+    - AVG
+    filters: []
+    business_terms:
+    - margin
+    complexity: medium
+- question: Break down won versus lost deals by product type.
+  sql: SELECT product_type, deal_outcome, COUNT(*) AS deal_count FROM fab_semantic.margin_analysis GROUP
+    BY product_type, deal_outcome ORDER BY product_type, deal_outcome;
+  tier: full_dynamic
+  tags: margin_analysis
+  metadata:
+    tables:
+    - margin_analysis
+    columns:
+    - deal_outcome
+    - product_type
+    joins: []
+    intent: comparison
+    sql_pattern:
+    - aggregation
+    aggregations:
+    - COUNT
+    filters: []
+    business_terms: []
+    complexity: medium
+- question: Which regions have the most non-compliant deals?
+  sql: SELECT cm.region, COUNT(*) AS non_compliant_deals FROM fab_semantic.pricing_recommendation_view
+    prv JOIN fab_curated.customer_master cm ON prv.customer_id = cm.customer_id WHERE prv.policy_compliant
+    = 0 GROUP BY cm.region ORDER BY non_compliant_deals DESC;
+  tier: full_dynamic
+  tags: pricing_recommendation_view,customer_master
+  metadata:
+    tables:
+    - pricing_recommendation_view
+    - customer_master
+    columns:
+    - customer_id
+    - non_compliant_deals
+    - policy_compliant
+    - region
+    joins:
+    - pricing_recommendation_view.customer_id = customer_master.customer_id
+    intent: policy_violation
+    sql_pattern:
+    - join
+    - policy_violation
+    - aggregation
+    aggregations:
+    - COUNT
+    filters:
+    - policy_compliant
+    business_terms: []
+    complexity: high
+- question: How many won and lost deals came through each sales channel?
+  sql: SELECT sales_channel, deal_outcome, COUNT(*) AS deal_count FROM fab_curated.historical_deals GROUP
+    BY sales_channel, deal_outcome ORDER BY sales_channel;
+  tier: full_dynamic
+  tags: historical_deals
+  metadata:
+    tables:
+    - historical_deals
+    columns:
+    - deal_outcome
+    - sales_channel
+    joins: []
+    intent: aggregation
+    sql_pattern:
+    - aggregation
+    aggregations:
+    - COUNT
+    filters: []
+    business_terms: []
+    complexity: medium
+- question: How many customers do we have in each industry?
+  sql: SELECT industry, COUNT(*) AS customer_count FROM fab_curated.customer_master GROUP BY industry
+    ORDER BY customer_count DESC;
+  tier: full_dynamic
+  tags: customer_master
+  metadata:
+    tables:
+    - customer_master
+    columns:
+    - customer_count
+    - industry
+    joins: []
+    intent: aggregation
+    sql_pattern:
+    - aggregation
+    aggregations:
+    - COUNT
+    filters: []
+    business_terms: []
+    complexity: medium
+- question: What is the total net profit by product type?
+  sql: SELECT product_type, SUM(net_profit_aed) AS total_net_profit_aed FROM fab_semantic.profitability_summary
+    GROUP BY product_type ORDER BY total_net_profit_aed DESC;
+  tier: full_dynamic
+  tags: profitability_summary
+  metadata:
+    tables:
+    - profitability_summary
+    columns:
+    - net_profit_aed
+    - product_type
+    - total_net_profit_aed
+    joins: []
+    intent: aggregation
+    sql_pattern:
+    - aggregation
+    aggregations:
+    - SUM
+    filters: []
+    business_terms: []
+    complexity: medium
+- question: Which customer segments generate the most revenue?
+  sql: SELECT customer_segment, SUM(revenue_aed) AS total_revenue_aed FROM fab_semantic.profitability_summary
+    GROUP BY customer_segment ORDER BY total_revenue_aed DESC;
+  tier: full_dynamic
+  tags: profitability_summary
+  metadata:
+    tables:
+    - profitability_summary
+    columns:
+    - customer_segment
+    - revenue_aed
+    - total_revenue_aed
+    joins: []
+    intent: ranking
+    sql_pattern:
+    - aggregation
+    aggregations:
+    - SUM
+    filters: []
+    business_terms:
+    - revenue
+    complexity: medium
+- question: Show total RWA and average return on RWA by product type.
+  sql: SELECT product_type, SUM(rwa_aed) AS total_rwa_aed, ROUND(AVG(return_on_rwa_pct), 2) AS avg_return_on_rwa_pct
+    FROM fab_semantic.rwa_impact_view GROUP BY product_type ORDER BY total_rwa_aed DESC;
+  tier: full_dynamic
+  tags: rwa_impact_view
+  metadata:
+    tables:
+    - rwa_impact_view
+    columns:
+    - product_type
+    - return_on_rwa_pct
+    - rwa_aed
+    - total_rwa_aed
+    joins: []
+    intent: aggregation
+    sql_pattern:
+    - aggregation
+    aggregations:
+    - AVG
+    - SUM
+    filters: []
+    business_terms:
+    - rwa
+    complexity: high
+- question: How much capital are we holding against high-RWA deals?
+  sql: SELECT SUM(capital_required_aed) AS total_capital_high_rwa_aed FROM fab_semantic.rwa_impact_view
+    WHERE is_high_rwa = 1;
+  tier: full_dynamic
+  tags: rwa_impact_view
+  metadata:
+    tables:
+    - rwa_impact_view
+    columns:
+    - capital_required_aed
+    - is_high_rwa
+    joins: []
+    intent: aggregation
+    sql_pattern:
+    - aggregation
+    aggregations:
+    - SUM
+    filters:
+    - is_high_rwa
+    business_terms:
+    - capital
+    - rwa
+    complexity: medium
+- question: What is the total capital required by customer segment?
+  sql: SELECT customer_segment, SUM(capital_required_aed) AS total_capital_aed FROM fab_semantic.rwa_impact_view
+    GROUP BY customer_segment ORDER BY total_capital_aed DESC;
+  tier: full_dynamic
+  tags: rwa_impact_view
+  metadata:
+    tables:
+    - rwa_impact_view
+    columns:
+    - capital_required_aed
+    - customer_segment
+    - total_capital_aed
+    joins: []
+    intent: aggregation
+    sql_pattern:
+    - aggregation
+    aggregations:
+    - SUM
+    filters: []
+    business_terms:
+    - customer segment
+    - capital
+    complexity: medium
+- question: List the customer and product groups in a loss-making profitability tier.
+  sql: SELECT customer_id, customer_segment, product_type, profitability_tier, net_profit_aed FROM fab_semantic.profitability_summary
+    WHERE profitability_tier = 'Loss-Making' ORDER BY net_profit_aed ASC LIMIT 50;
+  tier: full_dynamic
+  tags: profitability_summary
+  metadata:
+    tables:
+    - profitability_summary
+    columns:
+    - customer_id
+    - customer_segment
+    - net_profit_aed
+    - product_type
+    - profitability_tier
+    joins: []
+    intent: ranking
+    sql_pattern:
+    - ranking
+    - bottom_n
+    aggregations: []
+    filters:
+    - profitability_tier
+    business_terms:
+    - profitability
+    complexity: low
+- question: Which regions generate the most net profit?
+  sql: SELECT region, SUM(net_profit_aed) AS total_net_profit_aed FROM fab_semantic.profitability_summary
+    GROUP BY region ORDER BY total_net_profit_aed DESC;
+  tier: full_dynamic
+  tags: profitability_summary
+  metadata:
+    tables:
+    - profitability_summary
+    columns:
+    - net_profit_aed
+    - region
+    - total_net_profit_aed
+    joins: []
+    intent: ranking
+    sql_pattern:
+    - aggregation
+    aggregations:
+    - SUM
+    filters: []
+    business_terms: []
+    complexity: medium
+- question: What percentage of deals are policy compliant overall?
+  sql: SELECT ROUND(SUM(policy_compliant) * 100.0 / COUNT(*), 2) AS pct_compliant, COUNT(*) AS total_deals
+    FROM fab_semantic.pricing_recommendation_view;
+  tier: full_dynamic
+  tags: pricing_recommendation_view
+  metadata:
+    tables:
+    - pricing_recommendation_view
+    columns:
+    - policy_compliant
+    joins: []
+    intent: policy_violation
+    sql_pattern:
+    - aggregation
+    aggregations:
+    - COUNT
+    - SUM
+    filters: []
+    business_terms:
+    - policy compliant
+    complexity: medium
+- question: Which deals were priced below the policy floor?
+  sql: SELECT deal_id, customer_id, product_type, recommended_price_pct, policy_min_margin_pct FROM fab_semantic.pricing_recommendation_view
+    WHERE price_below_policy_floor = 1 LIMIT 50;
+  tier: full_dynamic
+  tags: pricing_recommendation_view
+  metadata:
+    tables:
+    - pricing_recommendation_view
+    columns:
+    - customer_id
+    - deal_id
+    - policy_min_margin_pct
+    - price_below_policy_floor
+    - product_type
+    - recommended_price_pct
+    joins: []
+    intent: policy_violation
+    sql_pattern:
+    - policy_violation
+    aggregations: []
+    filters:
+    - price_below_policy_floor
+    business_terms: []
+    complexity: low
+- question: How many deals exceeded the relationship discount cap, by segment?
+  sql: SELECT customer_segment, COUNT(*) AS discount_breaches FROM fab_semantic.pricing_recommendation_view
+    WHERE discount_exceeds_policy = 1 GROUP BY customer_segment ORDER BY discount_breaches DESC;
+  tier: full_dynamic
+  tags: pricing_recommendation_view
+  metadata:
+    tables:
+    - pricing_recommendation_view
+    columns:
+    - customer_segment
+    - discount_breaches
+    - discount_exceeds_policy
+    joins: []
+    intent: policy_violation
+    sql_pattern:
+    - policy_violation
+    - aggregation
+    aggregations:
+    - COUNT
+    filters:
+    - discount_exceeds_policy
+    business_terms: []
+    complexity: medium
+- question: What's the average spread over benchmark for won Loan deals?
+  sql: SELECT ROUND(AVG(spread_over_benchmark_pct), 2) AS avg_spread_pct FROM fab_semantic.margin_analysis
+    WHERE deal_outcome = 'Won' AND product_type = 'Loan';
+  tier: full_dynamic
+  tags: margin_analysis
+  metadata:
+    tables:
+    - margin_analysis
+    columns:
+    - deal_outcome
+    - product_type
+    - spread_over_benchmark_pct
+    joins: []
+    intent: aggregation
+    sql_pattern:
+    - aggregation
+    aggregations:
+    - AVG
+    filters:
+    - deal_outcome
+    - product_type
+    business_terms: []
+    complexity: medium
+- question: Compare the average approved price by risk category.
+  sql: SELECT risk_category, ROUND(AVG(approved_price_pct), 2) AS avg_approved_price_pct FROM fab_semantic.pricing_recommendation_view
+    GROUP BY risk_category ORDER BY risk_category;
+  tier: full_dynamic
+  tags: pricing_recommendation_view
+  metadata:
+    tables:
+    - pricing_recommendation_view
+    columns:
+    - approved_price_pct
+    - risk_category
+    joins: []
+    intent: comparison
+    sql_pattern:
+    - aggregation
+    aggregations:
+    - AVG
+    filters: []
+    business_terms: []
+    complexity: medium
+- question: What are the target margins for Corporate customers across products?
+  sql: SELECT product_type, product_name, risk_category, target_margin_pct FROM fab_semantic.segment_pricing_benchmark
+    WHERE customer_segment = 'Corporate' ORDER BY product_type, risk_category LIMIT 50;
+  tier: full_dynamic
+  tags: segment_pricing_benchmark
+  metadata:
+    tables:
+    - segment_pricing_benchmark
+    columns:
+    - customer_segment
+    - product_name
+    - product_type
+    - risk_category
+    - target_margin_pct
+    joins: []
+    intent: ranking
+    sql_pattern:
+    - ranking
+    - bottom_n
+    aggregations: []
+    filters:
+    - customer_segment
+    business_terms:
+    - corporate
+    complexity: low
+- question: Which product and segment combinations have the highest operational cost margin?
+  sql: SELECT product_name, customer_segment, ops_cost_margin_pct FROM fab_semantic.operations_cost_impact
+    ORDER BY ops_cost_margin_pct DESC LIMIT 10;
+  tier: full_dynamic
+  tags: operations_cost_impact
+  metadata:
+    tables:
+    - operations_cost_impact
+    columns:
+    - customer_segment
+    - ops_cost_margin_pct
+    - product_name
+    joins: []
+    intent: ranking
+    sql_pattern:
+    - ranking
+    - top_n
+    aggregations: []
+    filters: []
+    business_terms:
+    - margin
+    complexity: low
+- question: Show the USD funding cost across all tenors, latest first.
+  sql: SELECT tenor, benchmark_index, funding_cost_pct, effective_date FROM fab_curated.treasury_rate_sheet
+    WHERE currency = 'USD' ORDER BY effective_date DESC, tenor LIMIT 50;
+  tier: full_dynamic
+  tags: treasury_rate_sheet
+  metadata:
+    tables:
+    - treasury_rate_sheet
+    columns:
+    - benchmark_index
+    - currency
+    - effective_date
+    - funding_cost_pct
+    - tenor
+    joins: []
+    intent: ranking
+    sql_pattern:
+    - ranking
+    - top_n
+    aggregations: []
+    filters:
+    - currency
+    business_terms: []
+    complexity: low
+- question: For SME Loan deals, what's the average recommended price and how many breached the policy
+    floor?
+  sql: SELECT ROUND(AVG(recommended_price_pct), 2) AS avg_recommended_price_pct, SUM(price_below_policy_floor)
+    AS below_floor_count, COUNT(*) AS total_deals FROM fab_semantic.pricing_recommendation_view WHERE
+    customer_segment = 'SME' AND product_type = 'Loan';
+  tier: full_dynamic
+  tags: pricing_recommendation_view
+  metadata:
+    tables:
+    - pricing_recommendation_view
+    columns:
+    - customer_segment
+    - price_below_policy_floor
+    - product_type
+    - recommended_price_pct
+    joins: []
+    intent: policy_violation
+    sql_pattern:
+    - aggregation
+    aggregations:
+    - AVG
+    - COUNT
+    - SUM
+    filters:
+    - customer_segment
+    - product_type
+    business_terms:
+    - sme
+    complexity: high
+- question: Compare recommended versus approved price by product type.
+  sql: SELECT product_type, ROUND(AVG(recommended_price_pct), 2) AS avg_recommended_price_pct, ROUND(AVG(approved_price_pct),
+    2) AS avg_approved_price_pct FROM fab_semantic.pricing_recommendation_view GROUP BY product_type ORDER
+    BY product_type;
+  tier: full_dynamic
+  tags: pricing_recommendation_view
+  metadata:
+    tables:
+    - pricing_recommendation_view
+    columns:
+    - approved_price_pct
+    - product_type
+    - recommended_price_pct
+    joins: []
+    intent: comparison
+    sql_pattern:
+    - aggregation
+    aggregations:
+    - AVG
+    filters: []
+    business_terms: []
+    complexity: medium
+- question: What recommended prices are we quoting new customers, by segment and product?
+  sql: SELECT customer_segment, product_type, ROUND(AVG(recommended_price_pct), 2) AS avg_recommended_price_pct
+    FROM fab_semantic.new_customer_pricing_view GROUP BY customer_segment, product_type ORDER BY customer_segment,
+    product_type;
+  tier: full_dynamic
+  tags: new_customer_pricing_view
+  metadata:
+    tables:
+    - new_customer_pricing_view
+    columns:
+    - customer_segment
+    - product_type
+    - recommended_price_pct
+    joins: []
+    intent: aggregation
+    sql_pattern:
+    - aggregation
+    aggregations:
+    - AVG
+    filters: []
+    business_terms: []
+    complexity: medium
+- question: How many deals per segment are non-compliant on price, margin, or discount?
+  sql: SELECT customer_segment, SUM(price_below_policy_floor) AS price_breaches, SUM(margin_below_min)
+    AS margin_breaches, SUM(discount_exceeds_policy) AS discount_breaches, COUNT(*) AS total_deals FROM
+    fab_semantic.pricing_recommendation_view GROUP BY customer_segment;
+  tier: full_dynamic
+  tags: pricing_recommendation_view
+  metadata:
+    tables:
+    - pricing_recommendation_view
+    columns:
+    - customer_segment
+    - discount_exceeds_policy
+    - margin_below_min
+    - price_below_policy_floor
+    joins: []
+    intent: policy_violation
+    sql_pattern:
+    - aggregation
+    aggregations:
+    - COUNT
+    - SUM
+    filters: []
+    business_terms:
+    - margin
+    complexity: high
+- question: Which product types have the highest share of below-floor pricing?
+  sql: SELECT product_type, ROUND(SUM(price_below_policy_floor) * 100.0 / COUNT(*), 2) AS pct_below_floor,
+    COUNT(*) AS total_deals FROM fab_semantic.pricing_recommendation_view GROUP BY product_type ORDER
+    BY pct_below_floor DESC;
+  tier: full_dynamic
+  tags: pricing_recommendation_view
+  metadata:
+    tables:
+    - pricing_recommendation_view
+    columns:
+    - pct_below_floor
+    - price_below_policy_floor
+    - product_type
+    joins: []
+    intent: threshold
+    sql_pattern:
+    - aggregation
+    aggregations:
+    - COUNT
+    - SUM
+    filters: []
+    business_terms: []
+    complexity: high
+- question: For high-risk customers, what's the average risk premium and approved price?
+  sql: SELECT ROUND(AVG(risk_premium_pct), 2) AS avg_risk_premium_pct, ROUND(AVG(approved_price_pct),
+    2) AS avg_approved_price_pct FROM fab_semantic.pricing_recommendation_view WHERE risk_category = 'High';
+  tier: full_dynamic
+  tags: pricing_recommendation_view
+  metadata:
+    tables:
+    - pricing_recommendation_view
+    columns:
+    - approved_price_pct
+    - risk_category
+    - risk_premium_pct
+    joins: []
+    intent: aggregation
+    sql_pattern:
+    - aggregation
+    aggregations:
+    - AVG
+    filters:
+    - risk_category
+    business_terms: []
+    complexity: medium
+- question: What are the floor and target margins for SME Trade Finance at each risk level?
+  sql: SELECT risk_category, base_margin_floor_pct, target_margin_pct, max_relationship_discount_pct FROM
+    fab_semantic.segment_pricing_benchmark WHERE customer_segment = 'SME' AND product_type = 'Trade Finance'
+    ORDER BY risk_category;
+  tier: full_dynamic
+  tags: segment_pricing_benchmark
+  metadata:
+    tables:
+    - segment_pricing_benchmark
+    columns:
+    - base_margin_floor_pct
+    - customer_segment
+    - max_relationship_discount_pct
+    - product_type
+    - risk_category
+    - target_margin_pct
+    joins: []
+    intent: threshold
+    sql_pattern:
+    - lookup
+    aggregations: []
+    filters:
+    - customer_segment
+    - product_type
+    business_terms:
+    - sme
+    complexity: low
+- question: What is the average expected margin by customer industry?
+  sql: SELECT cm.industry, ROUND(AVG(prv.expected_margin_pct), 2) AS avg_expected_margin_pct FROM fab_semantic.pricing_recommendation_view
+    prv JOIN fab_curated.customer_master cm ON prv.customer_id = cm.customer_id GROUP BY cm.industry ORDER
+    BY avg_expected_margin_pct DESC;
+  tier: full_dynamic
+  tags: pricing_recommendation_view,customer_master
+  metadata:
+    tables:
+    - pricing_recommendation_view
+    - customer_master
+    columns:
+    - avg_expected_margin_pct
+    - customer_id
+    - expected_margin_pct
+    - industry
+    joins:
+    - pricing_recommendation_view.customer_id = customer_master.customer_id
+    intent: aggregation
+    sql_pattern:
+    - join
+    - aggregation
+    aggregations:
+    - AVG
+    filters: []
+    business_terms:
+    - expected margin
+    - margin
+    complexity: high
+- question: Which industries have the most policy-non-compliant deals?
+  sql: SELECT cm.industry, COUNT(*) AS non_compliant_deals FROM fab_semantic.pricing_recommendation_view
+    prv JOIN fab_curated.customer_master cm ON prv.customer_id = cm.customer_id WHERE prv.policy_compliant
+    = 0 GROUP BY cm.industry ORDER BY non_compliant_deals DESC;
+  tier: full_dynamic
+  tags: pricing_recommendation_view,customer_master
+  metadata:
+    tables:
+    - pricing_recommendation_view
+    - customer_master
+    columns:
+    - customer_id
+    - industry
+    - non_compliant_deals
+    - policy_compliant
+    joins:
+    - pricing_recommendation_view.customer_id = customer_master.customer_id
+    intent: policy_violation
+    sql_pattern:
+    - join
+    - policy_violation
+    - aggregation
+    aggregations:
+    - COUNT
+    filters:
+    - policy_compliant
+    business_terms: []
+    complexity: high
+- question: Compare average net margin for customers with relationship tenure over 5 years versus 5 years
+    or less.
+  sql: SELECT CASE WHEN cm.relationship_tenure_years > 5 THEN 'Over 5 years' ELSE '5 years or less' END
+    AS tenure_band, ROUND(AVG(ma.net_margin_pct), 2) AS avg_net_margin_pct FROM fab_semantic.margin_analysis
+    ma JOIN fab_curated.customer_master cm ON ma.customer_id = cm.customer_id GROUP BY tenure_band ORDER
+    BY avg_net_margin_pct DESC;
+  tier: full_dynamic
+  tags: margin_analysis,customer_master
+  metadata:
+    tables:
+    - margin_analysis
+    - customer_master
+    columns:
+    - avg_net_margin_pct
+    - customer_id
+    - net_margin_pct
+    - relationship_tenure_years
+    - tenure_band
+    joins:
+    - margin_analysis.customer_id = customer_master.customer_id
+    intent: comparison
+    sql_pattern:
+    - case_when
+    - join
+    - aggregation
+    aggregations:
+    - AVG
+    filters: []
+    business_terms:
+    - margin
+    complexity: high
+- question: Average approved price by customer credit-score band.
+  sql: SELECT CASE WHEN cm.credit_score >= 700 THEN 'High (>=700)' WHEN cm.credit_score >= 600 THEN 'Medium
+    (600-699)' ELSE 'Low (<600)' END AS credit_band, ROUND(AVG(prv.approved_price_pct), 2) AS avg_approved_price_pct
+    FROM fab_semantic.pricing_recommendation_view prv JOIN fab_curated.customer_master cm ON prv.customer_id
+    = cm.customer_id GROUP BY credit_band ORDER BY credit_band;
+  tier: full_dynamic
+  tags: pricing_recommendation_view,customer_master
+  metadata:
+    tables:
+    - pricing_recommendation_view
+    - customer_master
+    columns:
+    - approved_price_pct
+    - credit_band
+    - credit_score
+    - customer_id
+    joins:
+    - pricing_recommendation_view.customer_id = customer_master.customer_id
+    intent: aggregation
+    sql_pattern:
+    - case_when
+    - join
+    - aggregation
+    aggregations:
+    - AVG
+    filters: []
+    business_terms: []
+    complexity: high
+- question: What is the total requested deal amount by customer industry?
+  sql: SELECT cm.industry, SUM(hd.requested_amount) AS total_requested_amount FROM fab_curated.historical_deals
+    hd JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id GROUP BY cm.industry ORDER
+    BY total_requested_amount DESC;
+  tier: full_dynamic
+  tags: historical_deals,customer_master
+  metadata:
+    tables:
+    - historical_deals
+    - customer_master
+    columns:
+    - customer_id
+    - industry
+    - requested_amount
+    - total_requested_amount
+    joins:
+    - historical_deals.customer_id = customer_master.customer_id
+    intent: aggregation
+    sql_pattern:
+    - join
+    - aggregation
+    aggregations:
+    - SUM
+    filters: []
+    business_terms: []
+    complexity: high
+- question: Average deal size by customer internal rating.
+  sql: SELECT cm.internal_rating, ROUND(AVG(hd.requested_amount), 0) AS avg_deal_size FROM fab_curated.historical_deals
+    hd JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id GROUP BY cm.internal_rating
+    ORDER BY avg_deal_size DESC;
+  tier: full_dynamic
+  tags: historical_deals,customer_master
+  metadata:
+    tables:
+    - historical_deals
+    - customer_master
+    columns:
+    - avg_deal_size
+    - customer_id
+    - internal_rating
+    - requested_amount
+    joins:
+    - historical_deals.customer_id = customer_master.customer_id
+    intent: aggregation
+    sql_pattern:
+    - join
+    - aggregation
+    aggregations:
+    - AVG
+    filters: []
+    business_terms: []
+    complexity: high
+- question: List deals whose requested amount exceeds the product's maximum ticket size.
+  sql: SELECT hd.deal_id, hd.customer_id, pm.product_name, hd.requested_amount, pm.max_ticket_size FROM
+    fab_curated.historical_deals hd JOIN fab_curated.product_master pm ON hd.product_id = pm.product_id
+    WHERE hd.requested_amount > pm.max_ticket_size LIMIT 50;
+  tier: full_dynamic
+  tags: historical_deals,product_master
+  metadata:
+    tables:
+    - historical_deals
+    - product_master
+    columns:
+    - customer_id
+    - deal_id
+    - max_ticket_size
+    - product_id
+    - product_name
+    - requested_amount
+    joins:
+    - historical_deals.product_id = product_master.product_id
+    intent: threshold
+    sql_pattern:
+    - join
+    - comparison
+    aggregations: []
+    filters:
+    - max_ticket_size
+    - requested_amount
+    business_terms: []
+    complexity: medium
+- question: Compare each product's standard margin to the average expected margin booked on its deals.
+  sql: SELECT pm.product_name, pm.standard_margin_pct, ROUND(AVG(hd.expected_margin_pct), 2) AS avg_booked_margin_pct
+    FROM fab_curated.historical_deals hd JOIN fab_curated.product_master pm ON hd.product_id = pm.product_id
+    GROUP BY pm.product_name, pm.standard_margin_pct ORDER BY pm.product_name LIMIT 50;
+  tier: full_dynamic
+  tags: historical_deals,product_master
+  metadata:
+    tables:
+    - historical_deals
+    - product_master
+    columns:
+    - expected_margin_pct
+    - product_id
+    - product_name
+    - standard_margin_pct
+    joins:
+    - historical_deals.product_id = product_master.product_id
+    intent: ranking
+    sql_pattern:
+    - join
+    - ranking
+    - bottom_n
+    - aggregation
+    aggregations:
+    - AVG
+    filters: []
+    business_terms:
+    - expected margin
+    - margin
+    complexity: high
+- question: Which customer segment and risk band have the most deals priced below their policy minimum
+    margin?
+  sql: SELECT cm.customer_segment, cm.risk_category, COUNT(*) AS deals_below_floor FROM fab_curated.historical_deals
+    hd JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id JOIN fab_curated.pricing_policy
+    pp ON cm.customer_segment = pp.customer_segment AND hd.product_type = pp.product_type AND cm.risk_category
+    = pp.risk_category WHERE hd.expected_margin_pct < pp.min_margin_pct GROUP BY cm.customer_segment,
+    cm.risk_category ORDER BY deals_below_floor DESC;
+  tier: full_dynamic
+  tags: historical_deals,customer_master,pricing_policy
+  metadata:
+    tables:
+    - historical_deals
+    - customer_master
+    - pricing_policy
+    columns:
+    - customer_id
+    - customer_segment
+    - deals_below_floor
+    - expected_margin_pct
+    - min_margin_pct
+    - product_type
+    - risk_category
+    joins:
+    - historical_deals.customer_id = customer_master.customer_id
+    intent: policy_violation
+    sql_pattern:
+    - join
+    - comparison
+    - aggregation
+    aggregations:
+    - COUNT
+    filters:
+    - expected_margin_pct
+    - min_margin_pct
+    business_terms:
+    - customer segment
+    - minimum margin
+    - policy minimum
+    - risk band
+    - margin
+    complexity: high
+- question: What is the average expected margin on won deals by customer industry and product type?
+  sql: SELECT cm.industry, hd.product_type, ROUND(AVG(hd.expected_margin_pct),2) AS avg_expected_margin_pct
+    FROM fab_curated.historical_deals hd JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id
+    JOIN fab_curated.product_master pm ON hd.product_id = pm.product_id WHERE hd.deal_outcome = 'Won'
+    GROUP BY cm.industry, hd.product_type ORDER BY avg_expected_margin_pct DESC LIMIT 50;
+  tier: full_dynamic
+  tags: historical_deals,customer_master,product_master
+  metadata:
+    tables:
+    - historical_deals
+    - customer_master
+    - product_master
+    columns:
+    - avg_expected_margin_pct
+    - customer_id
+    - deal_outcome
+    - expected_margin_pct
+    - industry
+    - product_id
+    - product_type
+    joins:
+    - historical_deals.customer_id = customer_master.customer_id
+    - historical_deals.product_id = product_master.product_id
+    intent: ranking
+    sql_pattern:
+    - join
+    - ranking
+    - top_n
+    - aggregation
+    aggregations:
+    - AVG
+    filters:
+    - deal_outcome
+    business_terms:
+    - expected margin
+    - margin
+    complexity: high
+- question: What is the average deal size by customer internal rating and product type?
+  sql: SELECT cm.internal_rating, hd.product_type, ROUND(AVG(hd.requested_amount),0) AS avg_deal_size
+    FROM fab_curated.historical_deals hd JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id
+    JOIN fab_curated.product_master pm ON hd.product_id = pm.product_id GROUP BY cm.internal_rating, hd.product_type
+    ORDER BY avg_deal_size DESC LIMIT 50;
+  tier: full_dynamic
+  tags: historical_deals,customer_master,product_master
+  metadata:
+    tables:
+    - historical_deals
+    - customer_master
+    - product_master
+    columns:
+    - avg_deal_size
+    - customer_id
+    - internal_rating
+    - product_id
+    - product_type
+    - requested_amount
+    joins:
+    - historical_deals.customer_id = customer_master.customer_id
+    - historical_deals.product_id = product_master.product_id
+    intent: ranking
+    sql_pattern:
+    - join
+    - ranking
+    - top_n
+    - aggregation
+    aggregations:
+    - AVG
+    filters: []
+    business_terms: []
+    complexity: high
+- question: How many deals exceeded the policy discount cap in each customer segment and risk band?
+  sql: SELECT cm.customer_segment, cm.risk_category, COUNT(*) AS discount_breaches FROM fab_curated.historical_deals
+    hd JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id JOIN fab_curated.pricing_policy
+    pp ON cm.customer_segment = pp.customer_segment AND hd.product_type = pp.product_type AND cm.risk_category
+    = pp.risk_category WHERE hd.relationship_discount_pct > pp.max_relationship_discount_pct GROUP BY
+    cm.customer_segment, cm.risk_category ORDER BY discount_breaches DESC LIMIT 50;
+  tier: full_dynamic
+  tags: historical_deals,customer_master,pricing_policy
+  metadata:
+    tables:
+    - historical_deals
+    - customer_master
+    - pricing_policy
+    columns:
+    - customer_id
+    - customer_segment
+    - discount_breaches
+    - max_relationship_discount_pct
+    - product_type
+    - relationship_discount_pct
+    - risk_category
+    joins:
+    - historical_deals.customer_id = customer_master.customer_id
+    intent: policy_violation
+    sql_pattern:
+    - join
+    - comparison
+    - ranking
+    - top_n
+    - aggregation
+    aggregations:
+    - COUNT
+    filters:
+    - max_relationship_discount_pct
+    - relationship_discount_pct
+    business_terms:
+    - customer segment
+    - risk band
+    complexity: high
+- question: How many deals fell below the policy minimum expected margin, by region and product type?
+  sql: SELECT cm.region, hd.product_type, COUNT(*) AS below_min_expected FROM fab_curated.historical_deals
+    hd JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id JOIN fab_curated.pricing_policy
+    pp ON cm.customer_segment = pp.customer_segment AND hd.product_type = pp.product_type AND cm.risk_category
+    = pp.risk_category WHERE hd.expected_margin_pct < pp.min_expected_margin_pct GROUP BY cm.region, hd.product_type
+    ORDER BY below_min_expected DESC LIMIT 50;
+  tier: full_dynamic
+  tags: historical_deals,customer_master,pricing_policy
+  metadata:
+    tables:
+    - historical_deals
+    - customer_master
+    - pricing_policy
+    columns:
+    - below_min_expected
+    - customer_id
+    - customer_segment
+    - expected_margin_pct
+    - min_expected_margin_pct
+    - product_type
+    - region
+    - risk_category
+    joins:
+    - historical_deals.customer_id = customer_master.customer_id
+    intent: policy_violation
+    sql_pattern:
+    - join
+    - comparison
+    - policy_violation
+    - ranking
+    - top_n
+    - aggregation
+    aggregations:
+    - COUNT
+    filters:
+    - expected_margin_pct
+    - min_expected_margin_pct
+    business_terms:
+    - expected margin
+    - policy minimum
+    - margin
+    complexity: high
+- question: List won deals priced below their policy floor margin, with the customer and product names.
+  sql: SELECT hd.deal_id, cm.customer_name, pm.product_name, cm.risk_category, hd.expected_margin_pct,
+    pp.min_margin_pct FROM fab_curated.historical_deals hd JOIN fab_curated.customer_master cm ON hd.customer_id
+    = cm.customer_id JOIN fab_curated.product_master pm ON hd.product_id = pm.product_id JOIN fab_curated.pricing_policy
+    pp ON cm.customer_segment = pp.customer_segment AND hd.product_type = pp.product_type AND cm.risk_category
+    = pp.risk_category WHERE hd.deal_outcome = 'Won' AND hd.expected_margin_pct < pp.min_margin_pct LIMIT
+    50;
+  tier: full_dynamic
+  tags: historical_deals,customer_master,product_master,pricing_policy
+  metadata:
+    tables:
+    - historical_deals
+    - customer_master
+    - product_master
+    - pricing_policy
+    columns:
+    - customer_id
+    - customer_name
+    - customer_segment
+    - deal_id
+    - deal_outcome
+    - expected_margin_pct
+    - min_margin_pct
+    - product_id
+    - product_name
+    - product_type
+    - risk_category
+    joins:
+    - historical_deals.customer_id = customer_master.customer_id
+    - historical_deals.product_id = product_master.product_id
+    intent: policy_violation
+    sql_pattern:
+    - join
+    - comparison
+    aggregations: []
+    filters:
+    - deal_outcome
+    - expected_margin_pct
+    - min_margin_pct
+    business_terms:
+    - margin
+    complexity: high
+- question: What is the total existing exposure by risk category?
+  sql: SELECT risk_category, SUM(existing_exposure_aed) AS total_exposure_aed FROM fab_curated.customer_master
+    GROUP BY risk_category ORDER BY total_exposure_aed DESC;
+  tier: full_dynamic
+  tags: customer_master
+  metadata:
+    tables:
+    - customer_master
+    columns:
+    - existing_exposure_aed
+    - risk_category
+    - total_exposure_aed
+    joins: []
+    intent: aggregation
+    sql_pattern:
+    - aggregation
+    aggregations:
+    - SUM
+    filters: []
+    business_terms:
+    - exposure
+    complexity: medium
+- question: What's the total requested amount of deals by product type?
+  sql: SELECT product_type, SUM(requested_amount) AS total_requested_amount FROM fab_curated.historical_deals
+    GROUP BY product_type ORDER BY total_requested_amount DESC;
+  tier: full_dynamic
+  tags: historical_deals
+  metadata:
+    tables:
+    - historical_deals
+    columns:
+    - product_type
+    - requested_amount
+    - total_requested_amount
+    joins: []
+    intent: aggregation
+    sql_pattern:
+    - aggregation
+    aggregations:
+    - SUM
+    filters: []
+    business_terms: []
+    complexity: medium
+- question: How many deals were booked each quarter, and what was the total requested amount?
+  sql: SELECT YEAR(deal_date) AS deal_year, QUARTER(deal_date) AS deal_quarter, COUNT(*) AS deal_count,
+    SUM(requested_amount) AS total_requested_amount FROM fab_curated.historical_deals GROUP BY YEAR(deal_date),
+    QUARTER(deal_date) ORDER BY deal_year, deal_quarter;
+  tier: full_dynamic
+  tags: historical_deals
+  metadata:
+    tables:
+    - historical_deals
+    columns:
+    - deal_date
+    - deal_quarter
+    - deal_year
+    - requested_amount
+    joins: []
+    intent: trend
+    sql_pattern:
+    - trend
+    - aggregation
+    aggregations:
+    - COUNT
+    - SUM
+    filters: []
+    business_terms: []
+    complexity: high
+- question: Show the monthly count and volume of won deals over time.
+  sql: SELECT YEAR(deal_date) AS deal_year, MONTH(deal_date) AS deal_month, COUNT(*) AS won_deal_count,
+    SUM(requested_amount) AS total_volume_aed FROM fab_curated.historical_deals WHERE deal_outcome = 'Won'
+    GROUP BY YEAR(deal_date), MONTH(deal_date) ORDER BY deal_year, deal_month;
+  tier: full_dynamic
+  tags: historical_deals
+  metadata:
+    tables:
+    - historical_deals
+    columns:
+    - deal_date
+    - deal_month
+    - deal_outcome
+    - deal_year
+    - requested_amount
+    joins: []
+    intent: trend
+    sql_pattern:
+    - trend
+    - aggregation
+    aggregations:
+    - COUNT
+    - SUM
+    filters:
+    - deal_outcome
+    business_terms: []
+    complexity: high
+- question: Which five deals have the lowest net margin?
+  sql: SELECT deal_id, customer_name, product_type, net_margin_pct FROM fab_semantic.margin_analysis ORDER
+    BY net_margin_pct ASC LIMIT 5;
+  tier: full_dynamic
+  tags: margin_analysis
+  metadata:
+    tables:
+    - margin_analysis
+    columns:
+    - customer_name
+    - deal_id
+    - net_margin_pct
+    - product_type
+    joins: []
+    intent: ranking
+    sql_pattern:
+    - ranking
+    - bottom_n
+    aggregations: []
+    filters: []
+    business_terms:
+    - margin
+    complexity: low
+- question: Which ten deals have the largest gap between recommended and approved price?
+  sql: SELECT deal_id, customer_name, product_name, recommended_price_pct, approved_price_pct, (approved_price_pct
+    - recommended_price_pct) AS price_gap_pct FROM fab_semantic.pricing_recommendation_view ORDER BY ABS(approved_price_pct
+    - recommended_price_pct) DESC LIMIT 10;
+  tier: full_dynamic
+  tags: pricing_recommendation_view
+  metadata:
+    tables:
+    - pricing_recommendation_view
+    columns:
+    - approved_price_pct
+    - customer_name
+    - deal_id
+    - product_name
+    - recommended_price_pct
+    joins: []
+    intent: ranking
+    sql_pattern:
+    - ranking
+    - top_n
+    aggregations: []
+    filters: []
+    business_terms: []
+    complexity: low
+- question: Which customers have more than two lost deals?
+  sql: SELECT customer_id, customer_name, lost_deals FROM fab_semantic.customer_360 WHERE lost_deals >
+    2 LIMIT 50;
+  tier: full_dynamic
+  tags: customer_360
+  metadata:
+    tables:
+    - customer_360
+    columns:
+    - customer_id
+    - customer_name
+    - lost_deals
+    joins: []
+    intent: threshold
+    sql_pattern:
+    - threshold
+    aggregations: []
+    filters:
+    - lost_deals
+    business_terms: []
+    complexity: low
+- question: Which deals have a final approved price below their system-recommended price?
+  sql: SELECT deal_id, customer_name, product_name, system_recommended_price_pct, approved_price_pct FROM
+    fab_semantic.pricing_recommendation_view WHERE approved_price_pct < system_recommended_price_pct LIMIT
+    50;
+  tier: full_dynamic
+  tags: pricing_recommendation_view
+  metadata:
+    tables:
+    - pricing_recommendation_view
+    columns:
+    - approved_price_pct
+    - customer_name
+    - deal_id
+    - product_name
+    - system_recommended_price_pct
+    joins: []
+    intent: threshold
+    sql_pattern:
+    - comparison
+    aggregations: []
+    filters:
+    - approved_price_pct
+    - system_recommended_price_pct
+    business_terms: []
+    complexity: low
+- question: Which customers require approval for their relationship discount?
+  sql: SELECT customer_id, customer_name, relationship_discount_pct, policy_max_relationship_discount_pct,
+    approval_required FROM fab_semantic.relationship_discount_view WHERE approval_required = 1 LIMIT 50;
+  tier: full_dynamic
+  tags: relationship_discount_view
+  metadata:
+    tables:
+    - relationship_discount_view
+    columns:
+    - approval_required
+    - customer_id
+    - customer_name
+    - policy_max_relationship_discount_pct
+    - relationship_discount_pct
+    joins: []
+    intent: pricing_analysis
+    sql_pattern:
+    - lookup
+    aggregations: []
+    filters:
+    - approval_required
+    business_terms: []
+    complexity: low

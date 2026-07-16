@@ -190,7 +190,7 @@ def _patch_dense(monkeypatch, rows, scores):
         "name_to_idx": {r["question"]: i for i, r in enumerate(rows)},
         "dense_ok": True,
     }
-    monkeypatch.setattr(example_index, "_dense_scores", lambda q: dict(scores))
+    monkeypatch.setattr(example_index, "dense_scores", lambda q: dict(scores))
 
 
 _GATE_ROWS = [
@@ -224,49 +224,49 @@ def test_threshold_gate_suppresses_all_when_nothing_clears(monkeypatch):
 # --- (5) query-logic-aware corpus enrichment (fights lexical-only matching) --
 
 def test_sql_shape_phrase_ranking_no_aggregate():
-    from sql_agent.memory.example_index import _sql_shape_phrase
+    from sql_agent.memory.sql_pattern import shape_phrase
 
     sql = ("SELECT customer_id, customer_name, win_rate_pct FROM fab_semantic.customer_360 "
            "WHERE customer_segment = 'Corporate' ORDER BY win_rate_pct DESC LIMIT 10;")
-    phrase = _sql_shape_phrase(sql)
-    assert "pattern: ranking" in phrase
+    phrase = shape_phrase(sql)
+    assert "ranking" in phrase
     assert "customer_segment" in phrase  # WHERE column surfaced
 
 
 def test_sql_shape_phrase_grouped_aggregation():
-    from sql_agent.memory.example_index import _sql_shape_phrase
+    from sql_agent.memory.sql_pattern import shape_phrase
 
     sql = ("SELECT customer_segment, SUM(won_deals) AS won, SUM(total_deals) AS total "
            "FROM fab_semantic.customer_360 GROUP BY customer_segment;")
-    phrase = _sql_shape_phrase(sql)
-    assert "pattern: aggregation" in phrase
+    phrase = shape_phrase(sql)
+    assert "aggregation" in phrase
     assert "customer_segment" in phrase  # GROUP BY column surfaced
 
 
 def test_sql_shape_phrase_scalar_aggregate_without_group_by_is_still_aggregation():
     """A bare AVG() with no GROUP BY is a scalar aggregation, not a 'lookup' — the
     classifier must key off the presence of an aggregate FUNCTION, not GROUP BY."""
-    from sql_agent.memory.example_index import _sql_shape_phrase
+    from sql_agent.memory.sql_pattern import shape_phrase
 
     sql = ("SELECT ROUND(AVG(expected_margin_pct), 2) AS avg_margin FROM "
            "fab_semantic.pricing_recommendation_view WHERE customer_segment = 'SME';")
-    assert "pattern: aggregation" in _sql_shape_phrase(sql)
+    assert "aggregation" in shape_phrase(sql)
 
 
 def test_sql_shape_phrase_trend_groups_by_time_dimension():
-    from sql_agent.memory.example_index import _sql_shape_phrase
+    from sql_agent.memory.sql_pattern import shape_phrase
 
     sql = ("SELECT deal_month, SUM(total_deal_volume_aed) AS volume FROM "
            "fab_semantic.customer_360 GROUP BY deal_month;")
-    assert "pattern: trend" in _sql_shape_phrase(sql)
+    assert "trend" in shape_phrase(sql)
 
 
 def test_sql_shape_phrase_unparseable_or_missing_sql_is_never_fatal():
-    from sql_agent.memory.example_index import _sql_shape_phrase
+    from sql_agent.memory.sql_pattern import shape_phrase
 
-    assert _sql_shape_phrase(None) == ""
-    assert _sql_shape_phrase("") == ""
-    assert _sql_shape_phrase("not ( valid sql") == ""
+    assert shape_phrase(None) == ""
+    assert shape_phrase("") == ""
+    assert shape_phrase("not ( valid sql") == ""
 
 
 def test_example_doc_text_combines_question_and_shape():
@@ -331,7 +331,7 @@ def test_rank_examples_weighted_fusion_prefers_dense_end_to_end(monkeypatch):
         "name_to_idx": {r["question"]: i for i, r in enumerate(rows)},
         "dense_ok": True,
     }
-    monkeypatch.setattr(example_index, "_dense_scores",
+    monkeypatch.setattr(example_index, "dense_scores",
                          lambda q: {0: 0.10, 1: 0.95, 2: 0.50})
     monkeypatch.setattr(example_index, "_sparse_ranking", lambda q: [0, 2, 1])
     monkeypatch.setattr(settings, "examples_dense_weight", 0.7)
@@ -339,5 +339,65 @@ def test_rank_examples_weighted_fusion_prefers_dense_end_to_end(monkeypatch):
 
     out = rank_examples("anything", rows, k=1)
     assert out[0]["tags"] == "t1"  # dense's clear winner despite being BM25's worst pick
+
+
+# --- (7) metadata-aware ranking (Phases 4/8-10) — the task's motivating fix --------
+
+_POLICY_VS_AVERAGE_ROWS = [
+    {"question": "What is the average expected margin across all our SME customers' deals?",
+     "validated_sql": ("SELECT ROUND(AVG(expected_margin_pct), 2) AS avg_margin FROM "
+                       "fab_semantic.pricing_recommendation_view WHERE customer_segment = 'SME';"),
+     "tier": "full_dynamic", "tags": "pricing_recommendation_view"},
+    {"question": ("Which customer segment and risk band have the most deals priced "
+                  "below their policy minimum margin?"),
+     "validated_sql": ("SELECT customer_segment, risk_category, COUNT(*) AS violations "
+                       "FROM fab_semantic.pricing_recommendation_view WHERE "
+                       "expected_margin_pct < policy_min_expected_margin_pct "
+                       "GROUP BY customer_segment, risk_category ORDER BY violations DESC;"),
+     "tier": "full_dynamic", "tags": "pricing_recommendation_view"},
+    {"question": "Show me the top 10 customers by total deal volume.",
+     "validated_sql": ("SELECT customer_id, customer_name, total_deal_volume_aed FROM "
+                       "fab_semantic.customer_360 ORDER BY total_deal_volume_aed DESC LIMIT 10;"),
+     "tier": "full_dynamic", "tags": "customer_360"},
+]
+
+
+def test_rank_examples_distinguishes_policy_violation_from_plain_average(monkeypatch):
+    """The task's exact motivating bug: a question about deals priced below the POLICY
+    minimum margin must rank the policy-violation/comparison example above the
+    plain average-margin-by-segment example, even though both share "customer",
+    "segment", and "margin" vocabulary. BM25-only (dense off) so this never needs an
+    embedding model — the metadata-driven factors alone must carry the distinction."""
+    pytest.importorskip("rank_bm25")
+    _dense_off(monkeypatch)
+    from sql_agent.memory.example_index import rank_examples
+
+    # A paraphrase — NOT identical to either stored question — that lexically overlaps
+    # both candidates about equally, so only the metadata-aware scoring can break the tie.
+    question = ("For each pricing segment and risk category, how many deals fell short "
+                "of the required minimum margin threshold?")
+    out = rank_examples(question, _POLICY_VS_AVERAGE_ROWS,
+                        tables_hint=["pricing_recommendation_view"], k=1)
+    assert "policy minimum margin" in out[0]["question"]
+
+
+def test_rank_examples_diversity_pass_avoids_pure_duplicates(monkeypatch):
+    """With k=2 the top pick and the runner-up should not be the two examples that
+    share BOTH the same table AND the same SQL shape when a genuinely different
+    (still relevant-ish) example is available in the pool."""
+    pytest.importorskip("rank_bm25")
+    _dense_off(monkeypatch)
+    from sql_agent.memory.example_index import rank_examples
+
+    rows = _POLICY_VS_AVERAGE_ROWS + [
+        {"question": "Compare win rates between Corporate and SME segments.",
+         "validated_sql": ("SELECT customer_segment, SUM(won_deals) won, SUM(total_deals) total "
+                           "FROM fab_semantic.customer_360 GROUP BY customer_segment;"),
+         "tier": "full_dynamic", "tags": "customer_360"},
+    ]
+    out = rank_examples("pricing and segment analysis", rows,
+                        tables_hint=["pricing_recommendation_view"], k=2)
+    assert len(out) == 2
+    assert len({r["question"] for r in out}) == 2  # no duplicate picks
 
 

@@ -1,0 +1,87 @@
+# Business glossary — business vocabulary -> physical column names.
+#
+# Consumed by sql_agent/semantic_layer/glossary.py. Extend this file (no code change,
+# no redeploy) to teach retrieval/generation a new synonym: add an entry with the
+# canonical term, the physical column(s) it maps to, and a category for grouping in
+# docs/prompts. Terms are matched as whole words, case-insensitive, against the
+# question text (see glossary.py::glossary_expand / matched_terms).
+#
+# category is free-form but kept consistent with the semantic_layer domains
+# (pricing, risk, customer, treasury, deals) so the prompt's glossary block can group
+# related terms together.
+
+terms:
+  - term: "gearing"
+    columns: ["debt_to_equity_ratio"]
+    category: risk
+  - term: "leverage"
+    columns: ["debt_to_equity_ratio"]
+    category: risk
+  - term: "dte"
+    columns: ["debt_to_equity_ratio"]
+    category: risk
+  - term: "exposure"
+    columns: ["existing_exposure_aed"]
+    category: risk
+  - term: "revenue"
+    columns: ["annual_revenue_aed"]
+    category: customer
+  - term: "turnover"
+    columns: ["annual_revenue_aed"]
+    category: customer
+  - term: "margin"
+    columns: ["expected_margin_pct", "net_margin_pct"]
+    category: pricing
+  - term: "win rate"
+    columns: ["win_rate_pct", "deal_outcome"]
+    category: deals
+  - term: "profitability"
+    columns: ["net_margin_pct", "profitability_tier"]
+    category: pricing
+  - term: "capital"
+    columns: ["capital_required_aed", "rwa_aed"]
+    category: risk
+  - term: "rwa"
+    columns: ["rwa_aed", "rwa_risk_weight_pct"]
+    category: risk
+  - term: "tenor"
+    columns: ["tenor"]
+    category: deals
+  - term: "sme"
+    columns: ["customer_segment"]
+    category: customer
+  - term: "corporate"
+    columns: ["customer_segment"]
+    category: customer
+  # --- Terms from the task brief, formalising the policy-margin distinction ------
+  # NOTE: the physical column is named differently across views
+  # (min_expected_margin_pct on pricing_policy/margin_analysis/segment_pricing_benchmark,
+  # policy_min_expected_margin_pct on pricing_recommendation_view) — list both so
+  # retrieval/generation match regardless of which view an example/question touches.
+  - term: "policy margin"
+    columns: ["min_expected_margin_pct", "policy_min_expected_margin_pct"]
+    category: pricing
+  - term: "minimum margin"
+    columns: ["min_expected_margin_pct", "policy_min_expected_margin_pct"]
+    category: pricing
+  - term: "policy minimum"
+    columns: ["min_expected_margin_pct", "policy_min_expected_margin_pct"]
+    category: pricing
+  - term: "expected margin"
+    columns: ["expected_margin_pct"]
+    category: pricing
+  - term: "risk band"
+    columns: ["risk_category"]
+    category: risk
+  - term: "customer segment"
+    columns: ["customer_segment"]
+    category: customer
+  - term: "policy compliant"
+    columns: ["policy_compliant"]
+    category: pricing
+  - term: "policy violation"
+    columns: ["policy_compliant", "margin_below_minimum"]
+    category: pricing
+  - term: "below minimum"
+    columns: ["margin_below_minimum"]
+    category: pricing

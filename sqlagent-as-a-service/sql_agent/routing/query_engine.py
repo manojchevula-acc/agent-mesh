@@ -21,6 +21,7 @@ from sql_agent.formatting import format_error, format_response
 from sql_agent.llm import Step, get_llm, log_usage
 from sql_agent.logging_config import get_logger
 from sql_agent.memory import relevant_examples, render_examples_block
+from sql_agent.semantic_layer.glossary import matched_terms, render_glossary_block
 from sql_agent.semantic_layer.joins import resolve_joins
 from sql_agent.semantic_layer.loader import join_closure
 from sql_agent.semantic_layer.renderer import render_schema_context
@@ -66,12 +67,15 @@ def _generate_sql(prompt: str, step: Step) -> str:
 def _plan_schema(question: str, tables_hint: list[str] | None):
     """Scoped-schema-retrieval front end for the dynamic tier (Component B).
 
-    Returns (schema_context, join_clauses, allowed_join_pairs). When schema retrieval is
-    disabled this is byte-identical to the original behaviour: full schema, no join hints,
-    no join constraint (allowed_join_pairs is None so validator check #7 is skipped).
+    Returns (schema_context, join_clauses, allowed_join_pairs, planned_tables) —
+    ``planned_tables`` is the schema-link plan's chosen table set (plus join bridges),
+    passed to the example ranker as its table signal. When schema retrieval is disabled
+    this is byte-identical to the original behaviour: full schema, no join hints, no
+    join constraint (allowed_join_pairs is None so validator check #7 is skipped), and
+    no planned tables (the ranker falls back to the pre-flight tables_hint).
     """
     if not settings.schema_retrieval_enabled:
-        return render_schema_context(), [], None
+        return render_schema_context(), [], None, None
 
     # 1. RETRIEVE candidates (index lookup, no LLM) -> 2. SCHEMA-LINK plan (planner LLM)
     candidates = select_tables(question, tables_hint)
@@ -80,7 +84,7 @@ def _plan_schema(question: str, tables_hint: list[str] | None):
     join_clauses, allowed_pairs, used_tables = resolve_joins(plan.tables, plan.join_pairs)
     # 4. RENDER only the plan's tables plus any bridge tables the join path needs.
     schema_context = render_schema_context(tables=used_tables)
-    return schema_context, join_clauses, allowed_pairs
+    return schema_context, join_clauses, allowed_pairs, sorted(used_tables)
 
 
 def _widen_schema(question: str, tables_hint: list[str] | None):
@@ -97,7 +101,7 @@ def _widen_schema(question: str, tables_hint: list[str] | None):
     candidates = select_tables(question, tables_hint, top_k=settings.schema_retrieval_widen_top_k)
     used_tables = join_closure(candidates)
     schema_context = render_schema_context(tables=used_tables)
-    return schema_context, [], None
+    return schema_context, [], None, sorted(used_tables)
 
 
 def run_dynamic_pipeline(question: str, tables_hint: list[str] | None = None) -> dict:
@@ -107,30 +111,50 @@ def run_dynamic_pipeline(question: str, tables_hint: list[str] | None = None) ->
     The validator is the hard gate; generation quality is grounded in the semantic
     layer, never invented relationships.
     """
-    schema_context, join_clauses, allowed_pairs = _plan_schema(question, tables_hint)
+    schema_context, join_clauses, allowed_pairs, planned_tables = _plan_schema(question, tables_hint)
+
+    def _join_hints_block(joins: list[str]) -> str:
+        if not joins:
+            return ""
+        return "\n\nJOIN HINTS — use ONLY these declared relationships:\n" + "\n".join(joins) + "\n"
+
+    def _glossary_block_for(q: str) -> str:
+        # Business glossary (Phase 11): only the terms actually present in THIS
+        # question, so the block stays short and doesn't pad the prompt with
+        # irrelevant vocabulary. "" when nothing matches -> no-op on the template.
+        terms = matched_terms(q)
+        log.info("GLOSSARY block | matched_terms=%s", terms or "none")
+        block = render_glossary_block(terms) if terms else ""
+        return f"\n\n{block}\n" if block else ""
+
+    def _examples_block_for(q: str) -> str:
+        # Intent-aware few-shot (Pattern Retriever): the most RELEVANT approved worked
+        # examples for THIS question. The table signal is the schema-link PLANNER's
+        # chosen tables (planned_tables — the most precise "which tables does this
+        # question touch" available, and it exists even when the pre-flight intent
+        # classifier abstained) merged with the pre-flight tables_hint. planned_tables
+        # is read at CALL time, so a widened retry re-ranks examples against the
+        # widened table set automatically. No-op when examples are disabled.
+        if not settings.examples_enabled:
+            return ""
+        hint = list(dict.fromkeys([*(planned_tables or []), *(tables_hint or [])]))
+        block = render_examples_block(
+            relevant_examples(q, tier="full_dynamic", tables_hint=hint or None)
+        )
+        return f"\n\n{block}\n" if block else ""
 
     def _base_prompt(schema: str, joins: list[str]) -> str:
-        # The generator is told which engine it targets, so it writes correct SQL. When a
-        # deterministic join path is known, it is appended so the model uses the exact
-        # declared relationships (and the validator enforces them via check #7).
-        prompt = DYNAMIC_SQL_GENERATION_PROMPT.format(
+        # The generator is told which engine it targets, so it writes correct SQL. Join
+        # hints, the business glossary, and few-shot examples are rendered BEFORE the
+        # question (Phase 11 prompt ordering) rather than appended after formatting, so
+        # the model sees "how to answer" immediately ahead of "what to answer".
+        return DYNAMIC_SQL_GENERATION_PROMPT.format(
             schema_context=schema, question=question,
             dialect=dialect_label(), dialect_notes=dialect_notes(),
+            join_hints_block=_join_hints_block(joins),
+            glossary_block=_glossary_block_for(question),
+            examples_block=_examples_block_for(question),
         )
-        if joins:
-            prompt += ("\n\nJOIN HINTS — use ONLY these declared relationships:\n"
-                       + "\n".join(joins))
-        # Intent-aware few-shot (Pattern Retriever): append the most RELEVANT approved
-        # worked examples for THIS question, biased toward the tables retrieval already
-        # selected. No-op (byte-identical prompt) when examples are disabled or none are
-        # stored. tables_hint doubles as the intent signal that steers example selection.
-        if settings.examples_enabled:
-            block = render_examples_block(
-                relevant_examples(question, tier="full_dynamic", tables_hint=tables_hint)
-            )
-            if block:
-                prompt += "\n\n" + block
-        return prompt
 
     prompt = _base_prompt(schema_context, join_clauses)
     max_attempts = settings.max_self_correction_attempts
@@ -162,7 +186,7 @@ def run_dynamic_pipeline(question: str, tables_hint: list[str] | None = None) ->
             if narrowed:
                 log.info("DYNAMIC cannot-answer on narrowed schema | widening "
                          "(bounded) and retrying | reason=%s", reason)
-                schema_context, join_clauses, allowed_pairs = _widen_schema(question, tables_hint)
+                schema_context, join_clauses, allowed_pairs, planned_tables = _widen_schema(question, tables_hint)
                 narrowed = False
                 prompt = _base_prompt(schema_context, join_clauses)
                 continue
@@ -188,7 +212,7 @@ def run_dynamic_pipeline(question: str, tables_hint: list[str] | None = None) ->
             # the fix; drop the narrow join constraint accordingly (invented joins are
             # still rejected by the table whitelist). Append the validator's exact
             # error and regenerate.
-            schema_context, join_clauses, allowed_pairs = _widen_schema(question, tables_hint)
+            schema_context, join_clauses, allowed_pairs, planned_tables = _widen_schema(question, tables_hint)
             narrowed = False
             prompt = (
                 _base_prompt(schema_context, join_clauses)
@@ -208,7 +232,7 @@ def run_dynamic_pipeline(question: str, tables_hint: list[str] | None = None) ->
             db_error = str(getattr(exc, "orig", exc))
             log.warning("DYNAMIC db-exec error | %s | self-correcting", db_error)
             previous_sql, last_error = sql, db_error
-            schema_context, join_clauses, allowed_pairs = _widen_schema(question, tables_hint)
+            schema_context, join_clauses, allowed_pairs, planned_tables = _widen_schema(question, tables_hint)
             narrowed = False
             prompt = (
                 _base_prompt(schema_context, join_clauses)

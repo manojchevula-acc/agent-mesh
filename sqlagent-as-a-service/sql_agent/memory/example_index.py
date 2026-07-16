@@ -1,13 +1,19 @@
-"""Intent-aware hybrid retrieval over approved few-shot examples (Pattern Retriever).
+"""Semantic (dense+BM25) retrieval layer for approved few-shot examples (Pattern
+Retriever) — the "semantic similarity" term of the weighted score in
+``memory/example_ranker.py``.
 
 Mirrors ``semantic_layer/selector.py``: a DENSE ranker (embeddings — semantic/logical
 recall, over the question PLUS a short description of the example SQL's query logic —
-see ``example_doc_text``) and a SPARSE BM25 ranker (exact banking-jargon / column
-precision, over the question alone), fused with WEIGHTED Reciprocal Rank Fusion so a
-lexical-but-not-logical match can't out-vote a genuine semantic one (see ``_rrf``). The
-fused ranking is then soft-boosted toward examples whose ``tier`` / ``tables`` overlap
-the current question's intent, so the generator sees worked examples that touch the
-same objects it must query.
+see ``example_doc_text``, built from ``memory/sql_pattern.py``) and a SPARSE BM25
+ranker (exact banking-jargon / column precision, over the question alone), fused with
+WEIGHTED Reciprocal Rank Fusion so a lexical-but-not-logical match can't out-vote a
+genuine semantic one (see ``_rrf``).
+
+This module owns ONLY the semantic signal and the corpus cache. Metadata-aware
+filtering, the multi-factor weighted score (table/column/intent/pattern/join overlap),
+and diversity re-ranking live in ``example_ranker.py`` — ``rank_examples`` below is a
+thin backward-compatible delegate so existing callers (``memory/examples.py``,
+``eval/check_example_retrieval.py``) don't need to change their import.
 
 The DENSE side is stored through the swappable ``VectorIndex`` abstraction
 (``get_example_vector_index``): ``memory`` (in-RAM cosine, default for small corpora),
@@ -25,6 +31,7 @@ from __future__ import annotations
 
 from sql_agent.config import settings
 from sql_agent.logging_config import get_logger
+from sql_agent.memory.sql_pattern import shape_phrase, sql_pattern  # noqa: F401 — re-export
 
 log = get_logger("examples")
 
@@ -36,82 +43,6 @@ _CACHE: dict = {"sig": None, "names": None, "bm25": None,
                 "name_to_idx": None, "dense_ok": False}
 
 
-_TIME_HINTS = ("date", "month", "year", "week", "day", "quarter")
-
-
-def _parse_shape(sql: str | None) -> dict | None:
-    """Parse ``sql`` (sqlglot, a core dependency — see eval/sql_introspect.py for the
-    same approach) into the structural facts ``_sql_shape_phrase``/``sql_pattern`` both
-    need. Returns None on any parse failure or missing SQL — callers treat that as "no
-    signal", never an error."""
-    if not sql:
-        return None
-    try:
-        import sqlglot
-        from sqlglot import exp
-
-        ast = sqlglot.parse_one(sql, dialect="mysql")
-    except Exception:  # noqa: BLE001 — enrichment is best-effort, never fatal
-        return None
-    if ast is None:
-        return None
-
-    group = ast.find(exp.Group)
-    where = ast.find(exp.Where)
-    order = ast.find(exp.Order)
-    has_limit = ast.find(exp.Limit) is not None
-
-    group_cols = sorted({c.name.lower() for c in group.find_all(exp.Column)}) if group else []
-    where_cols = sorted({c.name.lower() for c in where.find_all(exp.Column)}) if where else []
-    aggs = sorted({type(f).__name__.upper() for f in ast.find_all(exp.AggFunc)})
-
-    if group_cols and any(hint in col for col in group_cols for hint in _TIME_HINTS):
-        pattern = "trend"
-    elif aggs:
-        pattern = "aggregation"
-    elif order is not None and has_limit:
-        pattern = "ranking"
-    else:
-        pattern = "lookup"
-
-    return {"pattern": pattern, "aggs": aggs, "group_cols": group_cols,
-            "where_cols": where_cols, "has_order": order is not None, "has_limit": has_limit}
-
-
-def sql_pattern(sql: str | None) -> str:
-    """The QUERY LOGIC bucket ``sql`` falls into: ``ranking`` / ``aggregation`` /
-    ``trend`` / ``lookup``, or ``""`` if ``sql`` is missing/unparseable. Public so eval
-    scripts can compare a gold question's own SQL pattern against a retrieved example's
-    (see eval/check_example_retrieval.py) — retrieval quality independent of end-to-end
-    SQL accuracy."""
-    shape = _parse_shape(sql)
-    return shape["pattern"] if shape else ""
-
-
-def _sql_shape_phrase(sql: str | None) -> str:
-    """Best-effort natural-language description of ``sql``'s QUERY LOGIC — ranking vs.
-    grouped aggregation vs. a time trend vs. a plain filtered lookup — plus the columns
-    it groups/filters/orders by. Fed into the dense embedding alongside the question so
-    the vector space clusters examples by what the SQL actually DOES, not just how the
-    question happens to be phrased. Never raises: a bad/missing SQL yields "", so a bad
-    example never breaks corpus building.
-    """
-    shape = _parse_shape(sql)
-    if shape is None:
-        return ""
-
-    bits = [f"Query pattern: {shape['pattern']}."]
-    if shape["aggs"]:
-        bits.append(f"Aggregates: {', '.join(shape['aggs']).lower()}.")
-    if shape["group_cols"]:
-        bits.append(f"Grouped by: {', '.join(shape['group_cols'])}.")
-    if shape["where_cols"]:
-        bits.append(f"Filtered by: {', '.join(shape['where_cols'][:5])}.")
-    if shape["has_order"]:
-        bits.append("Top-N ranked result." if shape["has_limit"] else "Sorted result.")
-    return " ".join(bits)
-
-
 def example_doc_text(row: dict) -> str:
     """Text embedded into the DENSE index for one example: its glossary-expanded
     question plus a short structural description of its SQL's query logic. Used by both
@@ -120,12 +51,19 @@ def example_doc_text(row: dict) -> str:
     from sql_agent.semantic_layer.catalog import glossary_expand
 
     text = glossary_expand(row.get("question", ""))
-    shape = _sql_shape_phrase(row.get("validated_sql"))
+    shape = shape_phrase(row.get("validated_sql"))
     return f"{text}\n{shape}" if shape else text
 
 
 def _corpus_signature(rows: list[dict]) -> tuple:
     return tuple(r.get("question", "") for r in rows)
+
+
+def ensure_built(rows: list[dict]) -> None:
+    """(Re)build the dense/BM25 indices over ``rows`` if the corpus has changed since
+    the last build. Cheap no-op otherwise — safe to call on every retrieval."""
+    if _CACHE["sig"] != _corpus_signature(rows):
+        _build(rows)
 
 
 def _build(rows: list[dict]) -> None:
@@ -175,13 +113,13 @@ def _build(rows: list[dict]) -> None:
                   name_to_idx={n: i for i, n in enumerate(names)}, dense_ok=dense_ok)
 
 
-def _dense_scores(question: str) -> dict[int, float]:
+def dense_scores(question: str) -> dict[int, float]:
     """Cosine similarity of ``question`` to every example (row index -> score).
 
     Queries the dense VectorIndex for the whole corpus (small) and maps each returned
     payload name back to its row index. Returns {} when the dense backend/index is
     unavailable — the confidence gate then can't fire and retrieval falls back to
-    BM25-only ranking without a threshold.
+    BM25-only ranking without a threshold. Assumes ``ensure_built`` has already run.
     """
     if not _CACHE.get("dense_ok"):
         return {}
@@ -229,6 +167,33 @@ def _rrf(rankings: list[tuple[list[int], float]], k: int) -> dict[int, float]:
     return fused
 
 
+def semantic_signal(question: str, rows: list[dict]) -> tuple[dict[int, float], dict[int, float]]:
+    """The "semantic" term for ``example_ranker.py``'s weighted score: hybrid dense+BM25
+    fused via weighted RRF, PLUS the raw dense cosine scores the confidence gate needs.
+
+    Returns ``(fused_rrf_scores, raw_dense_scores)``, both ``{idx: score}``. Rebuilds
+    the corpus index first if ``rows`` changed since the last call. ``fused_rrf_scores``
+    is ``{}`` when NEITHER ranker is available (caller should fall back to a static
+    slice); ``raw_dense_scores`` is ``{}`` whenever the dense backend is off, even if
+    BM25 alone produced a fused ranking.
+    """
+    ensure_built(rows)
+    from sql_agent.semantic_layer.catalog import glossary_expand
+
+    expanded = glossary_expand(question)
+    d_scores = dense_scores(expanded)
+    dense_rank = sorted(d_scores, key=d_scores.get, reverse=True)
+    sparse_rank = _sparse_ranking(expanded)
+    if not dense_rank and not sparse_rank:
+        return {}, d_scores
+    fused = _rrf(
+        [(dense_rank, settings.examples_dense_weight),
+         (sparse_rank, settings.examples_bm25_weight)],
+        settings.rrf_k,
+    )
+    return fused, d_scores
+
+
 def _example_tables(row: dict) -> set[str]:
     return {t.strip() for t in (row.get("tags") or "").split(",") if t.strip()}
 
@@ -240,69 +205,10 @@ def rank_examples(
     tables_hint: list[str] | None = None,
     k: int | None = None,
 ) -> list[dict]:
-    """Return the top-``k`` most relevant example rows for ``question``.
+    """Backward-compatible delegate to ``example_ranker.rank_examples`` (Phases 4/8-10:
+    metadata-filtered candidates, weighted multi-factor score, diversity re-ranking).
+    Kept here so existing imports (``memory/examples.py``, the eval script) don't need
+    to change. See ``example_ranker.py`` for the full algorithm."""
+    from sql_agent.memory.example_ranker import rank_examples as _rank_examples
 
-    Hybrid dense+BM25 RRF, then a soft boost for examples whose ``tier`` matches or whose
-    tagged tables overlap ``tables_hint`` (the intent signal already computed upstream).
-    Never raises: on any failure it returns a static head slice so generation is never
-    starved of (or broken by) examples.
-    """
-    if not rows:
-        return []
-    k = k or settings.examples_top_k
-
-    try:
-        if _CACHE["sig"] != _corpus_signature(rows):
-            _build(rows)
-
-        from sql_agent.semantic_layer.catalog import glossary_expand
-
-        expanded = glossary_expand(question)
-        dense_scores = _dense_scores(expanded)  # {idx: cosine} or {} if dense is off
-        dense_rank = sorted(dense_scores, key=dense_scores.get, reverse=True)
-        sparse_rank = _sparse_ranking(expanded)
-        if not dense_rank and not sparse_rank:  # no rankers available -> static head slice
-            return rows[:k]
-
-        fused = _rrf(
-            [(dense_rank, settings.examples_dense_weight),
-             (sparse_rank, settings.examples_bm25_weight)],
-            settings.rrf_k,
-        )
-
-        # Confidence gate: when a dense signal is available, drop examples whose cosine
-        # similarity to the question is below the floor. If NOTHING clears the floor, inject
-        # no examples at all (schema-only generation, today's baseline) rather than a
-        # misleading one — this makes the "question not in the example set" case provably
-        # safe. Disabled (min_score <= 0) => today's behaviour. No dense signal => no gate.
-        min_score = settings.examples_min_score
-        if dense_scores and min_score > 0:
-            fused = {i: sc for i, sc in fused.items()
-                     if dense_scores.get(i, 0.0) >= min_score}
-            if not fused:
-                best = max(dense_scores.values())
-                log.info("PATTERN retrieve | %d examples | best score %.3f < floor %.2f "
-                         "| no examples injected", len(rows), best, min_score)
-                return []
-
-        # Soft intent boost: nudge (never hard-filter) examples that touch the same
-        # tables / tier as the live question. Bonus is scaled to the RRF magnitude so it
-        # re-orders near-ties without overriding a clearly stronger textual match.
-        hint = {t for t in (tables_hint or []) if t}
-        max_score = max(fused.values())
-        for idx, row in enumerate(rows):
-            if idx not in fused:
-                continue
-            if hint and (_example_tables(row) & hint):
-                fused[idx] += 0.5 * max_score
-            if tier and row.get("tier") == tier:
-                fused[idx] += 0.1 * max_score
-
-        ordered = sorted(fused, key=lambda i: fused[i], reverse=True)
-        top = [rows[i] for i in ordered[:k]]
-        log.info("PATTERN retrieve | %d examples | picked=%s",
-                 len(rows), [r.get("question", "")[:48] for r in top])
-        return top
-    except Exception as exc:  # noqa: BLE001 — retrieval must never break the turn
-        log.warning("example retrieval failed | %s | static head slice", exc)
-        return rows[:k]
+    return _rank_examples(question, rows, tier=tier, tables_hint=tables_hint, k=k)

@@ -153,6 +153,28 @@ class Settings(BaseSettings):
         "Represent this business question for retrieving a SQL example with the same "
         "query logic and business intent: ")
 
+    # --- Production upgrade: metadata-aware hybrid retrieval + re-ranking ------
+    # Final score = semantic + table + column + intent + pattern + join (see
+    # memory/example_ranker.py). "semantic" is the EXISTING dense+BM25 RRF fusion above
+    # (examples_dense_weight/examples_bm25_weight tune what happens INSIDE that term);
+    # these six weights combine it with the metadata-overlap factors. Configurable, not
+    # hardcoded, and need not sum to exactly 1.0 (the ranker normalises defensively).
+    examples_weight_semantic: float = 0.35
+    examples_weight_table: float = 0.25
+    examples_weight_column: float = 0.15
+    examples_weight_intent: float = 0.10
+    examples_weight_pattern: float = 0.10
+    examples_weight_join: float = 0.05
+    # Phase 10: candidate pool re-ranked by the full weighted formula before the
+    # diversity pass narrows to examples_top_k. Larger than examples_top_k so
+    # re-ranking has real candidates to work with beyond the raw semantic order.
+    examples_candidate_pool_k: int = 20
+    # MMR-style diversity trade-off when picking the final examples_top_k from the
+    # scored pool: 1.0 = pure relevance (today's behaviour, no diversity penalty),
+    # 0.0 = pure novelty. 0.5 balances teaching the model varied reasoning patterns
+    # against still picking genuinely relevant examples.
+    examples_diversity_lambda: float = 0.5
+
     # --- Production upgrade: intent detection (Component A) --------------------
     # Every new stage below is flag-gated and defaults to today's behaviour.
     intent_detection_enabled: bool = False   # run the intent node (shadow / advisory)

@@ -48,8 +48,10 @@ def main() -> None:
                          "(and check EXAMPLES_ENABLED / AGENT_DB_DSN).")
 
     names = [r["question"] for r in rows]
-    # Payload: tier + tags for reference/inspection (not used by similarity search).
-    payloads = {r["question"]: {"tier": r.get("tier", ""), "tags": r.get("tags", "")}
+    # Payload: tier + tags + metadata for reference/inspection (not used by similarity
+    # search — the ranker reads metadata from the metadata DB, not the vector payload).
+    payloads = {r["question"]: {"tier": r.get("tier", ""), "tags": r.get("tags", ""),
+                                "metadata": r.get("metadata") or ""}
                 for r in rows}
 
     print(f"Examples to index : {len(names)}")

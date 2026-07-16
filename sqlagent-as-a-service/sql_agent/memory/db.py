@@ -19,6 +19,8 @@ from sqlalchemy import (
     Text,
     create_engine,
     func,
+    inspect,
+    text,
 )
 
 from sql_agent.config import settings
@@ -76,6 +78,12 @@ examples = Table(
     Column("tags", String(256)),
     Column("status", String(16), default="candidate", index=True),  # candidate | approved | retired
     Column("approved_by", String(64)),
+    # JSON-serialized dict (tables/columns/joins/intent/sql_pattern/aggregations/
+    # filters/business_terms/complexity — see memory/example_metadata.py). Stored as
+    # TEXT rather than a dialect-specific JSON type for cross-DB portability (this
+    # table also runs on SQLite in dev); parsed by the app layer, same convention as
+    # ``tags`` (comma-separated) above. NULL/blank for examples predating this column.
+    Column("metadata", Text),
     Column("created_at", DateTime(timezone=True), server_default=func.now()),
 )
 
@@ -93,7 +101,19 @@ def get_engine():
 
 
 def init_tables() -> None:
-    """Create the metadata tables if a metadata DB is configured."""
+    """Create the metadata tables if a metadata DB is configured.
+
+    Also defensively adds the ``examples.metadata`` column to a pre-existing DB whose
+    ``examples`` table predates it — ``metadata.create_all`` only creates MISSING
+    tables, never new columns on an existing one, and this repo has no separate
+    migration tool. Idempotent and safe to call every process start."""
     engine = get_engine()
-    if engine is not None:
-        metadata.create_all(engine)
+    if engine is None:
+        return
+    metadata.create_all(engine)
+    inspector = inspect(engine)
+    if "examples" in inspector.get_table_names():
+        cols = {c["name"] for c in inspector.get_columns("examples")}
+        if "metadata" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE examples ADD COLUMN metadata TEXT"))
