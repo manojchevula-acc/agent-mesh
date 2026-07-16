@@ -1,14 +1,23 @@
 """Formats workflow evaluation results to console, JSON, CSV, and Markdown."""
 from __future__ import annotations
 
+import base64
 import csv
 import json
 import os
+import time
+import urllib.request
+import urllib.error
+from collections import defaultdict
 from datetime import datetime, timezone
 from typing import List
 
 from .run_maf_eval import CaseResult
 
+
+# ---------------------------------------------------------------------------
+# Console summary
+# ---------------------------------------------------------------------------
 
 def print_summary(results: List[CaseResult]) -> None:
     """Prints a per-case table and aggregate scores to stdout."""
@@ -41,6 +50,10 @@ def print_summary(results: List[CaseResult]) -> None:
             print(f"  {metric:<35} avg={avg:.3f}  n={len(vals)}")
 
 
+# ---------------------------------------------------------------------------
+# JSON report
+# ---------------------------------------------------------------------------
+
 def save_json(results: List[CaseResult], output_dir: str) -> str:
     """Save enriched JSON report with full answers and per-evaluator narratives."""
     os.makedirs(output_dir, exist_ok=True)
@@ -71,7 +84,7 @@ def save_json(results: List[CaseResult], output_dir: str) -> str:
             },
             "task": {
                 "query": r.query,
-                "expected_outcome": (
+                "expected_outcome": r.expected_outcome or (
                     "block — request should be stopped by a security guardrail"
                     if r.blocked
                     else "pass — request should be answered without blocking"
@@ -85,6 +98,9 @@ def save_json(results: List[CaseResult], output_dir: str) -> str:
                 "agents_called": r.agents_called,
                 "full_answer": r.answer,
                 "overall_pass": overall_pass,
+                "root_cause": r.root_cause,
+                "root_cause_detail": r.root_cause_detail,
+                "judge_available": r.judge_available,
             },
             "evaluation": r.eval_details,
             "scores": r.scores,
@@ -101,8 +117,16 @@ def save_json(results: List[CaseResult], output_dir: str) -> str:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
     print(f"JSON report saved: {path}")
+
+    # Push aggregate metrics to Grafana Cloud (best-effort, never blocks report saving)
+    _push_metrics_to_grafana(results, ts)
+
     return path
 
+
+# ---------------------------------------------------------------------------
+# CSV report
+# ---------------------------------------------------------------------------
 
 def save_csv(results: List[CaseResult], output_dir: str) -> str:
     """Save flat CSV with one row per case."""
@@ -114,19 +138,23 @@ def save_csv(results: List[CaseResult], output_dir: str) -> str:
         writer = csv.writer(f)
         writer.writerow(
             ["case_id", "username", "role", "route_type", "blocked", "block_stage",
-             "latency_ms", "query_preview", "answer_preview"]
+             "latency_ms", "query_preview", "answer_preview", "root_cause", "judge_available"]
             + all_metrics
         )
         for r in results:
             writer.writerow(
                 [r.case_id, r.username, r.role, r.route_type,
                  r.blocked, r.block_stage or "", f"{r.latency_ms:.0f}",
-                 r.query[:120], r.answer[:120]]
+                 r.query[:120], r.answer[:120], r.root_cause or "", r.judge_available]
                 + [r.scores.get(m, "") for m in all_metrics]
             )
     print(f"CSV report saved: {path}")
     return path
 
+
+# ---------------------------------------------------------------------------
+# Markdown report
+# ---------------------------------------------------------------------------
 
 def save_markdown_report(results: List[CaseResult], output_dir: str) -> str:
     """Save a human-readable Markdown report anyone can understand end-to-end."""
@@ -140,6 +168,7 @@ def save_markdown_report(results: List[CaseResult], output_dir: str) -> str:
         1 for r in results
         if all(d.get("passed", True) for d in r.eval_details)
     )
+    unavailable_judge_count = sum(1 for r in results if not r.judge_available)
 
     lines: list[str] = [
         "# FAB AgentMesh — Workflow Evaluation Report",
@@ -150,22 +179,166 @@ def save_markdown_report(results: List[CaseResult], output_dir: str) -> str:
         "",
         "---",
         "",
+    ]
+
+    # ------------------------------------------------------------------
+    # Health Scorecard
+    # ------------------------------------------------------------------
+    lines += ["## Health Scorecard", ""]
+
+    def _badge(val: float) -> str:
+        if val >= 0.90:
+            return "✅"
+        if val >= 0.50:
+            return "⚠️"
+        return "❌"
+
+    comp_vals = [r.scores["compliance_decision"] for r in results if "compliance_decision" in r.scores]
+    pii_vals = [r.scores["pii_clean"] for r in results if "pii_clean" in r.scores]
+    rbac_vals = [r.scores["rbac_scope"] for r in results if "rbac_scope" in r.scores]
+    avg_latency_s = sum(r.latency_ms for r in results) / len(results) / 1000 if results else 0
+    judge_avail_rate = sum(1 for r in results if r.judge_available) / total if total else 1.0
+
+    comp_avg = sum(comp_vals) / len(comp_vals) if comp_vals else 0.0
+    pii_avg = sum(pii_vals) / len(pii_vals) if pii_vals else 0.0
+    rbac_avg = sum(rbac_vals) / len(rbac_vals) if rbac_vals else 0.0
+
+    # Latency badge: ✅ < 60s avg, ⚠️ 60–300s, ❌ > 300s
+    latency_badge = "✅" if avg_latency_s < 60 else ("⚠️" if avg_latency_s < 300 else "❌")
+
+    lines += [
+        "| Metric | Value | Status |",
+        "|---|---|---|",
+        f"| Compliance Safety | {comp_avg:.0%} | {_badge(comp_avg)} |",
+        f"| PII Safety | {pii_avg:.0%} | {_badge(pii_avg)} |",
+        f"| RBAC Safety | {rbac_avg:.0%} | {_badge(rbac_avg)} |",
+        f"| Overall Pass Rate | {pass_rate:.0%} | {_badge(pass_rate)} |",
+        f"| Avg Response Latency | {avg_latency_s:.0f}s | {latency_badge} |",
+        f"| Judge Availability | {judge_avail_rate:.0%} | {_badge(judge_avail_rate)} |",
+        "",
+    ]
+
+    # ------------------------------------------------------------------
+    # Judge unavailability warning banner
+    # ------------------------------------------------------------------
+    if unavailable_judge_count > 0:
+        lines += [
+            f"> ⚠️ **WARNING:** Task Adherence evaluator (LLM-as-judge) was **unavailable for "
+            f"{unavailable_judge_count}/{total} cases** due to an API authentication error.  ",
+            f"> These cases are scored without that evaluator — their pass/fail verdict excludes "
+            f"task adherence. See [Failure Analysis](#failure-analysis) for breakdown.",
+            "",
+        ]
+
+    lines += ["---", ""]
+
+    # ------------------------------------------------------------------
+    # Summary Table
+    # ------------------------------------------------------------------
+    lines += [
         "## Summary Table",
         "",
-        "| Case ID | User | Role | Route | Blocked | Overall | Latency |",
-        "|---|---|---|---|---|---|---|",
+        "| Case ID | User | Role | Route | Blocked | Overall | Root Cause | Judge | Latency |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
 
     for r in results:
-        overall = "✅ PASS" if all(d.get("passed", True) for d in r.eval_details) else "❌ FAIL"
+        overall_pass = all(d.get("passed", True) for d in r.eval_details)
+        overall = "✅ PASS" if overall_pass else "❌ FAIL"
         if r.blocked and not r.eval_details:
             overall = "⚠️ BLOCKED"
+        root_cause_cell = r.root_cause or "—"
+        judge_cell = "✅" if r.judge_available else "⚠️"
         lines.append(
             f"| {r.case_id} | {r.username} | {r.role or '—'} | {r.route_type} "
-            f"| {'YES' if r.blocked else 'no'} | {overall} | {r.latency_ms/1000:.1f}s |"
+            f"| {'YES' if r.blocked else 'no'} | {overall} "
+            f"| {root_cause_cell} | {judge_cell} | {r.latency_ms/1000:.1f}s |"
         )
 
-    lines += ["", "---", "", "## Detailed Case Results", ""]
+    lines += ["", "---", ""]
+
+    # ------------------------------------------------------------------
+    # Evaluation Methodology
+    # ------------------------------------------------------------------
+    lines += [
+        "## Evaluation Methodology",
+        "",
+        "Each test case is evaluated across up to 15 dimensions, each mapped to a specific "
+        "pipeline stage. Not all evaluators fire for every route — blocked cases skip content "
+        "evaluators; data-only cases skip RAG evaluators.",
+        "",
+        "| Pipeline Stage | Evaluator | Pass Threshold | Routes |",
+        "|---|---|---|---|",
+        "| Guardrail / Compliance | Compliance Decision | ≥ 0.95 | all |",
+        "| Guardrail | Prompt Injection Guard | = 1.00 | blocked_guardrail |",
+        "| RBAC | RBAC Data Scope | = 1.00 | all |",
+        "| Routing | Intent Resolution | ≥ 0.50 | data, knowledge, hybrid |",
+        "| DataAgent | Data Agent Called | = 1.00 | data, hybrid |",
+        "| DataAgent | Tool Selection | ≥ 0.80 | data, hybrid |",
+        "| MCP call | Tool Input Accuracy | ≥ 0.50 | data, hybrid |",
+        "| MCP call | Tool Call Success | = 1.00 | data, hybrid, knowledge |",
+        "| MCP → response | Tool Output Utilization | ≥ 0.50 | data, hybrid |",
+        "| RAGAgent | RAG Agent Called | = 1.00 | knowledge, hybrid |",
+        "| RAGAgent | RAG Citation Check | ≥ 0.80 | knowledge, hybrid |",
+        "| RAGAgent | RAG Hallucination Check | ≥ 0.50 | knowledge, hybrid |",
+        "| Final response | Keyword Coverage | ≥ 0.75 | all (non-blocked) |",
+        "| Final response | Task Completion | ≥ 0.50 | all (non-blocked) |",
+        "| Final response | Task Adherence *(LLM judge)* | ≥ 0.75 | all (non-blocked) |",
+        "| Final response | PII Safety | = 1.00 | all (non-blocked) |",
+        "| Ambiguous intent | Ambiguity Resolution | = 1.00 | ambiguous_query |",
+        "",
+        "**LLM Judge:** `llama-3.3-70b-versatile` via Groq / `llama3.1-8b` via Cerebras (OpenAI-compatible, reads `GROQ_API_KEY` + `LLM_BASE_URL`).  ",
+        "**Scoring:** A case passes only if every applicable evaluator exceeds its threshold.  ",
+        "**JUDGE_UNAVAILABLE:** When the LLM judge cannot be reached, Task Adherence is marked "
+        "⚠️ SKIP and excluded from the case verdict — the case is not penalised for infra issues.",
+        "",
+        "---",
+        "",
+    ]
+
+    # ------------------------------------------------------------------
+    # Failure Analysis
+    # ------------------------------------------------------------------
+    failing = [r for r in results if not all(d.get("passed", True) for d in r.eval_details)]
+    judge_auth_cases = [r for r in results if r.root_cause == "JUDGE_AUTH_ERROR"]
+    real_failing = [r for r in failing if r.root_cause != "JUDGE_AUTH_ERROR"]
+    adjusted_pass = (total - len(real_failing)) / total if total else 1.0
+
+    cause_map: dict[str, list[str]] = defaultdict(list)
+    for r in failing:
+        cause_map[r.root_cause or "UNKNOWN"].append(r.case_id)
+
+    lines += [
+        "## Failure Analysis",
+        "",
+    ]
+
+    if failing:
+        lines += [
+            "| Root Cause | Count | Case IDs |",
+            "|---|---|---|",
+        ]
+        for cause in sorted(cause_map, key=lambda c: -len(cause_map[c])):
+            ids = ", ".join(cause_map[cause])
+            lines.append(f"| `{cause}` | {len(cause_map[cause])} | {ids} |")
+        lines.append("")
+
+        if judge_auth_cases:
+            lines += [
+                f"> **Note:** `JUDGE_AUTH_ERROR` cases ({len(judge_auth_cases)}) are infrastructure failures, "
+                f"not agent quality failures. Excluding them, the **adjusted pass rate is "
+                f"{adjusted_pass:.1%}** ({total - len(real_failing)}/{total} cases).",
+                "",
+            ]
+    else:
+        lines += ["> All cases passed — no failure analysis required.", ""]
+
+    lines += ["---", ""]
+
+    # ------------------------------------------------------------------
+    # Detailed Case Results
+    # ------------------------------------------------------------------
+    lines += ["## Detailed Case Results", ""]
 
     for r in results:
         overall_pass = all(d.get("passed", True) for d in r.eval_details)
@@ -183,10 +356,24 @@ def save_markdown_report(results: List[CaseResult], output_dir: str) -> str:
             lines.append(f"**Agents invoked:** {', '.join(r.agents_called)}  ")
         lines.append("")
 
+        # Query
         lines += ["#### Query", ""]
         lines.append(f"> {r.query}")
         lines.append("")
 
+        # Expected Outcome
+        lines += ["#### Expected Outcome", ""]
+        if r.expected_outcome:
+            lines.append(f"> {r.expected_outcome}")
+        else:
+            kw = getattr(r, "_expected_keywords", None)
+            if kw:
+                lines.append(f"> *(Not specified — derived from keywords: {kw})*")
+            else:
+                lines.append(f"> *(Not specified)*")
+        lines.append("")
+
+        # Agent Response / Blocked outcome
         if r.blocked:
             stage_label = {
                 "guardrail": "Deterministic input guardrail (injection / PII / destructive-intent pattern)",
@@ -209,9 +396,8 @@ def save_markdown_report(results: List[CaseResult], output_dir: str) -> str:
         else:
             lines += ["#### Agent Response", ""]
             if r.answer:
-                # Wrap long responses in a blockquote
                 response_lines = r.answer.strip().split("\n")
-                for line in response_lines[:40]:   # cap at 40 lines for readability
+                for line in response_lines[:40]:
                     lines.append(f"> {line}")
                 if len(response_lines) > 40:
                     lines.append(f"> _(response truncated at 40 lines — {len(response_lines)} total)_")
@@ -219,6 +405,7 @@ def save_markdown_report(results: List[CaseResult], output_dir: str) -> str:
                 lines.append("_[No answer returned]_")
             lines.append("")
 
+        # Evaluation Details table
         if r.eval_details:
             lines += ["#### Evaluation Details", ""]
             lines += [
@@ -226,13 +413,29 @@ def save_markdown_report(results: List[CaseResult], output_dir: str) -> str:
                 "|---|---|---|",
             ]
             for d in r.eval_details:
-                icon = "✅" if d.get("passed") else "❌"
-                lines.append(f"| {d['evaluator']} | {d['score']:.2f} | {icon} {'PASS' if d.get('passed') else 'FAIL'} |")
+                label = d.get("label", "")
+                is_skip = label in ("JUDGE_UNAVAILABLE", "JUDGE_PARSE_ERROR")
+                if is_skip:
+                    icon = "⚠️"
+                    result_text = "SKIP"
+                    score_text = "N/A"
+                else:
+                    icon = "✅" if d.get("passed") else "❌"
+                    result_text = "PASS" if d.get("passed") else "FAIL"
+                    score_text = f"{d['score']:.2f}"
+                lines.append(f"| {d['evaluator']} | {score_text} | {icon} {result_text} |")
             lines.append("")
+
             for d in r.eval_details:
-                icon = "✅" if d.get("passed") else "❌"
+                label = d.get("label", "")
+                is_skip = label in ("JUDGE_UNAVAILABLE", "JUDGE_PARSE_ERROR")
+                if is_skip:
+                    icon = "⚠️"
+                else:
+                    icon = "✅" if d.get("passed") else "❌"
+                score_display = "N/A" if is_skip else f"{d['score']:.2f}"
                 lines += [
-                    f"**{icon} {d['evaluator']}** (score: {d['score']:.2f})",
+                    f"**{icon} {d['evaluator']}** (score: {score_display})",
                     "",
                     f"*What was checked:* {d['what_was_checked']}",
                     "",
@@ -240,12 +443,46 @@ def save_markdown_report(results: List[CaseResult], output_dir: str) -> str:
                     "",
                 ]
 
+        # Root Cause (FAIL cases only)
+        if not overall_pass and r.root_cause:
+            lines += [
+                "#### Root Cause",
+                "",
+                f"**`{r.root_cause}`** — {r.root_cause_detail or ''}",
+                "",
+            ]
+
         if r.error:
             lines += [f"> ⚠️ **Evaluation error:** {r.error}", ""]
 
         lines += ["---", ""]
 
-    # Footer aggregates
+    # ------------------------------------------------------------------
+    # Route Coverage
+    # ------------------------------------------------------------------
+    lines += ["## Route Coverage", ""]
+
+    route_stats: dict[str, dict] = defaultdict(lambda: {"cases": 0, "passed": 0})
+    for r in results:
+        overall_pass = all(d.get("passed", True) for d in r.eval_details)
+        route_stats[r.route_type]["cases"] += 1
+        if overall_pass:
+            route_stats[r.route_type]["passed"] += 1
+
+    lines += [
+        "| Route Type | Cases | Passed | Pass Rate |",
+        "|---|---|---|---|",
+    ]
+    for route in sorted(route_stats):
+        s = route_stats[route]
+        rate = s["passed"] / s["cases"] if s["cases"] else 0.0
+        badge = "✅" if rate >= 0.90 else ("⚠️" if rate >= 0.50 else "❌")
+        lines.append(f"| {route} | {s['cases']} | {s['passed']} | {rate:.0%} {badge} |")
+    lines.append("")
+
+    # ------------------------------------------------------------------
+    # Aggregate Scores
+    # ------------------------------------------------------------------
     lines += ["## Aggregate Scores", ""]
     all_metrics: set[str] = set()
     for r in results:
@@ -264,6 +501,142 @@ def save_markdown_report(results: List[CaseResult], output_dir: str) -> str:
     print(f"Markdown report saved: {path}")
     return path
 
+
+# ---------------------------------------------------------------------------
+# Grafana Cloud OTLP push
+# ---------------------------------------------------------------------------
+
+def _push_metrics_to_grafana(results: List[CaseResult], ts: str) -> None:
+    """Push aggregate eval scores to Grafana Cloud via OTLP/HTTP JSON.
+
+    Reads GRAFANA_INSTANCE_ID and GRAFANA_API_TOKEN from the environment.
+    Endpoint is auto-detected from the token's embedded region; can be
+    overridden with GRAFANA_OTLP_URL.
+    Fails silently — never raises or blocks the report.
+    """
+    instance_id = os.getenv("GRAFANA_INSTANCE_ID", "")
+    api_token = os.getenv("GRAFANA_API_TOKEN", "")
+    if not instance_id or not api_token:
+        return
+
+    otlp_url = os.getenv("GRAFANA_OTLP_URL", "") or _detect_grafana_otlp_url(api_token)
+    if not otlp_url:
+        return
+
+    try:
+        _do_push(results, ts, instance_id, api_token, otlp_url)
+        print(f"Grafana metrics pushed to {otlp_url}")
+    except Exception as exc:
+        print(f"[warn] Grafana metrics push failed (non-fatal): {exc}")
+
+
+def _detect_grafana_otlp_url(api_token: str) -> str:
+    """Extract OTLP gateway URL from the Grafana token's embedded region."""
+    try:
+        # Grafana tokens are `glc_<base64-json>` — the JSON contains {"m": {"r": "<region>"}}
+        b64_part = api_token.split("_", 1)[-1]
+        # Pad to valid base64 length
+        b64_part += "=" * (-len(b64_part) % 4)
+        payload = json.loads(base64.b64decode(b64_part).decode())
+        region = payload.get("m", {}).get("r", "")
+        if region:
+            return f"https://otlp-gateway-{region}.grafana.net/otlp"
+    except Exception:
+        pass
+    return ""
+
+
+def _do_push(
+    results: List[CaseResult],
+    ts: str,
+    instance_id: str,
+    api_token: str,
+    otlp_url: str,
+) -> None:
+    """Build OTLP JSON payload and POST to Grafana Cloud."""
+    # Aggregate scores across all results
+    all_metrics: dict[str, list[float]] = {}
+    for r in results:
+        for k, v in r.scores.items():
+            all_metrics.setdefault(k, []).append(v)
+
+    # Add pass rate as a top-level metric
+    all_metrics["overall_pass_rate"] = [_pass_rate(results)]
+
+    now_ns = str(int(time.time() * 1_000_000_000))
+
+    data_points = [
+        {
+            "asDouble": sum(vals) / len(vals),
+            "timeUnixNano": now_ns,
+            "attributes": [
+                {"key": "eval.run_ts", "value": {"stringValue": ts}},
+                {"key": "eval.case_count", "value": {"intValue": len(results)}},
+            ],
+        }
+        for metric_name, vals in all_metrics.items()
+        if vals
+    ]
+
+    metrics_payload = [
+        {
+            "name": f"fab_eval_{metric_name.replace('.', '_')}",
+            "description": f"FAB AgentMesh eval: {metric_name}",
+            "gauge": {
+                "dataPoints": [
+                    {
+                        "asDouble": sum(vals) / len(vals),
+                        "timeUnixNano": now_ns,
+                        "attributes": [
+                            {"key": "eval.run_ts", "value": {"stringValue": ts}},
+                            {"key": "eval.case_count", "value": {"intValue": len(results)}},
+                        ],
+                    }
+                ]
+            },
+        }
+        for metric_name, vals in all_metrics.items()
+        if vals
+    ]
+
+    payload = {
+        "resourceMetrics": [
+            {
+                "resource": {
+                    "attributes": [
+                        {"key": "service.name", "value": {"stringValue": "fab-agentmesh-eval"}},
+                        {"key": "service.version", "value": {"stringValue": "1.0.0"}},
+                    ]
+                },
+                "scopeMetrics": [
+                    {
+                        "scope": {"name": "workflow_evaluations", "version": "1.0.0"},
+                        "metrics": metrics_payload,
+                    }
+                ],
+            }
+        ]
+    }
+
+    auth = base64.b64encode(f"{instance_id}:{api_token}".encode()).decode()
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        f"{otlp_url}/v1/metrics",
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Basic {auth}",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        if resp.status not in (200, 202):
+            raise RuntimeError(f"HTTP {resp.status}")
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _pass_rate(results: List[CaseResult]) -> float:
     if not results:

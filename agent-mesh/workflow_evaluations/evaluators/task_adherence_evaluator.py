@@ -1,4 +1,4 @@
-"""Task adherence evaluator — LLM-as-judge via Groq qwen/qwen3.6-27b.
+"""Task adherence evaluator — LLM-as-judge via Groq/Cerebras (OpenAI-compatible).
 
 Scores whether the agent response directly addresses the banking query.
   1.0 — response directly addresses the pricing/policy/data query
@@ -20,7 +20,10 @@ for _p in (str(_MESH_ROOT), str(_EVAL_ROOT)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-_JUDGE_MODEL = "qwen/qwen3.6-27b"
+# Model selection: Groq uses llama-3.3-70b-versatile; Cerebras uses llama3.1-8b
+_GROQ_MODEL = "llama-3.3-70b-versatile"
+_CEREBRAS_MODEL = "llama3.1-8b"
+
 _JUDGE_PROMPT = """\
 You are an objective evaluator for a banking AI assistant (FAB — First Abu Dhabi Bank).
 Score the response below on a scale of 0.0, 0.5, or 1.0.
@@ -38,8 +41,7 @@ User query: {query}
 Agent response: {response}
 
 Reply with ONLY a JSON object like: {{"score": 1.0, "reason": "..."}}
-Do not include any other text.
-"""
+Do not include any other text."""
 
 
 def task_adherence_score(
@@ -51,16 +53,17 @@ def task_adherence_score(
     if not response or not response.strip():
         return EvalScore(0.0, "EMPTY_RESPONSE", "No response to evaluate")
 
-    judge_model = model or _JUDGE_MODEL
-    api_key = (
-        os.getenv("RAG_AGENT_API_KEY")
-        or os.getenv("GROQ_API_KEY")
-        or ""
-    )
     base_url = os.getenv("LLM_BASE_URL", "https://api.groq.com/openai/v1")
+    api_key = os.getenv("GROQ_API_KEY", "")
+
+    if not api_key:
+        return EvalScore(0.5, "JUDGE_UNAVAILABLE", "GROQ_API_KEY not set")
+
+    if model is None:
+        model = _CEREBRAS_MODEL if "cerebras" in base_url else _GROQ_MODEL
 
     try:
-        return _call_judge(query, response, judge_model, api_key, base_url)
+        return _call_judge(query, response, model, base_url, api_key)
     except Exception as exc:
         return EvalScore(0.5, "JUDGE_UNAVAILABLE", str(exc)[:120])
 
@@ -69,25 +72,23 @@ def _call_judge(
     query: str,
     response: str,
     model: str,
-    api_key: str,
     base_url: str,
+    api_key: str,
 ) -> EvalScore:
     import json
     from openai import OpenAI
 
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    client = OpenAI(base_url=base_url, api_key=api_key)
     prompt = _JUDGE_PROMPT.format(
         query=query[:500],
         response=response[:1000],
     )
-    completion = client.chat.completions.create(
+    message = client.chat.completions.create(
         model=model,
+        max_tokens=256,
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.0,
-        max_tokens=128,
     )
-    raw = completion.choices[0].message.content or ""
-    # Extract JSON even if the model wraps it in markdown
+    raw = message.choices[0].message.content if message.choices else ""
     start = raw.find("{")
     end = raw.rfind("}") + 1
     if start == -1 or end == 0:
@@ -96,7 +97,6 @@ def _call_judge(
     score = float(data.get("score", 0.5))
     reason = str(data.get("reason", ""))
     score = max(0.0, min(1.0, score))
-    # Normalise to 0 / 0.5 / 1.0
     if score >= 0.75:
         score = 1.0
     elif score >= 0.25:

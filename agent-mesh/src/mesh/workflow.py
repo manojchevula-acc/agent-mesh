@@ -683,6 +683,15 @@ class DomainExecutor(Executor):
                               extra={"status": "SUCCESS"})
 
             total_ms = int((time.perf_counter() - t0) * 1000)
+            # If the retry prompt itself was echoed back by a rate-limited LLM, the
+            # raw retry instruction becomes the user-facing answer. Replace it with
+            # the standard unavailability message so internal directives never leak.
+            _answer_stripped = (answer or "").strip()
+            if _answer_stripped.startswith("CRITICAL:") or _answer_stripped.startswith("IMPORTANT:"):
+                answer = (
+                    "I was unable to retrieve the required data. "
+                    "Please try again or contact your relationship manager."
+                )
             answer = ConversationStore.strip_history_echo(answer or "", state.query)
             # Extract LLM reasoning markers from the answer and strip them so the
             # user-facing answer is clean. Captured entries go to the trace layer.
