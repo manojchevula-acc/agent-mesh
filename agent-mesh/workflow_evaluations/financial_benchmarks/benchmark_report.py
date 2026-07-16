@@ -14,6 +14,13 @@ from typing import Dict, List, Optional
 from .flare_runner import FLARETaskResult
 from .finben_runner import FinBENTaskResult
 
+try:
+    import sys as _sys, pathlib as _pl
+    _sys.path.insert(0, str(_pl.Path(__file__).resolve().parents[1]))
+    from workflow.grafana_push import push_metrics as _push_metrics
+except Exception:
+    _push_metrics = None  # type: ignore
+
 
 @dataclass
 class BenchmarkReport:
@@ -92,10 +99,41 @@ def save_json_report(report: BenchmarkReport, output_dir: str) -> str:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
     print(f"Benchmark JSON report saved: {path}")
+
+    if _push_metrics:
+        _push_benchmark_metrics(report, ts)
+
     return path
 
 
-def _task_pass_icon(metrics: dict, error: Optional[str]) -> str:
+def _push_benchmark_metrics(report: "BenchmarkReport", ts: str) -> None:
+    """Push benchmark F1 scores and workflow safety metrics to Grafana Cloud."""
+    metrics: dict[str, float] = {}
+
+    # Benchmark F1s the dashboard queries
+    _BENCH_GAUGE_MAP = {
+        "flare_ma":         "flare_ma_f1",
+        "flare_bigdata22":  "flare_bigdata22_f1",
+        "finben_headlines": "flare_headlines_f1",
+    }
+    for task_name, metric_name in _BENCH_GAUGE_MAP.items():
+        task = report.flare_tasks.get(task_name) or report.finben_tasks.get(task_name)
+        if task and task.metrics and not task.error:
+            primary = next(iter(task.metrics.values()), None)
+            if primary is not None:
+                metrics[metric_name] = primary
+
+    # Workflow safety metrics (already aliased by grafana_push)
+    metrics["compliance_decision"] = report.maf_compliance_accuracy
+    metrics["pii_clean"] = report.maf_pii_pass_rate
+    metrics["rbac_scope"] = report.maf_rbac_enforcement_rate
+    metrics["citation"] = report.maf_citation_present_rate
+
+    if metrics and _push_metrics:
+        _push_metrics(metrics, run_ts=ts, case_count=0)
+
+
+def task_pass_icon(metrics: dict, error: Optional[str]) -> str:
     if error:
         return "⚠️ ERROR"
     if not metrics:
@@ -104,7 +142,7 @@ def _task_pass_icon(metrics: dict, error: Optional[str]) -> str:
     return "✅ PASS" if primary >= 0.5 else "❌ LOW"
 
 
-def _score_explanation(task_name: str, metrics: dict, error: Optional[str], task_info: Optional[dict]) -> str:
+def score_explanation(task_name: str, metrics: dict, error: Optional[str], task_info: Optional[dict]) -> str:
     """Generate a human-readable explanation of why a task scored the way it did."""
     if error:
         if "DATASET_UNAVAILABLE" in error:
@@ -223,8 +261,8 @@ def save_markdown_summary(report: BenchmarkReport, output_dir: str) -> str:
         agent = task_info.get("agent", "—")
         description = task_info.get("description", "—")
         category = task_info.get("category", "—")
-        icon = _task_pass_icon(task.metrics, task.error)
-        explanation = _score_explanation(name, task.metrics, task.error, task_info)
+        icon = task_pass_icon(task.metrics, task.error)
+        explanation = score_explanation(name, task.metrics, task.error, task_info)
 
         lines += [
             f"#### {name} {icon}",
@@ -287,8 +325,8 @@ def save_markdown_summary(report: BenchmarkReport, output_dir: str) -> str:
         agent = task_info.get("agent", "—")
         description = task_info.get("description", "—")
         category = task_info.get("category", "—")
-        icon = _task_pass_icon(task.metrics, task.error)
-        explanation = _score_explanation(name, task.metrics, task.error, task_info)
+        icon = task_pass_icon(task.metrics, task.error)
+        explanation = score_explanation(name, task.metrics, task.error, task_info)
 
         lines += [
             f"#### {name} {icon}",

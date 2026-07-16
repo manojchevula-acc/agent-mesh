@@ -1,18 +1,15 @@
 """Formats workflow evaluation results to console, JSON, CSV, and Markdown."""
 from __future__ import annotations
 
-import base64
 import csv
 import json
 import os
-import time
-import urllib.request
-import urllib.error
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import List
 
 from .run_maf_eval import CaseResult
+from .grafana_push import push_metrics
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +116,7 @@ def save_json(results: List[CaseResult], output_dir: str) -> str:
     print(f"JSON report saved: {path}")
 
     # Push aggregate metrics to Grafana Cloud (best-effort, never blocks report saving)
-    _push_metrics_to_grafana(results, ts)
+    _push_workflow_metrics(results, ts)
 
     return path
 
@@ -503,135 +500,32 @@ def save_markdown_report(results: List[CaseResult], output_dir: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Grafana Cloud OTLP push
+# Grafana Cloud push (workflow results)
 # ---------------------------------------------------------------------------
 
-def _push_metrics_to_grafana(results: List[CaseResult], ts: str) -> None:
-    """Push aggregate eval scores to Grafana Cloud via OTLP/HTTP JSON.
-
-    Reads GRAFANA_INSTANCE_ID and GRAFANA_API_TOKEN from the environment.
-    Endpoint is auto-detected from the token's embedded region; can be
-    overridden with GRAFANA_OTLP_URL.
-    Fails silently — never raises or blocks the report.
-    """
-    instance_id = os.getenv("GRAFANA_INSTANCE_ID", "")
-    api_token = os.getenv("GRAFANA_API_TOKEN", "")
-    if not instance_id or not api_token:
-        return
-
-    otlp_url = os.getenv("GRAFANA_OTLP_URL", "") or _detect_grafana_otlp_url(api_token)
-    if not otlp_url:
-        return
-
-    try:
-        _do_push(results, ts, instance_id, api_token, otlp_url)
-        print(f"Grafana metrics pushed to {otlp_url}")
-    except Exception as exc:
-        print(f"[warn] Grafana metrics push failed (non-fatal): {exc}")
-
-
-def _detect_grafana_otlp_url(api_token: str) -> str:
-    """Extract OTLP gateway URL from the Grafana token's embedded region."""
-    try:
-        # Grafana tokens are `glc_<base64-json>` — the JSON contains {"m": {"r": "<region>"}}
-        b64_part = api_token.split("_", 1)[-1]
-        # Pad to valid base64 length
-        b64_part += "=" * (-len(b64_part) % 4)
-        payload = json.loads(base64.b64decode(b64_part).decode())
-        region = payload.get("m", {}).get("r", "")
-        if region:
-            return f"https://otlp-gateway-{region}.grafana.net/otlp"
-    except Exception:
-        pass
-    return ""
-
-
-def _do_push(
-    results: List[CaseResult],
-    ts: str,
-    instance_id: str,
-    api_token: str,
-    otlp_url: str,
-) -> None:
-    """Build OTLP JSON payload and POST to Grafana Cloud."""
-    # Aggregate scores across all results
-    all_metrics: dict[str, list[float]] = {}
+def _push_workflow_metrics(results: List[CaseResult], ts: str) -> None:
+    """Aggregate scores and push to Grafana via the shared grafana_push helper."""
+    # Collect per-metric averages
+    buckets: dict[str, list[float]] = {}
     for r in results:
         for k, v in r.scores.items():
-            all_metrics.setdefault(k, []).append(v)
+            buckets.setdefault(k, []).append(v)
 
-    # Add pass rate as a top-level metric
-    all_metrics["overall_pass_rate"] = [_pass_rate(results)]
+    metrics: dict[str, float] = {k: sum(v) / len(v) for k, v in buckets.items() if v}
 
-    now_ns = str(int(time.time() * 1_000_000_000))
+    # Derived: tool accuracy = avg of the three tool evaluator scores
+    tool_keys = ["tool_selection", "tool_input_accuracy", "tool_output_utilization"]
+    tool_vals = [metrics[k] for k in tool_keys if k in metrics]
+    if tool_vals:
+        metrics["fab_eval_tool_accuracy"] = sum(tool_vals) / len(tool_vals)
 
-    data_points = [
-        {
-            "asDouble": sum(vals) / len(vals),
-            "timeUnixNano": now_ns,
-            "attributes": [
-                {"key": "eval.run_ts", "value": {"stringValue": ts}},
-                {"key": "eval.case_count", "value": {"intValue": len(results)}},
-            ],
-        }
-        for metric_name, vals in all_metrics.items()
-        if vals
-    ]
+    # Derived: avg run duration in seconds
+    if results:
+        metrics["fab_eval_run_duration_seconds"] = sum(r.latency_ms for r in results) / len(results) / 1000
 
-    metrics_payload = [
-        {
-            "name": f"fab_eval_{metric_name.replace('.', '_')}",
-            "description": f"FAB AgentMesh eval: {metric_name}",
-            "gauge": {
-                "dataPoints": [
-                    {
-                        "asDouble": sum(vals) / len(vals),
-                        "timeUnixNano": now_ns,
-                        "attributes": [
-                            {"key": "eval.run_ts", "value": {"stringValue": ts}},
-                            {"key": "eval.case_count", "value": {"intValue": len(results)}},
-                        ],
-                    }
-                ]
-            },
-        }
-        for metric_name, vals in all_metrics.items()
-        if vals
-    ]
+    metrics["overall_pass_rate"] = _pass_rate(results)
 
-    payload = {
-        "resourceMetrics": [
-            {
-                "resource": {
-                    "attributes": [
-                        {"key": "service.name", "value": {"stringValue": "fab-agentmesh-eval"}},
-                        {"key": "service.version", "value": {"stringValue": "1.0.0"}},
-                    ]
-                },
-                "scopeMetrics": [
-                    {
-                        "scope": {"name": "workflow_evaluations", "version": "1.0.0"},
-                        "metrics": metrics_payload,
-                    }
-                ],
-            }
-        ]
-    }
-
-    auth = base64.b64encode(f"{instance_id}:{api_token}".encode()).decode()
-    body = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        f"{otlp_url}/v1/metrics",
-        data=body,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Basic {auth}",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        if resp.status not in (200, 202):
-            raise RuntimeError(f"HTTP {resp.status}")
+    push_metrics(metrics, run_ts=ts, case_count=len(results))
 
 
 # ---------------------------------------------------------------------------

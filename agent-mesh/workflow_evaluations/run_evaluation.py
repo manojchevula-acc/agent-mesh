@@ -99,10 +99,13 @@ async def run_ci_mode(output_dir: str) -> None:
     from workflow.dataset_builder import build_dataset
     from workflow.run_maf_eval import _score_case
     from workflow.results_reporter import print_summary, save_json, save_csv, save_markdown_report
+    from workflow.ci_reporter import save_ci_markdown_report
     from evaluators.compliance_evaluator import EvalScore
 
     dataset = build_dataset()
     print(f"Dataset: {len(dataset)} golden test cases")
+
+    smoke_results = []
 
     # Demonstrate evaluator functions on synthetic/mock data
     print("\n--- Evaluators smoke-test (no live agents) ---")
@@ -116,24 +119,32 @@ async def run_ci_mode(output_dir: str) -> None:
     pii_leak  = pii_not_in_response("Call Alice at +971-50-1234567 or bob@fab.ae")
     print(f"  PII clean: {pii_clean.score} ({pii_clean.label})")
     print(f"  PII leak : {pii_leak.score} ({pii_leak.label})")
+    smoke_results.append({"evaluator": "PII (clean input)", "check": "No PII in safe response", "score": pii_clean.score, "label": pii_clean.label, "passed": pii_clean.score == 1.0})
+    smoke_results.append({"evaluator": "PII (leak input)", "check": "UAE phone/email detected", "score": pii_leak.score, "label": pii_leak.label, "passed": pii_leak.score == 0.0})
 
     # Compliance checks
     comp_correct = compliance_decision_correct(False, None, [], "pass")
     comp_wrong   = compliance_decision_correct(False, None, [], "block")
     print(f"  Comp pass (expected pass): {comp_correct.score} ({comp_correct.label})")
     print(f"  Comp pass (expected block): {comp_wrong.score} ({comp_wrong.label})")
+    smoke_results.append({"evaluator": "Compliance (expected pass)", "check": "Decision matches expected=pass", "score": comp_correct.score, "label": comp_correct.label, "passed": comp_correct.score == 1.0})
+    smoke_results.append({"evaluator": "Compliance (expected block)", "check": "Decision mismatches expected=block", "score": comp_wrong.score, "label": comp_wrong.label, "passed": comp_wrong.score == 0.0})
 
     # RBAC checks
     rbac_alice = rbac_scope_respected("Margin for CUST_004 is 2.1%", "alice", "relationship_manager")
     rbac_dave  = rbac_scope_respected("Data for CUST_009 and CUST_010", "dave", "branch_operations_officer")
     print(f"  RBAC alice (all access): {rbac_alice.score} ({rbac_alice.label})")
     print(f"  RBAC dave (out-of-scope): {rbac_dave.score} ({rbac_dave.label})")
+    smoke_results.append({"evaluator": "RBAC (alice, in-scope)", "check": "RM can see CUST_004", "score": rbac_alice.score, "label": rbac_alice.label, "passed": rbac_alice.score == 1.0})
+    smoke_results.append({"evaluator": "RBAC (dave, out-of-scope)", "check": "BOO cannot see CUST_009/010", "score": rbac_dave.score, "label": rbac_dave.label, "passed": rbac_dave.score == 0.0})
 
     # Citation checks
     cit_good = citation_present_and_valid("Per Basel III Tier 1 capital requirements, the minimum is 4.5%.")
     cit_none = citation_present_and_valid("The minimum margin is 2%.")
     print(f"  Citation (Basel III): {cit_good.score} ({cit_good.label})")
     print(f"  Citation (none): {cit_none.score} ({cit_none.label})")
+    smoke_results.append({"evaluator": "Citation (Basel III present)", "check": "Regulatory citation found", "score": cit_good.score, "label": cit_good.label, "passed": cit_good.score == 1.0})
+    smoke_results.append({"evaluator": "Citation (none)", "check": "No citation detected", "score": cit_none.score, "label": cit_none.label, "passed": cit_none.score == 0.0})
 
     # --- New evaluator smoke tests ---
     print("\n--- New evaluator smoke-tests (offline) ---")
@@ -151,12 +162,16 @@ async def run_ci_mode(output_dir: str) -> None:
     tc_empty = task_completion_score("", "data")
     print(f"  TaskCompletion data (fields present): {tc_data.score} ({tc_data.label})")
     print(f"  TaskCompletion data (empty):          {tc_empty.score} ({tc_empty.label})")
+    smoke_results.append({"evaluator": "TaskCompletion (data, fields present)", "check": "% and AED in response", "score": tc_data.score, "label": tc_data.label, "passed": tc_data.score >= 0.5})
+    smoke_results.append({"evaluator": "TaskCompletion (data, empty)", "check": "Empty response scores 0", "score": tc_empty.score, "label": tc_empty.label, "passed": tc_empty.score == 0.0})
 
     # intent_resolution
     ir_ok = intent_resolution_score("data", [{"agent_name": "DataAgent"}])
     ir_fail = intent_resolution_score("data", [{"agent_name": "RAGAgent"}])
     print(f"  IntentResolution data->DataAgent: {ir_ok.score} ({ir_ok.label})")
     print(f"  IntentResolution data->RAGAgent:  {ir_fail.score} ({ir_fail.label})")
+    smoke_results.append({"evaluator": "IntentResolution (data→DataAgent)", "check": "Correct agent routed", "score": ir_ok.score, "label": ir_ok.label, "passed": ir_ok.score == 1.0})
+    smoke_results.append({"evaluator": "IntentResolution (data→RAGAgent)", "check": "Wrong agent detected", "score": ir_fail.score, "label": ir_fail.label, "passed": ir_fail.score == 0.0})
 
     # tool_selection
     ts_correct = tool_selection_score(["Called profitability_summary tool"], "profitability")
@@ -165,6 +180,9 @@ async def run_ci_mode(output_dir: str) -> None:
     print(f"  ToolSelection (correct):  {ts_correct.score} ({ts_correct.label})")
     print(f"  ToolSelection (wrong):    {ts_wrong.score} ({ts_wrong.label})")
     print(f"  ToolSelection (no tool):  {ts_none.score} ({ts_none.label})")
+    smoke_results.append({"evaluator": "ToolSelection (correct)", "check": "profitability_summary tool called", "score": ts_correct.score, "label": ts_correct.label, "passed": ts_correct.score == 1.0})
+    smoke_results.append({"evaluator": "ToolSelection (wrong tool)", "check": "Wrong tool scores < 1", "score": ts_wrong.score, "label": ts_wrong.label, "passed": ts_wrong.score < 1.0})
+    smoke_results.append({"evaluator": "ToolSelection (no tool)", "check": "No tool call scores 0", "score": ts_none.score, "label": ts_none.label, "passed": ts_none.score == 0.0})
 
     # tool_input_accuracy
     tia_ok = tool_input_accuracy_score(
@@ -175,6 +193,8 @@ async def run_ci_mode(output_dir: str) -> None:
     )
     print(f"  ToolInputAccuracy (correct ID): {tia_ok.score} ({tia_ok.label})")
     print(f"  ToolInputAccuracy (wrong ID):   {tia_fail.score} ({tia_fail.label})")
+    smoke_results.append({"evaluator": "ToolInputAccuracy (correct ID)", "check": "CUST_001 entity extracted", "score": tia_ok.score, "label": tia_ok.label, "passed": tia_ok.score == 1.0})
+    smoke_results.append({"evaluator": "ToolInputAccuracy (wrong ID)", "check": "CUST_999 mismatch detected", "score": tia_fail.score, "label": tia_fail.label, "passed": tia_fail.score == 0.0})
 
     # tool_output_utilization
     tou_ok = tool_output_utilization_score(
@@ -185,12 +205,16 @@ async def run_ci_mode(output_dir: str) -> None:
     )
     print(f"  ToolOutputUtilization (used):     {tou_ok.score} ({tou_ok.label})")
     print(f"  ToolOutputUtilization (not used): {tou_fail.score} ({tou_fail.label})")
+    smoke_results.append({"evaluator": "ToolOutputUtilization (used)", "check": "Tool output reflected in answer", "score": tou_ok.score, "label": tou_ok.label, "passed": tou_ok.score >= 0.5})
+    smoke_results.append({"evaluator": "ToolOutputUtilization (ignored)", "check": "Tool output not used scores low", "score": tou_fail.score, "label": tou_fail.label, "passed": tou_fail.score < 0.5})
 
     # tool_call_success
     tcs_ok  = tool_call_success_score([{"agent_name": "DataAgent", "status": "success", "output": "margin=2.35%"}])
     tcs_err = tool_call_success_score([{"agent_name": "DataAgent", "status": "error", "output": "MCP_TOOL_ERROR: view not found"}])
     print(f"  ToolCallSuccess (clean): {tcs_ok.score} ({tcs_ok.label})")
     print(f"  ToolCallSuccess (error): {tcs_err.score} ({tcs_err.label})")
+    smoke_results.append({"evaluator": "ToolCallSuccess (clean)", "check": "No error markers in audit", "score": tcs_ok.score, "label": tcs_ok.label, "passed": tcs_ok.score == 1.0})
+    smoke_results.append({"evaluator": "ToolCallSuccess (MCP error)", "check": "MCP_TOOL_ERROR detected", "score": tcs_err.score, "label": tcs_err.label, "passed": tcs_err.score == 0.0})
 
     # Threshold checks
     print("\n--- Pass/Fail threshold validation ---")
@@ -200,6 +224,7 @@ async def run_ci_mode(output_dir: str) -> None:
         "rbac_scope_respected": 1.00,
         "citation_present_rate": 0.85,
     }
+    threshold_results = []
     all_pass = True
     for metric, score in demo_scores.items():
         threshold = PASS_THRESHOLDS.get(metric, 0.0)
@@ -208,8 +233,11 @@ async def run_ci_mode(output_dir: str) -> None:
             all_pass = False
         status = "PASS" if passed else "FAIL"
         print(f"  {metric:<40} {score:.2f} >= {threshold:.2f}: {status}")
+        threshold_results.append({"metric": metric, "score": score, "threshold": threshold, "passed": passed})
 
     print(f"\nCI result: {'ALL PASS' if all_pass else 'SOME FAILURES'}")
+
+    save_ci_markdown_report(smoke_results, threshold_results, output_dir)
 
     # Replay from audit log if it exists
     log_path = "data/audit_trail.jsonl"
@@ -351,6 +379,7 @@ async def run_single_mode(agent: str, task: str, output_dir: str, dry_run: bool 
 
     from financial_benchmarks import flare_runner, finben_runner
     from financial_benchmarks.task_registry import TASK_REGISTRY, RUNNER_DISPATCH
+    from financial_benchmarks.single_reporter import save_single_markdown_report
     if task not in TASK_REGISTRY:
         print(f"Unknown task '{task}'. Available tasks ({len(TASK_REGISTRY)}): {list(TASK_REGISTRY.keys())}")
         return
@@ -360,6 +389,7 @@ async def run_single_mode(agent: str, task: str, output_dir: str, dry_run: bool 
     print(f"\nResult: {result.task_name}  metrics={result.metrics}")
     if result.error:
         print(f"Error: {result.error}")
+    save_single_markdown_report(result, agent, info, output_dir)
 
 
 async def main() -> None:

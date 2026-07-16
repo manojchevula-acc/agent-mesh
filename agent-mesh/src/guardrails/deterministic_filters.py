@@ -29,6 +29,8 @@ _INJECTION_PATTERNS = [
     r"reveal\s+(your\s+)?(system\s+prompt|instructions|hidden)",
     r"override\s+(your\s+)?(safety|guardrails|policy)",
     r"pretend\s+(that\s+)?you\s+(are|have)\b",
+    r"pretend\s+(that\s+)?(i|we)\s+(am|are|have|had)\b",
+    r"\b(give|grant|assume|claim)\s+(me|myself|us)\b.{0,40}\b(bypass|permission|privilege|role|access)\b",
 ]
 
 _PII_PATTERNS = {

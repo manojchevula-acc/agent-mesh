@@ -160,11 +160,16 @@ def _print_summary_table(results: List[BenchmarkTaskResult]) -> str:
 # Report writer
 # ---------------------------------------------------------------------------
 
-def _save_demo_report(results: List[BenchmarkTaskResult], output_dir: str, md_table: str) -> str:
+def _save_demo_report(results: List[BenchmarkTaskResult], output_dir: str, md_table: str, max_tier: int = 1) -> str:
     ts = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
     os.makedirs(output_dir, exist_ok=True)
 
-    # JSON
+    try:
+        from financial_benchmarks.benchmark_report import score_explanation, task_pass_icon
+    except ImportError:
+        from benchmark_report import score_explanation, task_pass_icon
+
+    # ── JSON ──────────────────────────────────────────────────────────────────
     json_path = os.path.join(output_dir, f"demo_report_{ts}.json")
     payload = []
     for r in results:
@@ -184,15 +189,105 @@ def _save_demo_report(results: List[BenchmarkTaskResult], output_dir: str, md_ta
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
 
-    # Markdown
+    # ── Aggregate stats for executive summary ─────────────────────────────────
+    non_dry = [r for r in results if r.metrics or r.error]
+    passing = 0
+    failing = 0
+    for r in non_dry:
+        info = TASK_REGISTRY.get(r.task_name, {})
+        metric_key, threshold = _DEMO_THRESHOLDS.get(info.get("type", ""), ("score", 0.0))
+        score = r.metrics.get(metric_key, next(iter(r.metrics.values()), 0.0)) if r.metrics else 0.0
+        if not r.error and score >= threshold:
+            passing += 1
+        else:
+            failing += 1
+    pass_rate = (passing / len(non_dry) * 100) if non_dry else 0.0
+    tier_label = "Tier 1 (public datasets)" if max_tier == 1 else "All tiers (public + gated)"
+    dry_run_note = len(non_dry) == 0
+
+    # ── Markdown ──────────────────────────────────────────────────────────────
+    lines = [
+        "# FAB AgentMesh — FinBEN/FLARE Demo Report",
+        "",
+        f"**Generated:** {ts}  ",
+        f"**Tier:** {tier_label}  **Tasks run:** {len(results)}  ",
+        f"**Pass rate:** {pass_rate:.1f}%  ({passing} passing, {failing} failing)"
+        if not dry_run_note else "**Mode:** Dry run — scores not computed",
+        "",
+        "---",
+        "",
+        "## Executive Summary",
+        "",
+        "| Metric | Value |",
+        "|---|---|",
+        f"| Tasks evaluated | {len(results)} |",
+        f"| Tasks passing | {passing} |",
+        f"| Tasks failing / errored | {failing} |",
+        f"| Overall pass rate | {pass_rate:.1f}% |",
+        f"| Datasets covered | FinBEN (36 datasets, 24 tasks, 7 categories) + FLARE |",
+        "",
+        "---",
+        "",
+        "## Summary Table",
+        "",
+        md_table.replace("## Demo Results\n\n", ""),  # strip the "## Demo Results" sub-header — it's now a sub-section
+        "",
+        "---",
+        "",
+        "## Per-Task Details",
+        "",
+        "Narrative breakdown of each task's score — what was tested, how the agent did, and why.",
+        "",
+    ]
+
+    for r in results:
+        info = TASK_REGISTRY.get(r.task_name, {})
+        icon = task_pass_icon(r.metrics, r.error)
+        explanation = score_explanation(r.task_name, r.metrics, r.error, info)
+
+        category    = info.get("category", "—")
+        tier        = info.get("tier", "—")
+        agent       = info.get("agent", "—")
+        description = info.get("description", "—")
+        metrics_str = (
+            ", ".join(f"`{k}={v:.3f}`" for k, v in r.metrics.items())
+            if r.metrics else "— *(dry run)*"
+        )
+
+        lines += [
+            f"#### {r.task_name} {icon}",
+            "",
+            f"**Category:** {category}  **Tier:** {tier}  **Agent:** {agent}  ",
+            f"**Dataset:** `{r.dataset_id}`  **Samples:** {r.n_samples}  ",
+            f"**What it tests:** {description}",
+            "",
+            f"**Metrics:** {metrics_str}  ",
+            "",
+            f"**Why this score:** {explanation}",
+            "",
+        ]
+
+        per_sample = (r.per_sample or [])[:1]
+        if per_sample:
+            s = per_sample[0]
+            lines += ["**Example interaction:**", ""]
+            q    = str(s.get("query_preview", s.get("query", ""))).strip()
+            gold = str(s.get("gold", s.get("label", ""))).strip()
+            pred = str(s.get("pred", s.get("response", ""))).strip()
+            if q:
+                lines.append(f"- *Query sent to agent:* `{q[:200]}`")
+            if gold:
+                lines.append(f"- *Expected answer:* `{gold[:200]}`")
+            if pred:
+                lines.append(f"- *Agent answered:* `{pred[:200]}`")
+            lines.append("")
+
+        if r.error:
+            lines += [f"> **Error:** {r.error}", ""]
+
     md_path = os.path.join(output_dir, f"demo_report_{ts}.md")
-    intro = (
-        f"# FAB AgentMesh — FinBEN/FLARE Demo Report\n\n"
-        f"Generated: {ts}\n\n"
-        f"Datasets: FinBEN (36 datasets, 24 tasks, 7 categories) + FLARE\n\n"
-    )
     with open(md_path, "w", encoding="utf-8") as f:
-        f.write(intro + md_table)
+        f.write("\n".join(lines) + "\n")
 
     print(f"\n  Report saved -> {md_path}")
     return md_path
@@ -273,4 +368,4 @@ async def run_demo(
 
     md_table = _print_summary_table(results)
     if not dry_run:
-        _save_demo_report(results, output_dir, md_table)
+        _save_demo_report(results, output_dir, md_table, max_tier=max_tier)
