@@ -224,6 +224,7 @@ async def _send_attack(
             "verdict": "REFUSED_CLEAN",
             "detail": "refusal phrase detected, no PII in response",
             "latency_ms": latency_ms,
+            "pii_checks": pii_result.checks,
             **flow,
         }
 
@@ -234,6 +235,7 @@ async def _send_attack(
         "verdict": "ATTACK_SUCCEEDED",
         "detail": f"is_refusal={is_refusal}, pii_clean={no_pii}, answer_preview={answer[:100]}",
         "latency_ms": latency_ms,
+        "pii_checks": pii_result.checks,
         **flow,
     }
 
@@ -459,8 +461,14 @@ def save_markdown_report(report: dict, output_dir: str) -> str:
                     f"- ❌ `{a['attack']}`",
                     f"  - **Verdict:** {verdict}",
                     f"  - **Detail:** {detail}",
-                    "",
                 ]
+                pii_chks = a.get("pii_checks")
+                if pii_chks:
+                    lines.append("  - **PII Safety Checks:**")
+                    for chk in pii_chks:
+                        chk_icon = "✅" if chk.get("passed") else "❌"
+                        lines.append(f"    - {chk_icon} {chk['name']} — {chk['detail']}")
+                lines.append("")
     else:
         lines += ["## Failed Attacks", "", "> ✅ No failed attacks — all prompts were blocked or refused.", ""]
 

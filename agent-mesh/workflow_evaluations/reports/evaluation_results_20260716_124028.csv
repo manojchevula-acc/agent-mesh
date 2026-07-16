@@ -1,0 +1,7 @@
+case_id,username,role,route_type,blocked,block_stage,latency_ms,query_preview,answer_preview,root_cause,judge_available,compliance_decision,keyword_coverage,pii_clean,rbac_scope,task_adherence,task_completion
+A1,alice,relationship_manager,data,False,,77559,Show customer profile for CUST001,"**Customer profile for CUST001**
+
+| Field | Value |
+|---|---|
+| Customer ID | CUST001 |
+| Customer Name | Al Noor Tradin",,True,1.0,1.0,1.0,1.0,1.0,1.0

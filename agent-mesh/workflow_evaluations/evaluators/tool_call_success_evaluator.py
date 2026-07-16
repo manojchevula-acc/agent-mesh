@@ -26,6 +26,15 @@ _ERROR_MARKERS = (
     "mcp_error",
 )
 
+# Group markers by category for per-check reporting
+_ERROR_CATEGORIES: List[tuple] = [
+    ("No MCP tool errors (MCP_TOOL_ERROR / mcp_error)", ["MCP_TOOL_ERROR", "mcp_error"]),
+    ("No timeout errors (A2A_TIMEOUT / timeout)", ["A2A_TIMEOUT", "timeout"]),
+    ("No SQL view errors (SQL_VIEW_NOT_FOUND)", ["SQL_VIEW_NOT_FOUND"]),
+    ("No tool execution errors (tool_error)", ["tool_error"]),
+    ("No connection errors (connection_error)", ["connection_error"]),
+]
+
 
 def tool_call_success_score(
     audit_records: List[dict],
@@ -36,23 +45,27 @@ def tool_call_success_score(
     Checks audit record status fields and known error string markers.
     Returns NOT_APPLICABLE if no DataAgent records are present.
     """
-    from typing import Optional
-
     data_records = [
         r for r in audit_records
         if r.get("agent_name") in ("DataAgent", "RAGAgent")
     ]
 
     if not data_records and not (agent_outputs or []):
-        return EvalScore(1.0, "NOT_APPLICABLE", "no tool-calling agent records found")
+        return EvalScore(1.0, "NOT_APPLICABLE", "no tool-calling agent records found", checks=[
+            {"name": "DataAgent / RAGAgent records present in audit trail",
+             "passed": False,
+             "detail": "No tool-calling agent records — evaluation not applicable"},
+        ])
 
-    errors_found = []
+    # Collect all error markers found
+    errors_found: List[str] = []
+    status_error = False
 
     for rec in data_records:
         status = str(rec.get("status", "")).lower()
         if status in ("error", "failed", "timeout"):
             errors_found.append(f"audit_status={status} agent={rec.get('agent_name')}")
-
+            status_error = True
         output_str = str(rec.get("output", "")).upper()
         for marker in _ERROR_MARKERS:
             if marker.upper() in output_str:
@@ -65,11 +78,28 @@ def tool_call_success_score(
                 errors_found.append(f"{marker} in agent output")
                 break
 
-    if errors_found:
-        return EvalScore(
-            0.0,
-            "TOOL_ERROR",
-            "; ".join(errors_found[:3]),
-        )
+    # Build per-category checks
+    all_error_text = " ".join(errors_found).upper()
+    checks: List[dict] = [
+        {"name": "DataAgent / RAGAgent records present in audit trail",
+         "passed": bool(data_records),
+         "detail": f"{len(data_records)} record(s) found"},
+    ]
+    for label, markers in _ERROR_CATEGORIES:
+        fired = any(m.upper() in all_error_text for m in markers)
+        checks.append({
+            "name": label,
+            "passed": not fired,
+            "detail": "Clean" if not fired
+                      else f"Error detected: {next((m for m in markers if m.upper() in all_error_text), markers[0])}",
+        })
+    if status_error:
+        # If status was error/failed/timeout, mark audit status check
+        for chk in checks:
+            if "status" in chk["name"].lower():
+                chk["passed"] = False
 
-    return EvalScore(1.0, "TOOL_SUCCESS")
+    if errors_found:
+        return EvalScore(0.0, "TOOL_ERROR", "; ".join(errors_found[:3]), checks=checks)
+
+    return EvalScore(1.0, "TOOL_SUCCESS", checks=checks)

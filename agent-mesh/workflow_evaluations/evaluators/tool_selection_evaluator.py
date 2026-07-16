@@ -33,20 +33,36 @@ def tool_selection_score(
     """
     expected_tool = QUERY_TYPE_TO_TOOL.get(query_type.lower())
     if not expected_tool:
-        return EvalScore(1.0, "NOT_APPLICABLE", f"no expected tool for query_type={query_type!r}")
+        return EvalScore(1.0, "NOT_APPLICABLE",
+                         f"no expected tool for query_type={query_type!r}",
+                         checks=[
+                             {"name": f"Expected tool for query type '{query_type}'",
+                              "passed": True,
+                              "detail": "No expected tool in mapping — evaluation not applicable"},
+                         ])
 
     combined = " ".join(agent_outputs).lower()
+    tool_found = expected_tool.lower() in combined
+    wrong_tools = [t for t in ALL_KNOWN_TOOLS
+                   if t.lower() != expected_tool.lower() and t.lower() in combined]
 
-    if expected_tool.lower() in combined:
-        return EvalScore(1.0, "CORRECT_TOOL", f"expected={expected_tool}")
+    checks = [
+        {"name": f"Expected tool identified for query keyword '{query_type}'",
+         "passed": True,
+         "detail": f"Expected tool: {expected_tool}"},
+        {"name": f"Expected tool '{expected_tool}' found in DataAgent output",
+         "passed": tool_found,
+         "detail": "Tool call detected in agent output" if tool_found
+                   else "Tool not found in DataAgent output"},
+        {"name": "No alternative (wrong) tool called instead",
+         "passed": not wrong_tools,
+         "detail": "No unexpected tool calls" if not wrong_tools
+                   else f"Wrong tool(s) found: {', '.join(wrong_tools)}"},
+    ]
 
-    # Check if any other known tool was called (wrong view, partial credit)
-    wrong_tools = [t for t in ALL_KNOWN_TOOLS if t.lower() != expected_tool.lower() and t.lower() in combined]
+    if tool_found:
+        return EvalScore(1.0, "CORRECT_TOOL", f"expected={expected_tool}", checks=checks)
     if wrong_tools:
-        return EvalScore(
-            0.5,
-            "WRONG_TOOL",
-            f"expected={expected_tool}, got={wrong_tools[0]}",
-        )
-
-    return EvalScore(0.0, "NO_TOOL_CALLED", f"expected={expected_tool}")
+        return EvalScore(0.5, "WRONG_TOOL",
+                         f"expected={expected_tool}, got={wrong_tools[0]}", checks=checks)
+    return EvalScore(0.0, "NO_TOOL_CALLED", f"expected={expected_tool}", checks=checks)

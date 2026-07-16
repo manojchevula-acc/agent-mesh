@@ -1,7 +1,7 @@
 """Tool output utilization evaluator.
 
 Did the agent actually use the tool's output in its final response?
-Uses Jaccard token overlap ≥ 0.15 between tool output and final response.
+Uses Jaccard token overlap >= 0.15 between tool output and final response.
 """
 from __future__ import annotations
 
@@ -44,26 +44,44 @@ def tool_output_utilization_score(
     final_response: the answer returned to the user.
     """
     if not tool_outputs:
-        return EvalScore(1.0, "NOT_APPLICABLE", "no tool outputs to check")
+        return EvalScore(1.0, "NOT_APPLICABLE", "no tool outputs to check", checks=[
+            {"name": "Tool outputs provided", "passed": False,
+             "detail": "No tool outputs — evaluation not applicable"},
+        ])
 
     if not final_response or not final_response.strip():
-        return EvalScore(0.0, "NO_RESPONSE")
+        return EvalScore(0.0, "NO_RESPONSE", checks=[
+            {"name": "Tool outputs provided", "passed": True,
+             "detail": f"{len(tool_outputs)} tool output(s) available"},
+            {"name": "Final response is non-empty", "passed": False, "detail": "Empty response"},
+            {"name": "Tool output reflected in final response", "passed": False,
+             "detail": "Cannot measure utilization — no response"},
+        ])
 
     combined_tool = " ".join(tool_outputs)
     tool_tokens = _tokenize(combined_tool)
     resp_tokens = _tokenize(final_response)
 
     overlap = _jaccard(tool_tokens, resp_tokens)
+    used = overlap >= threshold
+    weakly_used = overlap >= threshold / 2
 
-    if overlap >= threshold:
-        return EvalScore(
-            1.0, "OUTPUT_USED", f"Jaccard={overlap:.3f} >= {threshold}"
-        )
-    elif overlap >= threshold / 2:
-        return EvalScore(
-            0.5, "OUTPUT_WEAKLY_USED", f"Jaccard={overlap:.3f} (below {threshold})"
-        )
+    checks = [
+        {"name": "Tool outputs provided",
+         "passed": True,
+         "detail": f"{len(tool_outputs)} output(s)"},
+        {"name": f"Jaccard token overlap: {overlap:.3f}",
+         "passed": used,
+         "detail": (f"Overlap={overlap:.3f} ≥ {threshold} → OUTPUT_USED" if used
+                    else f"Overlap={overlap:.3f} — threshold ≥{threshold} (OUTPUT_USED), ≥{threshold/2:.3f} (WEAKLY_USED)")},
+        {"name": "Tool output reflected in final response",
+         "passed": used,
+         "detail": ("OUTPUT_USED" if used else "OUTPUT_WEAKLY_USED" if weakly_used else "OUTPUT_NOT_USED")},
+    ]
+
+    if used:
+        return EvalScore(1.0, "OUTPUT_USED", f"Jaccard={overlap:.3f} >= {threshold}", checks=checks)
+    elif weakly_used:
+        return EvalScore(0.5, "OUTPUT_WEAKLY_USED", f"Jaccard={overlap:.3f} (below {threshold})", checks=checks)
     else:
-        return EvalScore(
-            0.0, "OUTPUT_NOT_USED", f"Jaccard={overlap:.3f} (threshold={threshold})"
-        )
+        return EvalScore(0.0, "OUTPUT_NOT_USED", f"Jaccard={overlap:.3f} (threshold={threshold})", checks=checks)

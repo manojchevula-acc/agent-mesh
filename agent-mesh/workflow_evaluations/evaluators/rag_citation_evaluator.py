@@ -9,9 +9,9 @@ from typing import List, Optional, Set
 from .compliance_evaluator import EvalScore
 
 # U+202F (NARROW NO-BREAK SPACE) is emitted by Claude in formatted headings
-# between tokens like "Basel III" or "Tier 1". Python \s in ASCII
+# between tokens like "Basel III" or "Tier 1". Python \s in ASCII
 # mode does not match it, so we include it explicitly in whitespace classes.
-_WS = r"[\s ]+"
+_WS = r"[\s  ]+"
 
 # Citation patterns: any of these indicate the response cites a source.
 _CITATION_PATTERNS = [
@@ -47,29 +47,52 @@ def citation_present_and_valid(response_text: str) -> EvalScore:
     Score 0.0: no citation found.
     """
     if not response_text:
-        return EvalScore(0.0, "NO_CITATION", "Empty response")
+        empty_checks = [
+            {"name": "Known corpus document referenced", "passed": False, "detail": "Empty response"},
+            {"name": "Structured citation pattern matched", "passed": False, "detail": "Empty response"},
+            {"name": "General policy language detected", "passed": False, "detail": "Empty response"},
+        ]
+        return EvalScore(0.0, "NO_CITATION", "Empty response", checks=empty_checks)
 
     # Normalise narrow no-break space (U+202F) to ASCII space so corpus doc name
     # substring checks match regardless of which space variant the LLM emits.
     normalised = response_text.replace(" ", " ")
 
-    # Check for strong citations (known corpus documents)
+    # Run all three tiers up-front so checks always show the full picture
+    corpus_match: Optional[str] = None
     for doc in _KNOWN_CORPUS_DOCS:
         if doc.lower() in normalised.lower():
-            return EvalScore(1.0, "STRONG_CITATION", f"References known document: {doc}")
+            corpus_match = doc
+            break
 
-    # Check for pattern-based citations (run against normalised text)
+    pattern_match: Optional[str] = None
     for pattern in _CITATION_PATTERNS:
         m = pattern.search(normalised)
         if m:
-            cited = m.group()[:60]
-            return EvalScore(1.0, "CITATION_FOUND", f"Citation pattern matched: '{cited}'")
+            pattern_match = m.group()[:60]
+            break
 
-    # Vague policy language
-    if re.search(r"\bpolic(y|ies)\b|\bguideline|\bregulat", normalised, re.IGNORECASE):
-        return EvalScore(0.5, "WEAK_CITATION", "Policy language present but no specific document cited")
+    has_vague = bool(re.search(r"\bpolic(y|ies)\b|\bguideline|\bregulat", normalised, re.IGNORECASE))
 
-    return EvalScore(0.0, "NO_CITATION", "No citation or policy reference found")
+    checks = [
+        {"name": "Known corpus document referenced (FAB/CBUAE/Basel III/…)",
+         "passed": bool(corpus_match),
+         "detail": f"Found: '{corpus_match}'" if corpus_match else "None of the 10 known corpus documents found"},
+        {"name": "Structured citation pattern matched ([Source: …], 'According to', 'as per', …)",
+         "passed": bool(pattern_match),
+         "detail": f"Matched: '{pattern_match}'" if pattern_match else "No structured citation pattern found"},
+        {"name": "General policy / regulation language detected",
+         "passed": has_vague,
+         "detail": "Policy/guideline/regulation language present" if has_vague else "No policy language found"},
+    ]
+
+    if corpus_match:
+        return EvalScore(1.0, "STRONG_CITATION", f"References known document: {corpus_match}", checks=checks)
+    if pattern_match:
+        return EvalScore(1.0, "CITATION_FOUND", f"Citation pattern matched: '{pattern_match}'", checks=checks)
+    if has_vague:
+        return EvalScore(0.5, "WEAK_CITATION", "Policy language present but no specific document cited", checks=checks)
+    return EvalScore(0.0, "NO_CITATION", "No citation or policy reference found", checks=checks)
 
 
 def rag_answer_not_hallucinated(response_text: str, context_chunks: List[str]) -> EvalScore:
@@ -81,7 +104,14 @@ def rag_answer_not_hallucinated(response_text: str, context_chunks: List[str]) -
     Score 0.0: overlap < 0.10 (potential hallucination).
     """
     if not response_text or not context_chunks:
-        return EvalScore(0.5, "NO_CONTEXT", "Cannot evaluate without context chunks")
+        no_ctx_checks = [
+            {"name": "Context chunks provided", "passed": bool(context_chunks),
+             "detail": f"{len(context_chunks)} chunks" if context_chunks else "No context chunks available"},
+            {"name": "Jaccard token overlap computed", "passed": False,
+             "detail": "Cannot evaluate without both response and context"},
+            {"name": "Answer grounding verdict", "passed": False, "detail": "N/A — missing input"},
+        ]
+        return EvalScore(0.5, "NO_CONTEXT", "Cannot evaluate without context chunks", checks=no_ctx_checks)
 
     def tokenise(text: str) -> Set[str]:
         return {w.lower() for w in re.findall(r"\b[a-z]{3,}\b", text.lower())}
@@ -90,12 +120,31 @@ def rag_answer_not_hallucinated(response_text: str, context_chunks: List[str]) -
     context_tokens = tokenise(" ".join(context_chunks))
 
     if not answer_tokens or not context_tokens:
-        return EvalScore(0.5, "EMPTY_TOKENS", "Tokenisation produced no terms")
+        empty_tok_checks = [
+            {"name": "Context chunks provided", "passed": True, "detail": f"{len(context_chunks)} chunks"},
+            {"name": "Jaccard token overlap computed", "passed": False, "detail": "Tokenisation produced no terms"},
+            {"name": "Answer grounding verdict", "passed": False, "detail": "N/A — no tokens"},
+        ]
+        return EvalScore(0.5, "EMPTY_TOKENS", "Tokenisation produced no terms", checks=empty_tok_checks)
 
     overlap = len(answer_tokens & context_tokens) / len(answer_tokens | context_tokens)
+    grounded = overlap >= 0.30
+    partial = overlap >= 0.10
 
-    if overlap >= 0.30:
-        return EvalScore(1.0, "GROUNDED", f"Jaccard overlap={overlap:.2f}")
-    if overlap >= 0.10:
-        return EvalScore(0.5, "PARTIAL", f"Jaccard overlap={overlap:.2f}")
-    return EvalScore(0.0, "HALLUCINATION_RISK", f"Jaccard overlap={overlap:.2f} -- answer poorly grounded in retrieved chunks")
+    checks = [
+        {"name": "Context chunks provided", "passed": True, "detail": f"{len(context_chunks)} chunk(s) retrieved"},
+        {"name": f"Jaccard token overlap: {overlap:.3f}",
+         "passed": partial,
+         "detail": f"Overlap={overlap:.3f} — threshold ≥0.30 → GROUNDED, ≥0.10 → PARTIAL, <0.10 → HALLUCINATION_RISK"},
+        {"name": "Answer grounding verdict",
+         "passed": grounded,
+         "detail": "GROUNDED" if grounded else ("PARTIAL" if partial else "HALLUCINATION_RISK")},
+    ]
+
+    if grounded:
+        return EvalScore(1.0, "GROUNDED", f"Jaccard overlap={overlap:.2f}", checks=checks)
+    if partial:
+        return EvalScore(0.5, "PARTIAL", f"Jaccard overlap={overlap:.2f}", checks=checks)
+    return EvalScore(0.0, "HALLUCINATION_RISK",
+                     f"Jaccard overlap={overlap:.2f} -- answer poorly grounded in retrieved chunks",
+                     checks=checks)

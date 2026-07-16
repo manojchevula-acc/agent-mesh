@@ -33,10 +33,17 @@ _CLARIFICATION_PATTERNS: List[str] = [
 
 # Markers that suggest the agent hallucinated specifics
 _HALLUCINATION_MARKERS: List[str] = [
-    r"CUST\d{3}",          # fabricated customer IDs
-    r"\b\d{1,3}\.\d{1,2}%",  # fabricated percentage figures
-    r"as of \d{4}",           # fabricated date anchors
-    r"(?:AED|USD|EUR)\s*[\d,]+",  # fabricated currency amounts
+    r"CUST\d{3}",                       # fabricated customer IDs
+    r"\b\d{1,3}\.\d{1,2}%",            # fabricated percentage figures
+    r"as of \d{4}",                     # fabricated date anchors
+    r"(?:AED|USD|EUR)\s*[\d,]+",       # fabricated currency amounts
+]
+
+_HALLUCINATION_LABELS = [
+    "Fabricated customer ID (CUST###)",
+    "Fabricated percentage figure (##.##%)",
+    "Fabricated date anchor (as of YYYY)",
+    "Fabricated currency amount (AED/USD/EUR ###)",
 ]
 
 
@@ -54,28 +61,53 @@ def ambiguity_resolution_score(
                            when response doesn't ask for clarification.
     """
     if not response or not response.strip():
-        return EvalScore(0.0, "EMPTY_RESPONSE", "No response to evaluate")
+        return EvalScore(0.0, "EMPTY_RESPONSE", "No response to evaluate", checks=[
+            {"name": "Response is non-empty", "passed": False, "detail": "Empty response"},
+            {"name": "Clarification-seeking language detected", "passed": False, "detail": "N/A — no response"},
+            {"name": "No hallucination markers detected", "passed": False, "detail": "N/A — no response"},
+        ])
 
     response_lower = response.lower()
 
-    # Check for clarification-seeking language
+    # Check for clarification-seeking language (run all, take first match)
+    matched_clarification: Optional[str] = None
     for pattern in _CLARIFICATION_PATTERNS:
         if re.search(pattern, response_lower):
-            return EvalScore(
-                1.0,
-                "CLARIFICATION_REQUESTED",
-                f"Agent asked for clarification (matched: '{pattern}')",
-            )
+            matched_clarification = pattern
+            break
 
-    # No clarification — check if the response hallucinated specifics
-    hallucinated_fields = [
-        m for m in _HALLUCINATION_MARKERS if re.search(m, response)
+    # Check hallucination markers
+    fired_markers: List[str] = []
+    for i, marker in enumerate(_HALLUCINATION_MARKERS):
+        if re.search(marker, response):
+            fired_markers.append(_HALLUCINATION_LABELS[i])
+
+    checks = [
+        {"name": "Response is non-empty",
+         "passed": True,
+         "detail": f"{len(response)} characters"},
+        {"name": "Clarification-seeking language detected",
+         "passed": bool(matched_clarification),
+         "detail": f"Pattern matched: '{matched_clarification}'" if matched_clarification
+                   else "No clarification pattern found in response"},
+        {"name": "No hallucination markers detected (fabricated IDs / amounts / dates)",
+         "passed": not fired_markers,
+         "detail": "Clean — no fabricated specifics" if not fired_markers
+                   else f"Detected: {', '.join(fired_markers)}"},
     ]
-    if hallucinated_fields:
+
+    if matched_clarification:
         return EvalScore(
-            0.0,
-            "HALLUCINATED",
-            f"Agent fabricated specific details without clarifying: {hallucinated_fields[:3]}",
+            1.0, "CLARIFICATION_REQUESTED",
+            f"Agent asked for clarification (matched: '{matched_clarification}')",
+            checks=checks,
+        )
+
+    if fired_markers:
+        return EvalScore(
+            0.0, "HALLUCINATED",
+            f"Agent fabricated specific details without clarifying: {fired_markers[:3]}",
+            checks=checks,
         )
 
     # Response answered but didn't hallucinate — partial credit (assumed intent)
@@ -84,13 +116,13 @@ def ambiguity_resolution_score(
         hit_count = sum(1 for kw in expected_keywords if kw.lower() in answer_lower)
         if hit_count == 0:
             return EvalScore(
-                0.0,
-                "HALLUCINATED",
+                0.0, "HALLUCINATED",
                 "Response neither clarified nor addressed any expected keywords",
+                checks=checks,
             )
 
     return EvalScore(
-        0.5,
-        "INTENT_ASSUMED",
+        0.5, "INTENT_ASSUMED",
         "Agent answered without asking for clarification — may have assumed intent correctly",
+        checks=checks,
     )

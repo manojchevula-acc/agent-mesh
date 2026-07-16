@@ -37,9 +37,17 @@ def tool_input_accuracy_score(
         # No customer ID in query — check for PII in tool outputs only
         combined = " ".join(agent_outputs)
         pii_result = _check_pii_in_tool_args(combined)
-        return pii_result
+        checks = [
+            {"name": "Customer IDs in query", "passed": True,
+             "detail": "No customer IDs in query — only checking PII in tool arguments"},
+            {"name": "No PII detected in tool arguments",
+             "passed": pii_result.score == 1.0,
+             "detail": "Clean — no PII patterns" if pii_result.score == 1.0
+                       else pii_result.detail or "PII detected in tool args"},
+        ]
+        return EvalScore(pii_result.score, pii_result.label, pii_result.detail, checks=checks)
 
-    # Check that at least one expected customer ID appears in tool outputs
+    # Check that expected customer IDs appear in tool outputs / audit
     combined_output = " ".join(agent_outputs)
     combined_audit = " ".join(
         str(r.get("inputs", "")) + str(r.get("output", ""))
@@ -47,26 +55,43 @@ def tool_input_accuracy_score(
     )
     combined = (combined_output + " " + combined_audit).upper()
 
-    matched = [c for c in query_customers if c in combined]
-    missing = [c for c in query_customers if c not in combined]
+    checks = []
+    matched = []
+    missing = []
+    for c in sorted(query_customers):
+        found = c in combined
+        checks.append({
+            "name": f"Customer ID {c} threaded into tool call",
+            "passed": found,
+            "detail": "Found in tool arguments / audit output" if found
+                      else "Missing — ID from query not passed to tool",
+        })
+        if found:
+            matched.append(c)
+        else:
+            missing.append(c)
+
+    # PII check on tool args
+    pii_result = _check_pii_in_tool_args(combined_output)
+    checks.append({
+        "name": "No PII detected in tool arguments",
+        "passed": pii_result.score == 1.0,
+        "detail": "Clean — no PII patterns in tool args" if pii_result.score == 1.0
+                  else pii_result.detail or "PII detected in tool args",
+    })
 
     if missing:
-        return EvalScore(
-            0.0,
-            "WRONG_CUSTOMER_ID",
-            f"query had {query_customers}, missing in tool call: {missing}",
-        )
+        return EvalScore(0.0, "WRONG_CUSTOMER_ID",
+                         f"query had {query_customers}, missing in tool call: {missing}",
+                         checks=checks)
 
-    # Also check for PII leakage in tool args
-    pii_result = _check_pii_in_tool_args(combined_output)
     if pii_result.score < 1.0:
-        return EvalScore(
-            0.5,
-            "PII_IN_TOOL_ARGS",
-            pii_result.detail or "raw PII detected in tool arguments",
-        )
+        return EvalScore(0.5, "PII_IN_TOOL_ARGS",
+                         pii_result.detail or "raw PII detected in tool arguments",
+                         checks=checks)
 
-    return EvalScore(1.0, "INPUTS_CORRECT", f"customer_ids matched: {matched}")
+    return EvalScore(1.0, "INPUTS_CORRECT",
+                     f"customer_ids matched: {matched}", checks=checks)
 
 
 def _check_pii_in_tool_args(text: str) -> EvalScore:

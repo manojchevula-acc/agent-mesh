@@ -489,14 +489,25 @@ def save_markdown_report(results: List[CaseResult], output_dir: str) -> str:
                 else:
                     icon = "✅" if d.get("passed") else "❌"
                 score_display = "N/A" if is_skip else f"{d['score']:.2f}"
-                lines += [
-                    f"**{icon} {d['evaluator']}** (score: {score_display})",
-                    "",
-                    f"*What was checked:* {d['what_was_checked']}",
-                    "",
-                    f"*Finding:* {d['finding']}",
-                    "",
-                ]
+                lines += [f"**{icon} {d['evaluator']}** (score: {score_display})", ""]
+
+                chk_list = d.get("checks")
+                if chk_list:
+                    lines.append("Checks performed:")
+                    lines.append("")
+                    for chk in chk_list:
+                        chk_icon = "✅" if chk.get("passed") else "❌"
+                        lines.append(f"- {chk_icon} **{chk['name']}** — {chk['detail']}")
+                    lines.append("")
+                    # Still show the overall finding as a summary line
+                    lines += [f"*Overall finding:* {d['finding']}", ""]
+                else:
+                    lines += [
+                        f"*What was checked:* {d['what_was_checked']}",
+                        "",
+                        f"*Finding:* {d['finding']}",
+                        "",
+                    ]
 
         # Root Cause (FAIL cases only)
         if not overall_pass and r.root_cause:

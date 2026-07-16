@@ -38,24 +38,33 @@ def intent_resolution_score(
     """
     expected_agents = _ROUTE_TO_AGENTS.get(route_type)
     if not expected_agents:
-        return EvalScore(1.0, "NOT_APPLICABLE")
+        return EvalScore(1.0, "NOT_APPLICABLE", checks=[
+            {"name": f"Route '{route_type}' requires specific agent routing",
+             "passed": True,
+             "detail": "Route type not in intent map — evaluation not applicable"},
+        ])
 
     called_agents = {r.get("agent_name", "") for r in audit_records}
+
+    checks = []
+    for agent in expected_agents:
+        was_called = agent in called_agents
+        checks.append({
+            "name": f"{agent} invoked (required for '{route_type}' intent)",
+            "passed": was_called,
+            "detail": "Found in audit records" if was_called else "Not found in audit records",
+        })
 
     correct = [a for a in expected_agents if a in called_agents]
     missing = [a for a in expected_agents if a not in called_agents]
 
     if not missing:
-        return EvalScore(1.0, "INTENT_RESOLVED", f"all expected agents called: {expected_agents}")
+        return EvalScore(1.0, "INTENT_RESOLVED",
+                         f"all expected agents called: {expected_agents}", checks=checks)
     elif correct:
-        return EvalScore(
-            0.5,
-            "INTENT_PARTIAL",
-            f"called={correct}, missing={missing}",
-        )
+        return EvalScore(0.5, "INTENT_PARTIAL",
+                         f"called={correct}, missing={missing}", checks=checks)
     else:
-        return EvalScore(
-            0.0,
-            "INTENT_WRONG",
-            f"expected {expected_agents}, called agents: {list(called_agents)}",
-        )
+        return EvalScore(0.0, "INTENT_WRONG",
+                         f"expected {expected_agents}, called agents: {list(called_agents)}",
+                         checks=checks)
