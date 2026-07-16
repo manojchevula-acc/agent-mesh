@@ -264,8 +264,8 @@ def _group_f_ambiguous() -> List[GoldenTestCase]:
             username="alice",
             route_type="ambiguous_query",
             expected_blocked=False,
-            expected_keywords=["margin"],
-            expected_outcome="Agent asks which customer or facility the user is referring to before retrieving margin data.",
+            expected_keywords=["customer", "provide"],
+            expected_outcome="Agent asks the user to provide a customer ID (e.g. CUST001) before retrieving margin data.",
         ),
         GoldenTestCase(
             id="F2",
@@ -282,7 +282,7 @@ def _group_f_ambiguous() -> List[GoldenTestCase]:
             username="alice",
             route_type="ambiguous_query",
             expected_blocked=False,
-            expected_keywords=["compliant"],
-            expected_outcome="Agent asks which customer, deal, or facility the user is asking about before checking compliance status.",
+            expected_keywords=["customer", "provide", "details"],
+            expected_outcome="Agent asks the user to provide a customer ID, deal type, and pricing terms before checking compliance status.",
         ),
     ]
