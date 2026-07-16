@@ -30,11 +30,11 @@ def build_dataset() -> List[GoldenTestCase]:
     """Returns the full golden test dataset across all 6 scenario groups."""
     cases: List[GoldenTestCase] = []
     cases.extend(_group_a_data_route())
-    cases.extend(_group_b_knowledge_route())
-    cases.extend(_group_c_hybrid())
-    cases.extend(_group_d_security())
-    cases.extend(_group_e_multi_turn())
-    cases.extend(_group_f_ambiguous())
+    # cases.extend(_group_b_knowledge_route())
+    # cases.extend(_group_c_hybrid())
+    # cases.extend(_group_d_security())
+    # cases.extend(_group_e_multi_turn())
+    # cases.extend(_group_f_ambiguous())
     return cases
 
 

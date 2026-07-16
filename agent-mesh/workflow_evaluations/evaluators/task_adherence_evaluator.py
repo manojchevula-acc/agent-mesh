@@ -20,9 +20,10 @@ for _p in (str(_MESH_ROOT), str(_EVAL_ROOT)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-# Model selection: Groq uses llama-3.3-70b-versatile; Cerebras uses llama3.1-8b
-_GROQ_MODEL = "llama-3.3-70b-versatile"
-_CEREBRAS_MODEL = "llama3.1-8b"
+# Per-provider fallback defaults (used only when GROQ_MODEL env var is not set).
+# Prefer setting GROQ_MODEL in .env to avoid hardcoded model IDs breaking on account changes.
+_DEFAULT_GROQ_MODEL     = "llama-3.3-70b-versatile"
+_DEFAULT_CEREBRAS_MODEL = "gemma-4-31b"
 
 _JUDGE_PROMPT = """\
 You are an objective evaluator for a banking AI assistant (FAB — First Abu Dhabi Bank).
@@ -60,7 +61,10 @@ def task_adherence_score(
         return EvalScore(0.5, "JUDGE_UNAVAILABLE", "GROQ_API_KEY not set")
 
     if model is None:
-        model = _CEREBRAS_MODEL if "cerebras" in base_url else _GROQ_MODEL
+        model = (
+            os.getenv("GROQ_MODEL")
+            or (_DEFAULT_CEREBRAS_MODEL if "cerebras" in base_url else _DEFAULT_GROQ_MODEL)
+        )
 
     try:
         return _call_judge(query, response, model, base_url, api_key)

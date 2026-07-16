@@ -13,6 +13,61 @@ from .grafana_push import push_metrics
 
 
 # ---------------------------------------------------------------------------
+# Pipeline path derivation
+# ---------------------------------------------------------------------------
+
+def _derive_pipeline_path(r: "CaseResult") -> str:
+    """Build a human-readable pipeline stage path from existing CaseResult fields.
+
+    Uses block_stage, blocked, agents_called, and route_type — no extra API data needed.
+    The terminal stage gets a [BLOCKED] suffix when the request was stopped there.
+    """
+    stages = ["Input Processing", "Input Guardrail"]
+
+    if r.block_stage == "input_guardrail":
+        stages[-1] += " [BLOCKED]"
+        return " → ".join(stages)
+
+    stages.append("RBAC Check")
+
+    compliance_ran = (
+        "ComplianceAgent" in (r.agents_called or [])
+        or r.block_stage == "compliance"
+    )
+    if compliance_ran:
+        stages.append("Compliance Agent")
+        if r.block_stage == "compliance":
+            stages[-1] += " [BLOCKED]"
+            return " → ".join(stages)
+
+    if r.blocked:
+        stages.append(f"{r.block_stage or 'Unknown'} [BLOCKED]")
+        return " → ".join(stages)
+
+    stages.append("Domain Classifier")
+    if r.route_type == "data":
+        stages += ["Data Agent", "Response Generation"]
+    elif r.route_type == "knowledge":
+        stages += ["RAG Agent", "Response Generation"]
+    elif r.route_type == "hybrid":
+        stages += ["Data Agent", "RAG Agent", "Response Generation"]
+    elif r.route_type == "ambiguous_query":
+        stages.append("Ambiguity Handler")
+    elif r.route_type == "multi_turn":
+        stages += ["Data Agent", "Response Generation"]
+    else:
+        stages.append("Response Generation")
+
+    return " → ".join(stages)
+
+
+def _deepest_stage(r: "CaseResult") -> str:
+    """Return only the terminal stage label from _derive_pipeline_path()."""
+    path = _derive_pipeline_path(r)
+    return path.split(" → ")[-1]
+
+
+# ---------------------------------------------------------------------------
 # Console summary
 # ---------------------------------------------------------------------------
 
@@ -235,8 +290,8 @@ def save_markdown_report(results: List[CaseResult], output_dir: str) -> str:
     lines += [
         "## Summary Table",
         "",
-        "| Case ID | User | Role | Route | Blocked | Overall | Root Cause | Judge | Latency |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| Case ID | User | Role | Route | Deepest Stage | Blocked | Overall | Root Cause | Judge | Latency |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
 
     for r in results:
@@ -246,8 +301,10 @@ def save_markdown_report(results: List[CaseResult], output_dir: str) -> str:
             overall = "⚠️ BLOCKED"
         root_cause_cell = r.root_cause or "—"
         judge_cell = "✅" if r.judge_available else "⚠️"
+        deepest = _deepest_stage(r)
         lines.append(
             f"| {r.case_id} | {r.username} | {r.role or '—'} | {r.route_type} "
+            f"| {deepest} "
             f"| {'YES' if r.blocked else 'no'} | {overall} "
             f"| {root_cause_cell} | {judge_cell} | {r.latency_ms/1000:.1f}s |"
         )
@@ -341,6 +398,7 @@ def save_markdown_report(results: List[CaseResult], output_dir: str) -> str:
         overall_pass = all(d.get("passed", True) for d in r.eval_details)
         status_icon = "✅ PASS" if (overall_pass and not r.error) else ("❌ FAIL" if not r.blocked else "⚠️ BLOCKED")
 
+        agents_str = ", ".join(r.agents_called) if r.agents_called else "—"
         lines += [
             f"### {r.case_id} — {status_icon}",
             "",
@@ -348,10 +406,10 @@ def save_markdown_report(results: List[CaseResult], output_dir: str) -> str:
             f"**Role:** {r.role or 'unknown'}  ",
             f"**Task type:** {r.route_type}  ",
             f"**Latency:** {r.latency_ms/1000:.2f}s  ",
+            f"**Pipeline path:** {_derive_pipeline_path(r)}  ",
+            f"**Agents invoked:** {agents_str}  ",
+            "",
         ]
-        if r.agents_called:
-            lines.append(f"**Agents invoked:** {', '.join(r.agents_called)}  ")
-        lines.append("")
 
         # Query
         lines += ["#### Query", ""]
@@ -476,6 +534,59 @@ def save_markdown_report(results: List[CaseResult], output_dir: str) -> str:
         badge = "✅" if rate >= 0.90 else ("⚠️" if rate >= 0.50 else "❌")
         lines.append(f"| {route} | {s['cases']} | {s['passed']} | {rate:.0%} {badge} |")
     lines.append("")
+
+    # ------------------------------------------------------------------
+    # Agent Coverage
+    # ------------------------------------------------------------------
+    lines += ["## Agent Coverage", ""]
+
+    # A. Per-agent invocation counts
+    agent_counts: dict[str, int] = defaultdict(int)
+    for r in results:
+        for agent in (r.agents_called or []):
+            agent_counts[agent] += 1
+
+    lines += [
+        "How often each downstream agent was invoked across all evaluated cases.",
+        "",
+        "| Agent | Cases Invoked | % of Total Cases |",
+        "|---|---|---|",
+    ]
+    for agent in sorted(agent_counts, key=lambda a: -agent_counts[a]):
+        pct = agent_counts[agent] / total * 100 if total else 0.0
+        lines.append(f"| {agent} | {agent_counts[agent]} | {pct:.0f}% |")
+    if not agent_counts:
+        lines.append("| — | No agent data captured (replay without audit log?) | — |")
+    lines.append("")
+
+    # B. Pipeline depth distribution
+    depth_buckets: dict[str, int] = defaultdict(int)
+    for r in results:
+        terminal = _deepest_stage(r)
+        if "[BLOCKED]" in terminal:
+            stage_clean = terminal.replace(" [BLOCKED]", "")
+            if "Input Guardrail" in stage_clean or "RBAC" in stage_clean:
+                bucket = "Blocked at guardrail / RBAC"
+            elif "Compliance" in stage_clean:
+                bucket = "Blocked at Compliance Agent"
+            else:
+                bucket = f"Blocked at {stage_clean}"
+        elif "Response Generation" in terminal:
+            bucket = "Full response generated"
+        else:
+            bucket = f"Reached {terminal}"
+        depth_buckets[bucket] += 1
+
+    lines += [
+        "Pipeline depth distribution — how far each case travelled before completing or being stopped.",
+        "",
+        "| Pipeline Depth | Cases | % |",
+        "|---|---|---|",
+    ]
+    for bucket in sorted(depth_buckets, key=lambda b: -depth_buckets[b]):
+        pct = depth_buckets[bucket] / total * 100 if total else 0.0
+        lines.append(f"| {bucket} | {depth_buckets[bucket]} | {pct:.0f}% |")
+    lines += ["", "---", ""]
 
     # ------------------------------------------------------------------
     # Aggregate Scores

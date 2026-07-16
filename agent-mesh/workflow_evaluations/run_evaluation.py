@@ -21,6 +21,15 @@ Run from the agent-mesh/ directory.
 """
 from __future__ import annotations
 
+# Load .env before anything else so evaluators that read env vars directly
+# (e.g. GROQ_API_KEY in task_adherence_evaluator) find them without needing
+# src/config.py to be imported first.
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _load_dotenv()
+except ImportError:
+    pass  # env vars must be set manually if python-dotenv is not installed
+
 import argparse
 import asyncio
 import os
