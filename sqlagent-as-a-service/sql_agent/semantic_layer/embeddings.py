@@ -25,8 +25,10 @@ class EmbeddingBackend:
         """Embed documents (table summaries). Returns a 2-D array-like."""
         raise NotImplementedError
 
-    def embed_query(self, text: str):
-        """Embed a single query. Default: same as a document (OpenAI/Azure style)."""
+    def embed_query(self, text: str, prefix: str | None = None):
+        """Embed a single query. Default: same as a document (OpenAI/Azure style).
+        ``prefix`` lets a caller (e.g. example retrieval) override the retrieval
+        instruction; ignored by backends (like Azure) that don't use one."""
         return self.embed([text])[0]
 
 
@@ -41,9 +43,10 @@ class LocalEmbeddings(EmbeddingBackend):
 
         return np.asarray(self._model.encode(texts, normalize_embeddings=True))
 
-    def embed_query(self, text):
+    def embed_query(self, text, prefix: str | None = None):
         # bge/e5: prepend the retrieval instruction to the QUERY only, not the documents.
-        return self.embed([settings.embedding_query_prefix + text])[0]
+        prefix = settings.embedding_query_prefix if prefix is None else prefix
+        return self.embed([prefix + text])[0]
 
 
 class AzureEmbeddings(EmbeddingBackend):

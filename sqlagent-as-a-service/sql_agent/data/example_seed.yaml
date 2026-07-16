@@ -294,3 +294,52 @@ examples:
     sql: "SELECT product_type, SUM(requested_amount) AS total_requested_amount FROM fab_curated.historical_deals GROUP BY product_type ORDER BY total_requested_amount DESC;"
     tier: full_dynamic
     tags: "historical_deals"
+
+  # ---- Trend / time-series ----------------------------------------------------
+  # The Pattern Retriever had ZERO examples of this shape (GROUP BY a date/time
+  # dimension) — any genuinely trend-shaped question had nothing to retrieve.
+
+  - question: "How many deals were booked each quarter, and what was the total requested amount?"
+    sql: "SELECT YEAR(deal_date) AS deal_year, QUARTER(deal_date) AS deal_quarter, COUNT(*) AS deal_count, SUM(requested_amount) AS total_requested_amount FROM fab_curated.historical_deals GROUP BY YEAR(deal_date), QUARTER(deal_date) ORDER BY deal_year, deal_quarter;"
+    tier: full_dynamic
+    tags: "historical_deals"
+
+  - question: "Show the monthly count and volume of won deals over time."
+    sql: "SELECT YEAR(deal_date) AS deal_year, MONTH(deal_date) AS deal_month, COUNT(*) AS won_deal_count, SUM(requested_amount) AS total_volume_aed FROM fab_curated.historical_deals WHERE deal_outcome = 'Won' GROUP BY YEAR(deal_date), MONTH(deal_date) ORDER BY deal_year, deal_month;"
+    tier: full_dynamic
+    tags: "historical_deals"
+
+  # ---- Ranking (worst-case, not just top-N) ------------------------------------
+  # Existing ranking examples were all "highest/most" on customer_master /
+  # customer_360; margin_analysis and pricing_recommendation_view had none, so a
+  # margin-ranking question competed against same-table AGGREGATION examples
+  # instead of a same-PATTERN one.
+
+  - question: "Which five deals have the lowest net margin?"
+    sql: "SELECT deal_id, customer_name, product_type, net_margin_pct FROM fab_semantic.margin_analysis ORDER BY net_margin_pct ASC LIMIT 5;"
+    tier: full_dynamic
+    tags: "margin_analysis"
+
+  - question: "Which ten deals have the largest gap between recommended and approved price?"
+    sql: "SELECT deal_id, customer_name, product_name, recommended_price_pct, approved_price_pct, (approved_price_pct - recommended_price_pct) AS price_gap_pct FROM fab_semantic.pricing_recommendation_view ORDER BY ABS(approved_price_pct - recommended_price_pct) DESC LIMIT 10;"
+    tier: full_dynamic
+    tags: "pricing_recommendation_view"
+
+  # ---- Filtered lookups (no aggregation, no ranking) ---------------------------
+  # A plain WHERE-filtered list — the corpus was thin here relative to aggregation,
+  # so a same-table AGGREGATION example could out-compete the one true lookup match.
+
+  - question: "Which customers have more than two lost deals?"
+    sql: "SELECT customer_id, customer_name, lost_deals FROM fab_semantic.customer_360 WHERE lost_deals > 2 LIMIT 50;"
+    tier: full_dynamic
+    tags: "customer_360"
+
+  - question: "Which deals have a final approved price below their system-recommended price?"
+    sql: "SELECT deal_id, customer_name, product_name, system_recommended_price_pct, approved_price_pct FROM fab_semantic.pricing_recommendation_view WHERE approved_price_pct < system_recommended_price_pct LIMIT 50;"
+    tier: full_dynamic
+    tags: "pricing_recommendation_view"
+
+  - question: "Which customers require approval for their relationship discount?"
+    sql: "SELECT customer_id, customer_name, relationship_discount_pct, policy_max_relationship_discount_pct, approval_required FROM fab_semantic.relationship_discount_view WHERE approval_required = 1 LIMIT 50;"
+    tier: full_dynamic
+    tags: "relationship_discount_view"

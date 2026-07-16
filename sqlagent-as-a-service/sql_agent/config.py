@@ -138,6 +138,20 @@ class Settings(BaseSettings):
     # isn't in the example set never gets a misleading example. 0.0 => gate off. Only
     # applies when the dense embedding backend is available (it is the confidence signal).
     examples_min_score: float = 0.0
+    # RRF fusion weights (Pattern Retriever only, see example_index.py): DENSE carries
+    # semantic/logical similarity, BM25 carries exact banking-jargon/column overlap.
+    # Weighted above 50/50 toward dense so a lexically-similar-but-logically-different
+    # example (shares nouns, different SQL pattern) doesn't out-vote a genuine semantic
+    # match — RRF is rank-based, so without weights the two rankers get an equal vote
+    # regardless of how strong the dense similarity actually is.
+    examples_dense_weight: float = 0.7
+    examples_bm25_weight: float = 0.3
+    # bge/e5 query-side instruction for EXAMPLE retrieval specifically — deliberately
+    # separate from embedding_query_prefix (which is worded for schema/table retrieval)
+    # since the instruction measurably conditions the embedding space.
+    examples_embedding_query_prefix: str = (
+        "Represent this business question for retrieving a SQL example with the same "
+        "query logic and business intent: ")
 
     # --- Production upgrade: intent detection (Component A) --------------------
     # Every new stage below is flag-gated and defaults to today's behaviour.

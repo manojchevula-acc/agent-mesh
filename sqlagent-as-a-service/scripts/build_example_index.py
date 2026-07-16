@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 
 from sql_agent.config import settings
+from sql_agent.memory.example_index import example_doc_text
 from sql_agent.memory.examples import all_approved_examples
 from sql_agent.semantic_layer.catalog import glossary_expand
 from sql_agent.semantic_layer.embeddings import get_backend
@@ -57,8 +58,11 @@ def main() -> None:
     if backend is None:
         raise SystemExit("No embedding backend resolved — check EMBEDDING_BACKEND.")
 
-    print("Embedding example questions ...")
-    vectors = backend.embed([glossary_expand(n) for n in names])
+    print("Embedding example questions + SQL query-logic shape ...")
+    # Same document text the runtime retriever embeds (question + query-logic shape,
+    # see example_index.example_doc_text) — keeps an offline-built index from drifting
+    # from what sql_agent/memory/example_index.py._build() would produce.
+    vectors = backend.embed([example_doc_text(r) for r in rows])
 
     print(f"Vector backend    : {settings.vector_backend} "
           f"(collection={settings.examples_qdrant_collection}, "
@@ -70,7 +74,8 @@ def main() -> None:
 
         # Verify: a sample query should return sensible candidates.
         probe = "how much capital is tied up in our riskiest deals"
-        qv = backend.embed_query(glossary_expand(probe))
+        qv = backend.embed_query(glossary_expand(probe),
+                                  prefix=settings.examples_embedding_query_prefix)
         hits = index.search(qv, 5)
         print("\nUpsert complete. Sample search:")
         print(f"  query: {probe!r}")

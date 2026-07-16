@@ -221,3 +221,123 @@ def test_threshold_gate_suppresses_all_when_nothing_clears(monkeypatch):
     assert rank_examples("anything", _GATE_ROWS, k=5) == []
 
 
+# --- (5) query-logic-aware corpus enrichment (fights lexical-only matching) --
+
+def test_sql_shape_phrase_ranking_no_aggregate():
+    from sql_agent.memory.example_index import _sql_shape_phrase
+
+    sql = ("SELECT customer_id, customer_name, win_rate_pct FROM fab_semantic.customer_360 "
+           "WHERE customer_segment = 'Corporate' ORDER BY win_rate_pct DESC LIMIT 10;")
+    phrase = _sql_shape_phrase(sql)
+    assert "pattern: ranking" in phrase
+    assert "customer_segment" in phrase  # WHERE column surfaced
+
+
+def test_sql_shape_phrase_grouped_aggregation():
+    from sql_agent.memory.example_index import _sql_shape_phrase
+
+    sql = ("SELECT customer_segment, SUM(won_deals) AS won, SUM(total_deals) AS total "
+           "FROM fab_semantic.customer_360 GROUP BY customer_segment;")
+    phrase = _sql_shape_phrase(sql)
+    assert "pattern: aggregation" in phrase
+    assert "customer_segment" in phrase  # GROUP BY column surfaced
+
+
+def test_sql_shape_phrase_scalar_aggregate_without_group_by_is_still_aggregation():
+    """A bare AVG() with no GROUP BY is a scalar aggregation, not a 'lookup' — the
+    classifier must key off the presence of an aggregate FUNCTION, not GROUP BY."""
+    from sql_agent.memory.example_index import _sql_shape_phrase
+
+    sql = ("SELECT ROUND(AVG(expected_margin_pct), 2) AS avg_margin FROM "
+           "fab_semantic.pricing_recommendation_view WHERE customer_segment = 'SME';")
+    assert "pattern: aggregation" in _sql_shape_phrase(sql)
+
+
+def test_sql_shape_phrase_trend_groups_by_time_dimension():
+    from sql_agent.memory.example_index import _sql_shape_phrase
+
+    sql = ("SELECT deal_month, SUM(total_deal_volume_aed) AS volume FROM "
+           "fab_semantic.customer_360 GROUP BY deal_month;")
+    assert "pattern: trend" in _sql_shape_phrase(sql)
+
+
+def test_sql_shape_phrase_unparseable_or_missing_sql_is_never_fatal():
+    from sql_agent.memory.example_index import _sql_shape_phrase
+
+    assert _sql_shape_phrase(None) == ""
+    assert _sql_shape_phrase("") == ""
+    assert _sql_shape_phrase("not ( valid sql") == ""
+
+
+def test_example_doc_text_combines_question_and_shape():
+    from sql_agent.memory.example_index import example_doc_text
+
+    row = {"question": "top customers by deal volume",
+           "validated_sql": "SELECT c FROM t ORDER BY v DESC LIMIT 10;"}
+    doc = example_doc_text(row)
+    assert "top customers by deal volume" in doc
+    assert "pattern: ranking" in doc
+
+
+def test_example_doc_text_falls_back_to_question_when_no_sql():
+    from sql_agent.memory.example_index import example_doc_text
+
+    assert example_doc_text({"question": "plain question", "validated_sql": None}) == "plain question"
+
+
+# --- (6) weighted RRF fusion (fixes lexical overlap out-voting semantic match) ---
+
+def test_rrf_equal_weights_lets_a_pure_lexical_match_tie_the_true_semantic_match():
+    """Documents today's bug at the fusion-math level: candidate 0 is BM25's #1 pick
+    (rank 0) but dense's worst (rank 2); candidate 1 is the reverse. Equal-weight RRF
+    (today's ``_rrf`` before this fix) can't tell these apart — a pure keyword match
+    ties with the true semantic match instead of losing to it."""
+    from sql_agent.memory.example_index import _rrf
+
+    dense_rank = [1, 2, 0]   # candidate 1 = dense's best, candidate 0 = dense's worst
+    sparse_rank = [0, 2, 1]  # candidate 0 = BM25's best,  candidate 1 = BM25's worst
+
+    equal = _rrf([(dense_rank, 1.0), (sparse_rank, 1.0)], k=60)
+    assert equal[0] == pytest.approx(equal[1])
+
+
+def test_rrf_dense_weighted_breaks_the_tie_toward_the_semantic_match():
+    from sql_agent.memory.example_index import _rrf
+
+    dense_rank = [1, 2, 0]
+    sparse_rank = [0, 2, 1]
+
+    weighted = _rrf([(dense_rank, 0.7), (sparse_rank, 0.3)], k=60)
+    assert weighted[1] > weighted[0]  # dense's top pick now wins outright
+
+
+def test_rank_examples_weighted_fusion_prefers_dense_end_to_end(monkeypatch):
+    """Full rank_examples() wiring: BM25 ranks a lexically-overlapping-but-wrong example
+    first, dense ranks the logically-correct example first — the default weights
+    (examples_dense_weight=0.7 > examples_bm25_weight=0.3) must surface the dense pick."""
+    from sql_agent.config import settings
+    from sql_agent.memory import example_index
+    from sql_agent.memory.example_index import rank_examples
+
+    rows = [
+        {"question": "row A", "validated_sql": "SELECT 1", "tier": "full_dynamic", "tags": "t0"},
+        {"question": "row B", "validated_sql": "SELECT 2", "tier": "full_dynamic", "tags": "t1"},
+        {"question": "row C", "validated_sql": "SELECT 3", "tier": "full_dynamic", "tags": "t2"},
+    ]
+    example_index._CACHE = {
+        "sig": example_index._corpus_signature(rows),
+        "names": [r["question"] for r in rows],
+        "bm25": object(),  # non-None sentinel — _sparse_ranking is monkeypatched below
+        "name_to_idx": {r["question"]: i for i, r in enumerate(rows)},
+        "dense_ok": True,
+    }
+    monkeypatch.setattr(example_index, "_dense_scores",
+                         lambda q: {0: 0.10, 1: 0.95, 2: 0.50})
+    monkeypatch.setattr(example_index, "_sparse_ranking", lambda q: [0, 2, 1])
+    monkeypatch.setattr(settings, "examples_dense_weight", 0.7)
+    monkeypatch.setattr(settings, "examples_bm25_weight", 0.3)
+
+    out = rank_examples("anything", rows, k=1)
+    assert out[0]["tags"] == "t1"  # dense's clear winner despite being BM25's worst pick
+
+
