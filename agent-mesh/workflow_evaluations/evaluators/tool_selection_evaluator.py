@@ -25,11 +25,15 @@ if str(_EVAL_ROOT) not in sys.path:
 def tool_selection_score(
     agent_outputs: List[str],
     query_type: str,
+    tool_names_from_reasoning: Optional[List[str]] = None,
 ) -> EvalScore:
     """Score tool selection with 3-tier granularity.
 
     agent_outputs: list of string outputs / logs from the DataAgent hop.
     query_type: keyword matching QUERY_TYPE_TO_TOOL keys (e.g. "profitability", "margin").
+    tool_names_from_reasoning: tool names extracted from <llm_reasoning> blocks before
+        stripping. Preferred over free-text search since the tool name appears only in
+        the reasoning block, which is stripped before outputs reach this function.
     """
     expected_tool = QUERY_TYPE_TO_TOOL.get(query_type.lower())
     if not expected_tool:
@@ -42,9 +46,17 @@ def tool_selection_score(
                          ])
 
     combined = " ".join(agent_outputs).lower()
-    tool_found = expected_tool.lower() in combined
-    wrong_tools = [t for t in ALL_KNOWN_TOOLS
-                   if t.lower() != expected_tool.lower() and t.lower() in combined]
+    reasoning_tools_lower = [t.lower() for t in (tool_names_from_reasoning or [])]
+
+    # Prefer reasoning-extracted tool names (reliable); fall back to free-text search
+    if reasoning_tools_lower:
+        tool_found = expected_tool.lower() in reasoning_tools_lower
+        wrong_tools = [t for t in reasoning_tools_lower
+                       if t != expected_tool.lower() and t in {x.lower() for x in ALL_KNOWN_TOOLS}]
+    else:
+        tool_found = expected_tool.lower() in combined
+        wrong_tools = [t for t in ALL_KNOWN_TOOLS
+                       if t.lower() != expected_tool.lower() and t.lower() in combined]
 
     checks = [
         {"name": f"Expected tool identified for query keyword '{query_type}'",

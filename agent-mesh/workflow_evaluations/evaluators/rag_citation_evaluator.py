@@ -16,6 +16,7 @@ _WS = r"[\s  ]+"
 # Citation patterns: any of these indicate the response cites a source.
 _CITATION_PATTERNS = [
     re.compile(r"\[Source[:\s][^\]]+\]", re.IGNORECASE),
+    re.compile(r"\*Source[:\s][^*]+\*", re.IGNORECASE),   # *Source: Doc_Name, Section X.X*
     re.compile(r"According to [A-Z][^.]+", re.IGNORECASE),
     re.compile(r"as per [A-Z][^.]+", re.IGNORECASE),
     re.compile(r"per (the\s+)?[A-Z][^,.]+(?:policy|circular|guideline|document|framework|regulation)", re.IGNORECASE),
@@ -39,6 +40,17 @@ _KNOWN_CORPUS_DOCS: Set[str] = {
 }
 
 
+def _normalize_doc_name(name: str) -> str:
+    """Normalize a document name for fuzzy substring matching.
+
+    Replaces underscores with spaces and strips trailing version tags (v1.2, v2.4)
+    so 'FAB_Credit_Pricing_Policy_v2.4' matches corpus entry 'FAB Credit Pricing Policy'.
+    """
+    name = re.sub(r"_", " ", name)
+    name = re.sub(r"\s+v\d+[\d.]*\s*$", "", name, flags=re.IGNORECASE)
+    return name.lower().strip()
+
+
 def citation_present_and_valid(response_text: str) -> EvalScore:
     """Checks that a RAGAgent response includes at least one document citation.
 
@@ -58,10 +70,13 @@ def citation_present_and_valid(response_text: str) -> EvalScore:
     # substring checks match regardless of which space variant the LLM emits.
     normalised = response_text.replace(" ", " ")
 
-    # Run all three tiers up-front so checks always show the full picture
+    # Run all three tiers up-front so checks always show the full picture.
+    # normalised_norm converts underscores→spaces and strips version suffixes so that
+    # agent citations like 'FAB_Credit_Pricing_Policy_v2.4' match corpus names.
+    normalised_norm = _normalize_doc_name(normalised)
     corpus_match: Optional[str] = None
     for doc in _KNOWN_CORPUS_DOCS:
-        if doc.lower() in normalised.lower():
+        if _normalize_doc_name(doc) in normalised_norm:
             corpus_match = doc
             break
 
@@ -72,7 +87,9 @@ def citation_present_and_valid(response_text: str) -> EvalScore:
             pattern_match = m.group()[:60]
             break
 
-    has_vague = bool(re.search(r"\bpolic(y|ies)\b|\bguideline|\bregulat", normalised, re.IGNORECASE))
+    # Use normalised_norm so that underscore-formatted doc names (e.g. Pricing_Policy)
+    # are converted to spaces before word-boundary matching fires.
+    has_vague = bool(re.search(r"\bpolic(y|ies)\b|\bguideline|\bregulat", normalised_norm, re.IGNORECASE))
 
     checks = [
         {"name": "Known corpus document referenced (FAB/CBUAE/Basel III/…)",

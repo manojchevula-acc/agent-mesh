@@ -76,10 +76,15 @@ def ambiguity_resolution_score(
             matched_clarification = pattern
             break
 
+    # Strip parenthetical format examples before hallucination check to avoid false
+    # positives when the agent shows an expected-format example (e.g., CUST001) in
+    # a clarifying question rather than fabricating actual customer data.
+    response_for_hallucination = re.sub(r'\(e\.g\.?,\s*[^)]+\)', '', response)
+
     # Check hallucination markers
     fired_markers: List[str] = []
     for i, marker in enumerate(_HALLUCINATION_MARKERS):
-        if re.search(marker, response):
+        if re.search(marker, response_for_hallucination):
             fired_markers.append(_HALLUCINATION_LABELS[i])
 
     checks = [

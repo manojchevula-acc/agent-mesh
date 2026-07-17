@@ -35,7 +35,9 @@ QUERY_TYPE_TO_TOOL: dict[str, str] = {
     "prospect":               "new_customer_pricing",
     "customer_360":           "customer_360",
     "360":                    "customer_360",
-    "credit_rating":          "customer_360",
+    "customer":               "customer_360",   # customer_360 is the MCP tool; customer_master is a raw table
+    "profile":                "customer_360",
+    "credit_rating":          "credit_rating_events",  # dedicated analytical MCP tool
     "historical":             "historical_deals",
     "deals":                  "historical_deals",
     "pricing_policy":         "pricing_policy",
@@ -44,7 +46,8 @@ QUERY_TYPE_TO_TOOL: dict[str, str] = {
     "eibor":                  "treasury_rate_sheet",
     "rate":                   "treasury_rate_sheet",
     "product":                "product_master",
-    "customer":               "customer_master",
+    "cross_sell":             "cross_sell_opportunity",
+    "similar":                "similar_customer_pricing",
 }
 
 ALL_KNOWN_TOOLS = {
@@ -54,6 +57,9 @@ ALL_KNOWN_TOOLS = {
     "relationship_discount", "competitor_price_analysis", "operations_cost_impact",
     "new_customer_pricing", "historical_deals", "pricing_policy",
     "treasury_rate_sheet", "product_master", "customer_master",
+    # Additional registered MCP tools in datalayer-as-service/server.py
+    "cross_sell_opportunity", "credit_rating_events", "similar_customer_pricing",
+    "compare_fab_vs_competitor",
 }
 
 

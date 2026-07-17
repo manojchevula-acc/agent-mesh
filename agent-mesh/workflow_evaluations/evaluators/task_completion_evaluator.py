@@ -20,7 +20,12 @@ if str(_EVAL_ROOT) not in sys.path:
 
 # Patterns that indicate structured data was returned
 _PERCENT_RE = re.compile(r"\d+(\.\d+)?\s*%")
-_CURRENCY_RE = re.compile(r"(AED|USD|EUR|GBP)\s*[\d,]+|[\d,]+\s*(AED|USD|EUR|GBP)", re.IGNORECASE)
+_CURRENCY_RE = re.compile(
+    r"(AED|USD|EUR|GBP)\s*[\d,]+"           # AED 50,000 or AED50,000
+    r"|[\d,]+\s*(AED|USD|EUR|GBP)"          # 50,000 AED
+    r"|\(?(AED|USD|EUR|GBP)\)?[^0-9\n]{0,30}[\d,]+",  # (AED) | 18,000,000 (Markdown table column)
+    re.IGNORECASE,
+)
 _CUSTOMER_NAME_RE = re.compile(
     r"\b(acme|globex|initech|techcorp|omega|corp|ltd|llc|inc|company|customer)\b",
     re.IGNORECASE,

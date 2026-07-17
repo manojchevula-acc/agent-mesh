@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sys
 import time
 import pathlib
@@ -52,6 +53,51 @@ from config import PASS_THRESHOLDS
 _trace_linker = EvalTraceLinker()
 _T = PASS_THRESHOLDS  # short alias for threshold lookups
 
+# Common English suffixes for stem-matching keywords.
+# Ordered longest-first so "ation" is tried before "ion" etc.
+_KW_SUFFIXES = ("ation", "ance", "ence", "ment", "ant", "ent", "ing", "tion", "ed", "ly", "s")
+
+
+def _keyword_matches(keyword: str, text: str) -> bool:
+    """Return True if keyword (or a stemmed form) appears in text.
+
+    Falls back to stripping common suffixes so that 'compliant' matches
+    'compliance', 'comply', 'complies', etc. without requiring an NLP library.
+    """
+    kw = keyword.lower()
+    if kw in text:
+        return True
+    for suffix in _KW_SUFFIXES:
+        if kw.endswith(suffix) and len(kw) - len(suffix) >= 4:
+            root = kw[: len(kw) - len(suffix)]
+            if root in text:
+                return True
+    return False
+
+
+def _extract_tool_from_reasoning(output: str) -> Optional[str]:
+    """Parse tool_selected from a DataAgent <llm_reasoning> JSON block."""
+    m = re.search(r"<llm_reasoning>(.*?)</llm_reasoning>", output, re.DOTALL)
+    if not m:
+        return None
+    try:
+        payload = json.loads(m.group(1))
+        return payload.get("tool_selected")
+    except (json.JSONDecodeError, AttributeError):
+        return None
+
+
+def _annotate_tool_selected(records: List[dict]) -> List[dict]:
+    """Add _tool_selected field to DataAgent records before reasoning is stripped."""
+    annotated = []
+    for r in records:
+        if r.get("agent_name") == "DataAgent":
+            tool = _extract_tool_from_reasoning(r.get("output", ""))
+            if tool:
+                r = {**r, "_tool_selected": tool}
+        annotated.append(r)
+    return annotated
+
 
 @dataclass
 class CaseResult:
@@ -84,23 +130,31 @@ _AUDIT_LOG = os.path.join(
 def _read_new_audit_records(
     path: str, offset: int, request_id: str
 ) -> List[dict]:
-    """Read audit records written after `offset` bytes, filtered by request_id."""
+    """Read audit records written after `offset` bytes, filtered by request_id.
+
+    Falls back to all new records when request_id propagation to A2A servers fails
+    (they write request_id="-" instead of the UUID when OTel baggage is not received).
+    Safe because live evaluation runs sequentially — all records after the offset
+    captured before this request belong to this request.
+    """
     if not os.path.exists(path):
         return []
-    records = []
+    all_new: List[dict] = []
+    matched: List[dict] = []
     try:
         with open(path, "rb") as f:
             f.seek(offset)
             for raw in f:
                 try:
                     rec = json.loads(raw.decode("utf-8", errors="replace").strip())
+                    all_new.append(rec)
                     if rec.get("request_id") == request_id:
-                        records.append(rec)
+                        matched.append(rec)
                 except json.JSONDecodeError:
                     continue
     except OSError:
         pass
-    return records
+    return matched if matched else all_new
 
 
 def _strip_reasoning_from_records(records: List[dict]) -> List[dict]:
@@ -196,9 +250,12 @@ async def run_live_evaluation(
         if hasattr(user_role, "value"):
             user_role = user_role.value
 
-        # Collect audit records written for this specific request
+        # Collect audit records written for this specific request.
+        # Annotate tool_selected BEFORE stripping — the tool name only appears
+        # inside <llm_reasoning> blocks which are removed by stripping.
         new_audit_records = _read_new_audit_records(_AUDIT_LOG, audit_offset, eval_request_id)
         audit_offset = os.path.getsize(_AUDIT_LOG) if os.path.exists(_AUDIT_LOG) else audit_offset
+        new_audit_records = _annotate_tool_selected(new_audit_records)
         new_audit_records = _strip_reasoning_from_records(new_audit_records)
         agent_names = [r.get("agent_name", "") for r in new_audit_records]
 
@@ -487,14 +544,14 @@ def _score_case(
     # Keyword coverage
     if case.expected_keywords and not blocked:
         answer_lower = answer.lower()
-        hit = sum(1 for kw in case.expected_keywords if kw.lower() in answer_lower)
+        hit = sum(1 for kw in case.expected_keywords if _keyword_matches(kw, answer_lower))
         kw_score = hit / len(case.expected_keywords)
         scores["keyword_coverage"] = kw_score
-        missing_kw = [kw for kw in case.expected_keywords if kw.lower() not in answer_lower]
+        missing_kw = [kw for kw in case.expected_keywords if not _keyword_matches(kw, answer_lower)]
         kw_checks = [
             {"name": f"Keyword: '{kw}'",
-             "passed": kw.lower() in answer_lower,
-             "detail": "Found" if kw.lower() in answer_lower else "Not found"}
+             "passed": _keyword_matches(kw, answer_lower),
+             "detail": "Found" if _keyword_matches(kw, answer_lower) else "Not found"}
             for kw in case.expected_keywords
         ]
         _detail(
@@ -647,7 +704,11 @@ def _score_case(
                 ""
             )
 
-            ts = tool_selection_score(da_outputs, query_keyword)
+            da_tools_from_reasoning = [
+                r["_tool_selected"] for r in audit_records
+                if r.get("agent_name") == "DataAgent" and "_tool_selected" in r
+            ]
+            ts = tool_selection_score(da_outputs, query_keyword, tool_names_from_reasoning=da_tools_from_reasoning)
             scores["tool_selection"] = ts.score
             _trace_linker.record_eval_result(rid, "tool_selection_evaluator", ts.score, ts.score >= _T.get("tool_selection", 0.8), {"label": ts.label})
             _detail(
