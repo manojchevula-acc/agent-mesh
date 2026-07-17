@@ -25,7 +25,7 @@ from __future__ import annotations
 import argparse
 
 from sql_agent.config import settings
-from sql_agent.memory.example_index import example_doc_text
+from sql_agent.memory.example_index import example_doc_text, example_payloads
 from sql_agent.memory.examples import all_approved_examples
 from sql_agent.semantic_layer.catalog import glossary_expand
 from sql_agent.semantic_layer.embeddings import get_backend
@@ -48,11 +48,15 @@ def main() -> None:
                          "(and check EXAMPLES_ENABLED / AGENT_DB_DSN).")
 
     names = [r["question"] for r in rows]
-    # Payload: tier + tags + metadata for reference/inspection (not used by similarity
-    # search — the ranker reads metadata from the metadata DB, not the vector payload).
-    payloads = {r["question"]: {"tier": r.get("tier", ""), "tags": r.get("tags", ""),
-                                "metadata": r.get("metadata") or ""}
-                for r in rows}
+    # Payloads via the SAME helper the runtime build uses (example_index.example_payloads:
+    # tables/intent for the pre-filtered {"any": ...} conditions + tier), plus tags and
+    # raw metadata for inspection. Keeping the filterable fields identical to the runtime
+    # build means an offline-built collection never drifts from what
+    # examples_prefilter_enabled expects to condition on.
+    payloads = example_payloads(rows)
+    for r in rows:
+        payloads[r["question"]].update(
+            tags=r.get("tags", ""), metadata=r.get("metadata") or "")
 
     print(f"Examples to index : {len(names)}")
     print(f"Embedding model   : {settings.embedding_model} (backend={settings.embedding_backend})")

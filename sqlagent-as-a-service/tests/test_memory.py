@@ -190,7 +190,8 @@ def _patch_dense(monkeypatch, rows, scores):
         "name_to_idx": {r["question"]: i for i, r in enumerate(rows)},
         "dense_ok": True,
     }
-    monkeypatch.setattr(example_index, "dense_scores", lambda q: dict(scores))
+    monkeypatch.setattr(example_index, "dense_scores",
+                        lambda q, where=None, top_m=None: dict(scores))
 
 
 _GATE_ROWS = [
@@ -332,7 +333,7 @@ def test_rank_examples_weighted_fusion_prefers_dense_end_to_end(monkeypatch):
         "dense_ok": True,
     }
     monkeypatch.setattr(example_index, "dense_scores",
-                         lambda q: {0: 0.10, 1: 0.95, 2: 0.50})
+                         lambda q, where=None, top_m=None: {0: 0.10, 1: 0.95, 2: 0.50})
     monkeypatch.setattr(example_index, "_sparse_ranking", lambda q: [0, 2, 1])
     monkeypatch.setattr(settings, "examples_dense_weight", 0.7)
     monkeypatch.setattr(settings, "examples_bm25_weight", 0.3)
@@ -399,5 +400,119 @@ def test_rank_examples_diversity_pass_avoids_pure_duplicates(monkeypatch):
                         tables_hint=["pricing_recommendation_view"], k=2)
     assert len(out) == 2
     assert len({r["question"] for r in out}) == 2  # no duplicate picks
+
+
+# --- (8) scale mode: structured, pre-filtered retrieval (PLAN_STRUCTURED_RETRIEVAL) --
+
+_SCALE_ROWS = [
+    {"question": "avg margin overall", "validated_sql": "SELECT 1", "tier": "full_dynamic",
+     "metadata": {"tables": ["margin_analysis"], "intent": "aggregation",
+                  "sql_pattern": ["aggregation"], "columns": [], "joins": []}},
+    {"question": "top customers by volume", "validated_sql": "SELECT 2", "tier": "full_dynamic",
+     "metadata": {"tables": ["customer_360"], "intent": "ranking",
+                  "sql_pattern": ["ranking"], "columns": [], "joins": []}},
+    {"question": "margin by region", "validated_sql": "SELECT 3", "tier": "full_dynamic",
+     "metadata": {"tables": ["margin_analysis"], "intent": "aggregation",
+                  "sql_pattern": ["aggregation"], "columns": [], "joins": []}},
+    {"question": "lost deals per customer", "validated_sql": "SELECT 4", "tier": "full_dynamic",
+     "metadata": {"tables": ["customer_360"], "intent": "aggregation",
+                  "sql_pattern": ["aggregation"], "columns": [], "joins": []}},
+]
+
+_SCALE_SCORES = {0: 0.9, 1: 0.8, 2: 0.7, 3: 0.6}
+
+
+def _prime_scale_cache(rows):
+    """Prime the corpus cache at the CURRENT flag state (the signature includes the
+    scale-mode flags), BM25 off, dense 'available' — set flags before calling this."""
+    from sql_agent.memory import example_index
+
+    example_index._CACHE = {
+        "sig": example_index._corpus_signature(rows),
+        "names": [r["question"] for r in rows],
+        "bm25": None,
+        "name_to_idx": {r["question"]: i for i, r in enumerate(rows)},
+        "dense_ok": True,
+    }
+
+
+def _store_like_dense(rows, scores):
+    """A dense_scores stub that behaves like a payload-filtering vector store: honours
+    the {"tables": {"any": [...]}} condition against each row's metadata and the
+    bounded top_m, exactly as MemoryIndex/QdrantIndex would."""
+    def fake(q, where=None, top_m=None):
+        out = dict(scores)
+        if where and "tables" in where:
+            wanted = set(where["tables"]["any"])
+            out = {i: s for i, s in out.items()
+                   if set(rows[i]["metadata"]["tables"]) & wanted}
+        if top_m:
+            out = dict(sorted(out.items(), key=lambda kv: -kv[1])[:top_m])
+        return out
+    return fake
+
+
+def test_prefilter_parity_with_python_side_filter(monkeypatch):
+    """The go/no-go for scale mode: prefilter ON (store-side where) must pick the SAME
+    examples as prefilter OFF (Python-side filter) on the same corpus/question."""
+    from sql_agent.config import settings
+    from sql_agent.memory import example_index
+    from sql_agent.memory.example_index import rank_examples
+
+    monkeypatch.setattr(settings, "examples_min_score", 0.0)
+    monkeypatch.setattr(example_index, "dense_scores",
+                        _store_like_dense(_SCALE_ROWS, _SCALE_SCORES))
+
+    picks = {}
+    for flag in (False, True):
+        monkeypatch.setattr(settings, "examples_prefilter_enabled", flag)
+        _prime_scale_cache(_SCALE_ROWS)  # signature depends on the flag
+        out = rank_examples("what is the average margin", _SCALE_ROWS,
+                            tables_hint=["margin_analysis"], k=2)
+        picks[flag] = [r["question"] for r in out]
+
+    assert picks[True] == picks[False]
+    assert set(picks[True]) == {"avg margin overall", "margin by region"}
+
+
+def test_prefilter_empty_result_retries_unfiltered(monkeypatch):
+    """Never-starve: a table filter matching NOTHING in the store must fall back to an
+    unfiltered fetch (and then the Python-side filter's own full-pool fallback), so the
+    generator still gets examples."""
+    from sql_agent.config import settings
+    from sql_agent.memory import example_index
+    from sql_agent.memory.example_index import rank_examples
+
+    monkeypatch.setattr(settings, "examples_min_score", 0.0)
+    monkeypatch.setattr(settings, "examples_prefilter_enabled", True)
+    monkeypatch.setattr(example_index, "dense_scores",
+                        _store_like_dense(_SCALE_ROWS, _SCALE_SCORES))
+    _prime_scale_cache(_SCALE_ROWS)
+
+    out = rank_examples("anything", _SCALE_ROWS,
+                        tables_hint=["treasury_rate_sheet"], k=2)  # matches no example
+    assert len(out) == 2  # fell back to the full pool rather than returning nothing
+
+
+def test_query_doc_text_baseline_is_glossary_expansion_only(monkeypatch):
+    from sql_agent.config import settings
+    from sql_agent.memory.example_index import query_doc_text
+
+    monkeypatch.setattr(settings, "examples_structured_query_enabled", False)
+    q = "some plain wording with no glossary terms"
+    assert query_doc_text(q, intent="ranking", patterns={"ranking"}) == q
+
+
+def test_query_doc_text_structured_appends_short_suffix(monkeypatch):
+    from sql_agent.config import settings
+    from sql_agent.memory.example_index import query_doc_text
+
+    monkeypatch.setattr(settings, "examples_structured_query_enabled", True)
+    q = "some plain wording with no glossary terms"
+    doc = query_doc_text(q, intent="policy_violation",
+                         patterns={"threshold", "policy_violation"})
+    assert doc.startswith(q)  # question text still leads/dominates
+    assert "Query pattern: policy_violation, threshold." in doc
+    assert "Intent: policy_violation." in doc
 
 

@@ -38,14 +38,33 @@ class VectorIndex(Protocol):
     def search(self, query_vector, k: int, where: dict | None = None
                ) -> list[tuple[str, float]]:
         """Return the top-k (name, score) by cosine similarity, honouring ``where`` when
-        the backend supports payload filtering (Qdrant; ignored by memory/faiss)."""
+        the backend supports payload filtering (memory + Qdrant; ignored by faiss, whose
+        flat index has no payloads — callers needing a filter there must post-filter).
+
+        ``where`` conditions: a scalar value means equality
+        (``{"domain": "pricing"}``); ``{"any": [...]}`` means the payload field (itself
+        a list) must INTERSECT the given values —
+        ``{"tables": {"any": ["margin_analysis"]}}`` matches any point whose ``tables``
+        payload contains ``margin_analysis``."""
 
     def close(self) -> None:
         """Release any underlying resources (no-op for in-process backends)."""
 
 
 def _match(payload: dict, where: dict) -> bool:
-    return all(payload.get(k) == v for k, v in where.items())
+    """In-process `where` evaluation (memory backend; mirrors QdrantIndex.search).
+    Scalar condition => equality; {"any": [...]} => the payload field (a list) must
+    intersect the given values."""
+    for key, cond in where.items():
+        got = payload.get(key)
+        if isinstance(cond, dict) and "any" in cond:
+            wanted = set(cond["any"] or [])
+            have = set(got) if isinstance(got, (list, tuple, set)) else {got}
+            if not (wanted & have):
+                return False
+        elif got != cond:
+            return False
+    return True
 
 
 class MemoryIndex:
@@ -163,6 +182,18 @@ class QdrantIndex:
                 for i, n in enumerate(names)
             ],
         )
+        # Index the list-payload fields used by pre-filtered retrieval ({"any": ...}
+        # conditions) so the filter stays cheap as the collection grows. Best-effort:
+        # an index on a field no point carries is harmless, and failure to create one
+        # only costs filter speed, never correctness.
+        for field in ("tables", "intent"):
+            if any(field in p for p in payloads.values()):
+                try:
+                    self._client.create_payload_index(
+                        self._collection, field_name=field,
+                        field_schema=models.PayloadSchemaType.KEYWORD)
+                except Exception as exc:  # noqa: BLE001 — speed optimisation only
+                    log.warning("payload index on '%s' failed | %s", field, exc)
         log.info("Qdrant upserted %d schema vectors into '%s'", len(names), self._collection)
 
     def search(self, query_vector, k, where=None):
@@ -171,10 +202,17 @@ class QdrantIndex:
 
         qfilter = None
         if where:
-            qfilter = models.Filter(must=[
-                models.FieldCondition(key=key, match=models.MatchValue(value=val))
-                for key, val in where.items()
-            ])
+            conditions = []
+            for key, cond in where.items():
+                if isinstance(cond, dict) and "any" in cond:
+                    # {"any": [...]}: payload list field must intersect the values —
+                    # MatchAny on a list payload is Qdrant's native any-of semantics.
+                    conditions.append(models.FieldCondition(
+                        key=key, match=models.MatchAny(any=list(cond["any"] or []))))
+                else:
+                    conditions.append(models.FieldCondition(
+                        key=key, match=models.MatchValue(value=cond)))
+            qfilter = models.Filter(must=conditions)
         # query_points is the current API (replaced the deprecated .search()).
         result = self._client.query_points(
             self._collection,

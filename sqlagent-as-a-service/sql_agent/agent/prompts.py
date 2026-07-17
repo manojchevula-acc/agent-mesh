@@ -340,24 +340,50 @@ You are validating whether a SQL query answers a user's question. You are given 
 question, the SQL, its result COLUMN NAMES, the ROW COUNT, and the SCHEMA of the tables
 involved (so you know what each column MEANS) — never the data itself.
 
-Return strict JSON:
-  {{"answers_question": true|false, "confidence": 0.0-1.0, "reason": "<12 words>"}}
+Work in TWO stages. FIRST analyse each aspect of the query against the question; THEN,
+conditioned on that analysis, decide the verdict and how confident you are. Do NOT jump
+straight to the verdict — fill the analysis fields honestly and actively look for a reason
+the query might answer a DIFFERENT question than the one asked.
 
 Use the schema to interpret column meanings (e.g. expected_margin_pct IS the expected
-margin; customer_segment IS the segment). Then check: do the selected columns, grouping,
-filters, and aggregation match what was asked? A syntactically valid query that answers a
-DIFFERENT question must return false. If the query correctly answers the question, return
-answers_question=true with high confidence.
+margin; customer_segment IS the segment).
 
-Judge the QUERY LOGIC ONLY (columns, filters, grouping, aggregation) — never the data.
-ROW COUNT reflects what records EXIST, not whether the query is correct. A query with the
-right logic that returns few rows, ONE row, or ZERO rows STILL answers the question: the
-data simply may not contain every group asked about. In particular, for a "compare A vs B"
-question, a query grouped by the right dimension answers it EVEN IF only one group comes
-back — that means the data has no rows for the other group, which is itself the answer, NOT
-a query defect. Do NOT return false for "missing group", "insufficient groups", or "missing
-data". Return false ONLY when the query LOGIC is wrong (wrong column/filter/grouping/
-aggregation, or it answers a different question).
+WHAT ROW COUNT DOES AND DOESN'T TELL YOU: row count reflects what records EXIST, not whether
+the query is correct. A query with the right logic that returns few rows, ONE row, or ZERO
+rows STILL answers the question — the data simply may not contain every group asked about.
+For a "compare A vs B" question, a query grouped by the right dimension answers it EVEN IF
+only one group comes back. Do NOT lower the verdict or confidence for "missing group",
+"insufficient groups", or "missing data".
+
+WHAT YOU CANNOT SEE: you never see the data values, so you CANNOT confirm that a filter
+value is spelled/cased correctly or that a join returns the right rows. Judge the LOGIC you
+can observe, and let your CONFIDENCE reflect how certain you are given only the SQL + schema.
+If the question could reasonably map to more than one query, or a filter value / column
+choice is a judgment call you cannot verify, that is genuine uncertainty — report a LOWER
+confidence rather than defaulting to 1.0.
+
+Return STRICT JSON with these keys IN THIS ORDER (analysis first, verdict last):
+  {{
+    "columns_check":     "<do the selected columns match what was asked?>",
+    "filters_check":     "<do WHERE filters match the question's conditions? any you cannot confirm?>",
+    "grouping_check":    "<does GROUP BY match the dimension asked for?>",
+    "aggregation_check": "<do SUM/COUNT/AVG/etc match what was asked?>",
+    "possible_mismatch": "<strongest reason this query might answer a DIFFERENT question, or 'none found'>",
+    "answers_question":  true|false,
+    "confidence":        0.0-1.0,
+    "reason":            "<12 words>"
+  }}
+
+Set answers_question=false ONLY when the query LOGIC is wrong (wrong column/filter/grouping/
+aggregation, or it answers a different question) — never for missing data.
+
+CONFIDENCE RUBRIC (calibrate against your own analysis above; do NOT default to 1.0):
+  0.90-1.00  logic unambiguously matches; the question maps to exactly one reasonable query.
+  0.70-0.89  logic matches, but the question is slightly ambiguous or a filter/column is a
+             judgment call you cannot fully confirm.
+  0.40-0.69  plausible, but a real alternative interpretation exists or you found a possible
+             mismatch you cannot rule out.
+  0.00-0.39  the logic likely answers a different question.
 
 SCHEMA:
 {schema_context}

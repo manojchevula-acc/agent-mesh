@@ -20,41 +20,19 @@ same contract ``example_index.rank_examples`` has always had.
 
 from __future__ import annotations
 
-import json
 from itertools import combinations
 
 from sql_agent.config import settings
 from sql_agent.logging_config import get_logger
 from sql_agent.memory import example_index
 from sql_agent.memory.column_selector import select_columns
-from sql_agent.memory.example_metadata import generate as generate_metadata
+# Metadata reading lives beside the index build now (one reader, no drift with the
+# vector-store payloads) — kept under the old local name for the tests that patch it.
+from sql_agent.memory.example_index import row_metadata as _row_metadata
 from sql_agent.routing.intent_tagger import expected_patterns, tag_intent
 from sql_agent.semantic_layer.glossary import matched_terms
 
 log = get_logger("examples")
-
-# Per-question metadata cache (question text -> metadata dict), for approved examples
-# whose stored ``metadata`` column is missing/blank (rows seeded before this feature, or
-# a test fixture) — computed once via example_metadata.generate rather than on every
-# retrieval call. Cleared implicitly by process restart; the corpus is small (tens of
-# rows) so this never grows unbounded in practice.
-_METADATA_CACHE: dict[str, dict] = {}
-
-
-def _row_metadata(row: dict) -> dict:
-    raw = row.get("metadata")
-    if raw:
-        try:
-            return json.loads(raw) if isinstance(raw, str) else dict(raw)
-        except Exception:  # noqa: BLE001 — fall through to on-the-fly generation
-            pass
-    question = row.get("question", "")
-    cached = _METADATA_CACHE.get(question)
-    if cached is not None:
-        return cached
-    meta = generate_metadata(question, row.get("validated_sql"))
-    _METADATA_CACHE[question] = meta
-    return meta
 
 
 def _jaccard(a: set, b: set) -> float:
@@ -105,7 +83,27 @@ def rank_examples(
     k = k or settings.examples_top_k
 
     try:
-        fused, dense = example_index.semantic_signal(question, rows)
+        # --- Structured retrieval key: derive the question's signals FIRST ---------
+        # (scale mode passes them INTO the fetch — payload filter + enriched query
+        # text; with the flags off they only feed the post-search filter/score below.)
+        live_tables = {t for t in (tables_hint or []) if t}
+        live_columns = select_columns(question, tables=live_tables or None)
+        live_intent = tag_intent(question)
+        live_patterns = expected_patterns(question)
+
+        # Everything the ranker derived from THIS question — logged so a live turn's
+        # example picks can be audited without reproducing the request offline.
+        log.info(
+            "PATTERN signals | intent=%s | patterns=%s | glossary_terms=%s | "
+            "tables_hint=%s | columns=%s",
+            live_intent, sorted(live_patterns), matched_terms(question),
+            sorted(live_tables), sorted(live_columns),
+        )
+
+        fused, dense, prefiltered = example_index.semantic_signal(
+            question, rows,
+            live_tables=live_tables, intent=live_intent, patterns=live_patterns,
+        )
         if not fused:  # neither ranker available -> static head slice (today's floor)
             return rows[:k]
 
@@ -122,22 +120,14 @@ def rank_examples(
                 return []
 
         # --- Phase 4: metadata filter -------------------------------------------
-        live_tables = {t for t in (tables_hint or []) if t}
-        live_columns = select_columns(question, tables=live_tables or None)
-        live_intent = tag_intent(question)
-        live_patterns = expected_patterns(question)
-
-        # Everything the ranker derived from THIS question — logged so a live turn's
-        # example picks can be audited without reproducing the request offline.
-        log.info(
-            "PATTERN signals | intent=%s | patterns=%s | glossary_terms=%s | "
-            "tables_hint=%s | columns=%s",
-            live_intent, sorted(live_patterns), matched_terms(question),
-            sorted(live_tables), sorted(live_columns),
-        )
-
         metas = {i: _row_metadata(rows[i]) for i in fused}
-        if live_tables:
+        if prefiltered:
+            # The vector store already applied the table filter (payload where) —
+            # everything in `fused` is table-eligible; re-filtering here is redundant.
+            eligible = set(fused)
+            log.info("PATTERN filter | corpus=%d | store-prefiltered=%d (tables=%s)",
+                     len(rows), len(fused), sorted(live_tables))
+        elif live_tables:
             filtered = {i for i in fused if set(metas[i].get("tables") or []) & live_tables}
             eligible = filtered or set(fused)  # never starve: empty intersection -> full pool
             log.info(

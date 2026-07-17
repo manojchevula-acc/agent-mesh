@@ -175,6 +175,24 @@ class Settings(BaseSettings):
     # against still picking genuinely relevant examples.
     examples_diversity_lambda: float = 0.5
 
+    # --- Scale mode: structured, pre-filtered retrieval (docs/PLAN_STRUCTURED_RETRIEVAL.md)
+    # Both flags default OFF => byte-identical behaviour to the score-all-then-filter
+    # pipeline above. Flip when the example corpus grows (~500+, or examples start being
+    # auto-promoted from production turns). Toggling either flag changes what the vector
+    # index stores/embeds — rebuild it (scripts/build_example_index.py --force).
+    # Push the question's table signal into the vector store as a payload filter and
+    # fetch a bounded top-M instead of scoring the whole corpus per request.
+    examples_prefilter_enabled: bool = False
+    # Symmetric structural enrichment: embed the QUERY as question + a short
+    # "Query pattern: ... Intent: ..." suffix (mirroring example_doc_text's SQL-shape
+    # phrase) so query and example vectors share structural vocabulary; the same tokens
+    # join the BM25 docs. Kept to one short sentence so the question still dominates —
+    # a rule-tagger error must only nudge the vector, never poison it.
+    examples_structured_query_enabled: bool = False
+    # Bounded candidate fetch size when prefiltering (the store returns at most this
+    # many; the ranker's pool/top-k narrowing below is unchanged).
+    examples_search_top_m: int = 50
+
     # --- Production upgrade: intent detection (Component A) --------------------
     # Every new stage below is flag-gated and defaults to today's behaviour.
     intent_detection_enabled: bool = False   # run the intent node (shadow / advisory)
