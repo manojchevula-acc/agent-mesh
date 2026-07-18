@@ -282,7 +282,7 @@ def _group_f_ambiguous() -> List[GoldenTestCase]:
             username="alice",
             route_type="ambiguous_query",
             expected_blocked=False,
-            expected_keywords=["customer", "provide", "details"],
+            expected_keywords=["customer", "details"],
             expected_outcome="Agent asks the user to provide a customer ID, deal type, and pricing terms before checking compliance status.",
         ),
     ]

@@ -133,7 +133,7 @@ def _format_chunks(payload: dict) -> dict:
 
 @mcp.tool()
 async def search_documents(
-    query: str, top_k: int = 5, generate_answer: bool = DEFAULT_GENERATE_ANSWER
+    query: str, top_k: int = 5
 ) -> dict:
     """Search FAB credit & regulatory policy documents for grounded context.
 
@@ -145,18 +145,15 @@ async def search_documents(
     Args:
         query: The natural-language question or topic to retrieve context for.
         top_k: How many chunks to return (1-20, default 5).
-        generate_answer: If True, the RAG pipeline's LLM also composes a complete,
-            cited answer from the chunks, returned in the ``answer`` field. If
-            False (default), only the chunks are returned and you should reason
-            over them and cite ``[source · clause]`` yourself.
 
     Returns:
         ``{"results": [{source, clause, section, effective_date, stale, score,
         text}], "total_results", "freshness_warning", "latency_ms"}``, plus an
-        ``answer`` string when ``generate_answer`` is True. On error,
-        ``{"error": <message>}``.
+        ``answer`` string when the server is configured to generate answers. On
+        error, ``{"error": <message>}``.
     """
     top_k = max(1, min(int(top_k), 20))
+    generate_answer = DEFAULT_GENERATE_ANSWER
 
     try:
         pipeline, generator = await _ensure_pipeline()

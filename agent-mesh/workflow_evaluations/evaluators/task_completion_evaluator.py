@@ -21,15 +21,25 @@ if str(_EVAL_ROOT) not in sys.path:
 # Patterns that indicate structured data was returned
 _PERCENT_RE = re.compile(r"\d+(\.\d+)?\s*%")
 _CURRENCY_RE = re.compile(
-    r"(AED|USD|EUR|GBP)\s*[\d,]+"           # AED 50,000 or AED50,000
-    r"|[\d,]+\s*(AED|USD|EUR|GBP)"          # 50,000 AED
-    r"|\(?(AED|USD|EUR|GBP)\)?[^0-9\n]{0,30}[\d,]+",  # (AED) | 18,000,000 (Markdown table column)
+    r"(AED|USD|EUR|GBP|CAD|CHF|CNY|JPY|SGD)\s*[\d,]+"      # AED 50,000 or AED50,000
+    r"|[\d,]+\s*(AED|USD|EUR|GBP|CAD|CHF|CNY|JPY|SGD)"      # 50,000 AED
+    r"|\(?(AED|USD|EUR|GBP)\)?[^0-9\n]{0,30}[\d,]+",        # (AED) | 18,000,000 table column
     re.IGNORECASE,
 )
-_CUSTOMER_NAME_RE = re.compile(
-    r"\b(acme|globex|initech|techcorp|omega|corp|ltd|llc|inc|company|customer)\b",
-    re.IGNORECASE,
+# Structured-data presence signals.
+# Previously this was a company-name regex containing "customer", "corp", "company",
+# "ltd", "inc" — tokens that appear in virtually every banking response, making the
+# check meaningless (always True).  The replacement checks for concrete structural
+# evidence that the agent returned a data payload:
+#   • a markdown table row  (|field|value|)
+#   • a field:value line    (e.g. "**Customer Name** | Al Noor Trading")
+#   • a customer-ID reference (CUST001, CUST_002, …)
+_MD_TABLE_RE = re.compile(r"\|[^|\n]+\|[^|\n]+\|", re.MULTILINE)
+_FIELD_VALUE_RE = re.compile(
+    r"^\s*\*?\*?[A-Za-z][A-Za-z_ ]{2,30}\*?\*?\s*[|:]\s*\S",
+    re.MULTILINE,
 )
+_CUST_ID_RE = re.compile(r"\bCUST[_-]?\d{3,}\b", re.IGNORECASE)
 
 
 def task_completion_score(
@@ -62,29 +72,36 @@ def task_completion_score(
 def _check_data_completion(response: str) -> EvalScore:
     has_percent = bool(_PERCENT_RE.search(response))
     has_currency = bool(_CURRENCY_RE.search(response))
-    has_name = bool(_CUSTOMER_NAME_RE.search(response))
+    # Structural data signals: markdown table, field:value pairs, or a customer ID.
+    # These are far more specific than generic company-name tokens ("corp", "customer")
+    # which appear in every banking response regardless of whether data was returned.
+    has_structure = (
+        bool(_MD_TABLE_RE.search(response))
+        or bool(_FIELD_VALUE_RE.search(response))
+        or bool(_CUST_ID_RE.search(response))
+    )
 
     checks: List[dict] = [
         {"name": "Percentage / ratio value present (e.g. 12.5%)",
          "passed": has_percent,
          "detail": "Found" if has_percent else "Not found — expected a numeric % value"},
-        {"name": "Currency amount present (AED / USD / EUR / GBP)",
+        {"name": "Currency amount present (AED / USD / EUR / GBP / …)",
          "passed": has_currency,
          "detail": "Found" if has_currency else "Not found — expected a monetary value"},
-        {"name": "Customer or entity name present",
-         "passed": has_name,
-         "detail": "Found" if has_name else "Not found — expected a customer/company name"},
+        {"name": "Structured data present (table, field:value rows, or customer ID)",
+         "passed": has_structure,
+         "detail": "Found" if has_structure else "Not found — no markdown table, field:value, or CUST### ID"},
     ]
 
-    hits = sum([has_percent, has_currency, has_name])
+    hits = sum([has_percent, has_currency, has_structure])
     if hits >= 2:
         return EvalScore(1.0, "DATA_COMPLETE",
-                         f"fields found: percent={has_percent}, currency={has_currency}, name={has_name}",
+                         f"signals found: percent={has_percent}, currency={has_currency}, structure={has_structure}",
                          checks=checks)
     elif hits == 1:
-        return EvalScore(0.5, "DATA_PARTIAL", "only 1 of 3 expected data fields found", checks=checks)
+        return EvalScore(0.5, "DATA_PARTIAL", "only 1 of 3 expected data signals found", checks=checks)
     else:
-        return EvalScore(0.0, "DATA_MISSING", "no structured data fields detected", checks=checks)
+        return EvalScore(0.0, "DATA_MISSING", "no structured data signals detected", checks=checks)
 
 
 def _check_knowledge_completion(response: str) -> EvalScore:

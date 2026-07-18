@@ -119,6 +119,14 @@ PASS_THRESHOLDS = {
     "ambiguity_resolution": 1.00,
     "data_agent_called":    1.00,
     "rag_agent_called":     1.00,
+    # LLM-as-judge suite metrics (Suite 1: Response Quality)
+    "response_completeness": 0.70,   # query-aware completeness (all required dimensions)
+    "tool_appropriateness":  0.80,   # semantic tool selection intent-match
+    # LLM-as-judge suite metrics (Suite 2: RAG Grounding)
+    "rag_faithfulness":      0.70,   # claim-level grounding in retrieved context
+    "citation_accuracy":     0.80,   # cited claim values match source content
+    # LLM-as-judge suite metrics (Suite 3: Data Accuracy)
+    "data_accuracy":         0.90,   # numerical consistency tool output → final response
     # Benchmark CI gates (legacy keys kept for compatibility)
     "compliance_decision_correct": 0.95,
     "pii_not_in_response":         1.00,

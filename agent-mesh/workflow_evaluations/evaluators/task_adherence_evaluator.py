@@ -4,13 +4,18 @@ Scores whether the agent response directly addresses the banking query.
   1.0 — response directly addresses the pricing/policy/data query
   0.5 — partially on-topic (answered general question, missed specifics)
   0.0 — off-topic, refused when it shouldn't, or hallucinated a tool call
+
+Also exposes `semantic_keyword_check()` for the keyword coverage evaluator:
+a single batched LLM call that checks whether each concept is semantically
+addressed in the response (synonym-aware, paraphrase-tolerant fallback for
+exact string matching).
 """
 from __future__ import annotations
 
 import os
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Dict, List, Optional
 
 from evaluators.compliance_evaluator import EvalScore
 
@@ -43,6 +48,78 @@ Agent response: {response}
 
 Reply with ONLY a JSON object like: {{"score": 1.0, "reason": "..."}}
 Do not include any other text."""
+
+# Prompt for batched semantic keyword coverage check.
+# The LLM is asked whether each concept is *semantically* addressed — synonyms,
+# paraphrases, and domain-equivalent terms all count as a match.
+_KEYWORD_CHECK_PROMPT = """\
+You are checking whether a banking AI response semantically addresses a list of concepts.
+A concept is COVERED if the response mentions it, uses a synonym, or clearly addresses \
+the underlying idea — even with different wording.
+
+Agent response:
+{response}
+
+For each concept listed below, reply true if covered, false if not covered.
+Concepts: {concepts_json}
+
+Reply with ONLY a JSON object mapping each concept to a boolean.
+Example: {{"pricing floor": true, "provide": false}}
+No other text."""
+
+
+def semantic_keyword_check(
+    response: str,
+    keywords: List[str],
+    model: Optional[str] = None,
+) -> Dict[str, bool]:
+    """Check whether each keyword concept is semantically covered in the response.
+
+    Uses a single batched LLM call so N keywords cost one API round-trip.
+    Returns a dict mapping each keyword to True (covered) / False (not covered).
+    Falls back to all-False when the judge is unavailable, so the caller can
+    treat missing keys as "not semantically matched" without crashing.
+    """
+    if not keywords or not response or not response.strip():
+        return {kw: False for kw in keywords}
+
+    base_url = os.getenv("LLM_BASE_URL", "https://api.groq.com/openai/v1")
+    api_key = os.getenv("GROQ_API_KEY", "")
+    if not api_key:
+        return {kw: False for kw in keywords}
+
+    if model is None:
+        model = (
+            os.getenv("GROQ_MODEL")
+            or (_DEFAULT_CEREBRAS_MODEL if "cerebras" in base_url else _DEFAULT_GROQ_MODEL)
+        )
+
+    try:
+        import json
+        from openai import OpenAI
+
+        client = OpenAI(base_url=base_url, api_key=api_key)
+        concepts_json = json.dumps(keywords)
+        prompt = _KEYWORD_CHECK_PROMPT.format(
+            response=response[:1500],
+            concepts_json=concepts_json,
+        )
+        message = client.chat.completions.create(
+            model=model,
+            max_tokens=256,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = message.choices[0].message.content if message.choices else ""
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        if start == -1 or end == 0:
+            return {kw: False for kw in keywords}
+        data = json.loads(raw[start:end])
+        # Normalise keys — LLM might capitalise or add whitespace
+        data_lower = {k.lower().strip(): bool(v) for k, v in data.items()}
+        return {kw: data_lower.get(kw.lower().strip(), False) for kw in keywords}
+    except Exception:
+        return {kw: False for kw in keywords}
 
 
 def task_adherence_score(

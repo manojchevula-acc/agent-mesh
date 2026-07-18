@@ -8,6 +8,17 @@ Both modes run each GoldenTestCase through the evaluators in evaluators/.
 """
 from __future__ import annotations
 
+# Load .env before any evaluator imports so GROQ_API_KEY / LLM_BASE_URL / GROQ_MODEL
+# are available even when this module is run standalone (not via run_evaluation.py).
+try:
+    import pathlib as _pl
+    from dotenv import load_dotenv as _load_dotenv
+    # Walk up to agent-mesh/ root and load its .env
+    _env_file = _pl.Path(__file__).resolve().parents[2] / ".env"
+    _load_dotenv(dotenv_path=_env_file, override=False)
+except ImportError:
+    pass  # python-dotenv not installed — env vars must be set manually
+
 import asyncio
 import json
 import os
@@ -40,7 +51,10 @@ from evaluators.data_tool_evaluator import (
     QUERY_TYPE_TO_TOOL,
 )
 from evaluators.task_completion_evaluator import task_completion_score
-from evaluators.task_adherence_evaluator import task_adherence_score
+from evaluators.task_adherence_evaluator import task_adherence_score, semantic_keyword_check
+from evaluators.llm_evaluators import (
+    run_response_quality_suite, run_rag_grounding_suite, data_accuracy_score,
+)
 from evaluators.intent_resolution_evaluator import intent_resolution_score
 from evaluators.tool_selection_evaluator import tool_selection_score
 from evaluators.tool_input_accuracy_evaluator import tool_input_accuracy_score
@@ -541,23 +555,43 @@ def _score_case(
             checks=cit.checks,
         )
 
-    # Keyword coverage
+    # Keyword coverage — hybrid: exact/stem match first, LLM semantic check for misses.
+    # Prevents false negatives when the agent uses synonyms or paraphrasing
+    # (e.g. "specify" instead of "provide", "minimum rate" instead of "pricing floor").
     if case.expected_keywords and not blocked:
         answer_lower = answer.lower()
-        hit = sum(1 for kw in case.expected_keywords if _keyword_matches(kw, answer_lower))
+
+        # Phase 1: exact/stem match
+        exact_hits = {kw: _keyword_matches(kw, answer_lower) for kw in case.expected_keywords}
+        exact_misses = [kw for kw, hit in exact_hits.items() if not hit]
+
+        # Phase 2: single batched LLM call for any misses
+        semantic_hits: dict = {}
+        if exact_misses:
+            semantic_hits = semantic_keyword_check(answer, exact_misses)
+
+        # Build per-keyword check entries annotated with how the match was made
+        kw_checks = []
+        for kw in case.expected_keywords:
+            if exact_hits[kw]:
+                kw_checks.append({"name": f"Keyword: '{kw}'", "passed": True,
+                                   "detail": "Found (exact match)"})
+            elif semantic_hits.get(kw, False):
+                kw_checks.append({"name": f"Keyword: '{kw}'", "passed": True,
+                                   "detail": "Found (semantic match — synonym/paraphrase)"})
+            else:
+                kw_checks.append({"name": f"Keyword: '{kw}'", "passed": False,
+                                   "detail": "Not found (exact or semantic)"})
+
+        hit = sum(1 for c in kw_checks if c["passed"])
         kw_score = hit / len(case.expected_keywords)
         scores["keyword_coverage"] = kw_score
-        missing_kw = [kw for kw in case.expected_keywords if not _keyword_matches(kw, answer_lower)]
-        kw_checks = [
-            {"name": f"Keyword: '{kw}'",
-             "passed": _keyword_matches(kw, answer_lower),
-             "detail": "Found" if _keyword_matches(kw, answer_lower) else "Not found"}
-            for kw in case.expected_keywords
-        ]
+        missing_kw = [kw for kw, chk in zip(case.expected_keywords, kw_checks) if not chk["passed"]]
         _detail(
             "Keyword Coverage",
             kw_score, kw_score >= _T.get("keyword_coverage", 0.75),
-            f"Checked that the response contains expected domain keywords: {case.expected_keywords}.",
+            f"Checked that the response contains expected domain keywords: {case.expected_keywords}. "
+            f"Exact/stem match runs first; unmatched keywords are re-checked via LLM semantic judge.",
             f"{'FULL' if kw_score == 1.0 else 'PARTIAL' if kw_score > 0 else 'MISSING'} — "
             f"{hit}/{len(case.expected_keywords)} keywords found."
             + (f" Missing: {missing_kw}" if missing_kw else ""),
@@ -609,43 +643,96 @@ def _score_case(
                 checks=tc.checks,
             )
 
-    # Task Adherence (LLM-as-judge; falls back to SKIP when judge is unavailable)
+    # Task Adherence + Completeness + Tool Appropriateness
+    # Suite 1: one batched LLM call covers all three dimensions.
+    # Skipped for ambiguous_query routes — LLM judge penalises clarification-seeking
+    # as PARTIAL even though that IS the correct agent behaviour.
     _JUDGE_SKIP_LABELS = {"JUDGE_UNAVAILABLE", "JUDGE_PARSE_ERROR"}
-    if not blocked and answer:
-        ta = task_adherence_score(case.query, answer)
-        judge_skipped = ta.label in _JUDGE_SKIP_LABELS
-        scores["task_adherence"] = ta.score
-        _trace_linker.record_eval_result(rid, "task_adherence_evaluator", ta.score, ta.score >= _T.get("task_adherence", 0.75), {"label": ta.label})
-        if judge_skipped:
-            # Judge unreachable — exclude this evaluator from pass/fail verdict
-            _detail(
-                "Task Adherence",
-                ta.score, True,   # True = do not count as a failure
-                "LLM judge (Groq/Cerebras via GROQ_API_KEY) could not be reached. "
-                "This evaluator is excluded from the overall pass/fail verdict for this case.",
-                f"⚠️ SKIP ({ta.label}) — {ta.detail or 'Judge unavailable; result excluded from verdict.'}",
-                label=ta.label,
-                checks=[
-                    {"name": "Response non-empty", "passed": bool(answer and answer.strip()), "detail": "Non-empty" if answer else "Empty"},
-                    {"name": "LLM judge available (GROQ_API_KEY / Cerebras)", "passed": False, "detail": "Judge unreachable — result excluded from verdict"},
-                ],
-            )
-        else:
+    if not blocked and answer and case.route_type != "ambiguous_query":
+        # Pre-extract DataAgent tool (annotated before reasoning strip) for tool_appropriateness
+        _da_tool_for_suite = next(
+            (r.get("_tool_selected") for r in audit_records
+             if r.get("agent_name") == "DataAgent" and r.get("_tool_selected")),
+            None,
+        )
+
+        suite1 = run_response_quality_suite(case.query, answer, tool_used=_da_tool_for_suite)
+
+        if suite1 is not None:
+            # --- task_adherence from suite ---
+            ta = suite1.task_adherence
+            scores["task_adherence"] = ta.score
+            _trace_linker.record_eval_result(rid, "task_adherence_evaluator", ta.score, ta.score >= _T.get("task_adherence", 0.75), {"label": ta.label})
             _detail(
                 "Task Adherence",
                 ta.score, ta.score >= _T.get("task_adherence", 0.75),
-                "LLM judge (Groq llama-3.3-70b-versatile / Cerebras llama3.1-8b) scored whether the response directly addresses the banking query. "
+                "LLM Response Quality Suite: scored whether the response directly addresses the banking query. "
                 "1.0 = fully on-topic; 0.5 = partial; 0.0 = off-topic or refused without cause.",
                 f"{ta.label}" + (f" — {ta.detail}" if ta.detail else ""),
-                label=ta.label,
-                checks=[
-                    {"name": "Response non-empty", "passed": bool(answer and answer.strip()), "detail": "Non-empty"},
-                    {"name": "LLM judge available (GROQ_API_KEY / Cerebras)", "passed": True, "detail": "Judge reachable"},
-                    {"name": f"Judge score: {ta.score:.2f} (threshold ≥ {_T.get('task_adherence', 0.75)})",
-                     "passed": ta.score >= _T.get("task_adherence", 0.75),
-                     "detail": f"{ta.label}" + (f" — {ta.detail[:120]}" if ta.detail else "")},
-                ],
+                label=ta.label, checks=ta.checks,
             )
+
+            # --- response completeness from suite ---
+            co = suite1.completeness
+            scores["response_completeness"] = co.score
+            _trace_linker.record_eval_result(rid, "completeness_evaluator", co.score, co.score >= _T.get("response_completeness", 0.70), {"label": co.label})
+            _detail(
+                "Response Completeness",
+                co.score, co.score >= _T.get("response_completeness", 0.70),
+                "LLM judge verified all required query dimensions (entity, metric, value, policy, recommendation) "
+                "were addressed. Query-aware — unlike field-presence heuristics.",
+                f"{co.label}" + (f" — {co.detail}" if co.detail else ""),
+                label=co.label, checks=co.checks,
+            )
+
+            # --- tool appropriateness from suite ---
+            if suite1.tool_appropriateness is not None:
+                ta2 = suite1.tool_appropriateness
+                scores["tool_appropriateness"] = ta2.score
+                _trace_linker.record_eval_result(rid, "tool_appropriateness_evaluator", ta2.score, ta2.score >= _T.get("tool_appropriateness", 0.80), {"label": ta2.label})
+                _detail(
+                    "Tool Appropriateness (LLM)",
+                    ta2.score, ta2.score >= _T.get("tool_appropriateness", 0.80),
+                    "LLM judge evaluated whether the DataAgent's tool was semantically appropriate for the "
+                    "query intent — not just keyword-matched. Augments the deterministic tool_selection check.",
+                    f"{ta2.label}" + (f" — {ta2.detail}" if ta2.detail else ""),
+                    label=ta2.label, checks=ta2.checks,
+                )
+        else:
+            # Suite call failed — fall back to standalone task_adherence_score()
+            ta = task_adherence_score(case.query, answer)
+            judge_skipped = ta.label in _JUDGE_SKIP_LABELS
+            scores["task_adherence"] = ta.score
+            _trace_linker.record_eval_result(rid, "task_adherence_evaluator", ta.score, ta.score >= _T.get("task_adherence", 0.75), {"label": ta.label})
+            if judge_skipped:
+                _detail(
+                    "Task Adherence",
+                    ta.score, True,
+                    "LLM judge (Groq/Cerebras via GROQ_API_KEY) could not be reached. "
+                    "This evaluator is excluded from the overall pass/fail verdict for this case.",
+                    f"⚠️ SKIP ({ta.label}) — {ta.detail or 'Judge unavailable; result excluded from verdict.'}",
+                    label=ta.label,
+                    checks=[
+                        {"name": "Response non-empty", "passed": bool(answer and answer.strip()), "detail": "Non-empty" if answer else "Empty"},
+                        {"name": "LLM judge available (GROQ_API_KEY / Cerebras)", "passed": False, "detail": "Judge unreachable — result excluded from verdict"},
+                    ],
+                )
+            else:
+                _detail(
+                    "Task Adherence",
+                    ta.score, ta.score >= _T.get("task_adherence", 0.75),
+                    "LLM judge (Groq llama-3.3-70b-versatile / Cerebras llama3.1-8b) scored whether the response directly addresses the banking query. "
+                    "1.0 = fully on-topic; 0.5 = partial; 0.0 = off-topic or refused without cause.",
+                    f"{ta.label}" + (f" — {ta.detail}" if ta.detail else ""),
+                    label=ta.label,
+                    checks=[
+                        {"name": "Response non-empty", "passed": bool(answer and answer.strip()), "detail": "Non-empty"},
+                        {"name": "LLM judge available (GROQ_API_KEY / Cerebras)", "passed": True, "detail": "Judge reachable"},
+                        {"name": f"Judge score: {ta.score:.2f} (threshold ≥ {_T.get('task_adherence', 0.75)})",
+                         "passed": ta.score >= _T.get("task_adherence", 0.75),
+                         "detail": f"{ta.label}" + (f" — {ta.detail[:120]}" if ta.detail else "")},
+                    ],
+                )
 
     # Ambiguity Resolution — did the agent ask for clarification on a vague query?
     if not blocked and answer and case.route_type == "ambiguous_query":
@@ -697,10 +784,17 @@ def _score_case(
         da_outputs = [r.get("output", "") for r in audit_records if r.get("agent_name") == "DataAgent"]
         if da_outputs:
             q_lower = case.query.lower()
-            # Sort keys longest-first so multi-word keys (e.g. "credit_rating") win over
-            # shorter substrings (e.g. "rate" matching inside "corporate").
+            # Sort keys longest-first so multi-word keys win over shorter ambiguous ones.
+            # Use word-boundary regex (not plain substring) to prevent "rate" matching
+            # inside "corporate", "operate", etc.  Multi-word keys with spaces are
+            # matched with a space-or-hyphen alternation so "win loss" matches "win-loss".
+            def _kw_re(key: str) -> "re.Pattern":
+                escaped = re.escape(key).replace(r"\ ", r"[\s\-]")
+                return re.compile(r"\b" + escaped + r"\b")
+
             query_keyword = next(
-                (k for k in sorted(QUERY_TYPE_TO_TOOL, key=len, reverse=True) if k in q_lower),
+                (k for k in sorted(QUERY_TYPE_TO_TOOL, key=len, reverse=True)
+                 if _kw_re(k).search(q_lower)),
                 ""
             )
 
@@ -744,6 +838,20 @@ def _score_case(
                 checks=tou.checks,
             )
 
+            # Suite 3: Data Accuracy — numerical consistency between tool output and final response.
+            # Deterministic pre-filter (1.5% tolerance); LLM called only when mismatch detected.
+            da_acc = data_accuracy_score(da_outputs, answer)
+            scores["data_accuracy"] = da_acc.score
+            _trace_linker.record_eval_result(rid, "data_accuracy_evaluator", da_acc.score, da_acc.score >= _T.get("data_accuracy", 0.90), {"label": da_acc.label})
+            _detail(
+                "Data Accuracy (Numerical)",
+                da_acc.score, da_acc.score >= _T.get("data_accuracy", 0.90),
+                "Numerical consistency: figures in the final response vs. DataAgent tool output. "
+                "Deterministic pre-filter (1.5% tolerance); LLM called only on detected mismatch.",
+                f"{da_acc.label}" + (f" — {da_acc.detail}" if da_acc.detail else ""),
+                label=da_acc.label, checks=da_acc.checks,
+            )
+
 
     # RAG Hallucination Check — grounded in retrieved context? (replay mode only)
     if not blocked and audit_records and case.route_type in ("knowledge", "hybrid"):
@@ -760,6 +868,37 @@ def _score_case(
                 f"{hal.label}" + (f" — {hal.detail}" if hal.detail else ""),
                 checks=hal.checks,
             )
+
+            # Suite 2: RAG Grounding — LLM claim-level faithfulness + citation accuracy.
+            # Augments Jaccard check: handles paraphrases, numeric equivalences, and citation
+            # content verification that token overlap cannot detect.
+            if os.getenv("GROQ_API_KEY"):
+                rag_suite = run_rag_grounding_suite(answer, rag_outputs)
+                if rag_suite is not None:
+                    faith = rag_suite.faithfulness
+                    scores["rag_faithfulness"] = faith.score
+                    _trace_linker.record_eval_result(rid, "rag_faithfulness_evaluator", faith.score, faith.score >= _T.get("rag_faithfulness", 0.70), {"label": faith.label})
+                    _detail(
+                        "RAG Faithfulness (LLM)",
+                        faith.score, faith.score >= _T.get("rag_faithfulness", 0.70),
+                        "LLM claim-level faithfulness (RAGAS-inspired): each factual claim verified against "
+                        "retrieved context. Handles numeric values and paraphrases Jaccard misses.",
+                        f"{faith.label}" + (f" — {faith.detail}" if faith.detail else ""),
+                        label=faith.label, checks=faith.checks,
+                    )
+
+                    cit_acc = rag_suite.citation_accuracy
+                    if cit_acc.label != "NO_CITATIONS_TO_VERIFY":
+                        scores["citation_accuracy"] = cit_acc.score
+                        _trace_linker.record_eval_result(rid, "citation_accuracy_evaluator", cit_acc.score, cit_acc.score >= _T.get("citation_accuracy", 0.80), {"label": cit_acc.label})
+                        _detail(
+                            "Citation Accuracy (LLM)",
+                            cit_acc.score, cit_acc.score >= _T.get("citation_accuracy", 0.80),
+                            "LLM verified that values in explicitly cited claims match the source context — "
+                            "catches fabricated policy figures that citation presence checks cannot detect.",
+                            f"{cit_acc.label}" + (f" — {cit_acc.detail}" if cit_acc.detail else ""),
+                            label=cit_acc.label, checks=cit_acc.checks,
+                        )
 
     all_passed = all(d["passed"] for d in eval_details)
     judge_available = not any(

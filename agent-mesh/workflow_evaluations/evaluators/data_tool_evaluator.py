@@ -9,45 +9,90 @@ from typing import List, Optional
 from .compliance_evaluator import EvalScore
 
 # Maps query-type keywords to the expected MCP tool name.
-# Derived from the 18 semantic views in datalayer-as-service/sql/03_create_semantic_views.sql
+# SOURCE OF TRUTH: DataAgent system prompt TOOL SELECTION table (src/agents/data_agent.py).
+# Keys use spaces (not underscores) to match natural-language query text.
+# Multi-word keys are listed longest-first so the prefix scan in run_maf_eval.py
+# matches the most-specific entry before any shorter substring fires.
+#
+# IMPORTANT: "rate" is NOT mapped here — it is a substring of "corporate", "rate of
+# return", etc. and caused systematic false-positives.  Use "treasury" or "eibor"
+# for treasury-rate queries; "rate/price/recommended" routes to pricing_recommendation.
 QUERY_TYPE_TO_TOOL: dict[str, str] = {
+    # DataAgent TOOL SELECTION: rate/price/recommended → pricing_recommendation
+    "pricing recommendation": "pricing_recommendation",
+    "recommended price":      "pricing_recommendation",
+    "recommend":              "pricing_recommendation",
+    "price":                  "pricing_recommendation",
+    # margin/spread/benchmark → margin_analysis
+    "margin":                 "margin_analysis",
+    "spread":                 "margin_analysis",
+    # profit/ROE/ROA/income → profitability_summary
     "profitability":          "profitability_summary",
     "profit":                 "profitability_summary",
-    "margin":                 "margin_analysis",
+    "roe":                    "profitability_summary",
+    "roa":                    "profitability_summary",
+    # RWA/capital/Basel → rwa_impact
     "rwa":                    "rwa_impact",
-    "risk_weight":            "rwa_impact",
-    "pricing_recommendation": "pricing_recommendation",
-    "recommend":              "pricing_recommendation",
-    "pricing_trace":          "pricing_trace",
-    "pricing_exception":      "policy_exception",
-    "exception":              "policy_exception",
-    "win_loss":               "win_loss_insights",
-    "won":                    "win_loss_insights",
-    "lost":                   "win_loss_insights",
-    "relationship_discount":  "relationship_discount",
-    "discount":               "relationship_discount",
+    "capital":                "rwa_impact",
+    "basel":                  "rwa_impact",
+    # new customer/prospect → new_customer_pricing
+    "new customer":           "new_customer_pricing",
+    "prospect":               "new_customer_pricing",
+    # competitor/market rate → competitor_price_analysis
     "competitor":             "competitor_price_analysis",
+    "market rate":            "competitor_price_analysis",
+    # trace/breakdown/how priced → pricing_trace
+    "pricing trace":          "pricing_trace",
+    "breakdown":              "pricing_trace",
+    # segment floor/ceiling → segment_pricing_benchmark
+    "segment floor":          "segment_pricing_benchmark",
+    "segment ceiling":        "segment_pricing_benchmark",
     "benchmark":              "segment_pricing_benchmark",
     "segment":                "segment_pricing_benchmark",
-    "operations_cost":        "operations_cost_impact",
-    "cost":                   "operations_cost_impact",
-    "new_customer":           "new_customer_pricing",
-    "prospect":               "new_customer_pricing",
-    "customer_360":           "customer_360",
+    # ops cost/cost margin → operations_cost_impact
+    "operations cost":        "operations_cost_impact",
+    "ops cost":               "operations_cost_impact",
+    # discount/relationship → relationship_discount
+    "relationship discount":  "relationship_discount",
+    "discount":               "relationship_discount",
+    # win rate/loss analysis → win_loss_insights
+    "win rate":               "win_loss_insights",
+    "win loss":               "win_loss_insights",
+    "loss analysis":          "win_loss_insights",
+    "won":                    "win_loss_insights",
+    "lost":                   "win_loss_insights",
+    # policy exception/breach → policy_exception
+    "policy exception":       "policy_exception",
+    "exception":              "policy_exception",
+    "breach":                 "policy_exception",
+    # non-compliant/below floor → non_compliant_deals
+    "non-compliant":          "non_compliant_deals",
+    "non compliant":          "non_compliant_deals",
+    "below floor":            "non_compliant_deals",
+    # cross-sell/upsell → cross_sell_opportunity
+    "cross-sell":             "cross_sell_opportunity",
+    "cross sell":             "cross_sell_opportunity",
+    "upsell":                 "cross_sell_opportunity",
+    # rating change/downgrade → credit_rating_events
+    "credit rating":          "credit_rating_events",
+    "rating change":          "credit_rating_events",
+    "downgrade":              "credit_rating_events",
+    # similar customer → similar_customer_pricing
+    "similar customer":       "similar_customer_pricing",
+    # profile/360/who is → customer_360
+    "customer 360":           "customer_360",
     "360":                    "customer_360",
-    "customer":               "customer_360",   # customer_360 is the MCP tool; customer_master is a raw table
     "profile":                "customer_360",
-    "credit_rating":          "credit_rating_events",  # dedicated analytical MCP tool
-    "historical":             "historical_deals",
-    "deals":                  "historical_deals",
-    "pricing_policy":         "pricing_policy",
-    "policy":                 "pricing_policy",
+    "customer":               "customer_360",
+    # treasury/eibor → treasury_rate_sheet  (never bare "rate" — too ambiguous)
     "treasury":               "treasury_rate_sheet",
     "eibor":                  "treasury_rate_sheet",
-    "rate":                   "treasury_rate_sheet",
+    "funding cost":           "treasury_rate_sheet",
+    # misc
     "product":                "product_master",
-    "cross_sell":             "cross_sell_opportunity",
-    "similar":                "similar_customer_pricing",
+    "historical":             "historical_deals",
+    "deals":                  "historical_deals",
+    "policy":                 "pricing_policy",
 }
 
 ALL_KNOWN_TOOLS = {
@@ -57,9 +102,8 @@ ALL_KNOWN_TOOLS = {
     "relationship_discount", "competitor_price_analysis", "operations_cost_impact",
     "new_customer_pricing", "historical_deals", "pricing_policy",
     "treasury_rate_sheet", "product_master", "customer_master",
-    # Additional registered MCP tools in datalayer-as-service/server.py
     "cross_sell_opportunity", "credit_rating_events", "similar_customer_pricing",
-    "compare_fab_vs_competitor",
+    "compare_fab_vs_competitor", "non_compliant_deals",
 }
 
 

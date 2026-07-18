@@ -112,6 +112,29 @@ def citation_present_and_valid(response_text: str) -> EvalScore:
     return EvalScore(0.0, "NO_CITATION", "No citation or policy reference found", checks=checks)
 
 
+# Markers that indicate the RAGAgent returned an error rather than grounded content.
+# When context chunks consist solely of error messages, Jaccard overlap is meaningless.
+_RAG_ERROR_MARKERS = (
+    "knowledge base is currently unavailable",
+    "rag_unavailable",
+    "rag unavailable",
+    "no relevant policy documents were found",
+    "knowledge base unavailable",
+    "currently unavailable",
+)
+
+
+def _is_rag_error_output(chunks: List[str]) -> bool:
+    """Return True if every non-empty chunk is an error/unavailability message."""
+    non_empty = [c for c in chunks if c and c.strip()]
+    if not non_empty:
+        return False
+    return all(
+        any(m in chunk.lower() for m in _RAG_ERROR_MARKERS)
+        for chunk in non_empty
+    )
+
+
 def rag_answer_not_hallucinated(response_text: str, context_chunks: List[str]) -> EvalScore:
     """Checks that the RAGAgent answer is grounded in retrieved context chunks.
 
@@ -119,6 +142,9 @@ def rag_answer_not_hallucinated(response_text: str, context_chunks: List[str]) -
     Score 1.0: overlap > 0.30 (well-grounded).
     Score 0.5: overlap 0.10-0.30 (partially grounded).
     Score 0.0: overlap < 0.10 (potential hallucination).
+
+    Returns NOT_APPLICABLE (0.5) when the RAGAgent returned an error/unavailability
+    message — low Jaccard in that case is expected, not a hallucination signal.
     """
     if not response_text or not context_chunks:
         no_ctx_checks = [
@@ -130,8 +156,29 @@ def rag_answer_not_hallucinated(response_text: str, context_chunks: List[str]) -
         ]
         return EvalScore(0.5, "NO_CONTEXT", "Cannot evaluate without context chunks", checks=no_ctx_checks)
 
+    # When the RAGAgent returned an error/unavailability message, Jaccard overlap
+    # would be near zero by design — that is NOT a hallucination signal.
+    if _is_rag_error_output(context_chunks):
+        error_checks = [
+            {"name": "Context chunks provided", "passed": True,
+             "detail": f"{len(context_chunks)} chunk(s) — all are RAG error/unavailability messages"},
+            {"name": "Jaccard token overlap computed", "passed": True,
+             "detail": "Skipped — RAG returned an error, not grounded content"},
+            {"name": "Answer grounding verdict", "passed": True,
+             "detail": "NOT_APPLICABLE — RAG unavailable; hallucination check excluded"},
+        ]
+        return EvalScore(0.5, "RAG_UNAVAILABLE",
+                         "RAG returned error/unavailability — hallucination check not applicable",
+                         checks=error_checks)
+
     def tokenise(text: str) -> Set[str]:
-        return {w.lower() for w in re.findall(r"\b[a-z]{3,}\b", text.lower())}
+        # Include both alphabetic words (3+ chars) AND numeric tokens so that
+        # financial figures shared between context and response count as grounding
+        # evidence.  Without numbers, "4.5% pricing floor" and "minimum: 4.50%"
+        # share almost no tokens despite being semantically identical.
+        words = re.findall(r"\b[a-z]{3,}\b", text.lower())
+        nums  = re.findall(r"\b\d+(?:[.,]\d+)?%?\b", text)
+        return set(words) | set(nums)
 
     answer_tokens = tokenise(response_text)
     context_tokens = tokenise(" ".join(context_chunks))

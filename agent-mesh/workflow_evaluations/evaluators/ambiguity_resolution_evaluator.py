@@ -18,20 +18,30 @@ from evaluators.compliance_evaluator import EvalScore
 # Phrases that signal the agent is seeking clarification
 _CLARIFICATION_PATTERNS: List[str] = [
     r"which customer",
-    r"which (?:account|loan|facility|product|entity|counterparty)",
-    r"could you (?:please )?(?:clarify|specify|provide|confirm)",
-    r"can you (?:please )?(?:clarify|specify|provide|confirm)",
-    r"please (?:clarify|specify|provide|confirm|let me know)",
-    r"what (?:customer|account|period|timeframe|date range|product|entity) (?:are you|do you)",
+    r"which (?:account|loan|facility|product|entity|counterparty|deal|report|policy)",
+    r"could you (?:please )?(?:clarify|specify|provide|confirm|share|tell me)",
+    r"can you (?:please )?(?:clarify|specify|provide|confirm|share|tell me)",
+    r"please (?:clarify|specify|provide|confirm|let me know|share|indicate)",
+    r"what (?:customer|account|period|timeframe|date range|product|entity|deal|report) (?:are you|do you)",
     r"do you mean",
     r"could you tell me (?:which|what|who)",
     r"what do you mean by",
     r"to (?:help|assist) you (?:better|further),? (?:could|can|please)",
-    r"i(?:'d| would) need (?:more|additional) (?:information|details|context)",
-    r"(?:more|additional) (?:information|details|context) (?:is|would be) (?:needed|required|helpful)",
+    r"i(?:'d| would) need (?:more|additional) (?:information|details|context|detail)",
+    r"(?:more|additional) (?:information|details|context|detail) (?:is|would be) (?:needed|required|helpful)",
+    r"before (?:i can|we can|proceeding),?\s+(?:i |please )?(?:need|require|would need)",
+    r"(?:unable|not able) to (?:determine|answer|help|assist|check|retrieve|proceed) without",
+    r"(?:please |kindly )?(?:clarify|confirm|specify|provide|share|indicate) (?:the|your|which)",
+    r"(?:could|can) you (?:be more specific|elaborate|tell me more)",
+    r"i(?:'d| would) (?:be happy|like) to help.{0,30}(?:which|what|who|please)",
 ]
 
-# Markers that suggest the agent hallucinated specifics
+# Markers that suggest the agent hallucinated specifics rather than asking for
+# clarification.  IMPORTANT: these markers are ONLY applied when the response
+# does NOT contain any clarification-seeking language.  When an agent correctly
+# asks for clarification and includes a policy example or range for context
+# (e.g. "pricing floors are typically 4–5%"), that is not hallucination —
+# firing the markers in that case produces false HALLUCINATED verdicts.
 _HALLUCINATION_MARKERS: List[str] = [
     r"CUST\d{3}",                       # fabricated customer IDs
     r"\b\d{1,3}\.\d{1,2}%",            # fabricated percentage figures
@@ -81,11 +91,15 @@ def ambiguity_resolution_score(
     # a clarifying question rather than fabricating actual customer data.
     response_for_hallucination = re.sub(r'\(e\.g\.?,\s*[^)]+\)', '', response)
 
-    # Check hallucination markers
+    # Hallucination markers are ONLY applied when the response does NOT already
+    # contain clarification-seeking language.  A clarifying response that includes
+    # a policy figure for context (e.g. "floors are typically 4–5%") is NOT
+    # fabricating specifics — it is grounding the clarification request.
     fired_markers: List[str] = []
-    for i, marker in enumerate(_HALLUCINATION_MARKERS):
-        if re.search(marker, response_for_hallucination):
-            fired_markers.append(_HALLUCINATION_LABELS[i])
+    if not matched_clarification:
+        for i, marker in enumerate(_HALLUCINATION_MARKERS):
+            if re.search(marker, response_for_hallucination):
+                fired_markers.append(_HALLUCINATION_LABELS[i])
 
     checks = [
         {"name": "Response is non-empty",

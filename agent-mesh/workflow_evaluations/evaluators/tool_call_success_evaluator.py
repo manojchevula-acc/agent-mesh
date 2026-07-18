@@ -93,11 +93,16 @@ def tool_call_success_score(
             "detail": "Clean" if not fired
                       else f"Error detected: {next((m for m in markers if m.upper() in all_error_text), markers[0])}",
         })
+    # Explicit audit-status check so the report shows the failure when an agent
+    # record carries status="error" / "failed" / "timeout", even when none of the
+    # keyword-based error categories above fired.
     if status_error:
-        # If status was error/failed/timeout, mark audit status check
-        for chk in checks:
-            if "status" in chk["name"].lower():
-                chk["passed"] = False
+        status_errors = [e for e in errors_found if "audit_status" in e]
+        checks.append({
+            "name": "Audit record status clean (no error / failed / timeout)",
+            "passed": False,
+            "detail": f"Error status detected: {'; '.join(status_errors)}",
+        })
 
     if errors_found:
         return EvalScore(0.0, "TOOL_ERROR", "; ".join(errors_found[:3]), checks=checks)
