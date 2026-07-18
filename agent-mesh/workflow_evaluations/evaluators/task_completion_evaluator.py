@@ -1,12 +1,26 @@
-"""Task completion evaluator — deterministic field-presence checks.
+"""Task completion evaluator — LLM-as-judge primary, deterministic fallback.
 
 Verifies that the task was actually completed, not just attempted.
-  data    — response contains structured fields (name, % value, currency amount)
-  knowledge — response contains a policy citation
-  hybrid  — response contains BOTH structured fields AND a citation
+
+Evaluation strategy:
+  Primary (LLM judge): The LLM receives the query, response, and route type and
+    makes a broad semantic judgment about whether the task was fully completed.
+    It returns a score plus up to 3 broad dimension-level checks that explain
+    its reasoning — these are surfaced directly in the report.
+
+  Fallback (no LLM): A minimal structural check confirms whether the response
+    looks substantive (not an error/empty message) appropriate for the route type.
+    This is intentionally broad — one check, not a battery of narrow regex signals.
+
+Route types:
+  data    — response should contain specific customer/financial data
+  knowledge — response should explain policy and cite a document
+  hybrid  — response should contain BOTH data AND policy citation
 """
 from __future__ import annotations
 
+import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -18,115 +32,204 @@ _EVAL_ROOT = Path(__file__).resolve().parents[1]
 if str(_EVAL_ROOT) not in sys.path:
     sys.path.insert(0, str(_EVAL_ROOT))
 
-# Patterns that indicate structured data was returned
-_PERCENT_RE = re.compile(r"\d+(\.\d+)?\s*%")
-_CURRENCY_RE = re.compile(
-    r"(AED|USD|EUR|GBP|CAD|CHF|CNY|JPY|SGD)\s*[\d,]+"      # AED 50,000 or AED50,000
-    r"|[\d,]+\s*(AED|USD|EUR|GBP|CAD|CHF|CNY|JPY|SGD)"      # 50,000 AED
-    r"|\(?(AED|USD|EUR|GBP)\)?[^0-9\n]{0,30}[\d,]+",        # (AED) | 18,000,000 table column
-    re.IGNORECASE,
+# ---------------------------------------------------------------------------
+# LLM judge
+# ---------------------------------------------------------------------------
+
+_DEFAULT_GROQ_MODEL     = "llama-3.3-70b-versatile"
+_DEFAULT_CEREBRAS_MODEL = "gemma-4-31b"
+
+_TASK_COMPLETION_JUDGE_PROMPT = """\
+You are evaluating a banking AI assistant (FAB — First Abu Dhabi Bank) on whether \
+it fully completed the user's task.
+
+ORIGINAL USER QUERY:
+{query}
+
+AGENT RESPONSE:
+{response}
+
+TASK TYPE: {route_type}
+{route_type_guidance}
+
+=== Your job ===
+1. Score whether the agent fully completed the task.
+2. For each of the 3 evaluation dimensions below, state whether it was addressed.
+
+DIMENSIONS (tailor to task type):
+  A. "Query directly answered" — Did the agent directly address what was asked \
+(not deflect, not give a generic error, not ask a question back)?
+  B. "Content appropriate for task type" — For DATA: were specific numbers/figures/\
+records returned? For KNOWLEDGE: was policy/regulation explained with a citation? \
+For HYBRID: were both present?
+  C. "Response is substantive" — Is the response meaningfully detailed (not a \
+one-liner that skips the actual answer, not a generic fallback)?
+
+SCORING:
+  1.0 = COMPLETE     — All 3 dimensions fully addressed
+  0.5 = PARTIAL      — Some dimensions addressed but key content missing
+  0.0 = INCOMPLETE   — Task not completed (error response, off-topic, no content)
+
+Return ONLY valid JSON (no markdown fences, no extra keys):
+{{
+  "score": 1.0,
+  "label": "COMPLETE|PARTIAL|INCOMPLETE",
+  "dim_a": {{"passed": true, "detail": "one sentence"}},
+  "dim_b": {{"passed": true, "detail": "one sentence"}},
+  "dim_c": {{"passed": true, "detail": "one sentence"}},
+  "overall_reason": "one sentence summarising the verdict"
+}}"""
+
+_ROUTE_GUIDANCE = {
+    "data": (
+        "DATA task — the agent should return specific customer or financial data: "
+        "numbers, percentages, currency amounts, account balances, exposure figures, "
+        "pricing rates, customer attributes, or similar quantitative / structured information."
+    ),
+    "knowledge": (
+        "KNOWLEDGE task — the agent should explain a policy, regulation, or guideline "
+        "and cite the relevant document (e.g. FAB Credit Pricing Policy, CBUAE circular, "
+        "Basel III framework, AML/KYC policy).  A complete answer includes the policy "
+        "substance AND the source reference."
+    ),
+    "hybrid": (
+        "HYBRID task — the agent must BOTH return specific customer data AND provide "
+        "policy context with a citation.  Addressing only one half is PARTIAL."
+    ),
+}
+
+# Error/fallback markers — when the agent returned one of these, the task is
+# clearly not completed regardless of route type.
+_ERROR_MARKERS = (
+    "i was unable to retrieve",
+    "unable to retrieve the required data",
+    "please try again",
+    "contact your relationship manager",
+    "an error occurred",
+    "could not retrieve",
+    "failed to retrieve",
+    "service is currently unavailable",
+    "i'm unable to retrieve",
+    "i am unable to retrieve",
 )
-# Structured-data presence signals.
-# Previously this was a company-name regex containing "customer", "corp", "company",
-# "ltd", "inc" — tokens that appear in virtually every banking response, making the
-# check meaningless (always True).  The replacement checks for concrete structural
-# evidence that the agent returned a data payload:
-#   • a markdown table row  (|field|value|)
-#   • a field:value line    (e.g. "**Customer Name** | Al Noor Trading")
-#   • a customer-ID reference (CUST001, CUST_002, …)
-_MD_TABLE_RE = re.compile(r"\|[^|\n]+\|[^|\n]+\|", re.MULTILINE)
-_FIELD_VALUE_RE = re.compile(
-    r"^\s*\*?\*?[A-Za-z][A-Za-z_ ]{2,30}\*?\*?\s*[|:]\s*\S",
-    re.MULTILINE,
-)
-_CUST_ID_RE = re.compile(r"\bCUST[_-]?\d{3,}\b", re.IGNORECASE)
+
+
+def _call_task_completion_judge(query: str, response: str, route_type: str) -> Optional[dict]:
+    api_key = os.getenv("GROQ_API_KEY", "")
+    if not api_key:
+        return None
+
+    base_url = os.getenv("LLM_BASE_URL", "https://api.groq.com/openai/v1")
+    model = (
+        os.getenv("EVAL_JUDGE_MODEL")
+        or os.getenv("GROQ_MODEL")
+        or (_DEFAULT_CEREBRAS_MODEL if "cerebras" in base_url else _DEFAULT_GROQ_MODEL)
+    )
+    try:
+        from openai import OpenAI
+        client = OpenAI(base_url=base_url, api_key=api_key)
+        prompt = _TASK_COMPLETION_JUDGE_PROMPT.format(
+            query=query[:400] if query else "(query not provided)",
+            response=response[:900],
+            route_type=route_type.upper(),
+            route_type_guidance=_ROUTE_GUIDANCE.get(route_type, ""),
+        )
+        resp = client.chat.completions.create(
+            model=model,
+            max_tokens=400,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = resp.choices[0].message.content if resp.choices else ""
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        if start == -1 or end <= 0:
+            return None
+        data = json.loads(raw[start:end])
+        raw_score = float(data.get("score", 0.5))
+        if raw_score >= 0.75:
+            data["score"] = 1.0
+        elif raw_score >= 0.25:
+            data["score"] = 0.5
+        else:
+            data["score"] = 0.0
+        return data
+    except Exception:
+        return None
 
 
 def task_completion_score(
     response: str,
     route_type: str,
+    query: str = "",
 ) -> EvalScore:
-    """Score task completion deterministically based on route type.
+    """Score task completion using LLM semantic judgment.
+
+    Primary: LLM judge evaluates 3 broad dimensions and returns structured checks.
+    Fallback: structural check (is the response substantive, not an error).
 
     route_type: "data" | "knowledge" | "hybrid"
-    Any other route_type returns 1.0 (not applicable).
+    query: original user query (improves LLM judge accuracy; optional for back-compat)
     """
     if not response or not response.strip():
-        return EvalScore(0.0, "EMPTY_RESPONSE", checks=[
-            {"name": "Response is non-empty", "passed": False, "detail": "Empty response — task not completed"}
+        return EvalScore(0.0, "EMPTY_RESPONSE", "Empty response — task not completed", checks=[
+            {"name": "Response is non-empty", "passed": False,
+             "detail": "No response returned by the agent"},
         ])
 
-    if route_type == "data":
-        return _check_data_completion(response)
-    elif route_type == "knowledge":
-        return _check_knowledge_completion(response)
-    elif route_type == "hybrid":
-        return _check_hybrid_completion(response)
-    else:
-        return EvalScore(1.0, "NOT_APPLICABLE", checks=[
-            {"name": f"Route type '{route_type}' — task completion check not applicable", "passed": True,
-             "detail": "Blocked or unclassified routes are excluded from task completion scoring"}
+    if route_type not in ("data", "knowledge", "hybrid"):
+        return EvalScore(1.0, "NOT_APPLICABLE", f"Route type '{route_type}' — task completion not scored", checks=[
+            {"name": f"Route type '{route_type}' — task completion check not applicable",
+             "passed": True,
+             "detail": "Blocked or unclassified routes are excluded from task completion scoring"},
         ])
 
+    # --- LLM judge (primary) ---
+    llm = _call_task_completion_judge(query, response, route_type)
 
-def _check_data_completion(response: str) -> EvalScore:
-    has_percent = bool(_PERCENT_RE.search(response))
-    has_currency = bool(_CURRENCY_RE.search(response))
-    # Structural data signals: markdown table, field:value pairs, or a customer ID.
-    # These are far more specific than generic company-name tokens ("corp", "customer")
-    # which appear in every banking response regardless of whether data was returned.
-    has_structure = (
-        bool(_MD_TABLE_RE.search(response))
-        or bool(_FIELD_VALUE_RE.search(response))
-        or bool(_CUST_ID_RE.search(response))
-    )
+    if llm is not None:
+        score   = llm.get("score", 0.5)
+        label   = str(llm.get("label", "PARTIAL"))
+        reason  = str(llm.get("overall_reason", ""))[:200]
 
-    checks: List[dict] = [
-        {"name": "Percentage / ratio value present (e.g. 12.5%)",
-         "passed": has_percent,
-         "detail": "Found" if has_percent else "Not found — expected a numeric % value"},
-        {"name": "Currency amount present (AED / USD / EUR / GBP / …)",
-         "passed": has_currency,
-         "detail": "Found" if has_currency else "Not found — expected a monetary value"},
-        {"name": "Structured data present (table, field:value rows, or customer ID)",
-         "passed": has_structure,
-         "detail": "Found" if has_structure else "Not found — no markdown table, field:value, or CUST### ID"},
+        def _dim(key: str, default_name: str) -> dict:
+            d = llm.get(key, {})
+            return {
+                "name": default_name,
+                "passed": bool(d.get("passed", False)),
+                "detail": str(d.get("detail", ""))[:200],
+            }
+
+        checks = [
+            _dim("dim_a", "Query directly answered"),
+            _dim("dim_b", f"Content appropriate for '{route_type}' task type"),
+            _dim("dim_c", "Response is substantive (not an error or generic fallback)"),
+        ]
+
+        return EvalScore(score, label, reason, checks=checks)
+
+    # --- Fallback: structural check (LLM unavailable) ---
+    is_error = any(m in response.lower() for m in _ERROR_MARKERS)
+    is_substantive = len(response.strip()) > 80 and not is_error
+
+    fallback_checks = [
+        {"name": "Response is non-empty and substantive",
+         "passed": is_substantive,
+         "detail": ("Response appears substantive for this task type"
+                    if is_substantive
+                    else "Response is an error message or too short to be a valid answer")},
+        {"name": "LLM completion judge verdict",
+         "passed": is_substantive,
+         "detail": "JUDGE_UNAVAILABLE — GROQ_API_KEY not set; using structural fallback check"},
     ]
 
-    hits = sum([has_percent, has_currency, has_structure])
-    if hits >= 2:
-        return EvalScore(1.0, "DATA_COMPLETE",
-                         f"signals found: percent={has_percent}, currency={has_currency}, structure={has_structure}",
-                         checks=checks)
-    elif hits == 1:
-        return EvalScore(0.5, "DATA_PARTIAL", "only 1 of 3 expected data signals found", checks=checks)
-    else:
-        return EvalScore(0.0, "DATA_MISSING", "no structured data signals detected", checks=checks)
-
-
-def _check_knowledge_completion(response: str) -> EvalScore:
-    from evaluators.rag_citation_evaluator import citation_present_and_valid
-    cit = citation_present_and_valid(response)
-    if cit.score >= 1.0:
-        return EvalScore(1.0, "KNOWLEDGE_COMPLETE", checks=cit.checks)
-    elif cit.score >= 0.5:
-        return EvalScore(0.5, "KNOWLEDGE_WEAK_CITATION", checks=cit.checks)
-    else:
-        return EvalScore(0.0, "KNOWLEDGE_NO_CITATION", checks=cit.checks)
-
-
-def _check_hybrid_completion(response: str) -> EvalScore:
-    data_result = _check_data_completion(response)
-    knowledge_result = _check_knowledge_completion(response)
-    combined = (data_result.score + knowledge_result.score) / 2.0
-    combined_checks = (data_result.checks or []) + (knowledge_result.checks or [])
-    if combined >= 0.9:
-        return EvalScore(1.0, "HYBRID_COMPLETE", checks=combined_checks)
-    elif combined >= 0.4:
-        return EvalScore(0.5, "HYBRID_PARTIAL",
-                         f"data={data_result.score}, citation={knowledge_result.score}",
-                         checks=combined_checks)
-    else:
-        return EvalScore(0.0, "HYBRID_MISSING",
-                         f"data={data_result.score}, citation={knowledge_result.score}",
-                         checks=combined_checks)
+    if is_error:
+        return EvalScore(0.0, "INCOMPLETE",
+                         "Agent returned an error/fallback message — task not completed",
+                         checks=fallback_checks)
+    if is_substantive:
+        return EvalScore(1.0, "COMPLETE",
+                         "Response appears substantive — LLM judge unavailable for deeper assessment",
+                         checks=fallback_checks)
+    return EvalScore(0.5, "PARTIAL",
+                     "Response present but may be insufficient — LLM judge unavailable",
+                     checks=fallback_checks)

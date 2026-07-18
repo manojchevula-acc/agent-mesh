@@ -351,6 +351,26 @@ class RAGGroundingSuiteResult:
         self.raw             = raw
 
 
+# Phrases that identify a generic agent fallback/error response.
+# When the answer is an error message, faithfulness scoring is not meaningful:
+#   • The LLM finds 0 factual claims → score defaults to 0.5 ("All 0 claims grounded")
+#   • The confusing "All 0 claims grounded" detail misleads reviewers
+# Returning None here causes run_maf_eval.py to skip the suite entirely so the
+# rag_faithfulness key is absent from scores — the case is not penalised for this.
+_AGENT_ERROR_RESPONSE_MARKERS = (
+    "i was unable to retrieve",
+    "unable to retrieve the required data",
+    "please try again",
+    "contact your relationship manager",
+    "an error occurred",
+    "could not retrieve",
+    "failed to retrieve",
+    "service is currently unavailable",
+    "i'm unable to retrieve",
+    "i am unable to retrieve",
+)
+
+
 def run_rag_grounding_suite(
     response: str,
     context_chunks: List[str],
@@ -359,8 +379,20 @@ def run_rag_grounding_suite(
     """Single LLM call returning rag_faithfulness + citation_accuracy.
 
     Returns None on any error (caller should keep Jaccard score as-is).
+    Also returns None when the agent response is a generic error/fallback message —
+    in that case faithfulness is not meaningful (0 claims → "All 0 claims grounded"
+    confusion) and the Tool Call Success evaluator already captures the failure.
     """
     if not response or not context_chunks:
+        return None
+
+    # Skip faithfulness for generic error/fallback responses.
+    # B1 exhibits this: RAGAgent retrieved real chunks but the pipeline returned
+    # "I was unable to retrieve the required data." — 0 factual claims are found,
+    # the LLM returns faithfulness_score=0.5, and the detail reads confusingly as
+    # "All 0 claims grounded".  Skipping the suite makes rag_faithfulness absent
+    # from scores so the case verdict is not affected.
+    if any(m in response.lower() for m in _AGENT_ERROR_RESPONSE_MARKERS):
         return None
 
     context_text = "\n\n---\n\n".join(c for c in context_chunks if c)[:1500]
@@ -389,10 +421,12 @@ def run_rag_grounding_suite(
         else:
             f_label = "UNFAITHFUL"
             f_score = 0.0
-        f_detail = (
-            f"All {len(claims)} claims grounded" if not unsupported
-            else f"{len(unsupported)} unsupported claim(s): {unsupported[:2]}"
-        )
+        if len(claims) == 0:
+            f_detail = "No factual claims identified — faithfulness not applicable (response contains no verifiable assertions)"
+        elif not unsupported:
+            f_detail = f"All {len(claims)} claims grounded"
+        else:
+            f_detail = f"{len(unsupported)} unsupported claim(s): {unsupported[:2]}"
         f_checks = [
             {"name": f"Claim: \"{c.get('claim', '')[:70]}\"",
              "passed": c.get("verdict") != "UNSUPPORTED",

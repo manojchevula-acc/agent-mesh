@@ -52,6 +52,7 @@ from evaluators.data_tool_evaluator import (
 )
 from evaluators.task_completion_evaluator import task_completion_score
 from evaluators.task_adherence_evaluator import task_adherence_score, semantic_keyword_check
+from evaluators.keyword_coverage_evaluator import keyword_coverage_score
 from evaluators.llm_evaluators import (
     run_response_quality_suite, run_rag_grounding_suite, data_accuracy_score,
 )
@@ -559,43 +560,16 @@ def _score_case(
     # Prevents false negatives when the agent uses synonyms or paraphrasing
     # (e.g. "specify" instead of "provide", "minimum rate" instead of "pricing floor").
     if case.expected_keywords and not blocked:
-        answer_lower = answer.lower()
-
-        # Phase 1: exact/stem match
-        exact_hits = {kw: _keyword_matches(kw, answer_lower) for kw in case.expected_keywords}
-        exact_misses = [kw for kw, hit in exact_hits.items() if not hit]
-
-        # Phase 2: single batched LLM call for any misses
-        semantic_hits: dict = {}
-        if exact_misses:
-            semantic_hits = semantic_keyword_check(answer, exact_misses)
-
-        # Build per-keyword check entries annotated with how the match was made
-        kw_checks = []
-        for kw in case.expected_keywords:
-            if exact_hits[kw]:
-                kw_checks.append({"name": f"Keyword: '{kw}'", "passed": True,
-                                   "detail": "Found (exact match)"})
-            elif semantic_hits.get(kw, False):
-                kw_checks.append({"name": f"Keyword: '{kw}'", "passed": True,
-                                   "detail": "Found (semantic match — synonym/paraphrase)"})
-            else:
-                kw_checks.append({"name": f"Keyword: '{kw}'", "passed": False,
-                                   "detail": "Not found (exact or semantic)"})
-
-        hit = sum(1 for c in kw_checks if c["passed"])
-        kw_score = hit / len(case.expected_keywords)
+        kw = keyword_coverage_score(case.query, answer, case.expected_keywords)
+        kw_score = kw.score
         scores["keyword_coverage"] = kw_score
-        missing_kw = [kw for kw, chk in zip(case.expected_keywords, kw_checks) if not chk["passed"]]
         _detail(
             "Keyword Coverage",
             kw_score, kw_score >= _T.get("keyword_coverage", 0.75),
-            f"Checked that the response contains expected domain keywords: {case.expected_keywords}. "
-            f"Exact/stem match runs first; unmatched keywords are re-checked via LLM semantic judge.",
-            f"{'FULL' if kw_score == 1.0 else 'PARTIAL' if kw_score > 0 else 'MISSING'} — "
-            f"{hit}/{len(case.expected_keywords)} keywords found."
-            + (f" Missing: {missing_kw}" if missing_kw else ""),
-            checks=kw_checks,
+            f"LLM holistic assessment of whether the response covers the expected topics: "
+            f"{case.expected_keywords}. Single judge call — broad semantic coverage, not per-keyword matching.",
+            f"{kw.label} — {kw.detail}" if kw.detail else kw.label,
+            checks=kw.checks,
         )
 
     # Agent routing (from audit records)
@@ -630,7 +604,7 @@ def _score_case(
 
     # Task Completion (deterministic field-presence check)
     if not blocked:
-        tc = task_completion_score(answer, case.route_type)
+        tc = task_completion_score(answer, case.route_type, query=case.query)
         if tc.label != "NOT_APPLICABLE":
             scores["task_completion"] = tc.score
             _trace_linker.record_eval_result(rid, "task_completion_evaluator", tc.score, tc.score >= _T.get("task_completion", 0.5), {"label": tc.label})
@@ -802,17 +776,30 @@ def _score_case(
                 r["_tool_selected"] for r in audit_records
                 if r.get("agent_name") == "DataAgent" and "_tool_selected" in r
             ]
-            ts = tool_selection_score(da_outputs, query_keyword, tool_names_from_reasoning=da_tools_from_reasoning)
-            scores["tool_selection"] = ts.score
-            _trace_linker.record_eval_result(rid, "tool_selection_evaluator", ts.score, ts.score >= _T.get("tool_selection", 0.8), {"label": ts.label})
-            _detail(
-                "Tool Selection",
-                ts.score, ts.score >= _T.get("tool_selection", 0.8),
-                f"Checked that DataAgent invoked the correct MCP SQL-view tool for query keyword '{query_keyword}'. "
-                f"1.0=correct; 0.5=wrong view but tool call succeeded; 0.0=no tool called.",
-                f"{ts.label}" + (f" — {ts.detail}" if ts.detail else ""),
-                checks=ts.checks,
+
+            # Skip tool selection when DataAgent had an error status.
+            # NO_TOOL_CALLED (0.00) in that scenario is a double-penalty: the same
+            # failure is already captured by Tool Call Success (TOOL_ERROR 0.00).
+            # The tool couldn't be called *because* DataAgent errored — it's the same
+            # root cause, not an independent tool-selection problem.
+            da_had_errors = any(
+                r.get("agent_name") == "DataAgent"
+                and str(r.get("status", "")).lower() in ("error", "failed", "timeout")
+                for r in audit_records
             )
+
+            if not da_had_errors:
+                ts = tool_selection_score(da_outputs, query_keyword, tool_names_from_reasoning=da_tools_from_reasoning)
+                scores["tool_selection"] = ts.score
+                _trace_linker.record_eval_result(rid, "tool_selection_evaluator", ts.score, ts.score >= _T.get("tool_selection", 0.8), {"label": ts.label})
+                _detail(
+                    "Tool Selection",
+                    ts.score, ts.score >= _T.get("tool_selection", 0.8),
+                    f"Checked that DataAgent invoked the correct MCP SQL-view tool for query keyword '{query_keyword}'. "
+                    f"1.0=correct; 0.5=wrong view but tool call succeeded; 0.0=no tool called.",
+                    f"{ts.label}" + (f" — {ts.detail}" if ts.detail else ""),
+                    checks=ts.checks,
+                )
 
             tia = tool_input_accuracy_score(case.query, da_outputs, audit_records)
             scores["tool_input_accuracy"] = tia.score
