@@ -141,15 +141,31 @@ You are evaluating a banking AI assistant on three dimensions in one pass.
 
 USER QUERY: {query}
 
-AGENT RESPONSE: {response}
+AGENT RESPONSE (may be abbreviated for evaluation — do NOT penalise if the text \
+appears cut off; judge based on the content that is shown):
+{response}
 
 TOOL USED BY DATA AGENT (or "N/A"): {tool_used}
 
 === Dimension 1: Task Adherence ===
 Does the response directly and usefully address the banking query?
-  1.0 = Fully on-topic and complete.
-  0.5 = Partially on-topic or hedged / incomplete.
-  0.0 = Off-topic, refused without cause, or mirrors the query verbatim.
+
+Overall score:
+  1.0 = ADHERENT   — Fully on-topic and complete.
+  0.5 = PARTIAL    — Partially on-topic or hedged / incomplete.
+  0.0 = OFF_TOPIC  — Off-topic, refused without cause, or mirrors the query verbatim.
+
+Also evaluate each of these four criteria independently:
+
+  criterion_query_answered: Did the response directly address what was asked \
+(not deflect, not just echo the question back)?
+  criterion_content_present: Does the response contain the expected domain content \
+(data figures for data queries; policy explanation+citation for knowledge; both for hybrid)?
+  criterion_not_error_or_refusal: Is this a real answer — NOT a generic error message \
+("I was unable to retrieve"), NOT an unexplained refusal, NOT empty?
+  criterion_response_complete: Does the response appear complete — not abruptly ending \
+mid-thought? Note: the response text may be abbreviated for this evaluation; \
+only flag as incomplete if the response itself (not the evaluation window) is clearly truncated.
 
 === Dimension 2: Response Completeness ===
 Identify the dimensions the query requires (from: entity_identified, correct_metric, \
@@ -170,7 +186,14 @@ Return ONLY valid JSON (no markdown fences):
   "task_adherence": {{
     "score": 0.0,
     "label": "ADHERENT|PARTIAL|OFF_TOPIC",
-    "reason": "one sentence"
+    "reason": "one sentence",
+    "criteria": {{
+      "criterion_query_answered":      {{"passed": true,  "detail": "one sentence"}},
+      "criterion_content_present":     {{"passed": true,  "detail": "one sentence"}},
+      "criterion_not_error_or_refusal":{{"passed": true,  "detail": "one sentence"}},
+      "criterion_response_complete":   {{"passed": true,  "detail": "one sentence"}}
+    }},
+    "metrics_used": "comma-separated list of signals the judge used (e.g. content relevance, query alignment, completeness)"
   }},
   "completeness": {{
     "required_dimensions": ["entity_identified"],
@@ -219,26 +242,50 @@ def run_response_quality_suite(
         return None
 
     try:
+        # Truncate at a word boundary to avoid cutting mid-word (which causes the
+        # LLM to think the response itself is truncated rather than the eval window).
+        _RESP_LIMIT = 2500
+        resp_for_prompt = response if len(response) <= _RESP_LIMIT else response[:_RESP_LIMIT].rsplit(" ", 1)[0] + " …"
+
         prompt = _RESPONSE_QUALITY_PROMPT.format(
             query=query[:400],
-            response=response[:900],
+            response=resp_for_prompt,
             tool_used=tool_used or "N/A",
             tool_descriptions=_TOOL_DESCRIPTIONS_SHORT,
         )
-        raw  = _llm_call(prompt, model=model, max_tokens=1000)
+        raw  = _llm_call(prompt, model=model, max_tokens=1200)
         data = _parse_json(raw)
 
         # --- task_adherence ---
-        ta_raw   = data.get("task_adherence", {})
-        ta_score = float(ta_raw.get("score", 0.5))
-        ta_label = str(ta_raw.get("label", "PARTIAL"))
-        ta_reason= str(ta_raw.get("reason", ""))[:200]
-        ta_checks = [
-            {"name": "Response non-empty", "passed": bool(response.strip()), "detail": "Non-empty"},
-            {"name": "LLM judge available", "passed": True, "detail": "Suite call succeeded"},
-            {"name": f"Judge score: {ta_score:.2f}", "passed": ta_score >= 0.75,
-             "detail": f"{ta_label} — {ta_reason}"},
-        ]
+        ta_raw      = data.get("task_adherence", {})
+        ta_score    = float(ta_raw.get("score", 0.5))
+        ta_label    = str(ta_raw.get("label", "PARTIAL"))
+        ta_reason   = str(ta_raw.get("reason", ""))[:200]
+        ta_metrics  = str(ta_raw.get("metrics_used", ""))[:150]
+        ta_criteria = ta_raw.get("criteria", {})
+
+        # Build checks from structured criteria — each criterion becomes one check line,
+        # giving a clear breakdown of why the judge scored the way it did.
+        _CRITERION_LABELS = {
+            "criterion_query_answered":       "Query directly answered",
+            "criterion_content_present":      "Expected domain content present",
+            "criterion_not_error_or_refusal": "Response is not an error or refusal",
+            "criterion_response_complete":    "Response is complete (not truncated mid-thought)",
+        }
+        ta_checks = []
+        for key, display_name in _CRITERION_LABELS.items():
+            crit = ta_criteria.get(key, {})
+            ta_checks.append({
+                "name": display_name,
+                "passed": bool(crit.get("passed", ta_score >= 0.75)),
+                "detail": str(crit.get("detail", ""))[:200] or "(no detail)",
+            })
+        ta_checks.append({
+            "name": "Judge overall verdict",
+            "passed": ta_score >= 0.75,
+            "detail": f"{ta_label} — {ta_reason}"
+                      + (f" | Metrics: {ta_metrics}" if ta_metrics else ""),
+        })
         task_adherence = EvalScore(ta_score, ta_label, ta_reason, checks=ta_checks)
 
         # --- completeness ---

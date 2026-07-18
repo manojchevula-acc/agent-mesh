@@ -34,6 +34,10 @@ _JUDGE_PROMPT = """\
 You are an objective evaluator for a banking AI assistant (FAB — First Abu Dhabi Bank).
 Score the response below on a scale of 0.0, 0.5, or 1.0.
 
+IMPORTANT: The response text may be abbreviated for this evaluation context. \
+Do NOT penalise if the response appears cut off — only flag as incomplete if the \
+response itself (not the evaluation window) is clearly unfinished.
+
 Scoring criteria:
   1.0 — The response directly and completely addresses the user's banking query
         (pricing, policy, data, or hybrid). All key aspects answered.
@@ -160,9 +164,11 @@ def _call_judge(
     from openai import OpenAI
 
     client = OpenAI(base_url=base_url, api_key=api_key)
+    _RESP_LIMIT = 2500
+    resp_for_prompt = response if len(response) <= _RESP_LIMIT else response[:_RESP_LIMIT].rsplit(" ", 1)[0] + " …"
     prompt = _JUDGE_PROMPT.format(
         query=query[:500],
-        response=response[:1000],
+        response=resp_for_prompt,
     )
     message = client.chat.completions.create(
         model=model,
