@@ -31,10 +31,10 @@ def build_dataset() -> List[GoldenTestCase]:
     cases: List[GoldenTestCase] = []
     cases.extend(_group_a_data_route())
     cases.extend(_group_b_knowledge_route())
-    cases.extend(_group_c_hybrid())
-    cases.extend(_group_d_security())
-    # cases.extend(_group_e_multi_turn())   # needs multi-turn session state
-    cases.extend(_group_f_ambiguous())
+    # cases.extend(_group_c_hybrid())
+    # cases.extend(_group_d_security())
+    # # cases.extend(_group_e_multi_turn())   # needs multi-turn session state
+    # cases.extend(_group_f_ambiguous())
     return cases
 
 

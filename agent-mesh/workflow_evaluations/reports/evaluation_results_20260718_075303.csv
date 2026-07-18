@@ -1,0 +1,11 @@
+case_id,username,role,route_type,blocked,block_stage,latency_ms,query_preview,answer_preview,root_cause,judge_available,citation,citation_accuracy,compliance_decision,data_accuracy,data_agent_called,intent_resolution,keyword_coverage,pii_clean,rag_agent_called,rag_faithfulness,rag_not_hallucinated,rbac_scope,response_completeness,task_adherence,task_completion,tool_appropriateness,tool_call_success,tool_input_accuracy,tool_output_utilization,tool_selection
+A1,alice,relationship_manager,data,False,,79409,Show customer profile for CUST001,"**Customer profile for CUST001**
+
+| Field | Value |
+|---|---|
+| Customer ID | CUST001 |
+| Customer Name | Al Noor Tradin",,True,,,1.0,1.0,1.0,1.0,1.0,1.0,,,,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0
+B1,bob,credit_officer,knowledge,False,,199061,What is the pricing floor for BB-rated AED corporate loans?,"## Pricing Floor for BB‑Rated AED Corporate Loans
+
+**Direct Answer:**  
+- **Corporate Term Loans:** Minimum spreads over",,True,1.0,1.0,1.0,,,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,0.5,,1.0,,,
