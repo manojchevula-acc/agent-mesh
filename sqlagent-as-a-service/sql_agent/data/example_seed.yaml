@@ -1829,3 +1829,236 @@ examples:
     - operations cost
     - margin
     complexity: low
+
+# ── Coverage fills: win_loss_insights (previously 0 examples) ───────────────────
+# win_loss_insights is a bound view with its own get_win_loss_insights tool but had no
+# worked example. Two here: a single-customer lookup (row-grain columns displayed as-is)
+# and a population win-rate that SUMs won/total instead of AVG()-ing the pre-aggregated
+# win_rate_pct column (the schema note forbids re-averaging it).
+- question: How are we doing on wins versus losses for customer CUST001 by product?
+  sql: SELECT customer_id, product_type, total_deals, won_deals, lost_deals, win_rate_pct,
+    avg_price_gap_pct FROM fab_semantic.win_loss_insights WHERE customer_id = 'CUST001'
+    ORDER BY win_rate_pct DESC LIMIT 50;
+  tier: full_dynamic
+  tags: win_loss_insights
+  metadata:
+    tables:
+    - win_loss_insights
+    columns:
+    - customer_id
+    - lost_deals
+    - product_type
+    - total_deals
+    - win_rate_pct
+    - won_deals
+    joins: []
+    intent: customer_analysis
+    sql_pattern:
+    - lookup
+    aggregations: []
+    filters:
+    - customer_id
+    business_terms:
+    - win rate
+    - won
+    - lost
+    complexity: low
+- question: Which product types have the lowest win rate across all customers?
+  sql: SELECT product_type, SUM(won_deals) AS won_deals, SUM(total_deals) AS total_deals,
+    ROUND(SUM(won_deals) * 100.0 / SUM(total_deals), 2) AS win_rate_pct FROM fab_semantic.win_loss_insights
+    GROUP BY product_type ORDER BY win_rate_pct ASC;
+  tier: full_dynamic
+  tags: win_loss_insights
+  metadata:
+    tables:
+    - win_loss_insights
+    columns:
+    - product_type
+    - total_deals
+    - won_deals
+    joins: []
+    intent: ranking
+    sql_pattern:
+    - aggregation
+    - ranking
+    - bottom_n
+    aggregations:
+    - SUM
+    filters: []
+    business_terms:
+    - win rate
+    complexity: medium
+
+# ── Phrasing variants for the single-example archetype views ───────────────────
+# Same proven SQL as the canonical archetype example above, different real-world RM
+# phrasing — improves example-retrieval recall on the LOW-confidence path (the archetype
+# router pin is deterministic; these help when the semantic ranker has to work).
+- question: Walk me through the pricing components behind CUST001's recommended price.
+  sql: SELECT deal_id, product_type, treasury_rate_component, target_margin_component,
+    risk_premium_component, operations_cost_component, relationship_discount_component,
+    final_recommended_price, approved_price_pct, explanation_text FROM fab_semantic.pricing_trace_view
+    WHERE customer_id = 'CUST001' LIMIT 50;
+  tier: full_dynamic
+  tags: pricing_trace_view
+  metadata:
+    tables:
+    - pricing_trace_view
+    columns:
+    - customer_id
+    - final_recommended_price
+    - operations_cost_component
+    - relationship_discount_component
+    - risk_premium_component
+    - target_margin_component
+    - treasury_rate_component
+    joins: []
+    intent: pricing_analysis
+    sql_pattern:
+    - lookup
+    aggregations: []
+    filters:
+    - customer_id
+    business_terms:
+    - price
+    - pricing
+    - price build-up
+    complexity: low
+- question: A competitor undercut us on CUST001 — how far can we drop and still stay profitable?
+  sql: SELECT deal_id, competitor_name, fab_price_pct, competitor_price_pct, competitor_gap_bps,
+    profitability_floor_pct, max_reducible_pct, suggested_action, action_reason FROM
+    fab_semantic.competitor_price_analysis WHERE customer_id = 'CUST001' LIMIT 50;
+  tier: full_dynamic
+  tags: competitor_price_analysis
+  metadata:
+    tables:
+    - competitor_price_analysis
+    columns:
+    - competitor_price_pct
+    - customer_id
+    - fab_price_pct
+    - max_reducible_pct
+    - suggested_action
+    joins: []
+    intent: pricing_analysis
+    sql_pattern:
+    - lookup
+    aggregations: []
+    filters:
+    - customer_id
+    business_terms:
+    - competitor
+    - price
+    - pricing
+    complexity: low
+- question: What pricing action should we take after CUST001's credit rating downgrade?
+  sql: SELECT event_date, old_internal_rating, new_internal_rating, old_risk_category,
+    new_risk_category, rating_change_direction, recommended_pricing_action, additional_risk_premium_pct,
+    floating_rate_required_flag, credit_review_required_flag FROM fab_semantic.credit_rating_events
+    WHERE customer_id = 'CUST001' ORDER BY event_date DESC LIMIT 50;
+  tier: full_dynamic
+  tags: credit_rating_events
+  metadata:
+    tables:
+    - credit_rating_events
+    columns:
+    - additional_risk_premium_pct
+    - customer_id
+    - floating_rate_required_flag
+    - new_risk_category
+    - old_risk_category
+    - recommended_pricing_action
+    joins: []
+    intent: risk_analysis
+    sql_pattern:
+    - lookup
+    aggregations: []
+    filters:
+    - customer_id
+    business_terms:
+    - credit rating
+    - downgrade
+    - risk
+    complexity: low
+- question: What upsell products can we pitch to Corporate customers in Logistics?
+  sql: SELECT primary_product_name, recommended_product_name, expected_incremental_revenue_aed,
+    cross_sell_priority, rationale FROM fab_semantic.cross_sell_opportunity WHERE rule_status
+    = 'Active' AND customer_segment = 'Corporate' AND industry = 'Logistics' ORDER BY
+    cross_sell_priority LIMIT 50;
+  tier: full_dynamic
+  tags: cross_sell_opportunity
+  metadata:
+    tables:
+    - cross_sell_opportunity
+    columns:
+    - customer_segment
+    - industry
+    - recommended_product_name
+    - rule_status
+    joins: []
+    intent: customer_analysis
+    sql_pattern:
+    - lookup
+    aggregations: []
+    filters:
+    - customer_segment
+    - industry
+    - rule_status
+    business_terms:
+    - cross-sell
+    - upsell
+    - corporate
+    complexity: medium
+- question: Show me the deals that breached policy and what rule each one broke.
+  sql: SELECT deal_id, customer_id, customer_name, product_type, margin_below_min, discount_exceeds_policy,
+    price_below_floor, is_exception, exception_reason FROM fab_semantic.policy_exception_view
+    WHERE is_exception = 1 LIMIT 50;
+  tier: full_dynamic
+  tags: policy_exception_view
+  metadata:
+    tables:
+    - policy_exception_view
+    columns:
+    - customer_id
+    - deal_id
+    - exception_reason
+    - is_exception
+    joins: []
+    intent: policy_violation
+    sql_pattern:
+    - policy_violation
+    aggregations: []
+    filters:
+    - is_exception
+    business_terms:
+    - non-compliant
+    - policy breach
+    - policy
+    complexity: low
+- question: My new prospect looks like an existing client — what price does the closest match suggest?
+  sql: SELECT new_customer_id, new_customer_name, reference_customer_id, reference_customer_name,
+    similarity_score, reference_final_price_pct, adjustment_for_new_customer_pct, suggested_price_pct,
+    suggested_price_adjustment_rationale FROM fab_semantic.similar_customer_pricing WHERE
+    new_customer_id = 'CUST001' ORDER BY similarity_score DESC LIMIT 50;
+  tier: full_dynamic
+  tags: similar_customer_pricing
+  metadata:
+    tables:
+    - similar_customer_pricing
+    columns:
+    - adjustment_for_new_customer_pct
+    - new_customer_id
+    - reference_final_price_pct
+    - similarity_score
+    - suggested_price_pct
+    joins: []
+    intent: pricing_analysis
+    sql_pattern:
+    - lookup
+    aggregations: []
+    filters:
+    - new_customer_id
+    business_terms:
+    - similar customer
+    - price
+    - pricing
+    complexity: low

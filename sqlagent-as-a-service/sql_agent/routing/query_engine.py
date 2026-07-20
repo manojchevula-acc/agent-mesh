@@ -24,7 +24,6 @@ from sql_agent.memory import relevant_examples, render_examples_block
 from sql_agent.routing.entity_resolver import resolve_customer_hint
 from sql_agent.semantic_layer.glossary import matched_terms, render_glossary_block
 from sql_agent.semantic_layer.joins import resolve_joins
-from sql_agent.semantic_layer.loader import join_closure
 from sql_agent.semantic_layer.renderer import render_schema_context
 from sql_agent.semantic_layer.schema_link import link_schema
 from sql_agent.semantic_layer.selector import select_tables
@@ -68,45 +67,77 @@ def _generate_sql(prompt: str, step: Step) -> str:
 def _plan_schema(question: str, tables_hint: list[str] | None):
     """Scoped-schema-retrieval front end for the dynamic tier (Component B).
 
-    Returns (schema_context, join_clauses, allowed_join_pairs, planned_tables) —
-    ``planned_tables`` is the schema-link plan's chosen table set (plus join bridges),
-    passed to the example ranker as its table signal. When schema retrieval is disabled
-    this is byte-identical to the original behaviour: full schema, no join hints, no
-    join constraint (allowed_join_pairs is None so validator check #7 is skipped), and
+    Returns (schema_context, join_clauses, allowed_join_pairs, planned_tables, confidence).
+    ``planned_tables`` is the chosen table set (plus join bridges), passed to the example
+    ranker as its table signal. ``confidence`` is the archetype router's verdict
+    ("high" | "low" | "reject", or "low" when the router is off) — it gates few-shot
+    injection and the widen-on-CANNOT_ANSWER decision downstream. When schema retrieval is
+    disabled this is byte-identical to the original behaviour: full schema, no join hints,
+    no join constraint (allowed_join_pairs is None so validator check #7 is skipped), and
     no planned tables (the ranker falls back to the pre-flight tables_hint).
     """
     if not settings.schema_retrieval_enabled:
-        return render_schema_context(), [], None, None
+        return render_schema_context(), [], None, None, "low"
 
-    # 1. RETRIEVE candidates (index lookup, no LLM) -> 2. SCHEMA-LINK plan (planner LLM).
-    # Feed the planner the ranked candidates WITHOUT the join-closure expansion: the plan
-    # only picks among ranked tables, and rendering the full closure (customer_master
-    # neighbours nearly every view) can exceed the provider's per-minute token limit. Any
-    # bridge the plan needs is re-added by resolve_joins below.
-    candidates = select_tables(question, tables_hint, apply_closure=False)
+    if settings.archetype_router_enabled:
+        from sql_agent.semantic_layer.archetype_router import route
+
+        arch = route(question, tables_hint)
+
+        if arch.confidence == "high" and arch.top_table:
+            # Decisive single view -> pin it and SKIP the schema-link planner
+            # (deterministic + fewer tokens). resolve_joins adds the customer_master
+            # bridge only if the view declares it and the join is actually needed.
+            join_clauses, allowed_pairs, used = resolve_joins({arch.top_table}, None)
+            schema_context = render_schema_context(tables=used)
+            return schema_context, join_clauses, allowed_pairs, sorted(used), "high"
+
+        # LOW / reject: hand the router's ranked shortlist to the planner (which still
+        # arbitrates). "reject" flows through identically here but is tagged so the
+        # CANNOT_ANSWER path does not widen (§ widen — widening cannot rescue a question
+        # that matches nothing).
+        candidates = set(arch.candidates) or select_tables(
+            question, tables_hint, apply_closure=False
+        )
+        confidence = arch.confidence
+    else:
+        # 1. RETRIEVE candidates (index lookup, no LLM). Feed the planner the ranked
+        # candidates WITHOUT the join-closure expansion: the plan only picks among ranked
+        # tables, and rendering the full closure (customer_master neighbours nearly every
+        # view) can exceed the provider's per-minute token limit. Any bridge the plan
+        # needs is re-added by resolve_joins below.
+        candidates = select_tables(question, tables_hint, apply_closure=False)
+        confidence = "low"
+
+    # 2. SCHEMA-LINK plan (planner LLM) over the candidate set.
     plan = link_schema(question, candidates)
     # 3. JOIN-RESOLVE minimal path (+ bridge tables) with real keys from the graph.
     join_clauses, allowed_pairs, used_tables = resolve_joins(plan.tables, plan.join_pairs)
     # 4. RENDER only the plan's tables plus any bridge tables the join path needs.
     schema_context = render_schema_context(tables=used_tables)
-    return schema_context, join_clauses, allowed_pairs, sorted(used_tables)
+    return schema_context, join_clauses, allowed_pairs, sorted(used_tables), confidence
 
 
 def _widen_schema(question: str, tables_hint: list[str] | None):
-    """Bounded widen for a self-correction retry.
+    """Bounded widen for a self-correction retry — TPM-safe.
 
     Re-slices the SAME already-computed retrieval ranking (selector.py) to
-    ``schema_retrieval_widen_top_k`` candidates instead of falling back to literally
-    every table/view in the schema — rendering the full schema is the single largest
-    prompt component and was blowing the provider's per-minute token budget on retries.
-    No extra LLM call: schema-link is deliberately skipped here (a little precision
-    traded for materially fewer tokens on what is already a retry). join_closure is
-    still applied so a widened join target never ends up missing its bridge table.
+    ``schema_retrieval_widen_top_k`` candidates instead of falling back to literally every
+    table/view in the schema, and — crucially — WITHOUT join_closure (the closure pulls in
+    customer_master, which neighbours almost every view, and was the single biggest source
+    of the per-minute token blowup on retries). The schema-link PLANNER is re-run over the
+    widened candidates so the widened GENERATION prompt renders the planner's 1-2 tables,
+    not a full N-view dump; resolve_joins re-adds only the bridge tables the plan needs.
+    Costs one small planner call in exchange for a much smaller generation prompt.
     """
-    candidates = select_tables(question, tables_hint, top_k=settings.schema_retrieval_widen_top_k)
-    used_tables = join_closure(candidates)
+    candidates = select_tables(
+        question, tables_hint,
+        top_k=settings.schema_retrieval_widen_top_k, apply_closure=False,
+    )
+    plan = link_schema(question, candidates)
+    join_clauses, allowed_pairs, used_tables = resolve_joins(plan.tables, plan.join_pairs)
     schema_context = render_schema_context(tables=used_tables)
-    return schema_context, [], None, sorted(used_tables)
+    return schema_context, join_clauses, allowed_pairs, sorted(used_tables)
 
 
 def run_dynamic_pipeline(question: str, tables_hint: list[str] | None = None) -> dict:
@@ -116,7 +147,9 @@ def run_dynamic_pipeline(question: str, tables_hint: list[str] | None = None) ->
     The validator is the hard gate; generation quality is grounded in the semantic
     layer, never invented relationships.
     """
-    schema_context, join_clauses, allowed_pairs, planned_tables = _plan_schema(question, tables_hint)
+    schema_context, join_clauses, allowed_pairs, planned_tables, confidence = _plan_schema(
+        question, tables_hint
+    )
 
     # Resolve any customer NAME in the question to its id up front (mirrors the view
     # tools' _resolve_customer_id) so the generator filters on the id. Computed once and
@@ -140,17 +173,21 @@ def run_dynamic_pipeline(question: str, tables_hint: list[str] | None = None) ->
         block = render_glossary_block(terms) if terms else ""
         return f"\n\n{block}\n" if block else ""
 
-    def _examples_block_for(q: str) -> str:
+    def _examples_block_for(q: str, conf: str = "low") -> str:
         # Intent-aware few-shot (Pattern Retriever): the most RELEVANT approved worked
-        # examples for THIS question. The table signal is the schema-link PLANNER's
-        # chosen tables (planned_tables — the most precise "which tables does this
-        # question touch" available, and it exists even when the pre-flight intent
-        # classifier abstained) merged with the pre-flight tables_hint. planned_tables
-        # is read at CALL time, so a widened retry re-ranks examples against the
-        # widened table set automatically. No-op when examples are disabled.
+        # examples for THIS question. The table signal is the chosen tables (planned_tables
+        # — on a HIGH archetype pin this is the deterministic view, so the example filter
+        # is anchored to a STABLE signal, not a stochastic plan) merged with the pre-flight
+        # tables_hint. planned_tables is read at CALL time, so a widened retry re-ranks
+        # examples against the widened table set automatically. No-op when disabled.
         if not settings.examples_enabled:
             return ""
+        # On a low/reject-confidence turn the table signal is unreliable; drop the
+        # metadata table-anchor and lean on the examples_min_score gate alone so a
+        # wrong-table example can't be pulled in and reinforce a wrong plan.
         hint = list(dict.fromkeys([*(planned_tables or []), *(tables_hint or [])]))
+        if conf in ("low", "reject"):
+            hint = None
         block = render_examples_block(
             relevant_examples(q, tier="full_dynamic", tables_hint=hint or None)
         )
@@ -166,7 +203,7 @@ def run_dynamic_pipeline(question: str, tables_hint: list[str] | None = None) ->
             dialect=dialect_label(), dialect_notes=dialect_notes(),
             join_hints_block=_join_hints_block(joins),
             glossary_block=_glossary_block_for(question),
-            examples_block=_examples_block_for(question),
+            examples_block=_examples_block_for(question, confidence),
             entity_block=entity_block,
         )
 
@@ -180,7 +217,10 @@ def run_dynamic_pipeline(question: str, tables_hint: list[str] | None = None) ->
     # coverage exists at all — so the first such verdict earns one bounded widen-and-
     # retry, same as a validator/DB error does below. A second CANNOT_ANSWER, now
     # against the widened slice, is trusted as a genuine "no coverage" verdict.
-    narrowed = settings.schema_retrieval_enabled
+    # A "reject" archetype verdict means retrieval found no strong coverage at all, so a
+    # CANNOT_ANSWER should NOT earn a widen (widening cannot help and only burns TPM) —
+    # start un-narrowed so the first CANNOT_ANSWER returns immediately.
+    narrowed = settings.schema_retrieval_enabled and confidence != "reject"
     # A validator-clean result the judge was not satisfied with. It is the best-effort
     # answer to fall back to if self-correction exhausts — an answer-alignment doubt must
     # never turn a safe, executable result into a hard failure.

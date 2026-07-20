@@ -150,7 +150,10 @@ class Settings(BaseSettings):
     # generator falls back to schema-only, today's baseline) — so a novel question that
     # isn't in the example set never gets a misleading example. 0.0 => gate off. Only
     # applies when the dense embedding backend is available (it is the confidence signal).
-    examples_min_score: float = 0.0
+    # Set to 0.55 so a novel question with only weak matches falls back to schema-only
+    # generation rather than being steered by a misleading example (a weak example is
+    # worse than none). Requires embedding_backend != "none".
+    examples_min_score: float = 0.55
     # RRF fusion weights (Pattern Retriever only, see example_index.py): DENSE carries
     # semantic/logical similarity, BM25 carries exact banking-jargon/column overlap.
     # Weighted above 50/50 toward dense so a lexically-similar-but-logically-different
@@ -217,6 +220,27 @@ class Settings(BaseSettings):
 
     # --- Production upgrade: schema retrieval (Component B) --------------------
     schema_retrieval_enabled: bool = False   # prune schema for the dynamic tier
+
+    # --- Archetype confidence router (pre-planner deterministic anchor) --------
+    # Turns the EXISTING hybrid retrieval into a stable HIGH/LOW confidence signal
+    # WITHOUT an extra LLM call. HIGH confidence pins one view and SKIPS the schema-link
+    # planner (deterministic + fewer tokens); LOW confidence hands a shortlist to the
+    # planner (which still arbitrates); a "reject" verdict short-circuits out-of-scope
+    # questions so the CANNOT_ANSWER path does not widen (which cannot help and burns TPM).
+    # Defaults OFF => pipeline is byte-identical to today (router never called).
+    archetype_router_enabled: bool = False
+    # Floor on the top-1 DENSE COSINE (0..1, same interpretable scale as
+    # examples_min_score) below which we never pin — the question matches nothing strongly.
+    archetype_score_floor: float = 0.55
+    # Minimum top1-minus-top2 dense-cosine gap for HIGH confidence. A small gap means two
+    # views are near-ties for this question ("confusing case") -> hand to the planner.
+    archetype_margin: float = 0.06
+    # How many ranked candidates to hand the planner when confidence is LOW.
+    archetype_lowconf_top_k: int = 6
+    # Below this top-1 cosine (and with no keyword corroboration) the question is treated
+    # as out-of-scope for retrieval: skip the widen-and-retry and return CANNOT_ANSWER fast.
+    archetype_reject_floor: float = 0.35
+
     embedding_backend: str = "local"         # local | azure | none
     embedding_model: str = "BAAI/bge-base-en-v1.5"  # local; strong short-doc retrieval
     embedding_query_prefix: str = (          # bge/e5 models want a query-side instruction
@@ -232,8 +256,11 @@ class Settings(BaseSettings):
     # prompt component and was blowing the provider's per-minute token budget on
     # retries. Keep well under embedding_top_k*3 (the dense-ranking pool size in
     # selector.py) so there is always enough already-computed candidate depth to widen
-    # into without an extra retrieval pass.
-    schema_retrieval_widen_top_k: int = 14
+    # into without an extra retrieval pass. Kept small (8): the widen re-runs the planner
+    # over these candidates (query_engine._widen_schema) and drops join_closure, so the
+    # widened generation prompt renders the planner's 1-2 tables, not a 14-view dump that
+    # blew the provider's per-minute token budget.
+    schema_retrieval_widen_top_k: int = 8
 
     # Vector index — WHERE the schema embeddings live / are searched (separate from the
     # embedding model, which is HOW documents are vectorised).

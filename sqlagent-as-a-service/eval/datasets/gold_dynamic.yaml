@@ -1,78 +1,76 @@
-# =============================================================================
-# FAB SQL Agent — Gold Evaluation Set, DYNAMIC TIER  (gold_dynamic)
-# =============================================================================
-# Scope: full_dynamic (tier-3) ONLY — the free-text-to-SQL path through
-# analytical_query -> run_dynamic_pipeline. Parameterised / semantic-view / calculation
-# / safety items are deliberately NOT here: those are routing and refusal tests, not
-# text-to-SQL accuracy tests, and they answer from fixed SQL the agent never writes.
-#
-# SELF-CONTAINED BY DESIGN ----------------------------------------------------
-# Every item carries all three things the evaluation needs:
-#   question     — what the user asks
-#   gold_sql     — the reference query
-#   gold_result  — the ACTUAL ROWS gold_sql returned from the live database
-# gold_result is NOT hand-written. It is materialized by eval/materialize_gold.py, which
-# executes each gold_sql through the same validated read path the agent uses
-# (sql_agent.db.Executor -> six-check validator -> live DB) and rewrites this file in
-# place. Re-run it whenever the DB snapshot changes.
-#
-# GROUNDING -------------------------------------------------------------------
-# Every table/column referenced is declared in sql_agent/semantic_layer/schema.yaml, and
-# every gold_sql has been executed against the snapshot and returns a NON-EMPTY result —
-# a gold returning zero rows cannot distinguish a correct agent from one that filters
-# everything away.
-#
-# Gold SQL obeys the same rules the tier-3 generator must obey:
-#   * MySQL dialect, schema-qualified names (fab_curated.* / fab_semantic.*)
-#   * SELECT only, LIMIT <= 50 (the validator force-appends LIMIT 50 otherwise)
-#   * NEVER AVG() a pre-aggregated column (customer_360.win_rate_pct / avg_*,
-#     profitability_summary.avg_net_margin_pct) — compute the true population statistic
-#     from the deal-grain view, or as SUM(x)/SUM(y).
-#   * A fab_semantic VIEW may be joined ONLY to customer_master, never to another view or
-#     a second base table (validator check #9) — this applies to SUBQUERIES too.
-#
-# TIE-SAFETY ------------------------------------------------------------------
-# Every LIMIT-ed ranking was checked to have NO tie straddling the cutoff, so the returned
-# row SET is deterministic however the agent breaks ties. Questions whose natural answer
-# WOULD straddle a tie are phrased as full group-bys instead (D23, D29, D33).
-#
-# HOW THE EVALUATION USES THIS ------------------------------------------------
-#   1. eval/run_agent.py     sends `question` through the live agent, captures the SQL it
-#                            generated and the rows that SQL returns.
-#   2. eval/compare_llm.py   diffs agent vs gold — deterministic row comparison plus an
-#                            LLM verdict on whether the two QUERIES are literally
-#                            identical, logically equivalent, or genuinely different.
-#   gold_sql is NEVER string-matched against the agent's SQL: many different queries
-#   answer the same question correctly.
-#
-#   gold_tables / gold_columns : parsed back out of gold_sql by eval/sql_introspect.py and
-#                            verified against it by materialize_gold.py --check, so they
-#                            cannot drift. Output aliases (`... AS foo`) are not columns.
-#   order_sensitive          : true only when the question asks for a RANKING (row order IS
-#                            the answer). Otherwise results compare as an unordered SET.
-#   variants                 : extra surface forms (paraphrase / other language) that
-#                            inherit this item's gold — same meaning, same answer.
-# =============================================================================
+# =============================================================================
+# FAB SQL Agent — Gold Evaluation Set, DYNAMIC TIER  (gold_dynamic)
+# =============================================================================
+# Scope: full_dynamic (tier-3) ONLY — the free-text-to-SQL path through
+# analytical_query -> run_dynamic_pipeline. Parameterised / semantic-view / calculation
+# / safety items are deliberately NOT here: those are routing and refusal tests, not
+# text-to-SQL accuracy tests, and they answer from fixed SQL the agent never writes.
+#
+# SELF-CONTAINED BY DESIGN ----------------------------------------------------
+# Every item carries all three things the evaluation needs:
+#   question     — what the user asks
+#   gold_sql     — the reference query
+#   gold_result  — the ACTUAL ROWS gold_sql returned from the live database
+# gold_result is NOT hand-written. It is materialized by eval/materialize_gold.py, which
+# executes each gold_sql through the same validated read path the agent uses
+# (sql_agent.db.Executor -> six-check validator -> live DB) and rewrites this file in
+# place. Re-run it whenever the DB snapshot changes.
+#
+# GROUNDING -------------------------------------------------------------------
+# Every table/column referenced is declared in sql_agent/semantic_layer/schema.yaml, and
+# every gold_sql has been executed against the snapshot and returns a NON-EMPTY result —
+# a gold returning zero rows cannot distinguish a correct agent from one that filters
+# everything away.
+#
+# Gold SQL obeys the same rules the tier-3 generator must obey:
+#   * MySQL dialect, schema-qualified names (fab_curated.* / fab_semantic.*)
+#   * SELECT only, LIMIT <= 50 (the validator force-appends LIMIT 50 otherwise)
+#   * NEVER AVG() a pre-aggregated column (customer_360.win_rate_pct / avg_*,
+#     profitability_summary.avg_net_margin_pct) — compute the true population statistic
+#     from the deal-grain view, or as SUM(x)/SUM(y).
+#   * A fab_semantic VIEW may be joined ONLY to customer_master, never to another view or
+#     a second base table (validator check #9) — this applies to SUBQUERIES too.
+#
+# TIE-SAFETY ------------------------------------------------------------------
+# Every LIMIT-ed ranking was checked to have NO tie straddling the cutoff, so the returned
+# row SET is deterministic however the agent breaks ties. Questions whose natural answer
+# WOULD straddle a tie are phrased as full group-bys instead (D23, D29, D33).
+#
+# HOW THE EVALUATION USES THIS ------------------------------------------------
+#   1. eval/run_agent.py     sends `question` through the live agent, captures the SQL it
+#                            generated and the rows that SQL returns.
+#   2. eval/compare_llm.py   diffs agent vs gold — deterministic row comparison plus an
+#                            LLM verdict on whether the two QUERIES are literally
+#                            identical, logically equivalent, or genuinely different.
+#   gold_sql is NEVER string-matched against the agent's SQL: many different queries
+#   answer the same question correctly.
+#
+#   gold_tables / gold_columns : parsed back out of gold_sql by eval/sql_introspect.py and
+#                            verified against it by materialize_gold.py --check, so they
+#                            cannot drift. Output aliases (`... AS foo`) are not columns.
+#   order_sensitive          : true only when the question asks for a RANKING (row order IS
+#                            the answer). Otherwise results compare as an unordered SET.
+#   variants                 : extra surface forms (paraphrase / other language) that
+#                            inherit this item's gold — same meaning, same answer.
+# =============================================================================
 
 meta:
   version: gold_dynamic
   tier: full_dynamic
   dialect: mysql
-  db_snapshot: "poc_synthetic_v1"          # gold_result is only valid against this snapshot
+  db_snapshot: "poc_synthetic_v1"          # gold_result is only valid against this snapshot
   scopes_required: [dynamic_sql]
   entity_space:
     customers: "CUST001-CUST020"
-    products:  "PROD001-PROD008"
-    deals:     "DEAL001-DEAL060"
+    products: "PROD001-PROD008"
+    deals: "DEAL001-DEAL060"
     deal_dates: "2025-01-02 .. 2026-05-05"
   defaults:
-    order_sensitive: false                  # result sets compared as a SET unless overridden
-    numeric_tolerance: 0.01                 # 2.14 == 2.144 ; rounding-insensitive
+    order_sensitive: false                  # result sets compared as a SET unless overridden
+    numeric_tolerance: 0.01                 # 2.14 == 2.144 ; rounding-insensitive
 
 items:
-
-
-  # --- AGGREGATES / GROUP-BY -----------------------------------------------
+  # --- AGGREGATES / GROUP-BY -----------------------------------------------
 
   - id: D01
     question: "What is the average expected margin across all Won deals?"
@@ -88,7 +86,6 @@ items:
     row_count: 1
     gold_result:
       - {avg_expected_margin_pct: 1.31}
-
   - id: D02
     question: "What is the average expected margin by product type across all Won deals?"
     domain: margin
@@ -104,15 +101,14 @@ items:
     gold_columns: [product_type, expected_margin_pct, deal_outcome]
     row_count: 4
     gold_result:
-      - {product_type: 'Deposit', avg_expected_margin_pct: -0.45}
-      - {product_type: 'Loan', avg_expected_margin_pct: 1.86}
-      - {product_type: 'Trade Finance', avg_expected_margin_pct: 1.1}
-      - {product_type: 'Treasury', avg_expected_margin_pct: 1.03}
+      - {product_type: Deposit, avg_expected_margin_pct: -0.45}
+      - {product_type: Loan, avg_expected_margin_pct: 1.86}
+      - {product_type: Trade Finance, avg_expected_margin_pct: 1.1}
+      - {product_type: Treasury, avg_expected_margin_pct: 1.03}
     variants:
       - {lang: en, text: "avg expected margin per product type for won deals"}
       - {lang: en, text: "won deals — average margine by prodcut type"}
       - {lang: ar, text: "ما متوسط الهامش المتوقع لكل نوع منتج للصفقات الرابحة؟"}
-
   - id: D03
     question: "Which five customers have the highest existing exposure, and how much?"
     domain: risk-capital
@@ -130,15 +126,14 @@ items:
     gold_columns: [customer_id, customer_name, existing_exposure_aed]
     row_count: 5
     gold_result:
-      - {customer_id: 'CUST017', customer_name: 'Red Dune Mining', existing_exposure_aed: 60000000}
-      - {customer_id: 'CUST009', customer_name: 'Green Energy MEA', existing_exposure_aed: 50000000}
-      - {customer_id: 'CUST012', customer_name: 'Skyline Real Estate', existing_exposure_aed: 45000000}
-      - {customer_id: 'CUST005', customer_name: 'Emirates Healthcare Services', existing_exposure_aed: 40000000}
-      - {customer_id: 'CUST018', customer_name: 'Lulu Fresh Markets', existing_exposure_aed: 35000000}
+      - {customer_id: CUST017, customer_name: Red Dune Mining, existing_exposure_aed: 60000000}
+      - {customer_id: CUST009, customer_name: Green Energy MEA, existing_exposure_aed: 50000000}
+      - {customer_id: CUST012, customer_name: Skyline Real Estate, existing_exposure_aed: 45000000}
+      - {customer_id: CUST005, customer_name: Emirates Healthcare Services, existing_exposure_aed: 40000000}
+      - {customer_id: CUST018, customer_name: Lulu Fresh Markets, existing_exposure_aed: 35000000}
     variants:
       - {lang: en, text: "top 5 customers by exposure"}
       - {lang: ar, text: "من هم أكبر 5 عملاء من حيث التعرض الحالي وكم قيمته؟"}
-
   - id: D04
     question: "What is the average customer win rate across all customers?"
     domain: deals-pricing
@@ -154,7 +149,6 @@ items:
     row_count: 1
     gold_result:
       - {win_rate_pct: 85}
-
   - id: D05
     question: "What is the total net profit by product type?"
     domain: profitability
@@ -169,11 +163,10 @@ items:
     gold_columns: [product_type, net_profit_aed]
     row_count: 4
     gold_result:
-      - {product_type: 'Loan', total_net_profit_aed: 11387707.299999999}
-      - {product_type: 'Treasury', total_net_profit_aed: 116833.0}
-      - {product_type: 'Trade Finance', total_net_profit_aed: -229263.6}
-      - {product_type: 'Deposit', total_net_profit_aed: -3951625.0}
-
+      - {product_type: Loan, total_net_profit_aed: 11387707.299999999}
+      - {product_type: Treasury, total_net_profit_aed: 116833.0}
+      - {product_type: Trade Finance, total_net_profit_aed: -229263.6}
+      - {product_type: Deposit, total_net_profit_aed: -3951625.0}
   - id: D06
     question: "What is the total existing exposure for each customer segment?"
     domain: risk-capital
@@ -188,9 +181,8 @@ items:
     gold_columns: [customer_segment, existing_exposure_aed]
     row_count: 2
     gold_result:
-      - {customer_segment: 'Corporate', total_exposure_aed: 341000000}
-      - {customer_segment: 'SME', total_exposure_aed: 59700000}
-
+      - {customer_segment: Corporate, total_exposure_aed: 341000000}
+      - {customer_segment: SME, total_exposure_aed: 59700000}
   - id: D07
     question: "What is the average expected margin by customer industry?"
     domain: margin
@@ -208,24 +200,23 @@ items:
     gold_columns: [industry, expected_margin_pct, customer_id]
     row_count: 17
     gold_result:
-      - {industry: 'Marine Services', avg_expected_margin_pct: 1.95}
-      - {industry: 'Shipping', avg_expected_margin_pct: 1.8}
-      - {industry: 'Automotive', avg_expected_margin_pct: 1.74}
-      - {industry: 'Manufacturing', avg_expected_margin_pct: 1.65}
-      - {industry: 'Logistics', avg_expected_margin_pct: 1.65}
-      - {industry: 'Retail', avg_expected_margin_pct: 1.58}
-      - {industry: 'Construction', avg_expected_margin_pct: 1.4}
-      - {industry: 'Real Estate', avg_expected_margin_pct: 1.39}
-      - {industry: 'Hospitality', avg_expected_margin_pct: 1.23}
-      - {industry: 'Mining', avg_expected_margin_pct: 1.03}
-      - {industry: 'Education', avg_expected_margin_pct: 0.88}
-      - {industry: 'Energy', avg_expected_margin_pct: 0.74}
-      - {industry: 'Pharma Trading', avg_expected_margin_pct: 0.54}
-      - {industry: 'Trading', avg_expected_margin_pct: 0.48}
-      - {industry: 'Healthcare', avg_expected_margin_pct: 0.38}
-      - {industry: 'FMCG', avg_expected_margin_pct: 0.18}
-      - {industry: 'Technology', avg_expected_margin_pct: -0.0}
-
+      - {industry: Marine Services, avg_expected_margin_pct: 1.95}
+      - {industry: Shipping, avg_expected_margin_pct: 1.8}
+      - {industry: Automotive, avg_expected_margin_pct: 1.74}
+      - {industry: Manufacturing, avg_expected_margin_pct: 1.65}
+      - {industry: Logistics, avg_expected_margin_pct: 1.65}
+      - {industry: Retail, avg_expected_margin_pct: 1.58}
+      - {industry: Construction, avg_expected_margin_pct: 1.4}
+      - {industry: Real Estate, avg_expected_margin_pct: 1.39}
+      - {industry: Hospitality, avg_expected_margin_pct: 1.23}
+      - {industry: Mining, avg_expected_margin_pct: 1.03}
+      - {industry: Education, avg_expected_margin_pct: 0.88}
+      - {industry: Energy, avg_expected_margin_pct: 0.74}
+      - {industry: Pharma Trading, avg_expected_margin_pct: 0.54}
+      - {industry: Trading, avg_expected_margin_pct: 0.48}
+      - {industry: Healthcare, avg_expected_margin_pct: 0.38}
+      - {industry: FMCG, avg_expected_margin_pct: 0.18}
+      - {industry: Technology, avg_expected_margin_pct: -0.0}
   - id: D08
     question: "What percentage of deals are policy compliant overall?"
     domain: compliance
@@ -243,7 +234,6 @@ items:
     variants:
       - {lang: en, text: "what share of our deals comply with policy?"}
       - {lang: ar, text: "ما نسبة الصفقات المتوافقة مع السياسة بشكل عام؟"}
-
   - id: D09
     question: "Show total RWA and average return on RWA by product type."
     domain: risk-capital
@@ -259,11 +249,10 @@ items:
     gold_columns: [product_type, rwa_aed, return_on_rwa_pct]
     row_count: 4
     gold_result:
-      - {product_type: 'Loan', total_rwa_aed: 831050000, avg_return_on_rwa_pct: 3.05}
-      - {product_type: 'Deposit', total_rwa_aed: 723325000, avg_return_on_rwa_pct: 0.33}
-      - {product_type: 'Trade Finance', total_rwa_aed: 72950000, avg_return_on_rwa_pct: 2.1}
-      - {product_type: 'Treasury', total_rwa_aed: 51000000, avg_return_on_rwa_pct: 1.38}
-
+      - {product_type: Loan, total_rwa_aed: 831050000, avg_return_on_rwa_pct: 3.05}
+      - {product_type: Deposit, total_rwa_aed: 723325000, avg_return_on_rwa_pct: 0.33}
+      - {product_type: Trade Finance, total_rwa_aed: 72950000, avg_return_on_rwa_pct: 2.1}
+      - {product_type: Treasury, total_rwa_aed: 51000000, avg_return_on_rwa_pct: 1.38}
   - id: D10
     question: "How many deals fell below the minimum margin in each region?"
     domain: compliance
@@ -279,12 +268,11 @@ items:
     gold_columns: [region, margin_below_minimum]
     row_count: 5
     gold_result:
-      - {region: 'Abu Dhabi', below_min_deals: 6}
-      - {region: 'Dubai', below_min_deals: 5}
-      - {region: 'Sharjah', below_min_deals: 2}
-      - {region: 'Ras Al Khaimah', below_min_deals: 1}
-      - {region: 'Ajman', below_min_deals: 1}
-
+      - {region: Abu Dhabi, below_min_deals: 6}
+      - {region: Dubai, below_min_deals: 5}
+      - {region: Sharjah, below_min_deals: 2}
+      - {region: Ras Al Khaimah, below_min_deals: 1}
+      - {region: Ajman, below_min_deals: 1}
   - id: D11
     question: "Which customer segment and risk band have the most deals priced below their policy minimum margin?"
     domain: compliance
@@ -302,17 +290,11 @@ items:
     gold_columns: [customer_segment, risk_category, customer_id, product_type, expected_margin_pct, min_margin_pct]
     row_count: 5
     gold_result:
-      - {customer_segment: 'SME', risk_category: 'Medium', deals_below_floor: 17}
-      - {customer_segment: 'Corporate', risk_category: 'Low', deals_below_floor: 15}
-      - {customer_segment: 'Corporate', risk_category: 'High', deals_below_floor: 10}
-      - {customer_segment: 'Corporate', risk_category: 'Medium', deals_below_floor: 8}
-      - {customer_segment: 'SME', risk_category: 'Low', deals_below_floor: 6}
-
-
-  # --- DATE / TIME-BASED ANALYSIS ------------------------------------------
-  # deal_date spans 2025-01-02 .. 2026-05-05, stored ISO-formatted, so MySQL's
-  # YEAR()/QUARTER()/DATE_FORMAT() apply directly.
-
+      - {customer_segment: SME, risk_category: Medium, deals_below_floor: 17}
+      - {customer_segment: Corporate, risk_category: Low, deals_below_floor: 15}
+      - {customer_segment: Corporate, risk_category: High, deals_below_floor: 10}
+      - {customer_segment: Corporate, risk_category: Medium, deals_below_floor: 8}
+      - {customer_segment: SME, risk_category: Low, deals_below_floor: 6}
   - id: D12
     question: "How many deals were booked in each quarter of 2025, and what was the total requested amount?"
     domain: deals-pricing
@@ -335,7 +317,6 @@ items:
       - {quarter: 4, deal_count: 10, total_requested_amount: 277700000}
     variants:
       - {lang: en, text: "quarterly deal count and volume for 2025"}
-
   - id: D13
     question: "Show the monthly won-deal count and volume for 2026."
     domain: deals-pricing
@@ -352,14 +333,10 @@ items:
     gold_columns: [deal_date, deal_outcome, requested_amount]
     row_count: 4
     gold_result:
-      - {month: '2026-01', won_deals: 6, won_volume_aed: 285500000}
-      - {month: '2026-02', won_deals: 3, won_volume_aed: 190700000}
-      - {month: '2026-03', won_deals: 4, won_volume_aed: 28300000}
-      - {month: '2026-04', won_deals: 5, won_volume_aed: 112500000}
-
-
-  # --- RATIOS / CONDITIONAL AGGREGATION ------------------------------------
-
+      - {month: 2026-01, won_deals: 6, won_volume_aed: 285500000}
+      - {month: 2026-02, won_deals: 3, won_volume_aed: 190700000}
+      - {month: 2026-03, won_deals: 4, won_volume_aed: 28300000}
+      - {month: 2026-04, won_deals: 5, won_volume_aed: 112500000}
   - id: D14
     question: "For each sales channel, how many deals were booked in total, how many were won, and what is the win rate as a percentage?"
     domain: deals-pricing
@@ -383,13 +360,12 @@ items:
     gold_columns: [sales_channel, deal_outcome]
     row_count: 4
     gold_result:
-      - {sales_channel: 'Branch', total_deals: 13, won_deals: 13, win_rate_pct: 100}
-      - {sales_channel: 'API Quote', total_deals: 17, won_deals: 15, win_rate_pct: 88.24}
-      - {sales_channel: 'Relationship Manager', total_deals: 19, won_deals: 15, win_rate_pct: 78.95}
-      - {sales_channel: 'Digital Upload', total_deals: 11, won_deals: 8, win_rate_pct: 72.73}
+      - {sales_channel: Branch, total_deals: 13, won_deals: 13, win_rate_pct: 100}
+      - {sales_channel: API Quote, total_deals: 17, won_deals: 15, win_rate_pct: 88.24}
+      - {sales_channel: Relationship Manager, total_deals: 19, won_deals: 15, win_rate_pct: 78.95}
+      - {sales_channel: Digital Upload, total_deals: 11, won_deals: 8, win_rate_pct: 72.73}
     variants:
       - {lang: en, text: "which origination channel wins the most deals, proportionally?"}
-
   - id: D15
     question: "Compare the average expected margin between Corporate and SME deals."
     domain: margin
@@ -405,12 +381,8 @@ items:
     gold_columns: [customer_segment, expected_margin_pct]
     row_count: 2
     gold_result:
-      - {customer_segment: 'Corporate', deal_count: 37, avg_expected_margin_pct: 1.13}
-      - {customer_segment: 'SME', deal_count: 23, avg_expected_margin_pct: 1.04}
-
-
-  # --- TOP-N / BOTTOM-N ----------------------------------------------------
-
+      - {customer_segment: Corporate, deal_count: 37, avg_expected_margin_pct: 1.13}
+      - {customer_segment: SME, deal_count: 23, avg_expected_margin_pct: 1.04}
   - id: D16
     question: "Which five deals have the worst expected margin?"
     domain: margin
@@ -428,15 +400,14 @@ items:
     gold_columns: [deal_id, customer_id, product_type, expected_margin_pct]
     row_count: 5
     gold_result:
-      - {deal_id: 'DEAL013', customer_id: 'CUST012', product_type: 'Deposit', expected_margin_pct: -1.1}
-      - {deal_id: 'DEAL002', customer_id: 'CUST012', product_type: 'Deposit', expected_margin_pct: -1.05}
-      - {deal_id: 'DEAL029', customer_id: 'CUST006', product_type: 'Deposit', expected_margin_pct: -1.0}
-      - {deal_id: 'DEAL050', customer_id: 'CUST007', product_type: 'Deposit', expected_margin_pct: -0.7}
-      - {deal_id: 'DEAL045', customer_id: 'CUST011', product_type: 'Deposit', expected_margin_pct: -0.58}
+      - {deal_id: DEAL013, customer_id: CUST012, product_type: Deposit, expected_margin_pct: -1.1}
+      - {deal_id: DEAL002, customer_id: CUST012, product_type: Deposit, expected_margin_pct: -1.05}
+      - {deal_id: DEAL029, customer_id: CUST006, product_type: Deposit, expected_margin_pct: -1.0}
+      - {deal_id: DEAL050, customer_id: CUST007, product_type: Deposit, expected_margin_pct: -0.7}
+      - {deal_id: DEAL045, customer_id: CUST011, product_type: Deposit, expected_margin_pct: -0.58}
     variants:
       - {lang: en, text: "bottom 5 deals by margin"}
       - {lang: ar, text: "ما هي أسوأ خمس صفقات من حيث الهامش المتوقع؟"}
-
   - id: D17
     question: "Which three customers generated the most total net profit?"
     domain: profitability
@@ -455,13 +426,9 @@ items:
     gold_columns: [customer_id, net_profit_aed]
     row_count: 3
     gold_result:
-      - {customer_id: 'CUST012', total_net_profit_aed: 2263812.3}
-      - {customer_id: 'CUST009', total_net_profit_aed: 1571676.9}
-      - {customer_id: 'CUST018', total_net_profit_aed: 1255648.2}
-
-
-  # --- COMPUTED RATIO / CASE BANDING ---------------------------------------
-
+      - {customer_id: CUST012, total_net_profit_aed: 2263812.3}
+      - {customer_id: CUST009, total_net_profit_aed: 1571676.9}
+      - {customer_id: CUST018, total_net_profit_aed: 1255648.2}
   - id: D18
     question: "Which customers have existing exposure worth more than 20% of their annual revenue?"
     domain: risk-capital
@@ -481,13 +448,12 @@ items:
     gold_columns: [customer_id, customer_name, existing_exposure_aed, annual_revenue_aed]
     row_count: 6
     gold_result:
-      - {customer_id: 'CUST006', customer_name: 'Desert Sands Construction', exposure_to_revenue_pct: 25}
-      - {customer_id: 'CUST012', customer_name: 'Skyline Real Estate', exposure_to_revenue_pct: 25}
-      - {customer_id: 'CUST017', customer_name: 'Red Dune Mining', exposure_to_revenue_pct: 25}
-      - {customer_id: 'CUST019', customer_name: 'Coastal Marine Services', exposure_to_revenue_pct: 22.73}
-      - {customer_id: 'CUST020', customer_name: 'Nile General Supplies', exposure_to_revenue_pct: 20.83}
-      - {customer_id: 'CUST004', customer_name: 'Oasis Retail Group', exposure_to_revenue_pct: 20.31}
-
+      - {customer_id: CUST006, customer_name: Desert Sands Construction, exposure_to_revenue_pct: 25}
+      - {customer_id: CUST012, customer_name: Skyline Real Estate, exposure_to_revenue_pct: 25}
+      - {customer_id: CUST017, customer_name: Red Dune Mining, exposure_to_revenue_pct: 25}
+      - {customer_id: CUST019, customer_name: Coastal Marine Services, exposure_to_revenue_pct: 22.73}
+      - {customer_id: CUST020, customer_name: Nile General Supplies, exposure_to_revenue_pct: 20.83}
+      - {customer_id: CUST004, customer_name: Oasis Retail Group, exposure_to_revenue_pct: 20.31}
   - id: D19
     question: "Bucket customers into Large (>= 40m AED), Mid (>= 15m) and Small exposure bands, and show how many customers and how much total exposure sit in each."
     domain: risk-capital
@@ -504,13 +470,9 @@ items:
     gold_columns: [existing_exposure_aed]
     row_count: 3
     gold_result:
-      - {exposure_band: 'Large', customer_count: 4, total_exposure_aed: 195000000}
-      - {exposure_band: 'Mid', customer_count: 6, total_exposure_aed: 146000000}
-      - {exposure_band: 'Small', customer_count: 10, total_exposure_aed: 59700000}
-
-
-  # --- COMPETITOR ----------------------------------------------------------
-
+      - {exposure_band: Large, customer_count: 4, total_exposure_aed: 195000000}
+      - {exposure_band: Mid, customer_count: 6, total_exposure_aed: 146000000}
+      - {exposure_band: Small, customer_count: 10, total_exposure_aed: 59700000}
   - id: D20
     question: "Which competitors undercut our pricing the most on average, and across how many negotiations?"
     domain: competitor
@@ -526,16 +488,12 @@ items:
     gold_columns: [competitor_name, competitor_gap_bps]
     row_count: 6
     gold_result:
-      - {competitor_name: 'Dubai Islamic Bank', interactions: 1, avg_gap_bps: 65.0}
-      - {competitor_name: 'Mashreq Bank', interactions: 3, avg_gap_bps: 60.0}
-      - {competitor_name: 'Emirates NBD', interactions: 3, avg_gap_bps: 45.0}
-      - {competitor_name: 'Standard Chartered UAE', interactions: 4, avg_gap_bps: 43.8}
-      - {competitor_name: 'ADCB', interactions: 5, avg_gap_bps: 41.0}
-      - {competitor_name: 'HSBC UAE', interactions: 4, avg_gap_bps: 16.2}
-
-
-  # --- MULTI-TABLE JOINS ---------------------------------------------------
-
+      - {competitor_name: Dubai Islamic Bank, interactions: 1, avg_gap_bps: 65.0}
+      - {competitor_name: Mashreq Bank, interactions: 3, avg_gap_bps: 60.0}
+      - {competitor_name: Emirates NBD, interactions: 3, avg_gap_bps: 45.0}
+      - {competitor_name: Standard Chartered UAE, interactions: 4, avg_gap_bps: 43.8}
+      - {competitor_name: ADCB, interactions: 5, avg_gap_bps: 41.0}
+      - {competitor_name: HSBC UAE, interactions: 4, avg_gap_bps: 16.2}
   - id: D21
     question: "For won deals, how many were booked per product and what was the average margin on each?"
     domain: product
@@ -555,15 +513,14 @@ items:
     gold_columns: [product_name, deal_id, expected_margin_pct, product_id, deal_outcome]
     row_count: 8
     gold_result:
-      - {product_name: 'Term Loan', deal_count: 11, avg_margin_pct: 1.91}
-      - {product_name: 'Working Capital Loan', deal_count: 8, avg_margin_pct: 1.54}
-      - {product_name: 'Corporate Deposit', deal_count: 7, avg_margin_pct: -0.45}
-      - {product_name: 'Trade Finance LC', deal_count: 6, avg_margin_pct: 1.1}
-      - {product_name: 'Invoice Discounting', deal_count: 5, avg_margin_pct: 1.09}
-      - {product_name: 'Overdraft Facility', deal_count: 5, avg_margin_pct: 2.42}
-      - {product_name: 'USD Term Loan', deal_count: 5, avg_margin_pct: 1.71}
-      - {product_name: 'FX Forward Facility', deal_count: 4, avg_margin_pct: 1.03}
-
+      - {product_name: Term Loan, deal_count: 11, avg_margin_pct: 1.91}
+      - {product_name: Working Capital Loan, deal_count: 8, avg_margin_pct: 1.54}
+      - {product_name: Corporate Deposit, deal_count: 7, avg_margin_pct: -0.45}
+      - {product_name: Trade Finance LC, deal_count: 6, avg_margin_pct: 1.1}
+      - {product_name: Invoice Discounting, deal_count: 5, avg_margin_pct: 1.09}
+      - {product_name: Overdraft Facility, deal_count: 5, avg_margin_pct: 2.42}
+      - {product_name: USD Term Loan, deal_count: 5, avg_margin_pct: 1.71}
+      - {product_name: FX Forward Facility, deal_count: 4, avg_margin_pct: 1.03}
   - id: D22
     question: "Break down deal count and total volume by region and customer segment."
     domain: deals-pricing
@@ -580,15 +537,14 @@ items:
     gold_columns: [region, customer_segment, deal_id, requested_amount, customer_id]
     row_count: 8
     gold_result:
-      - {region: 'Dubai', customer_segment: 'Corporate', deals: 18, volume_aed: 833000000}
-      - {region: 'Abu Dhabi', customer_segment: 'Corporate', deals: 15, volume_aed: 735500000}
-      - {region: 'Ajman', customer_segment: 'SME', deals: 5, volume_aed: 253400000}
-      - {region: 'Ras Al Khaimah', customer_segment: 'SME', deals: 3, volume_aed: 251900000}
-      - {region: 'Dubai', customer_segment: 'SME', deals: 6, volume_aed: 235400000}
-      - {region: 'Sharjah', customer_segment: 'SME', deals: 8, volume_aed: 109100000}
-      - {region: 'Abu Dhabi', customer_segment: 'SME', deals: 1, volume_aed: 65000000}
-      - {region: 'Fujairah', customer_segment: 'Corporate', deals: 4, volume_aed: 51000000}
-
+      - {region: Dubai, customer_segment: Corporate, deals: 18, volume_aed: 833000000}
+      - {region: Abu Dhabi, customer_segment: Corporate, deals: 15, volume_aed: 735500000}
+      - {region: Ajman, customer_segment: SME, deals: 5, volume_aed: 253400000}
+      - {region: Ras Al Khaimah, customer_segment: SME, deals: 3, volume_aed: 251900000}
+      - {region: Dubai, customer_segment: SME, deals: 6, volume_aed: 235400000}
+      - {region: Sharjah, customer_segment: SME, deals: 8, volume_aed: 109100000}
+      - {region: Abu Dhabi, customer_segment: SME, deals: 1, volume_aed: 65000000}
+      - {region: Fujairah, customer_segment: Corporate, deals: 4, volume_aed: 51000000}
   - id: D23
     question: "What is the total risk-weighted assets and capital requirement by customer industry?"
     domain: risk-capital
@@ -607,26 +563,22 @@ items:
     gold_columns: [industry, rwa_aed, capital_required_aed, customer_id]
     row_count: 16
     gold_result:
-      - {industry: 'Real Estate', total_rwa_aed: 463100000, total_capital_aed: 37048000}
-      - {industry: 'Healthcare', total_rwa_aed: 198700000, total_capital_aed: 15896000}
-      - {industry: 'Hospitality', total_rwa_aed: 188925000, total_capital_aed: 15114000}
-      - {industry: 'Retail', total_rwa_aed: 135450000, total_capital_aed: 10836000}
-      - {industry: 'FMCG', total_rwa_aed: 130500000, total_capital_aed: 10440000}
-      - {industry: 'Manufacturing', total_rwa_aed: 88550000, total_capital_aed: 7084000}
-      - {industry: 'Construction', total_rwa_aed: 77900000, total_capital_aed: 6232000}
-      - {industry: 'Automotive', total_rwa_aed: 70800000, total_capital_aed: 5664000}
-      - {industry: 'Education', total_rwa_aed: 60800000, total_capital_aed: 4864000}
-      - {industry: 'Energy', total_rwa_aed: 59650000, total_capital_aed: 4772000}
-      - {industry: 'Mining', total_rwa_aed: 51000000, total_capital_aed: 4080000}
-      - {industry: 'Marine Services', total_rwa_aed: 48750000, total_capital_aed: 3900000}
-      - {industry: 'Logistics', total_rwa_aed: 47625000, total_capital_aed: 3810000}
-      - {industry: 'Shipping', total_rwa_aed: 37575000, total_capital_aed: 3006000}
-      - {industry: 'Trading', total_rwa_aed: 10800000, total_capital_aed: 864000}
-      - {industry: 'Pharma Trading', total_rwa_aed: 8200000, total_capital_aed: 656000}
-
-
-  # --- MULTI-STEP / SUBQUERY / HAVING --------------------------------------
-
+      - {industry: Real Estate, total_rwa_aed: 463100000, total_capital_aed: 37048000}
+      - {industry: Healthcare, total_rwa_aed: 198700000, total_capital_aed: 15896000}
+      - {industry: Hospitality, total_rwa_aed: 188925000, total_capital_aed: 15114000}
+      - {industry: Retail, total_rwa_aed: 135450000, total_capital_aed: 10836000}
+      - {industry: FMCG, total_rwa_aed: 130500000, total_capital_aed: 10440000}
+      - {industry: Manufacturing, total_rwa_aed: 88550000, total_capital_aed: 7084000}
+      - {industry: Construction, total_rwa_aed: 77900000, total_capital_aed: 6232000}
+      - {industry: Automotive, total_rwa_aed: 70800000, total_capital_aed: 5664000}
+      - {industry: Education, total_rwa_aed: 60800000, total_capital_aed: 4864000}
+      - {industry: Energy, total_rwa_aed: 59650000, total_capital_aed: 4772000}
+      - {industry: Mining, total_rwa_aed: 51000000, total_capital_aed: 4080000}
+      - {industry: Marine Services, total_rwa_aed: 48750000, total_capital_aed: 3900000}
+      - {industry: Logistics, total_rwa_aed: 47625000, total_capital_aed: 3810000}
+      - {industry: Shipping, total_rwa_aed: 37575000, total_capital_aed: 3006000}
+      - {industry: Trading, total_rwa_aed: 10800000, total_capital_aed: 864000}
+      - {industry: Pharma Trading, total_rwa_aed: 8200000, total_capital_aed: 656000}
   - id: D24
     question: "Which customer and product combinations fall in the Loss-Making profitability tier, and how big is the loss?"
     domain: profitability
@@ -642,10 +594,9 @@ items:
     gold_columns: [customer_id, product_type, net_profit_aed, avg_net_margin_pct, profitability_tier]
     row_count: 3
     gold_result:
-      - {customer_id: 'CUST005', product_type: 'Deposit', net_profit_aed: -2519016.0, avg_net_margin_pct: -0.6833}
-      - {customer_id: 'CUST011', product_type: 'Deposit', net_profit_aed: -791840.0, avg_net_margin_pct: -0.19}
-      - {customer_id: 'CUST012', product_type: 'Deposit', net_profit_aed: -237019.0, avg_net_margin_pct: -0.025}
-
+      - {customer_id: CUST005, product_type: Deposit, net_profit_aed: -2519016.0, avg_net_margin_pct: -0.6833}
+      - {customer_id: CUST011, product_type: Deposit, net_profit_aed: -791840.0, avg_net_margin_pct: -0.19}
+      - {customer_id: CUST012, product_type: Deposit, net_profit_aed: -237019.0, avg_net_margin_pct: -0.025}
   - id: D25
     question: "For the product type with the largest won volume, what is its average expected margin?"
     domain: margin
@@ -668,8 +619,7 @@ items:
     gold_columns: [product_type, expected_margin_pct, deal_outcome, requested_amount]
     row_count: 1
     gold_result:
-      - {product_type: 'Loan', won_deals: 29, avg_expected_margin_pct: 1.86}
-
+      - {product_type: Loan, won_deals: 29, avg_expected_margin_pct: 1.86}
   - id: D26
     question: "Which customers have booked at least four deals, and what is their total deal amount?"
     domain: deals-pricing
@@ -687,14 +637,13 @@ items:
     gold_columns: [customer_id, requested_amount]
     row_count: 7
     gold_result:
-      - {customer_id: 'CUST012', deal_count: 7, total_amount: 463100000}
-      - {customer_id: 'CUST009', deal_count: 6, total_amount: 154700000}
-      - {customer_id: 'CUST013', deal_count: 5, total_amount: 63900000}
-      - {customer_id: 'CUST003', deal_count: 4, total_amount: 63500000}
-      - {customer_id: 'CUST005', deal_count: 4, total_amount: 397400000}
-      - {customer_id: 'CUST016', deal_count: 4, total_amount: 125400000}
-      - {customer_id: 'CUST017', deal_count: 4, total_amount: 51000000}
-
+      - {customer_id: CUST012, deal_count: 7, total_amount: 463100000}
+      - {customer_id: CUST009, deal_count: 6, total_amount: 154700000}
+      - {customer_id: CUST013, deal_count: 5, total_amount: 63900000}
+      - {customer_id: CUST003, deal_count: 4, total_amount: 63500000}
+      - {customer_id: CUST005, deal_count: 4, total_amount: 397400000}
+      - {customer_id: CUST016, deal_count: 4, total_amount: 125400000}
+      - {customer_id: CUST017, deal_count: 4, total_amount: 51000000}
   - id: D27
     question: "What are the most common reasons deals breach policy, and how many deals hit each?"
     domain: compliance
@@ -710,13 +659,12 @@ items:
     gold_columns: [exception_reason, is_exception]
     row_count: 6
     gold_result:
-      - {exception_reason: 'high_rwa_requires_approval', deals: 11}
-      - {exception_reason: 'margin_below_min', deals: 8}
-      - {exception_reason: 'margin_below_min | high_rwa_requires_approval', deals: 3}
-      - {exception_reason: 'margin_below_min | discount_exceeds_policy', deals: 3}
-      - {exception_reason: 'discount_exceeds_policy', deals: 3}
-      - {exception_reason: 'margin_below_min | competitor_match_requires_approval', deals: 1}
-
+      - {exception_reason: high_rwa_requires_approval, deals: 11}
+      - {exception_reason: margin_below_min, deals: 8}
+      - {exception_reason: margin_below_min | high_rwa_requires_approval, deals: 3}
+      - {exception_reason: margin_below_min | discount_exceeds_policy, deals: 3}
+      - {exception_reason: discount_exceeds_policy, deals: 3}
+      - {exception_reason: margin_below_min | competitor_match_requires_approval, deals: 1}
   - id: D28
     question: "Which customers are getting a relationship discount above their policy cap?"
     domain: policy
@@ -732,9 +680,8 @@ items:
     gold_columns: [customer_id, customer_name, relationship_discount_pct, policy_max_relationship_discount_pct, discount_eligible]
     row_count: 2
     gold_result:
-      - {customer_id: 'CUST013', customer_name: 'Union Pharma Trading', relationship_discount_pct: 0.35, policy_max_relationship_discount_pct: 0.25}
-      - {customer_id: 'CUST015', customer_name: 'Prime Tech Solutions', relationship_discount_pct: 0.3, policy_max_relationship_discount_pct: 0.25}
-
+      - {customer_id: CUST013, customer_name: Union Pharma Trading, relationship_discount_pct: 0.35, policy_max_relationship_discount_pct: 0.25}
+      - {customer_id: CUST015, customer_name: Prime Tech Solutions, relationship_discount_pct: 0.3, policy_max_relationship_discount_pct: 0.25}
   - id: D29
     question: "How many rating downgrades landed in each new risk category, and what extra risk premium do they carry on average?"
     domain: risk-capital
@@ -753,13 +700,9 @@ items:
     gold_columns: [new_risk_category, additional_risk_premium_pct, rating_change_direction]
     row_count: 3
     gold_result:
-      - {new_risk_category: 'Medium', downgrade_events: 10, avg_additional_risk_premium_pct: 0.26}
-      - {new_risk_category: 'High', downgrade_events: 7, avg_additional_risk_premium_pct: 0.529}
-      - {new_risk_category: 'Low', downgrade_events: 3, avg_additional_risk_premium_pct: 0.25}
-
-
-  # --- MIN / MAX / PIVOT / SHARE-OF-TOTAL ----------------------------------
-
+      - {new_risk_category: Medium, downgrade_events: 10, avg_additional_risk_premium_pct: 0.26}
+      - {new_risk_category: High, downgrade_events: 7, avg_additional_risk_premium_pct: 0.529}
+      - {new_risk_category: Low, downgrade_events: 3, avg_additional_risk_premium_pct: 0.25}
   - id: D30
     question: "For each customer segment, what are the minimum, maximum and average expected margins?"
     domain: margin
@@ -775,9 +718,8 @@ items:
     gold_columns: [customer_segment, expected_margin_pct]
     row_count: 2
     gold_result:
-      - {customer_segment: 'SME', min_margin_pct: -0.7, max_margin_pct: 2.28, avg_margin_pct: 1.04}
-      - {customer_segment: 'Corporate', min_margin_pct: -1.1, max_margin_pct: 2.95, avg_margin_pct: 1.13}
-
+      - {customer_segment: SME, min_margin_pct: -0.7, max_margin_pct: 2.28, avg_margin_pct: 1.04}
+      - {customer_segment: Corporate, min_margin_pct: -1.1, max_margin_pct: 2.95, avg_margin_pct: 1.13}
   - id: D31
     question: "For active cross-sell rules, what is the total expected incremental revenue by priority?"
     domain: product
@@ -794,10 +736,9 @@ items:
     gold_columns: [cross_sell_priority, expected_incremental_revenue_aed, rule_status]
     row_count: 3
     gold_result:
-      - {cross_sell_priority: 'Medium', rules: 33, total_expected_revenue_aed: 4025000}
-      - {cross_sell_priority: 'High', rules: 15, total_expected_revenue_aed: 2045000}
-      - {cross_sell_priority: 'Low', rules: 16, total_expected_revenue_aed: 1825000}
-
+      - {cross_sell_priority: Medium, rules: 33, total_expected_revenue_aed: 4025000}
+      - {cross_sell_priority: High, rules: 15, total_expected_revenue_aed: 2045000}
+      - {cross_sell_priority: Low, rules: 16, total_expected_revenue_aed: 1825000}
   - id: D32
     question: "Compare the AED and USD funding cost at each tenor."
     domain: treasury
@@ -816,14 +757,13 @@ items:
     gold_columns: [tenor, currency, funding_cost_pct]
     row_count: 7
     gold_result:
-      - {tenor: '12M', aed_funding_cost_pct: 5.55, usd_funding_cost_pct: 5.15}
-      - {tenor: '1M', aed_funding_cost_pct: 5.05, usd_funding_cost_pct: 4.95}
-      - {tenor: '24M', aed_funding_cost_pct: 5.7, usd_funding_cost_pct: 5.3}
-      - {tenor: '36M', aed_funding_cost_pct: 5.85, usd_funding_cost_pct: 5.4}
-      - {tenor: '3M', aed_funding_cost_pct: 5.25, usd_funding_cost_pct: 5.0}
-      - {tenor: '60M', aed_funding_cost_pct: 6.0, usd_funding_cost_pct: 5.55}
-      - {tenor: '6M', aed_funding_cost_pct: 5.4, usd_funding_cost_pct: 5.08}
-
+      - {tenor: 12M, aed_funding_cost_pct: 5.55, usd_funding_cost_pct: 5.15}
+      - {tenor: 1M, aed_funding_cost_pct: 5.05, usd_funding_cost_pct: 4.95}
+      - {tenor: 24M, aed_funding_cost_pct: 5.7, usd_funding_cost_pct: 5.3}
+      - {tenor: 36M, aed_funding_cost_pct: 5.85, usd_funding_cost_pct: 5.4}
+      - {tenor: 3M, aed_funding_cost_pct: 5.25, usd_funding_cost_pct: 5.0}
+      - {tenor: 60M, aed_funding_cost_pct: 6.0, usd_funding_cost_pct: 5.55}
+      - {tenor: 6M, aed_funding_cost_pct: 5.4, usd_funding_cost_pct: 5.08}
   - id: D33
     question: "For customers with at least three deals, what is their win rate?"
     domain: deals-pricing
@@ -840,20 +780,19 @@ items:
     gold_columns: [customer_id, total_deals, won_deals, win_rate_pct]
     row_count: 13
     gold_result:
-      - {customer_id: 'CUST003', total_deals: 4, won_deals: 4, win_rate_pct: 100}
-      - {customer_id: 'CUST004', total_deals: 3, won_deals: 3, win_rate_pct: 100}
-      - {customer_id: 'CUST005', total_deals: 4, won_deals: 4, win_rate_pct: 100}
-      - {customer_id: 'CUST011', total_deals: 3, won_deals: 3, win_rate_pct: 100}
-      - {customer_id: 'CUST012', total_deals: 7, won_deals: 7, win_rate_pct: 100}
-      - {customer_id: 'CUST014', total_deals: 3, won_deals: 3, win_rate_pct: 100}
-      - {customer_id: 'CUST017', total_deals: 4, won_deals: 4, win_rate_pct: 100}
-      - {customer_id: 'CUST018', total_deals: 3, won_deals: 3, win_rate_pct: 100}
-      - {customer_id: 'CUST016', total_deals: 4, won_deals: 3, win_rate_pct: 75}
-      - {customer_id: 'CUST001', total_deals: 3, won_deals: 2, win_rate_pct: 66.67}
-      - {customer_id: 'CUST006', total_deals: 3, won_deals: 2, win_rate_pct: 66.67}
-      - {customer_id: 'CUST013', total_deals: 5, won_deals: 3, win_rate_pct: 60}
-      - {customer_id: 'CUST009', total_deals: 6, won_deals: 3, win_rate_pct: 50}
-
+      - {customer_id: CUST003, total_deals: 4, won_deals: 4, win_rate_pct: 100}
+      - {customer_id: CUST004, total_deals: 3, won_deals: 3, win_rate_pct: 100}
+      - {customer_id: CUST005, total_deals: 4, won_deals: 4, win_rate_pct: 100}
+      - {customer_id: CUST011, total_deals: 3, won_deals: 3, win_rate_pct: 100}
+      - {customer_id: CUST012, total_deals: 7, won_deals: 7, win_rate_pct: 100}
+      - {customer_id: CUST014, total_deals: 3, won_deals: 3, win_rate_pct: 100}
+      - {customer_id: CUST017, total_deals: 4, won_deals: 4, win_rate_pct: 100}
+      - {customer_id: CUST018, total_deals: 3, won_deals: 3, win_rate_pct: 100}
+      - {customer_id: CUST016, total_deals: 4, won_deals: 3, win_rate_pct: 75}
+      - {customer_id: CUST001, total_deals: 3, won_deals: 2, win_rate_pct: 66.67}
+      - {customer_id: CUST006, total_deals: 3, won_deals: 2, win_rate_pct: 66.67}
+      - {customer_id: CUST013, total_deals: 5, won_deals: 3, win_rate_pct: 60}
+      - {customer_id: CUST009, total_deals: 6, won_deals: 3, win_rate_pct: 50}
   - id: D34
     question: "What share of total deal volume sits in each tenor?"
     domain: deals-pricing
@@ -872,10 +811,290 @@ items:
     gold_columns: [tenor, requested_amount]
     row_count: 7
     gold_result:
-      - {tenor: '1M', volume_aed: 817300000, pct_of_total: 32.25}
-      - {tenor: '12M', volume_aed: 699000000, pct_of_total: 27.58}
-      - {tenor: '24M', volume_aed: 318200000, pct_of_total: 12.56}
-      - {tenor: '3M', volume_aed: 254600000, pct_of_total: 10.05}
-      - {tenor: '6M', volume_aed: 221200000, pct_of_total: 8.73}
-      - {tenor: '60M', volume_aed: 124300000, pct_of_total: 4.9}
-      - {tenor: '36M', volume_aed: 99700000, pct_of_total: 3.93}
+      - {tenor: 1M, volume_aed: 817300000, pct_of_total: 32.25}
+      - {tenor: 12M, volume_aed: 699000000, pct_of_total: 27.58}
+      - {tenor: 24M, volume_aed: 318200000, pct_of_total: 12.56}
+      - {tenor: 3M, volume_aed: 254600000, pct_of_total: 10.05}
+      - {tenor: 6M, volume_aed: 221200000, pct_of_total: 8.73}
+      - {tenor: 60M, volume_aed: 124300000, pct_of_total: 4.9}
+      - {tenor: 36M, volume_aed: 99700000, pct_of_total: 3.93}
+  - id: D35
+    question: "What interest rate should I offer new customer CUST021?"
+    domain: deals-pricing
+    persona: relationship-manager
+    difficulty: single-entity-view
+    gold_sql: >
+      SELECT customer_id, product_type, funding_cost_pct, risk_premium_pct,
+             new_customer_buffer_pct, ops_cost_margin_pct, recommended_price_pct,
+             policy_floor_margin_pct
+      FROM fab_semantic.new_customer_pricing_view
+      WHERE customer_id = 'CUST021'
+    gold_tables: [new_customer_pricing_view]
+    gold_columns: [customer_id, product_type, funding_cost_pct, risk_premium_pct, new_customer_buffer_pct, ops_cost_margin_pct, recommended_price_pct, policy_floor_margin_pct]
+    gold_result:
+      - {customer_id: CUST021, product_type: Loan, funding_cost_pct: 5.4, risk_premium_pct: 0.4, new_customer_buffer_pct: 0.1167, ops_cost_margin_pct: 1.1167, recommended_price_pct: 9.4834, policy_floor_margin_pct: 2.0}
+    row_count: 1
+  - id: D36
+    question: "Explain step by step how the recommended price was calculated for CUST001."
+    domain: deals-pricing
+    persona: pricing-desk
+    difficulty: single-entity-view
+    gold_sql: >
+      SELECT deal_id, product_type, treasury_rate_component, target_margin_component,
+             risk_premium_component, operations_cost_component, relationship_discount_component,
+             final_recommended_price, approved_price_pct, explanation_text
+      FROM fab_semantic.pricing_trace_view
+      WHERE customer_id = 'CUST001'
+    gold_tables: [pricing_trace_view]
+    gold_columns: [deal_id, product_type, treasury_rate_component, target_margin_component, risk_premium_component, operations_cost_component, relationship_discount_component, final_recommended_price, approved_price_pct, explanation_text, customer_id]
+    gold_result:
+      - {deal_id: DEAL033, product_type: Trade Finance, treasury_rate_component: 5.4, target_margin_component: 1.8, risk_premium_component: 0.45, operations_cost_component: 1.4667, relationship_discount_component: 0.25, final_recommended_price: 8.8667, approved_price_pct: 6.8, explanation_text: Treasury/funding 5.4% + target margin 1.8% + risk premium 0.45% + ops cost 1.47% - relationship discount 0.25% = recommended 8.87%}
+      - {deal_id: DEAL040, product_type: Deposit, treasury_rate_component: 5.05, target_margin_component: 0.25, risk_premium_component: 0.45, operations_cost_component: 0.3, relationship_discount_component: 0.25, final_recommended_price: 5.8, approved_price_pct: 5.45, explanation_text: Treasury/funding 5.05% + target margin 0.25% + risk premium 0.45% + ops cost 0.3% - relationship discount 0.25% = recommended 5.8%}
+      - {deal_id: DEAL041, product_type: Trade Finance, treasury_rate_component: 5.25, target_margin_component: 1.8, risk_premium_component: 0.45, operations_cost_component: 1.4667, relationship_discount_component: 0.25, final_recommended_price: 8.7167, approved_price_pct: 6.5, explanation_text: Treasury/funding 5.25% + target margin 1.8% + risk premium 0.45% + ops cost 1.47% - relationship discount 0.25% = recommended 8.72%}
+    row_count: 3
+  - id: D37
+    question: "Customer CUST002 got a lower competitor price — should we match, counter, or reject, and how much can we reduce?"
+    domain: competitor
+    persona: relationship-manager
+    difficulty: single-entity-view
+    gold_sql: >
+      SELECT deal_id, competitor_name, fab_price_pct, competitor_price_pct, competitor_gap_bps,
+             profitability_floor_pct, max_reducible_pct, suggested_action, action_reason
+      FROM fab_semantic.competitor_price_analysis
+      WHERE customer_id = 'CUST002'
+    gold_tables: [competitor_price_analysis]
+    gold_columns: [deal_id, competitor_name, fab_price_pct, competitor_price_pct, competitor_gap_bps, profitability_floor_pct, max_reducible_pct, suggested_action, action_reason, customer_id]
+    gold_result:
+      - {deal_id: MEM0007, competitor_name: Emirates NBD, fab_price_pct: 6.3, competitor_price_pct: 5.95, competitor_gap_bps: 35.0, profitability_floor_pct: 6.15, max_reducible_pct: 0.15, suggested_action: REJECT, action_reason: Competitor price is below FAB profitability floor - matching would be loss-making.}
+    row_count: 1
+  - id: D38
+    question: "CUST001's credit rating dropped — how do we cushion against the increased risk?"
+    domain: risk-capital
+    persona: cfo
+    difficulty: single-entity-view
+    gold_sql: >
+      SELECT event_date, old_internal_rating, new_internal_rating, old_risk_category,
+             new_risk_category, rating_change_direction, recommended_pricing_action,
+             additional_risk_premium_pct, floating_rate_required_flag, credit_review_required_flag
+      FROM fab_semantic.credit_rating_events
+      WHERE customer_id = 'CUST001'
+    gold_tables: [credit_rating_events]
+    gold_columns: [event_date, old_internal_rating, new_internal_rating, old_risk_category, new_risk_category, rating_change_direction, recommended_pricing_action, additional_risk_premium_pct, floating_rate_required_flag, credit_review_required_flag, customer_id]
+    gold_result:
+      - {event_date: '2026-06-19', old_internal_rating: BBB, new_internal_rating: BBB-, old_risk_category: Medium, new_risk_category: Medium, rating_change_direction: Downgrade, recommended_pricing_action: Review margin cushion and monitor exposure, additional_risk_premium_pct: 0.25, floating_rate_required_flag: N, credit_review_required_flag: Y}
+    row_count: 1
+  - id: D39
+    question: "What cross-selling ideas do we have for Corporate customers in Logistics?"
+    domain: product
+    persona: relationship-manager
+    difficulty: single-entity-view
+    note: >-
+      the view's own note requires the rule_status = 'Active' default filter.
+    gold_sql: >
+      SELECT primary_product_name, recommended_product_name, expected_incremental_revenue_aed,
+             cross_sell_priority, rationale
+      FROM fab_semantic.cross_sell_opportunity
+      WHERE rule_status = 'Active' AND customer_segment = 'Corporate' AND industry = 'Logistics'
+      ORDER BY cross_sell_priority
+    gold_tables: [cross_sell_opportunity]
+    gold_columns: [primary_product_name, recommended_product_name, expected_incremental_revenue_aed, cross_sell_priority, rationale, rule_status, customer_segment, industry]
+    gold_result:
+      - {primary_product_name: Working Capital Loan, recommended_product_name: Trade Finance LC, expected_incremental_revenue_aed: 45000, cross_sell_priority: Medium, rationale: Customer working capital need indicates import/export cycle; LC can support supplier payments.}
+    row_count: 1
+  - id: D40
+    question: "I have a new customer CUST021 whose profile is like an existing one — what price should I offer based on the similar customer?"
+    domain: deals-pricing
+    persona: relationship-manager
+    difficulty: single-entity-view
+    note: >-
+      the question is singular ("an existing one" / "the similar customer") -> the single
+      most-similar reference, so LIMIT 1 on similarity_score DESC. Without it the gold
+      returned every candidate and failed an agent that correctly took the top match.
+    order_sensitive: true
+    gold_sql: >
+      SELECT new_customer_id, new_customer_name, reference_customer_id, reference_customer_name,
+             similarity_score, reference_final_price_pct, adjustment_for_new_customer_pct,
+             suggested_price_pct, suggested_price_adjustment_rationale
+      FROM fab_semantic.similar_customer_pricing
+      WHERE new_customer_id = 'CUST021'
+      ORDER BY similarity_score DESC
+      LIMIT 1
+    gold_tables: [similar_customer_pricing]
+    gold_columns: [new_customer_id, new_customer_name, reference_customer_id, reference_customer_name, similarity_score, reference_final_price_pct, adjustment_for_new_customer_pct, suggested_price_pct, suggested_price_adjustment_rationale]
+    gold_result:
+      - {new_customer_id: CUST021, new_customer_name: Sahara Medical Supplies LLC, reference_customer_id: CUST010, reference_customer_name: Metro Auto Parts LLC, similarity_score: 0.89, reference_final_price_pct: 7.42, adjustment_for_new_customer_pct: 0.35, suggested_price_pct: 7.77, suggested_price_adjustment_rationale: Reference price adjusted upward because new customer has no relationship history.}
+    row_count: 1
+  - id: D41
+    question: "Which deals are non-compliant and why?"
+    domain: compliance
+    persona: pricing-desk
+    difficulty: single-entity-view
+    note: >-
+      the view's own note requires the is_exception = 1 default filter; exception_reason is the 'why'.
+    gold_sql: >
+      SELECT deal_id, customer_id, customer_name, product_type, margin_below_min,
+             discount_exceeds_policy, price_below_floor, is_exception, exception_reason
+      FROM fab_semantic.policy_exception_view
+      WHERE is_exception = 1
+      ORDER BY deal_id
+    gold_tables: [policy_exception_view]
+    gold_columns: [deal_id, customer_id, customer_name, product_type, margin_below_min, discount_exceeds_policy, price_below_floor, is_exception, exception_reason]
+    gold_result:
+      - {deal_id: DEAL002, customer_id: CUST012, customer_name: Skyline Real Estate, product_type: Deposit, margin_below_min: 1, discount_exceeds_policy: 0, price_below_floor: 0, is_exception: 1, exception_reason: margin_below_min | high_rwa_requires_approval}
+      - {deal_id: DEAL006, customer_id: CUST005, customer_name: Emirates Healthcare Services, product_type: Deposit, margin_below_min: 1, discount_exceeds_policy: 0, price_below_floor: 0, is_exception: 1, exception_reason: margin_below_min}
+      - {deal_id: DEAL007, customer_id: CUST012, customer_name: Skyline Real Estate, product_type: Loan, margin_below_min: 0, discount_exceeds_policy: 0, price_below_floor: 0, is_exception: 1, exception_reason: high_rwa_requires_approval}
+      - {deal_id: DEAL010, customer_id: CUST017, customer_name: Red Dune Mining, product_type: Treasury, margin_below_min: 0, discount_exceeds_policy: 0, price_below_floor: 0, is_exception: 1, exception_reason: high_rwa_requires_approval}
+      - {deal_id: DEAL013, customer_id: CUST012, customer_name: Skyline Real Estate, product_type: Deposit, margin_below_min: 1, discount_exceeds_policy: 0, price_below_floor: 0, is_exception: 1, exception_reason: margin_below_min | high_rwa_requires_approval}
+      - {deal_id: DEAL015, customer_id: CUST013, customer_name: Union Pharma Trading, product_type: Deposit, margin_below_min: 1, discount_exceeds_policy: 1, price_below_floor: 0, is_exception: 1, exception_reason: margin_below_min | discount_exceeds_policy}
+      - {deal_id: DEAL017, customer_id: CUST013, customer_name: Union Pharma Trading, product_type: Trade Finance, margin_below_min: 0, discount_exceeds_policy: 1, price_below_floor: 0, is_exception: 1, exception_reason: discount_exceeds_policy}
+      - {deal_id: DEAL019, customer_id: CUST012, customer_name: Skyline Real Estate, product_type: Loan, margin_below_min: 0, discount_exceeds_policy: 0, price_below_floor: 0, is_exception: 1, exception_reason: high_rwa_requires_approval}
+      - {deal_id: DEAL023, customer_id: CUST013, customer_name: Union Pharma Trading, product_type: Trade Finance, margin_below_min: 0, discount_exceeds_policy: 1, price_below_floor: 0, is_exception: 1, exception_reason: discount_exceeds_policy}
+      - {deal_id: DEAL028, customer_id: CUST016, customer_name: Capital Education Group, product_type: Trade Finance, margin_below_min: 1, discount_exceeds_policy: 0, price_below_floor: 0, is_exception: 1, exception_reason: margin_below_min | competitor_match_requires_approval}
+      - {deal_id: DEAL029, customer_id: CUST006, customer_name: Desert Sands Construction, product_type: Deposit, margin_below_min: 1, discount_exceeds_policy: 0, price_below_floor: 0, is_exception: 1, exception_reason: margin_below_min | high_rwa_requires_approval}
+      - {deal_id: DEAL030, customer_id: CUST017, customer_name: Red Dune Mining, product_type: Treasury, margin_below_min: 0, discount_exceeds_policy: 0, price_below_floor: 0, is_exception: 1, exception_reason: high_rwa_requires_approval}
+      - {deal_id: DEAL031, customer_id: CUST012, customer_name: Skyline Real Estate, product_type: Loan, margin_below_min: 0, discount_exceeds_policy: 0, price_below_floor: 0, is_exception: 1, exception_reason: high_rwa_requires_approval}
+      - {deal_id: DEAL032, customer_id: CUST013, customer_name: Union Pharma Trading, product_type: Deposit, margin_below_min: 1, discount_exceeds_policy: 1, price_below_floor: 0, is_exception: 1, exception_reason: margin_below_min | discount_exceeds_policy}
+      - {deal_id: DEAL034, customer_id: CUST012, customer_name: Skyline Real Estate, product_type: Trade Finance, margin_below_min: 0, discount_exceeds_policy: 0, price_below_floor: 0, is_exception: 1, exception_reason: high_rwa_requires_approval}
+      - {deal_id: DEAL036, customer_id: CUST012, customer_name: Skyline Real Estate, product_type: Loan, margin_below_min: 0, discount_exceeds_policy: 0, price_below_floor: 0, is_exception: 1, exception_reason: high_rwa_requires_approval}
+      - {deal_id: DEAL037, customer_id: CUST006, customer_name: Desert Sands Construction, product_type: Loan, margin_below_min: 0, discount_exceeds_policy: 0, price_below_floor: 0, is_exception: 1, exception_reason: high_rwa_requires_approval}
+      - {deal_id: DEAL039, customer_id: CUST005, customer_name: Emirates Healthcare Services, product_type: Deposit, margin_below_min: 1, discount_exceeds_policy: 0, price_below_floor: 0, is_exception: 1, exception_reason: margin_below_min}
+      - {deal_id: DEAL040, customer_id: CUST001, customer_name: Al Noor Trading LLC, product_type: Deposit, margin_below_min: 1, discount_exceeds_policy: 0, price_below_floor: 0, is_exception: 1, exception_reason: margin_below_min}
+      - {deal_id: DEAL042, customer_id: CUST009, customer_name: Green Energy MEA, product_type: Treasury, margin_below_min: 1, discount_exceeds_policy: 0, price_below_floor: 0, is_exception: 1, exception_reason: margin_below_min}
+      - {deal_id: DEAL045, customer_id: CUST011, customer_name: Royal Hospitality LLC, product_type: Deposit, margin_below_min: 1, discount_exceeds_policy: 0, price_below_floor: 0, is_exception: 1, exception_reason: margin_below_min}
+      - {deal_id: DEAL047, customer_id: CUST015, customer_name: Prime Tech Solutions, product_type: Treasury, margin_below_min: 1, discount_exceeds_policy: 1, price_below_floor: 0, is_exception: 1, exception_reason: margin_below_min | discount_exceeds_policy}
+      - {deal_id: DEAL048, customer_id: CUST017, customer_name: Red Dune Mining, product_type: Treasury, margin_below_min: 0, discount_exceeds_policy: 0, price_below_floor: 0, is_exception: 1, exception_reason: high_rwa_requires_approval}
+      - {deal_id: DEAL049, customer_id: CUST013, customer_name: Union Pharma Trading, product_type: Trade Finance, margin_below_min: 0, discount_exceeds_policy: 1, price_below_floor: 0, is_exception: 1, exception_reason: discount_exceeds_policy}
+      - {deal_id: DEAL050, customer_id: CUST007, customer_name: Pearl Foods Distribution, product_type: Deposit, margin_below_min: 1, discount_exceeds_policy: 0, price_below_floor: 0, is_exception: 1, exception_reason: margin_below_min}
+      - {deal_id: DEAL052, customer_id: CUST006, customer_name: Desert Sands Construction, product_type: Loan, margin_below_min: 0, discount_exceeds_policy: 0, price_below_floor: 0, is_exception: 1, exception_reason: high_rwa_requires_approval}
+      - {deal_id: DEAL055, customer_id: CUST017, customer_name: Red Dune Mining, product_type: Treasury, margin_below_min: 0, discount_exceeds_policy: 0, price_below_floor: 0, is_exception: 1, exception_reason: high_rwa_requires_approval}
+      - {deal_id: DEAL056, customer_id: CUST009, customer_name: Green Energy MEA, product_type: Treasury, margin_below_min: 1, discount_exceeds_policy: 0, price_below_floor: 0, is_exception: 1, exception_reason: margin_below_min}
+      - {deal_id: DEAL057, customer_id: CUST009, customer_name: Green Energy MEA, product_type: Treasury, margin_below_min: 1, discount_exceeds_policy: 0, price_below_floor: 0, is_exception: 1, exception_reason: margin_below_min}
+    row_count: 29
+  - id: D42
+    question: "Does CUST001's relationship discount need approval?"
+    domain: policy
+    persona: pricing-desk
+    difficulty: single-entity-view
+    gold_sql: >
+      SELECT customer_id, customer_name, relationship_discount_pct,
+             policy_max_relationship_discount_pct, approval_required_if_discount_above_pct,
+             discount_eligible, approval_required, eligibility_reason
+      FROM fab_semantic.relationship_discount_view
+      WHERE customer_id = 'CUST001'
+    gold_tables: [relationship_discount_view]
+    gold_columns: [customer_id, customer_name, relationship_discount_pct, policy_max_relationship_discount_pct, approval_required_if_discount_above_pct, discount_eligible, approval_required, eligibility_reason]
+    gold_result:
+      - {customer_id: CUST001, customer_name: Al Noor Trading LLC, relationship_discount_pct: 0.25, policy_max_relationship_discount_pct: 0.25, approval_required_if_discount_above_pct: 0.2, discount_eligible: 1, approval_required: 1, eligibility_reason: Discount within cap but above approval threshold - approval required.}
+    row_count: 1
+  - id: D43
+    question: "Show the profitability of customer CUST001 by product type."
+    domain: profitability
+    persona: cfo
+    difficulty: single-entity-view
+    gold_sql: >
+      SELECT customer_id, product_type, total_won_deals, revenue_aed, net_profit_aed,
+             avg_net_margin_pct, profitability_tier
+      FROM fab_semantic.profitability_summary
+      WHERE customer_id = 'CUST001'
+      ORDER BY net_profit_aed DESC
+    gold_tables: [profitability_summary]
+    gold_columns: [customer_id, product_type, total_won_deals, revenue_aed, net_profit_aed, avg_net_margin_pct, profitability_tier]
+    gold_result:
+      - {customer_id: CUST001, product_type: Trade Finance, total_won_deals: 2, revenue_aed: 956400.0, net_profit_aed: -121804.8, avg_net_margin_pct: 0.625, profitability_tier: Medium}
+    row_count: 1
+  - id: D44
+    question: "Show the RWA and capital impact for CUST001's deals."
+    domain: risk-capital
+    persona: cfo
+    difficulty: single-entity-view
+    gold_sql: >
+      SELECT deal_id, product_type, exposure_aed, risk_weight_pct, rwa_aed,
+             capital_required_aed, net_revenue_aed, return_on_rwa_pct, is_high_rwa
+      FROM fab_semantic.rwa_impact_view
+      WHERE customer_id = 'CUST001'
+    gold_tables: [rwa_impact_view]
+    gold_columns: [deal_id, product_type, exposure_aed, risk_weight_pct, rwa_aed, capital_required_aed, net_revenue_aed, return_on_rwa_pct, is_high_rwa, customer_id]
+    gold_result:
+      - {deal_id: DEAL033, product_type: Trade Finance, exposure_aed: 6800000, risk_weight_pct: 75, rwa_aed: 5100000, capital_required_aed: 408000, net_revenue_aed: 95200.0, return_on_rwa_pct: 1.8667, is_high_rwa: 0}
+      - {deal_id: DEAL041, product_type: Trade Finance, exposure_aed: 7600000, risk_weight_pct: 75, rwa_aed: 5700000, capital_required_aed: 456000, net_revenue_aed: 95000.0, return_on_rwa_pct: 1.6667, is_high_rwa: 0}
+    row_count: 2
+  # --- NAME -> ID RESOLUTION (the resolver) --------------------------------
+  # The question names a customer by NAME; the agent must resolve it to its id via
+  # routing/entity_resolver.py and filter WHERE customer_id = 'CUSTxxx' (never on the name).
+  # CUST004 = 'Oasis Retail Group' (see D18). Gold filters on the id it should resolve to.
+
+  - id: D45
+    question: "What price are we recommending for Oasis Retail Group's deals?"
+    domain: deals-pricing
+    persona: relationship-manager
+    difficulty: name-resolution
+    gold_sql: >
+      SELECT deal_id, product_type, recommended_price_pct, approved_price_pct,
+             expected_margin_pct, policy_compliant
+      FROM fab_semantic.pricing_recommendation_view
+      WHERE customer_id = 'CUST004'
+      ORDER BY deal_id
+    gold_tables: [pricing_recommendation_view]
+    gold_columns: [deal_id, product_type, recommended_price_pct, approved_price_pct, expected_margin_pct, policy_compliant, customer_id]
+    gold_result:
+      - {deal_id: DEAL011, product_type: Loan, recommended_price_pct: 8.2, approved_price_pct: 8.1, expected_margin_pct: 2.2, policy_compliant: 1}
+      - {deal_id: DEAL025, product_type: Loan, recommended_price_pct: 7.3, approved_price_pct: 7.3, expected_margin_pct: 1.7, policy_compliant: 1}
+      - {deal_id: DEAL060, product_type: Trade Finance, recommended_price_pct: 6.8, approved_price_pct: 6.6, expected_margin_pct: 1.2, policy_compliant: 1}
+    row_count: 3
+  - id: D46
+    question: "Explain step by step how the price was calculated for Oasis Retail Group."
+    domain: deals-pricing
+    persona: pricing-desk
+    difficulty: name-resolution
+    gold_sql: >
+      SELECT deal_id, product_type, treasury_rate_component, target_margin_component,
+             risk_premium_component, operations_cost_component, relationship_discount_component,
+             final_recommended_price, approved_price_pct, explanation_text
+      FROM fab_semantic.pricing_trace_view
+      WHERE customer_id = 'CUST004'
+    gold_tables: [pricing_trace_view]
+    gold_columns: [deal_id, product_type, treasury_rate_component, target_margin_component, risk_premium_component, operations_cost_component, relationship_discount_component, final_recommended_price, approved_price_pct, explanation_text, customer_id]
+    gold_result:
+      - {deal_id: DEAL011, product_type: Loan, treasury_rate_component: 5.55, target_margin_component: 2.45, risk_premium_component: 0.45, operations_cost_component: 1.1167, relationship_discount_component: 0.2, final_recommended_price: 9.3667, approved_price_pct: 8.1, explanation_text: Treasury/funding 5.55% + target margin 2.45% + risk premium 0.45% + ops cost 1.12% - relationship discount 0.2% = recommended 9.37%}
+      - {deal_id: DEAL025, product_type: Loan, treasury_rate_component: 5.25, target_margin_component: 2.45, risk_premium_component: 0.45, operations_cost_component: 1.1167, relationship_discount_component: 0.2, final_recommended_price: 9.0667, approved_price_pct: 7.3, explanation_text: Treasury/funding 5.25% + target margin 2.45% + risk premium 0.45% + ops cost 1.12% - relationship discount 0.2% = recommended 9.07%}
+      - {deal_id: DEAL060, product_type: Trade Finance, treasury_rate_component: 5.05, target_margin_component: 1.8, risk_premium_component: 0.45, operations_cost_component: 1.4667, relationship_discount_component: 0.2, final_recommended_price: 8.5667, approved_price_pct: 6.6, explanation_text: Treasury/funding 5.05% + target margin 1.8% + risk premium 0.45% + ops cost 1.47% - relationship discount 0.2% = recommended 8.57%}
+    row_count: 3
+  # --- ANALYTICAL SANITY + PRE-AGGREGATE TRAP ------------------------------
+
+  - id: D47
+    question: "Compare the average recommended and approved price by product type."
+    domain: deals-pricing
+    persona: pricing-desk
+    difficulty: group-by
+    gold_sql: >
+      SELECT product_type, ROUND(AVG(recommended_price_pct), 2) AS avg_recommended_price_pct,
+             ROUND(AVG(approved_price_pct), 2) AS avg_approved_price_pct
+      FROM fab_semantic.pricing_recommendation_view
+      GROUP BY product_type
+      ORDER BY product_type
+    gold_tables: [pricing_recommendation_view]
+    gold_columns: [product_type, recommended_price_pct, approved_price_pct]
+    gold_result:
+      - {product_type: Deposit, avg_recommended_price_pct: 5.72, avg_approved_price_pct: 5.6}
+      - {product_type: Loan, avg_recommended_price_pct: 7.76, avg_approved_price_pct: 7.67}
+      - {product_type: Trade Finance, avg_recommended_price_pct: 6.71, avg_approved_price_pct: 6.62}
+      - {product_type: Treasury, avg_recommended_price_pct: 5.91, avg_approved_price_pct: 5.81}
+    row_count: 4
+  - id: D48
+    question: "What is the average expected margin across all SME customers' deals?"
+    domain: margin
+    persona: pricing-desk
+    difficulty: pre-aggregate-trap
+    note: >-
+      must aggregate the DEAL-grain pricing_recommendation_view, NOT AVG() a pre-aggregated
+      customer_360.avg_* / win_loss_insights column — re-averaging a pre-aggregate is the
+      wrong number even though the query runs.
+    gold_sql: >
+      SELECT ROUND(AVG(expected_margin_pct), 2) AS avg_expected_margin_pct
+      FROM fab_semantic.pricing_recommendation_view
+      WHERE customer_segment = 'SME'
+    gold_tables: [pricing_recommendation_view]
+    gold_columns: [expected_margin_pct, customer_segment]
+    gold_result:
+      - {avg_expected_margin_pct: 1.04}
+    row_count: 1
