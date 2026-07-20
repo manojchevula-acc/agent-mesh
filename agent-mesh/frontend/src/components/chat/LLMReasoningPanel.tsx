@@ -1,7 +1,7 @@
 import { memo, useState } from "react";
 import { ChevronDown, ChevronRight, Brain, ShieldCheck, GitBranch, Layers, Database, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { LLMReasoningEntry } from "@/types/mesh";
+import type { LLMReasoningEntry, LLMReasoningData } from "@/types/mesh";
 
 // ── Labels & colours ──────────────────────────────────────────────────────────
 
@@ -288,6 +288,13 @@ const ReasoningCard = memo(function ReasoningCard({
           {/* ── TOOL SELECTION (data / rag agents) ───────── */}
           {entry.phase === "tool_selection" && (
             <>
+              {data.call_index != null && Number(data.call_index) > 1 && (
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+                    Additional call #{String(data.call_index)}
+                  </span>
+                </div>
+              )}
               {data.tool_selected && (
                 <div className="mt-2 flex items-center gap-2">
                   <span className="text-muted text-[10px] uppercase tracking-wider w-14 shrink-0">Tool</span>
@@ -328,6 +335,22 @@ const ReasoningCard = memo(function ReasoningCard({
                 <blockquote className="mt-1.5 border-l-2 border-line pl-2 text-muted italic">
                   {data.rationale}
                 </blockquote>
+              )}
+              {(data.additional_call_reason as string) && (
+                <div className="mt-1.5">
+                  <p className="text-[10px] uppercase tracking-wider text-amber-600 dark:text-amber-400 mb-0.5">Why an additional call was made</p>
+                  <blockquote className="border-l-2 border-amber-400 dark:border-amber-700 pl-2 text-muted italic">
+                    {data.additional_call_reason as string}
+                  </blockquote>
+                </div>
+              )}
+              {data.duplicate_suppressed_count != null && Number(data.duplicate_suppressed_count) > 0 && (
+                <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-amber-700 dark:text-amber-400">
+                  <span className="px-1.5 py-0.5 rounded font-semibold bg-amber-100 dark:bg-amber-900/40">
+                    {String(data.duplicate_suppressed_count)} duplicate retrieval{Number(data.duplicate_suppressed_count) !== 1 ? "s" : ""} suppressed
+                  </span>
+                  <span className="text-muted">— identical call(s) repeated with no new information (see server log for real MCP count).</span>
+                </div>
               )}
               <StepsChain steps={(data.steps as string[]) ?? []} />
             </>
@@ -392,6 +415,98 @@ interface LLMReasoningPanelProps {
   entries: LLMReasoningEntry[];
 }
 
+// Collapse redundant tool_selection blocks (Option A).
+//
+// The trace is built from <llm_reasoning> blocks the model *wrote*, so an
+// identical retrieval can appear twice even though it carries no new decision.
+// Rather than render a second card with a hollow "justification", we DROP exact
+// duplicates (same agent + same tool + same query as an earlier call in the same
+// request) and annotate the surviving first card with how many were suppressed.
+//
+// A genuinely DIFFERENT follow-up call (different tool, or a materially different
+// query) is kept and labelled with its real reason — that IS a distinct decision.
+//
+// Note: this de-duplicates the *display*. The authoritative count of REAL MCP
+// invocations is logged server-side by ToolCallLogMiddleware (see
+// src/middleware/tool_call_logger.py) — the UI never guesses at that.
+function annotateToolCalls(entries: LLMReasoningEntry[]): LLMReasoningEntry[] {
+  const seqByAgent: Record<string, number> = {};
+  const callsByAgent: Record<string, LLMReasoningData[]> = {};
+  // Map from an agent's kept first-call data object → suppressed duplicate count.
+  const suppressed = new Map<LLMReasoningData, number>();
+  const out: LLMReasoningEntry[] = [];
+
+  // Canonical signature: tool name + a normalized token SET of the query so that
+  // trivial differences (stopwords like "for"/"the", punctuation, word order)
+  // collapse to the same value. "pricing floor BB-rated AED corporate loans" and
+  // "pricing floor for BB-rated AED corporate loans" → identical signature.
+  const STOPWORDS = new Set([
+    "for", "the", "a", "an", "of", "in", "on", "to", "and", "or", "with",
+    "what", "is", "are", "please", "show", "me", "give",
+  ]);
+  const norm = (d: LLMReasoningData) => {
+    const tool = (d.tool_selected ?? "").trim().toLowerCase();
+    const query = (d.search_query ?? d.query_intent ?? "").toLowerCase();
+    const tokens = query
+      .replace(/[^a-z0-9\s]/g, " ") // strip punctuation/hyphens
+      .split(/\s+/)
+      .filter((t) => t && !STOPWORDS.has(t))
+      .sort();
+    return `${tool}::${Array.from(new Set(tokens)).join(" ")}`;
+  };
+
+  for (const entry of entries) {
+    if (entry.phase !== "tool_selection") {
+      out.push(entry);
+      continue;
+    }
+
+    const agent = entry.agent;
+    const prior = callsByAgent[agent] ?? [];
+    const sig = norm(entry.data);
+
+    // Exact duplicate of an earlier call this request → suppress from display.
+    const firstMatch = prior.find((d) => norm(d) === sig);
+    if (firstMatch) {
+      suppressed.set(firstMatch, (suppressed.get(firstMatch) ?? 0) + 1);
+      continue; // do not push a card for the redundant call
+    }
+
+    const n = (seqByAgent[agent] ?? 0) + 1;
+    seqByAgent[agent] = n;
+    prior.push(entry.data);
+    callsByAgent[agent] = prior;
+
+    const data: LLMReasoningData = { ...entry.data };
+    if (data.call_index == null) data.call_index = n;
+
+    // A kept call after the first is a genuinely different follow-up.
+    if (n > 1 && !data.additional_call_reason) {
+      const curTool = (data.tool_selected ?? "").trim();
+      data.additional_call_reason =
+        `Follow-up call${curTool ? ` to "${curTool}"` : ""} for information the ` +
+        `previous call did not provide.`;
+    }
+
+    out.push({ ...entry, data });
+  }
+
+  // Attach suppressed-duplicate counts to the surviving first-call cards.
+  if (suppressed.size > 0) {
+    for (const entry of out) {
+      if (entry.phase !== "tool_selection") continue;
+      // Find the original data object this card was derived from.
+      for (const [firstData, count] of suppressed) {
+        if (norm(entry.data) === norm(firstData)) {
+          (entry.data as LLMReasoningData).duplicate_suppressed_count = count;
+        }
+      }
+    }
+  }
+
+  return out;
+}
+
 export default function LLMReasoningPanel({ entries }: LLMReasoningPanelProps) {
   if (!entries || entries.length === 0) {
     return (
@@ -401,12 +516,14 @@ export default function LLMReasoningPanel({ entries }: LLMReasoningPanelProps) {
     );
   }
 
+  const annotated = annotateToolCalls(entries);
+
   return (
     <div className="space-y-2">
       <p className="text-[10px] uppercase tracking-wider text-muted font-semibold">
-        {entries.length} decision point{entries.length !== 1 ? "s" : ""} captured
+        {annotated.length} decision point{annotated.length !== 1 ? "s" : ""} captured
       </p>
-      {entries.map((entry, i) => (
+      {annotated.map((entry, i) => (
         <ReasoningCard key={`${entry.agent}-${entry.phase}-${i}`} index={i + 1} entry={entry} />
       ))}
     </div>

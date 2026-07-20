@@ -69,6 +69,10 @@ similar customer/new pricing→ similar_customer_pricing
 
 OPERATING RULES
 ---------------
+0. NO REDUNDANT CALLS: Call each tool AT MOST ONCE per request. Do NOT re-call the
+   same tool with a reworded query or the same customer_id to "double-check" — the
+   first result is authoritative. You MAY call two DIFFERENT tools when the question
+   genuinely needs both (e.g. margin_analysis AND rwa_impact), but never repeat a tool.
 1. ALWAYS call the tool before answering. NEVER invent figures.
 2. CUSTOMER ID: extract from request (e.g. "CUST001"). If missing and required,
    ask: "Please provide the customer ID (e.g. CUST001) to proceed."
@@ -88,17 +92,21 @@ OPERATING RULES
 8. TABLE FORMAT: render multi-field results as a markdown table, not prose.
 
 REASONING TRANSPARENCY (mandatory — required for AI explainability audit trail):
-At the very start of your FINAL response (after receiving all tool results), emit ONE tool
-selection block (self-identify as "data"):
-<llm_reasoning>{"agent":"data","phase":"tool_selection","tool_selected":"<exact tool name>","customer_id":"<extracted customer_id or empty string>","query_intent":"<one phrase: what the question asks for>","rationale":"<one sentence: why this specific tool>"}</llm_reasoning>
+After all tool calls are complete and you are writing your FINAL response, emit ONE
+combined reasoning block per tool call at the very start (one block if you called one
+tool, two blocks if you genuinely needed two DIFFERENT tools, etc.):
+<llm_reasoning>{"agent":"data","phase":"tool_selection","call_index":<1-based order of this call>,"tool_selected":"<exact tool name>","customer_id":"<extracted customer_id or empty string>","query_intent":"<one phrase: what the question asks for>","rationale":"<one sentence: why this specific tool>","additional_call_reason":"<empty for call_index 1; for call_index>1 state exactly what the PREVIOUS call did NOT provide that made this extra call necessary — e.g. 'first call returned margin only; RWA figures needed for capital view'>","rows":<row_count>,"finding":"<key result in 8 words>","steps":["<query received>","<tool chosen and why>","<what the data showed>","<conclusion drawn>"]}</llm_reasoning>
 
 Reasoning block rules:
 - agent must always be "data" (required for cross-process attribution).
 - tool_selected is the exact MCP tool name you called.
 - customer_id is extracted from the request (e.g. "CUST001"), or "" if not applicable.
-- Emit the block at the start of your final response; the downstream system strips it before display.
-Also, after your final data answer, append on its own line:
-<llm_reasoning>{"agent":"data","phase":"data_synthesis","rows":<row_count>,"finding":"<key result in 8 words>","steps":["<query received>","<tool chosen and why>","<what the data showed>","<conclusion drawn>"]}</llm_reasoning>
+- call_index numbers your tool calls in order (1, 2, ...); emit one block per call.
+- additional_call_reason MUST be a concrete justification for every call after the first
+  — it is the audit record proving the extra call was necessary, not a redundant re-query.
+  If you cannot state what the previous call failed to provide, do NOT make the extra call.
+- Emit these blocks only in your final response, after receiving all tool results.
+- Do NOT emit any reasoning block before or during tool calls.
 """
 
 
@@ -118,4 +126,8 @@ def get_data_agent(log_path: str = None, mcp_tool=None) -> Agent:
         log_path=log_path,
         model=Config.DATA_AGENT_MODEL,
         api_key=Config.DATA_AGENT_API_KEY,
+        # Hard ceiling: allows 2-3 genuinely DIFFERENT tools for multi-tool
+        # queries (e.g. margin_analysis + rwa_impact) while blocking repeat
+        # calls of the same tool with a reworded query.
+        max_function_calls=4,
     )

@@ -42,6 +42,11 @@ generate_answer: must be JSON boolean false — never the string "false" or "Fal
 
 OPERATING RULES
 ---------------
+0. CALL ONCE: Call search_documents EXACTLY ONE TIME, then answer from those results.
+   Do NOT call it again with a reworded or paraphrased query — the hybrid retriever
+   already returns the best matches on the first call. Only issue a second call if the
+   FIRST call returned an explicit error or total_results=0 AND a different query term
+   is genuinely likely to help. Never re-search just to "double-check" or refine phrasing.
 1. ALWAYS call search_documents before answering. NEVER invent figures or rules.
 2. CITATION: After every policy fact write [Source: <doc_name>, Section <id>].
 3. NO RESULTS: If total_results=0 or retrieval returns nothing, respond EXACTLY:
@@ -61,17 +66,19 @@ OPERATING RULES
    chunks with score < 0.5 as primary sources; note them as supplementary only.
 
 REASONING TRANSPARENCY (mandatory — required for AI explainability audit trail):
-At the very start of your FINAL response (after receiving all tool results), emit ONE tool
-selection block (self-identify as "rag"):
-<llm_reasoning>{"agent":"rag","phase":"tool_selection","tool_selected":"search_documents","search_query":"<the exact query you passed to the tool>","knowledge_domain":"<one phrase: e.g. credit_policy, fee_schedule, kyc_rules, aml_kyc, product_guidelines>","rationale":"<one sentence: why this search query answers the question>"}</llm_reasoning>
+After all tool calls are complete and you are writing your FINAL response, emit exactly ONE
+combined reasoning block at the very start:
+<llm_reasoning>{"agent":"rag","phase":"tool_selection","call_index":<1-based order of this call>,"tool_selected":"search_documents","search_query":"<the exact query you passed to the tool>","knowledge_domain":"<one phrase: e.g. credit_policy, fee_schedule, kyc_rules, aml_kyc, product_guidelines>","rationale":"<one sentence: why this search query answers the question>","additional_call_reason":"<empty for call_index 1; only set if a retry was forced by an error or total_results=0 on the previous call — state which>","docs":<doc_count>,"finding":"<key policy finding in 8 words>","steps":["<query received>","<search terms chosen and why>","<what documents matched>","<policy rule extracted>"]}</llm_reasoning>
 
 Reasoning block rules:
 - agent must always be "rag" (required for cross-process attribution).
 - search_query must be the exact string you passed to search_documents.
 - knowledge_domain is a short snake_case label for the policy area.
-- Emit the block at the start of your final response; the downstream system strips it before display.
-Also, after returning document text, append on its own line:
-<llm_reasoning>{"agent":"rag","phase":"rag_synthesis","docs":<doc_count>,"finding":"<key policy finding in 8 words>","steps":["<query received>","<search terms chosen and why>","<what documents matched>","<policy rule extracted>"]}</llm_reasoning>
+- Normally there is exactly ONE call (call_index 1). A second call is only valid if the
+  first returned an error or zero results — and additional_call_reason must say so.
+  Never re-search with a reworded query to "double-check".
+- Emit one block per call in your final response, after receiving all tool results.
+- Do NOT emit any reasoning block before or during tool calls.
 """
 
 
@@ -91,4 +98,9 @@ def get_rag_agent(log_path: str = None, mcp_tool=None) -> Agent:
         log_path=log_path,
         model=Config.RAG_AGENT_MODEL,
         api_key=Config.RAG_AGENT_API_KEY,
+        # Hard ceiling: exactly ONE search per request. RAG has a single tool
+        # (search_documents) and the hybrid retriever returns best matches on
+        # the first call, so a second call is always a redundant reworded-query
+        # re-search. This physically blocks that loop.
+        max_function_calls=1,
     )

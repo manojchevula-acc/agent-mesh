@@ -23,6 +23,9 @@ export interface LLMReasoningData {
   query_intent?: string;
   search_query?: string;
   knowledge_domain?: string;
+  call_index?: number;               // 1-based order of this tool call
+  additional_call_reason?: string;   // justification for any call after the first
+  duplicate_suppressed_count?: number; // # of identical redundant calls hidden from view
   // fallback for unstructured blocks
   raw?: string;
   [key: string]: unknown;

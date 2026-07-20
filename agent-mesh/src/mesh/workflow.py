@@ -628,7 +628,14 @@ class DomainExecutor(Executor):
                 try:
                     _add_event(span, "domain.a2a_call.started", {"target": "price_assist"})
                     answer = await self._ask("price_assist", base_prompt)
-                    if self._TOOL_CALL_RE.search(answer or ""):
+                    # Run retry-detection regexes on a reasoning-STRIPPED copy of the
+                    # answer. The <llm_reasoning> synthesis block legitimately contains
+                    # the tool name (e.g. "sources_used":["query_knowledge_base"]),
+                    # which otherwise false-matches _TOOL_CALL_RE and triggers a
+                    # spurious full retry — re-running the entire PriceAssist→RAG→search
+                    # chain a second time. Checking the visible answer only avoids that.
+                    answer_visible = strip_reasoning_markers(answer or "")
+                    if self._TOOL_CALL_RE.search(answer_visible):
                         retry_reason = "tool_call_echo"
                         _log.warning(
                             "price_assist returned bare tool-call text; retrying once.",
@@ -637,7 +644,7 @@ class DomainExecutor(Executor):
                         _add_event(span, "domain.retry", {"reason": retry_reason, "attempt": 2})
                         await asyncio.sleep(5)
                         answer = await self._ask("price_assist", base_prompt)
-                    elif self._META_RESPONSE_RE.search(answer or ""):
+                    elif self._META_RESPONSE_RE.search(answer_visible):
                         retry_reason = "meta_response"
                         _log.warning(
                             "price_assist returned meta-response without data; retrying once.",
@@ -653,7 +660,7 @@ class DomainExecutor(Executor):
                         )
                         await asyncio.sleep(5)
                         answer = await self._ask("price_assist", retry_prompt)
-                    elif self._HALLUCINATION_RE.search(answer or ""):
+                    elif self._HALLUCINATION_RE.search(answer_visible):
                         retry_reason = "hallucination"
                         _log.warning(
                             "price_assist returned hallucinated placeholder text; retrying once.",
