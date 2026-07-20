@@ -81,6 +81,18 @@ class Config:
     LOG_MAX_BYTES: int = int(os.getenv("LOG_MAX_BYTES", str(10 * 1024 * 1024)))  # 10 MB
     LOG_BACKUP_COUNT: int = int(os.getenv("LOG_BACKUP_COUNT", "5"))
 
+    # Per-request log files: one file per request_id under LOG_REQUEST_DIR so a
+    # single request's cross-layer story is isolated and easy to investigate.
+    LOG_PER_REQUEST: bool = os.getenv("LOG_PER_REQUEST", "true").lower() in ("1", "true", "yes")
+    LOG_REQUEST_DIR: str = os.getenv("LOG_REQUEST_DIR", "data/logs/requests")
+    LOG_REQUEST_MAX_OPEN: int = int(os.getenv("LOG_REQUEST_MAX_OPEN", "32"))  # LRU cap on open handles
+
+    # Human-readable state-transition trace: shows MeshState field deltas and the
+    # A2A payloads sent/received as the state flows executor -> executor.
+    LOG_STATE_TRACE: bool = os.getenv("LOG_STATE_TRACE", "true").lower() in ("1", "true", "yes")
+    STATE_TRACE_DIR: str = os.getenv("STATE_TRACE_DIR", "data/logs/state")  # one file per request_id
+    STATE_TRACE_PREVIEW_CHARS: int = int(os.getenv("STATE_TRACE_PREVIEW_CHARS", "200"))
+
     # Keep the legacy JSONL trace sink? Off by default now that workflow/agent
     # spans cover the same ground (avoids duplicate telemetry).
     ENABLE_TRACE_JSONL: bool = os.getenv("ENABLE_TRACE_JSONL", "false").lower() in ("1", "true", "yes")

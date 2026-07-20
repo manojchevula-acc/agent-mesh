@@ -60,6 +60,7 @@ from src.observability.metrics import (
 )
 from src.tracing.execution_trace import get_active_tracer, infer_route_and_scores
 from src.tracing.llm_reasoning import extract_reasoning, strip_reasoning_markers
+from src.tracing.state_trace import log_state_handoff
 from src.memory import ConversationStore
 from src.config import Config
 
@@ -174,6 +175,9 @@ class MeshState:
     # orchestrator. Injected into the PriceAssistAgent prompt by DomainExecutor so
     # follow-up questions resolve in-context. Empty when memory is off / first turn.
     conversation_history: List[dict] = field(default_factory=list)
+    # Prior field snapshot used by the state-transition trace to diff what each
+    # executor changed. Managed by src.tracing.state_trace; not persisted.
+    _trace_snapshot: dict = field(default_factory=dict, repr=False, compare=False)
 
 
 # --- Executors ----------------------------------------------------------------
@@ -256,6 +260,7 @@ class InputGuardrailExecutor(Executor):
                         )
                     record_guardrail("BLOCK", screen.categories[0] if screen.categories else "none", elapsed)
                     _emit_stream_event({"stage": "guardrail", "status": "blocked", "message": screen.reason[:120]})
+                    log_state_handoff("input_guardrail", "END", state, note="blocked -> early yield")
                     await ctx.yield_output(state)
                     return
 
@@ -282,6 +287,7 @@ class InputGuardrailExecutor(Executor):
                 _set_error(span, str(exc)[:200])
                 raise
         _emit_stream_event({"stage": "guardrail", "status": "completed", "message": "Input validation passed"})
+        log_state_handoff("input_guardrail", "rbac_validation", state)
         await ctx.send_message(state)
 
 
@@ -335,6 +341,7 @@ class RBACValidationExecutor(Executor):
                         )
                     record_rbac("BLOCK", state.role, elapsed)
                     _emit_stream_event({"stage": "rbac", "status": "blocked", "message": f"Role '{state.role}' is not recognised"})
+                    log_state_handoff("rbac_validation", "END", state, note="blocked -> early yield")
                     await ctx.yield_output(state)
                     return
 
@@ -359,6 +366,7 @@ class RBACValidationExecutor(Executor):
                 _set_error(span, str(exc)[:200])
                 raise
         _emit_stream_event({"stage": "rbac", "status": "completed", "message": f"Role '{state.role}' authorized"})
+        log_state_handoff("rbac_validation", "compliance", state)
         await ctx.send_message(state)
 
 
@@ -415,6 +423,7 @@ class ComplianceExecutor(Executor):
                         )
                     record_compliance("BYPASSED", state.role, elapsed)
                     _emit_stream_event({"stage": "compliance", "status": "completed", "message": "Compliance bypassed"})
+                    log_state_handoff("compliance", "domain", state, note=f"bypass:{_bypass_reason}")
                     await ctx.send_message(state)
                     return
 
@@ -427,7 +436,8 @@ class ComplianceExecutor(Executor):
                 _emit_stream_event({"stage": "compliance", "status": "started", "message": "Running semantic compliance check..."})
 
                 _add_event(span, "compliance.a2a_call.started", {"target": "compliance"})
-                verdict = await self._ask("compliance", f"Review this request for safety: '{state.query}'")
+                _compliance_prompt = f"Review this request for safety: '{state.query}'"
+                verdict = await self._ask("compliance", _compliance_prompt)
                 # Extract and capture LLM reasoning before consuming the verdict text.
                 _reasoning_entries, verdict = extract_reasoning(verdict, "compliance")
                 state.compliance_verdict = verdict
@@ -464,6 +474,10 @@ class ComplianceExecutor(Executor):
                         )
                     record_compliance("FAILED", state.role, elapsed)
                     _emit_stream_event({"stage": "compliance", "status": "blocked", "message": "Compliance check failed"})
+                    log_state_handoff(
+                        "compliance", "END", state, note="compliance failed -> early yield",
+                        a2a={"target": "compliance", "prompt": _compliance_prompt, "response": verdict},
+                    )
                     await ctx.yield_output(state)
                     return
 
@@ -492,6 +506,10 @@ class ComplianceExecutor(Executor):
                 _set_error(span, str(exc)[:200])
                 raise
         _emit_stream_event({"stage": "compliance", "status": "completed", "message": "Compliance check passed"})
+        log_state_handoff(
+            "compliance", "domain", state,
+            a2a={"target": "compliance", "prompt": _compliance_prompt, "response": verdict},
+        )
         await ctx.send_message(state)
 
 
@@ -939,6 +957,11 @@ class DomainExecutor(Executor):
                 record_a2a_call(_target_node, "ERROR", float(total_ms))
 
         _emit_stream_event({"stage": "domain", "status": "completed", "message": "Domain agent responded"})
+        log_state_handoff(
+            "domain", "output_redaction", state,
+            note=f"route={route} retried={retry_reason != 'none'}",
+            a2a={"target": _target_node, "prompt": base_prompt, "response": state.answer},
+        )
         await ctx.send_message(state)
 
 
@@ -975,6 +998,7 @@ class OutputRedactionExecutor(Executor):
         _log.info("Request complete trail=%s", " -> ".join(state.trail),
                   extra={"user": state.user_name, "status": "SUCCESS"})
         _emit_stream_event({"stage": "output_redaction", "status": "completed", "message": "Response ready"})
+        log_state_handoff("output_redaction", "END", state, note="final answer ready")
         await ctx.yield_output(state)
 
 

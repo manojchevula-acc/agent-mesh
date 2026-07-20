@@ -78,8 +78,11 @@ async def ask_remote(
     finally:
         duration_ms = int((time.perf_counter() - t0) * 1000)
         if error is None:
-            _log.info("A2A call node=%s ok (%d ms, %d chars)",
-                      name, duration_ms, len(result or ""),
+            # Truncated previews so the log shows *what* was sent/received, not just sizes.
+            _p = " ".join((prompt or "").split())[:200]
+            _r = " ".join((result or "").split())[:200]
+            _log.info("A2A call node=%s ok (%d ms, %d chars) | sent: \"%s\" | recv: \"%s\"",
+                      name, duration_ms, len(result or ""), _p, _r,
                       extra={"node": name, "status": "SUCCESS"})
         # Business metric — A2A hop latency and outcome by target node.
         try:

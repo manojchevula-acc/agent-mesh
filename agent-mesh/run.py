@@ -185,7 +185,9 @@ async def _run_query(user, user_input: str) -> None:
 
     token = set_active_tracer(tracer)
     try:
-        result = await handle_request(user, user_input)
+        # Pass the tracer's request_id through so log records, per-request files,
+        # and the CLI summary all share one id.
+        result = await handle_request(user, user_input, request_id=tracer.request_id)
     finally:
         clear_active_tracer(token)
 

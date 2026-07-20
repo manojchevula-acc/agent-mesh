@@ -24,6 +24,7 @@ import json
 import logging
 import logging.handlers
 import os
+from collections import OrderedDict
 from typing import Any
 
 from src.config import Config
@@ -37,8 +38,69 @@ CAT_MCP = "mesh.mcp"
 CAT_TRANSPORT = "mesh.transport"
 CAT_APPROVALS = "mesh.approvals"
 CAT_SYSTEM = "mesh.system"
+CAT_STATE = "mesh.state"  # MeshState transition / A2A payload trace
 
 _CONFIGURED = False
+
+
+class PerRequestFileHandler(logging.Handler):
+    """Routes each log record to a per-request file named by ``record.request_id``.
+
+    A single request's cross-layer story (guardrail -> rbac -> compliance ->
+    domain -> redaction, plus A2A hops) lands in one file
+    ``{directory}/{request_id}.log`` — far easier to investigate than the
+    interleaved combined log. Records without a real request id (``"-"``) are
+    dropped here; they still reach the combined/console sinks.
+
+    Open file streams are cached and evicted LRU-style once ``max_open`` is
+    exceeded, so long-running processes don't leak descriptors.
+    """
+
+    def __init__(self, directory: str, max_open: int = 32) -> None:
+        super().__init__()
+        self._dir = directory
+        self._max_open = max(1, max_open)
+        # request_id -> stream, insertion-ordered so the first key is the LRU.
+        self._streams: "OrderedDict[str, Any]" = OrderedDict()
+        os.makedirs(directory, exist_ok=True)
+
+    def _stream_for(self, request_id: str):
+        stream = self._streams.get(request_id)
+        if stream is not None:
+            self._streams.move_to_end(request_id)
+            return stream
+        # Sanitize to a safe filename (request ids are short hex, but be defensive).
+        safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in request_id)[:64]
+        path = os.path.join(self._dir, f"{safe}.log")
+        stream = open(path, "a", encoding="utf-8")
+        self._streams[request_id] = stream
+        while len(self._streams) > self._max_open:
+            _old_id, old_stream = self._streams.popitem(last=False)
+            try:
+                old_stream.close()
+            except Exception:
+                pass
+        return stream
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            request_id = getattr(record, "request_id", "-") or "-"
+            if request_id == "-":
+                return
+            stream = self._stream_for(request_id)
+            stream.write(self.format(record) + "\n")
+            stream.flush()
+        except Exception:
+            self.handleError(record)
+
+    def close(self) -> None:
+        for stream in self._streams.values():
+            try:
+                stream.close()
+            except Exception:
+                pass
+        self._streams.clear()
+        super().close()
 
 
 class TraceContextFilter(logging.Filter):
@@ -143,11 +205,43 @@ def configure_logging(service_name: str | None = None) -> None:
 
         # Avoid duplicate handlers if reconfigured.
         root.handlers = [h for h in root.handlers
-                         if not isinstance(h, (logging.handlers.RotatingFileHandler,))]
+                         if not isinstance(h, (logging.handlers.RotatingFileHandler,
+                                               PerRequestFileHandler))]
         root.addHandler(file_handler)
         # Only add a console handler if one isn't already present.
         if not any(isinstance(h, logging.StreamHandler) for h in root.handlers):
             root.addHandler(console_handler)
+
+        # Per-request file sink (durable, one file per request_id). Attached to
+        # the root so records from every category land in the request's file.
+        if Config.LOG_PER_REQUEST:
+            per_req = PerRequestFileHandler(
+                Config.LOG_REQUEST_DIR, max_open=Config.LOG_REQUEST_MAX_OPEN
+            )
+            per_req.setLevel(logging.DEBUG)
+            per_req.addFilter(trace_filter)
+            per_req.setFormatter(formatter)
+            root.addHandler(per_req)
+
+        # State-transition trace: one clean, readable file PER REQUEST under
+        # STATE_TRACE_DIR (mirrors the requests/ layout) showing the full
+        # MeshState evolving executor -> executor. The mesh.state logger keeps
+        # propagate=True (so lines also reach the combined + per-request files).
+        if Config.LOG_STATE_TRACE:
+            state_logger = logging.getLogger(CAT_STATE)
+            if not any(getattr(h, "_is_state_trace", False) for h in state_logger.handlers):
+                state_handler = PerRequestFileHandler(
+                    Config.STATE_TRACE_DIR, max_open=Config.LOG_REQUEST_MAX_OPEN
+                )
+                state_handler._is_state_trace = True  # type: ignore[attr-defined]
+                state_handler.setLevel(logging.DEBUG)
+                state_handler.addFilter(trace_filter)
+                # Clean format — no trace/span prefix noise; the state trace is
+                # already request-scoped and human-oriented.
+                state_handler.setFormatter(logging.Formatter(
+                    "%(asctime)s | req=%(request_id)s | %(message)s"
+                ))
+                state_logger.addHandler(state_handler)
 
         # Tame noisy third-party loggers.
         for noisy in ("httpx", "httpcore", "uvicorn.access", "azure"):
