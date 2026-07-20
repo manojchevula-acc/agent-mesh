@@ -42,6 +42,8 @@ class Table:
     joins: dict[str, str]
     schema: str = ""  # owning DB schema (e.g. fab_curated / fab_semantic); "" = unqualified
     is_view: bool = False  # a pre-joined fab_semantic read model — query standalone, don't join
+    search_terms: str = ""  # extra NL trigger phrases/synonyms for retrieval ONLY (not rendered
+                            # to the generator); boosts recall of business-question phrasings
 
     @property
     def filterable_columns(self) -> list[str]:
@@ -100,6 +102,7 @@ def load_semantic_layer() -> SemanticLayer:
             schema=schema,
             # A fab_semantic object is a pre-joined view; overridable via `view:` in yaml.
             is_view=bool(tspec.get("view", schema == "fab_semantic")),
+            search_terms=str(tspec.get("search_terms", "") or ""),
         )
 
     blocked = {c.lower() for c in raw.get("blocked_columns", [])}

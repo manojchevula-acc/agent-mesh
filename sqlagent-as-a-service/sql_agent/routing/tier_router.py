@@ -72,6 +72,25 @@ TOOL_TIER_REGISTRY = {
 GATED_TOOLS = {"analytical_query"}
 GATED_SCOPE = "dynamic_sql"
 
+# Which tiers each config toggle controls. A tier absent here (full_dynamic, meta) is
+# always on. The dynamic tool has its own scope gate below.
+_TIER_TOGGLES = {
+    "parameterised": "parameterised_tools_enabled",
+    "semi_dynamic": "semi_dynamic_tools_enabled",
+}
+
+
+def _tier_enabled(tier: str) -> bool:
+    flag = _TIER_TOGGLES.get(tier)
+    return True if flag is None else bool(getattr(settings, flag))
+
+
+def fixed_tiers_disabled() -> bool:
+    """True when BOTH the parameterised and semi-dynamic tiers are switched off — the
+    state in which the dynamic tool is the only remaining data path and so is bound and
+    ungated automatically (see tools_for_caller and analytical_tool)."""
+    return not _tier_enabled("parameterised") and not _tier_enabled("semi_dynamic")
+
 # Bounded fan-out ceilings (Section 9.3). Same failure mode as the runaway-agent-loop
 # incident pattern; mitigated the same way — a hard ceiling plus logging.
 MAX_TOOL_CALLS_PER_TURN = settings.max_tool_calls_per_turn
@@ -85,8 +104,14 @@ def tools_for_caller(caller_agent: str, auth_scopes: set) -> list:
     ContextVar so the gated tool can double-check at call time."""
     auth_scopes = set(auth_scopes or [])
     set_caller_scopes(auth_scopes)
-    tools = [ALL_TOOLS[name] for name in TOOL_TIER_REGISTRY if name not in GATED_TOOLS]
-    if GATED_SCOPE in auth_scopes:
+    tools = [
+        ALL_TOOLS[name]
+        for name, tier in TOOL_TIER_REGISTRY.items()
+        if name not in GATED_TOOLS and _tier_enabled(tier)
+    ]
+    # Bind the dynamic tool for a scoped caller, OR whenever the fixed tiers are all off
+    # (otherwise the agent would be left with no data tool at all).
+    if GATED_SCOPE in auth_scopes or fixed_tiers_disabled():
         tools.append(ALL_TOOLS["analytical_query"])
     return tools
 

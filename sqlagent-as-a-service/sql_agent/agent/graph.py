@@ -12,7 +12,11 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 
-from sql_agent.agent.prompts import REACT_SYSTEM_PROMPT, RESPONSE_SYNTHESIS_PROMPT
+from sql_agent.agent.prompts import (
+    REACT_SYSTEM_PROMPT,
+    REACT_SYSTEM_PROMPT_DYNAMIC_ONLY,
+    RESPONSE_SYNTHESIS_PROMPT,
+)
 from sql_agent.agent.state import AgentState
 from sql_agent.config import settings
 from sql_agent.formatting.audit_logger import log_invocation
@@ -20,7 +24,12 @@ from sql_agent.llm import Step, get_llm, log_usage
 from sql_agent.logging_config import get_logger
 from sql_agent.memory import approved_examples, render_examples_block
 from sql_agent.routing.intent_classifier import classify
-from sql_agent.routing.tier_router import guard_tool_call, tier_of, tools_for_caller
+from sql_agent.routing.tier_router import (
+    fixed_tiers_disabled,
+    guard_tool_call,
+    tier_of,
+    tools_for_caller,
+)
 from sql_agent.validation.exceptions import SQLAgentError
 
 log = get_logger("agent")
@@ -135,10 +144,13 @@ def build_sql_agent_graph(llm=None, checkpointer=None):
         llm_with_tools = llm.bind_tools(tools, tool_choice=tool_choice)
 
         # Ground the agent with approved, curated few-shot examples (from feedback).
+        # In dynamic-only mode (fixed tiers off) swap in the single-tool system prompt so
+        # the model isn't steered toward get_*/find_* tools that are no longer bound.
         examples_block = render_examples_block(approved_examples())
-        system_content = REACT_SYSTEM_PROMPT
-        if examples_block:
-            system_content = f"{REACT_SYSTEM_PROMPT}\n\n{examples_block}"
+        base_system = (
+            REACT_SYSTEM_PROMPT_DYNAMIC_ONLY if fixed_tiers_disabled() else REACT_SYSTEM_PROMPT
+        )
+        system_content = f"{base_system}\n\n{examples_block}" if examples_block else base_system
 
         # Trim to the most recent messages so cost/context stays bounded as the
         # conversation grows (architecture §2.3). The checkpointer keeps the full
@@ -161,17 +173,28 @@ def build_sql_agent_graph(llm=None, checkpointer=None):
                     raise
                 log.warning("[%s] AGENT bad tool call rejected | %s | retrying with "
                             "valid tool list", cid, str(exc)[:160])
-                correction = HumanMessage(content=(
-                    "Your previous tool call was invalid (you called a tool that does "
-                    "not exist or passed malformed arguments — it may have been removed "
-                    "from your tool list). Call ONLY one of these tools, by exact name: "
-                    f"{', '.join(tool_names)}. Do NOT default to analytical_query just "
-                    "because your first choice failed — if the question is about ONE "
-                    "named customer/deal/product's own data, use that entity's specific "
-                    "get_* view tool (e.g. get_customer_pricing_recommendations for a "
-                    "customer's pricing); analytical_query is only for cross-row "
-                    "aggregates no fixed tool covers."
-                ))
+                if fixed_tiers_disabled():
+                    # Only analytical_query is bound; steer the retry to it, not the
+                    # removed get_*/find_* tools (which is what triggered this failure).
+                    correction = HumanMessage(content=(
+                        "Your previous tool call was invalid — you called a tool that does "
+                        "not exist in this configuration. The ONLY tool available is "
+                        "analytical_query(question). Call it now and pass the user's "
+                        "natural-language question as `question` (no SQL, no table/column "
+                        "names). Do not call any get_* or find_* tool."
+                    ))
+                else:
+                    correction = HumanMessage(content=(
+                        "Your previous tool call was invalid (you called a tool that does "
+                        "not exist or passed malformed arguments — it may have been removed "
+                        "from your tool list). Call ONLY one of these tools, by exact name: "
+                        f"{', '.join(tool_names)}. Do NOT default to analytical_query just "
+                        "because your first choice failed — if the question is about ONE "
+                        "named customer/deal/product's own data, use that entity's specific "
+                        "get_* view tool (e.g. get_customer_pricing_recommendations for a "
+                        "customer's pricing); analytical_query is only for cross-row "
+                        "aggregates no fixed tool covers."
+                    ))
                 try:
                     response = llm_with_tools.invoke(messages + [correction])
                     log_usage(Step.AGENT, response)

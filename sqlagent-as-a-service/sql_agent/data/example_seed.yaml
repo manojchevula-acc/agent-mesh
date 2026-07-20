@@ -1,10 +1,15 @@
 # Curated few-shot seed set for the dynamic-tier SQL generator (Pattern Retriever).
 #
-# These are persona-driven ANALYTICAL questions (RM / Branch Manager / CFO / pricing
-# desk) that legitimately route to `analytical_query` — genuine cross-row aggregates,
-# rankings, and groupings that no dedicated single-entity tool exposes. Single-customer
-# "quote a rate / is it compliant" questions are NOT here: those are handled by the
-# dedicated pricing tools in the ReAct layer, not by dynamic SQL.
+# These are persona-driven questions (RM / Branch Manager / CFO / pricing desk) that
+# route to `analytical_query`. Two families live here:
+#   1. Cross-row ANALYTICAL questions — aggregates, rankings, groupings.
+#   2. Single-entity BUSINESS questions — "what rate for customer X", "explain the price
+#      for X", "competitor offer for X", "non-compliant deals and why". These used to be
+#      served only by the dedicated view tools; they are seeded here so the dynamic tier
+#      can answer them when the parameterised/semi-dynamic tiers are turned off (see
+#      PARAMETERISED_TOOLS_ENABLED / SEMI_DYNAMIC_TOOLS_ENABLED). The single-entity
+#      examples filter on customer_id/deal_id — the id the entity resolver injects from a
+#      customer NAME (routing/entity_resolver.py), mirroring the view tools' behaviour.
 #
 # Each entry is loaded by scripts/seed_examples.py, which re-validates the SQL through
 # the six-check validator AND runs it live against the governed DB before storing it as
@@ -1497,4 +1502,330 @@ examples:
     filters:
     - approval_required
     business_terms: []
+    complexity: low
+
+# ── Single-entity business-question archetypes (dynamic-only mode) ──────────────
+# One worked example per business view so the Pattern Retriever has a correct SQL to
+# ground each archetype the parameterised view tools used to serve.
+- question: What interest rate should I offer new customer CUST001?
+  sql: SELECT customer_id, customer_name, product_type, funding_cost_pct, risk_premium_pct,
+    new_customer_buffer_pct, ops_cost_margin_pct, recommended_price_pct, policy_floor_margin_pct
+    FROM fab_semantic.new_customer_pricing_view WHERE customer_id = 'CUST001' LIMIT 50;
+  tier: full_dynamic
+  tags: new_customer_pricing_view
+  metadata:
+    tables:
+    - new_customer_pricing_view
+    columns:
+    - customer_id
+    - funding_cost_pct
+    - new_customer_buffer_pct
+    - ops_cost_margin_pct
+    - recommended_price_pct
+    - risk_premium_pct
+    joins: []
+    intent: pricing_analysis
+    sql_pattern:
+    - lookup
+    aggregations: []
+    filters:
+    - customer_id
+    business_terms:
+    - new customer
+    - rate
+    - pricing
+    complexity: low
+- question: Explain step by step how the recommended price was calculated for CUST001.
+  sql: SELECT deal_id, product_type, treasury_rate_component, target_margin_component,
+    risk_premium_component, operations_cost_component, relationship_discount_component,
+    final_recommended_price, approved_price_pct, explanation_text FROM fab_semantic.pricing_trace_view
+    WHERE customer_id = 'CUST001' LIMIT 50;
+  tier: full_dynamic
+  tags: pricing_trace_view
+  metadata:
+    tables:
+    - pricing_trace_view
+    columns:
+    - customer_id
+    - final_recommended_price
+    - operations_cost_component
+    - relationship_discount_component
+    - risk_premium_component
+    - target_margin_component
+    - treasury_rate_component
+    joins: []
+    intent: pricing_analysis
+    sql_pattern:
+    - lookup
+    aggregations: []
+    filters:
+    - customer_id
+    business_terms:
+    - price
+    - pricing
+    - price build-up
+    complexity: low
+- question: Customer CUST001 got a lower competitor price. Should we match, counter, or
+    reject, and how much can we reduce?
+  sql: SELECT deal_id, competitor_name, fab_price_pct, competitor_price_pct, competitor_gap_bps,
+    profitability_floor_pct, max_reducible_pct, suggested_action, action_reason FROM
+    fab_semantic.competitor_price_analysis WHERE customer_id = 'CUST001' LIMIT 50;
+  tier: full_dynamic
+  tags: competitor_price_analysis
+  metadata:
+    tables:
+    - competitor_price_analysis
+    columns:
+    - competitor_price_pct
+    - customer_id
+    - fab_price_pct
+    - max_reducible_pct
+    - suggested_action
+    joins: []
+    intent: pricing_analysis
+    sql_pattern:
+    - lookup
+    aggregations: []
+    filters:
+    - customer_id
+    business_terms:
+    - competitor
+    - price
+    - pricing
+    complexity: low
+- question: CUST001's credit rating dropped. How should we cushion against the increased
+    risk?
+  sql: SELECT event_date, old_internal_rating, new_internal_rating, old_risk_category,
+    new_risk_category, rating_change_direction, recommended_pricing_action, additional_risk_premium_pct,
+    floating_rate_required_flag, credit_review_required_flag FROM fab_semantic.credit_rating_events
+    WHERE customer_id = 'CUST001' ORDER BY event_date DESC LIMIT 50;
+  tier: full_dynamic
+  tags: credit_rating_events
+  metadata:
+    tables:
+    - credit_rating_events
+    columns:
+    - additional_risk_premium_pct
+    - customer_id
+    - floating_rate_required_flag
+    - new_risk_category
+    - old_risk_category
+    - recommended_pricing_action
+    joins: []
+    intent: risk_analysis
+    sql_pattern:
+    - lookup
+    aggregations: []
+    filters:
+    - customer_id
+    business_terms:
+    - credit rating
+    - risk
+    complexity: low
+- question: What cross-selling ideas do we have for Corporate customers in Logistics?
+  sql: SELECT primary_product_name, recommended_product_name, expected_incremental_revenue_aed,
+    cross_sell_priority, rationale FROM fab_semantic.cross_sell_opportunity WHERE rule_status
+    = 'Active' AND customer_segment = 'Corporate' AND industry = 'Logistics' ORDER BY
+    cross_sell_priority LIMIT 50;
+  tier: full_dynamic
+  tags: cross_sell_opportunity
+  metadata:
+    tables:
+    - cross_sell_opportunity
+    columns:
+    - customer_segment
+    - industry
+    - recommended_product_name
+    - rule_status
+    joins: []
+    intent: customer_analysis
+    sql_pattern:
+    - lookup
+    aggregations: []
+    filters:
+    - customer_segment
+    - industry
+    - rule_status
+    business_terms:
+    - cross-sell
+    - corporate
+    complexity: medium
+- question: I have a new customer whose profile is like an existing one. What price should
+    I offer based on the similar customer?
+  sql: SELECT new_customer_id, new_customer_name, reference_customer_id, reference_customer_name,
+    similarity_score, reference_final_price_pct, adjustment_for_new_customer_pct, suggested_price_pct,
+    suggested_price_adjustment_rationale FROM fab_semantic.similar_customer_pricing WHERE
+    new_customer_id = 'CUST001' ORDER BY similarity_score DESC LIMIT 50;
+  tier: full_dynamic
+  tags: similar_customer_pricing
+  metadata:
+    tables:
+    - similar_customer_pricing
+    columns:
+    - adjustment_for_new_customer_pct
+    - new_customer_id
+    - reference_final_price_pct
+    - similarity_score
+    - suggested_price_pct
+    joins: []
+    intent: pricing_analysis
+    sql_pattern:
+    - lookup
+    aggregations: []
+    filters:
+    - new_customer_id
+    business_terms:
+    - similar customer
+    - price
+    - pricing
+    complexity: low
+- question: Which deals are non-compliant and why?
+  sql: SELECT deal_id, customer_id, customer_name, product_type, margin_below_min, discount_exceeds_policy,
+    price_below_floor, is_exception, exception_reason FROM fab_semantic.policy_exception_view
+    WHERE is_exception = 1 LIMIT 50;
+  tier: full_dynamic
+  tags: policy_exception_view
+  metadata:
+    tables:
+    - policy_exception_view
+    columns:
+    - customer_id
+    - deal_id
+    - exception_reason
+    - is_exception
+    joins: []
+    intent: policy_violation
+    sql_pattern:
+    - policy_violation
+    aggregations: []
+    filters:
+    - is_exception
+    business_terms:
+    - non-compliant
+    - policy
+    complexity: low
+- question: Does CUST001's relationship discount need approval?
+  sql: SELECT customer_id, customer_name, relationship_discount_pct, policy_max_relationship_discount_pct,
+    approval_required_if_discount_above_pct, discount_eligible, approval_required, eligibility_reason
+    FROM fab_semantic.relationship_discount_view WHERE customer_id = 'CUST001' LIMIT 50;
+  tier: full_dynamic
+  tags: relationship_discount_view
+  metadata:
+    tables:
+    - relationship_discount_view
+    columns:
+    - approval_required
+    - customer_id
+    - discount_eligible
+    - relationship_discount_pct
+    joins: []
+    intent: pricing_analysis
+    sql_pattern:
+    - lookup
+    aggregations: []
+    filters:
+    - customer_id
+    business_terms:
+    - relationship discount
+    - discount
+    complexity: low
+- question: Show the profitability of customer CUST001 by product type.
+  sql: SELECT customer_id, product_type, total_won_deals, revenue_aed, net_profit_aed,
+    avg_net_margin_pct, profitability_tier FROM fab_semantic.profitability_summary WHERE
+    customer_id = 'CUST001' ORDER BY net_profit_aed DESC LIMIT 50;
+  tier: full_dynamic
+  tags: profitability_summary
+  metadata:
+    tables:
+    - profitability_summary
+    columns:
+    - customer_id
+    - net_profit_aed
+    - product_type
+    - profitability_tier
+    - revenue_aed
+    joins: []
+    intent: profitability_analysis
+    sql_pattern:
+    - lookup
+    aggregations: []
+    filters:
+    - customer_id
+    business_terms:
+    - profitability
+    - profit
+    complexity: low
+- question: Show the RWA and capital impact for customer CUST001's deals.
+  sql: SELECT deal_id, product_type, exposure_aed, risk_weight_pct, rwa_aed, capital_required_aed,
+    net_revenue_aed, return_on_rwa_pct, is_high_rwa FROM fab_semantic.rwa_impact_view
+    WHERE customer_id = 'CUST001' ORDER BY deal_date DESC LIMIT 50;
+  tier: full_dynamic
+  tags: rwa_impact_view
+  metadata:
+    tables:
+    - rwa_impact_view
+    columns:
+    - capital_required_aed
+    - customer_id
+    - return_on_rwa_pct
+    - rwa_aed
+    joins: []
+    intent: risk_analysis
+    sql_pattern:
+    - lookup
+    aggregations: []
+    filters:
+    - customer_id
+    business_terms:
+    - rwa
+    - capital
+    complexity: low
+- question: What price are we recommending for existing customer CUST001's deals?
+  sql: SELECT deal_id, product_type, recommended_price_pct, approved_price_pct, expected_margin_pct,
+    policy_compliant FROM fab_semantic.pricing_recommendation_view WHERE customer_id
+    = 'CUST001' ORDER BY deal_date DESC LIMIT 50;
+  tier: full_dynamic
+  tags: pricing_recommendation_view
+  metadata:
+    tables:
+    - pricing_recommendation_view
+    columns:
+    - approved_price_pct
+    - customer_id
+    - expected_margin_pct
+    - recommended_price_pct
+    joins: []
+    intent: pricing_analysis
+    sql_pattern:
+    - lookup
+    aggregations: []
+    filters:
+    - customer_id
+    business_terms:
+    - price
+    - pricing
+    complexity: low
+- question: What is the operational cost margin for SME customers by product?
+  sql: SELECT product_name, product_type, customer_segment, ops_cost_margin_pct, avg_annual_operating_cost_aed,
+    avg_onboarding_cost_aed, avg_monthly_servicing_cost_aed FROM fab_semantic.operations_cost_impact
+    WHERE customer_segment = 'SME' ORDER BY ops_cost_margin_pct DESC LIMIT 50;
+  tier: full_dynamic
+  tags: operations_cost_impact
+  metadata:
+    tables:
+    - operations_cost_impact
+    columns:
+    - customer_segment
+    - ops_cost_margin_pct
+    - product_name
+    joins: []
+    intent: pricing_analysis
+    sql_pattern:
+    - lookup
+    aggregations: []
+    filters:
+    - customer_segment
+    business_terms:
+    - operations cost
+    - margin
     complexity: low

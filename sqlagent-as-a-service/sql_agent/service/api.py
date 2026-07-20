@@ -35,6 +35,7 @@ from sql_agent.routing.tier_router import (
     GATED_SCOPE,
     GATED_TOOLS,
     TOOL_TIER_REGISTRY,
+    fixed_tiers_disabled,
 )
 from sql_agent.tools.registry import ALL_TOOLS, set_caller_scopes
 from sql_agent.validation.exceptions import AuthError, SQLAgentError
@@ -101,7 +102,8 @@ def invoke(req: InvokeRequest) -> dict:
     set_caller_scopes(scopes)
 
     # Per-agent auth scope: gated tools require the dynamic_sql scope (Design §11.2).
-    if req.tool in GATED_TOOLS and GATED_SCOPE not in scopes:
+    # Bypassed when the fixed tiers are all off and the dynamic tool is the only path.
+    if req.tool in GATED_TOOLS and GATED_SCOPE not in scopes and not fixed_tiers_disabled():
         return format_error("AuthError", f"'{req.tool}' requires the {GATED_SCOPE} scope",
                             retryable=False)
 

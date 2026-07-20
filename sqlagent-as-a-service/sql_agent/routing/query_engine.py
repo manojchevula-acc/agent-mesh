@@ -21,6 +21,7 @@ from sql_agent.formatting import format_error, format_response
 from sql_agent.llm import Step, get_llm, log_usage
 from sql_agent.logging_config import get_logger
 from sql_agent.memory import relevant_examples, render_examples_block
+from sql_agent.routing.entity_resolver import resolve_customer_hint
 from sql_agent.semantic_layer.glossary import matched_terms, render_glossary_block
 from sql_agent.semantic_layer.joins import resolve_joins
 from sql_agent.semantic_layer.loader import join_closure
@@ -77,8 +78,12 @@ def _plan_schema(question: str, tables_hint: list[str] | None):
     if not settings.schema_retrieval_enabled:
         return render_schema_context(), [], None, None
 
-    # 1. RETRIEVE candidates (index lookup, no LLM) -> 2. SCHEMA-LINK plan (planner LLM)
-    candidates = select_tables(question, tables_hint)
+    # 1. RETRIEVE candidates (index lookup, no LLM) -> 2. SCHEMA-LINK plan (planner LLM).
+    # Feed the planner the ranked candidates WITHOUT the join-closure expansion: the plan
+    # only picks among ranked tables, and rendering the full closure (customer_master
+    # neighbours nearly every view) can exceed the provider's per-minute token limit. Any
+    # bridge the plan needs is re-added by resolve_joins below.
+    candidates = select_tables(question, tables_hint, apply_closure=False)
     plan = link_schema(question, candidates)
     # 3. JOIN-RESOLVE minimal path (+ bridge tables) with real keys from the graph.
     join_clauses, allowed_pairs, used_tables = resolve_joins(plan.tables, plan.join_pairs)
@@ -112,6 +117,14 @@ def run_dynamic_pipeline(question: str, tables_hint: list[str] | None = None) ->
     layer, never invented relationships.
     """
     schema_context, join_clauses, allowed_pairs, planned_tables = _plan_schema(question, tables_hint)
+
+    # Resolve any customer NAME in the question to its id up front (mirrors the view
+    # tools' _resolve_customer_id) so the generator filters on the id. Computed once and
+    # reused across self-correction retries. Empty string => no-op on the template.
+    entity_hint = (
+        resolve_customer_hint(question) if settings.dynamic_entity_resolution_enabled else ""
+    )
+    entity_block = f"\n{entity_hint}" if entity_hint else ""
 
     def _join_hints_block(joins: list[str]) -> str:
         if not joins:
@@ -154,6 +167,7 @@ def run_dynamic_pipeline(question: str, tables_hint: list[str] | None = None) ->
             join_hints_block=_join_hints_block(joins),
             glossary_block=_glossary_block_for(question),
             examples_block=_examples_block_for(question),
+            entity_block=entity_block,
         )
 
     prompt = _base_prompt(schema_context, join_clauses)

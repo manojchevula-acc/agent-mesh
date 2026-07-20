@@ -111,6 +111,19 @@ class Settings(BaseSettings):
     max_self_correction_attempts: int = 3
     cache_ttl_seconds: int = 60
 
+    # --- Tool-tier toggles ----------------------------------------------------
+    # Turn whole tiers off so the agent must fall through to the dynamic SQL tier.
+    # When BOTH the parameterised and semi-dynamic tiers are disabled the dynamic
+    # tool becomes the only data path; it is then bound (and its scope gate is
+    # bypassed) automatically so the agent still has something to call. Defaults
+    # keep the current behaviour (all tiers on).
+    parameterised_tools_enabled: bool = True
+    semi_dynamic_tools_enabled: bool = True
+    # Best-effort customer NAME -> customer_id resolution for the dynamic tier, so a
+    # question naming a customer by name (not a CUSTnnn id) is filtered on the id the
+    # way the parameterised view tools do. No-op when it resolves nothing.
+    dynamic_entity_resolution_enabled: bool = True
+
     # --- Agent metadata DB (memory/feedback/examples) -------------------------
     # Separate from db_dsn (the governed, read-only business DB). Blank in dev =>
     # in-memory checkpointer + every metadata writer becomes a no-op.

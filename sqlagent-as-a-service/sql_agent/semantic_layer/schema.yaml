@@ -270,6 +270,9 @@ tables:
   profitability_summary:
     schema: fab_semantic
     grain: one row per customer x product_type — won-deals roll-up with profitability tier
+    search_terms: >
+      how profitable is this customer; profitability by product; net profit for a customer;
+      profitability tier; show profitability for a customer; revenue and cost breakdown
     primary_key: null
     sensitivity_default: internal
     columns:
@@ -295,6 +298,9 @@ tables:
   rwa_impact_view:
     schema: fab_semantic
     grain: one row per won historical deal — Basel III RWA and capital metrics
+    search_terms: >
+      RWA and capital impact for a customer; risk-weighted assets; Basel III capital charge;
+      return on RWA; how much capital does this deal or customer consume
     primary_key: deal_id
     sensitivity_default: internal
     columns:
@@ -325,6 +331,10 @@ tables:
   segment_pricing_benchmark:
     schema: fab_semantic
     grain: one row per customer_segment x product x risk_category — aggregated pricing guideline
+    search_terms: >
+      pricing guideline by segment; target and floor margins for a segment; new-customer
+      buffer; pricing cushion for a rating drop; max relationship discount for a segment;
+      documents based on different customer segments
     primary_key: null
     sensitivity_default: internal
     columns:
@@ -347,6 +357,10 @@ tables:
   operations_cost_impact:
     schema: fab_semantic
     grain: one row per product x customer_segment — operational cost margin roll-up
+    search_terms: >
+      operations cost per product and customer; operational cost differs by product and
+      segment; onboarding and servicing cost; how much does it cost to run this product;
+      ops cost impact on pricing
     primary_key: null
     sensitivity_default: internal
     columns:
@@ -365,6 +379,11 @@ tables:
   new_customer_pricing_view:
     schema: fab_semantic
     grain: one row per prospect customer — recommended price with no relationship history
+    search_terms: >
+      what interest rate should I offer a new customer; rate for a customer with no
+      previous relationship; quote a price for a prospect; pricing for a brand new
+      customer; what rate to offer someone we have no relationship with; first-time
+      customer pricing; recommended price for a prospect
     primary_key: customer_id
     sensitivity_default: internal
     columns:
@@ -376,7 +395,7 @@ tables:
       risk_category:                 {type: enum,  values: [Low, Medium, High], filterable: true, desc: "Risk band"}
       internal_rating:               {type: str,   sensitivity: internal, filterable: true, desc: "Internal credit rating grade"}
       relationship_status:           {type: enum,  values: [New, Existing, Strategic], filterable: true, desc: "Relationship classification"}
-      no_previous_relationship_flag: {type: bool,  filterable: true, desc: "True if the prospect has no prior relationship"}
+      no_previous_relationship_flag: {type: enum, values: [Y, N], filterable: true, desc: "'Y' if the prospect has no prior relationship", note: "Stored as 'Y'/'N' characters, NOT a boolean — filter with = 'Y' or = 'N', never = TRUE/1. Being in this view already implies a prospect, so a filter is usually unnecessary."}
       product_id:                    {type: str,   filterable: true,  desc: "Requested product identifier"}
       product_name:                  {type: str,   filterable: true,  desc: "Requested product display name"}
       product_type:                  {type: enum,  values: [Loan, Trade Finance, Treasury, Deposit], filterable: true, desc: "Requested product family"}
@@ -398,6 +417,11 @@ tables:
   competitor_price_analysis:
     schema: fab_semantic
     grain: one row per negotiation-memory interaction — FAB vs competitor with a suggested action
+    search_terms: >
+      customer came back with a lower competitor offer; should we match counter or reject;
+      competitor undercut our price; how much can we reduce the price without hurting
+      profitability; how much can we lower our rate and stay competitive; price versus
+      competitor; competitor is cheaper; matching a rival bank's quote; negotiation
     primary_key: deal_id
     sensitivity_default: internal
     columns:
@@ -426,6 +450,11 @@ tables:
   pricing_trace_view:
     schema: fab_semantic
     grain: one row per historical deal — step-by-step recommended-price decomposition
+    search_terms: >
+      explain step by step how the price was calculated; how did we arrive at the current
+      price; break down the recommended price; price build-up; walk me through the pricing
+      components; why is the price what it is; trace the pricing; show the price
+      decomposition; how was the recommended price constructed
     primary_key: deal_id
     sensitivity_default: internal
     columns:
@@ -454,6 +483,10 @@ tables:
   relationship_discount_view:
     schema: fab_semantic
     grain: one row per customer — relationship discount eligibility and approval requirement
+    search_terms: >
+      is the customer's relationship discount allowed; does this discount need approval;
+      relationship discount eligibility; how much discount can we give this customer;
+      discount within policy cap
     primary_key: customer_id
     sensitivity_default: internal
     columns:
@@ -502,6 +535,10 @@ tables:
   policy_exception_view:
     schema: fab_semantic
     grain: one row per historical deal — which policy rules the deal breached
+    search_terms: >
+      which deals are non-compliant and why; policy breaches; policy exceptions; why did a
+      deal break policy; deals that violated pricing rules; non-compliant deals with reasons;
+      what rule did the deal breach
     primary_key: deal_id
     sensitivity_default: internal
     columns:
@@ -524,8 +561,8 @@ tables:
       price_below_floor:                        {type: bool,  filterable: true, desc: "True if price < policy floor margin"}
       competitor_match_requires_approval:       {type: bool,  filterable: true, desc: "True if a competitor undercut requires approval"}
       high_rwa_requires_approval:               {type: bool,  filterable: true, desc: "True if risk weight >= 100 requires approval"}
-      is_exception:                             {type: bool,  filterable: true, desc: "True if the deal breached any policy rule"}
-      exception_reason:                         {type: str,   filterable: false, desc: "Pipe-delimited list of breached rules"}
+      is_exception:                             {type: bool,  filterable: true, desc: "True if the deal breached any policy rule", note: "For 'which deals are non-compliant', filter is_exception = TRUE to return only the breaching deals."}
+      exception_reason:                         {type: str,   filterable: false, desc: "Pipe-delimited list of breached rules; this is the 'why' for a non-compliant deal"}
     blocked_columns: []
     joins:
       customer_master: "customer_id -> customer_master.customer_id"
@@ -534,6 +571,10 @@ tables:
   cross_sell_opportunity:
     schema: fab_semantic
     grain: one row per active cross-sell rule — segment x industry recommendation
+    search_terms: >
+      cross-selling ideas; what other products can we offer; next best product to sell;
+      upsell recommendations; cross-sell opportunities alongside the current product;
+      additional products for this customer segment or industry
     primary_key: cross_sell_rule_id
     sensitivity_default: internal
     columns:
@@ -541,20 +582,24 @@ tables:
       customer_segment:                 {type: enum,  values: [Corporate, SME], filterable: true, desc: "Customer segment the rule targets"}
       industry:                         {type: enum,  values: [Trading, Manufacturing, Logistics, Retail, Healthcare], filterable: true, desc: "Industry the rule targets"}
       trigger_condition:                {type: str,   filterable: false, desc: "Condition that triggers the recommendation"}
-      primary_product_id:               {type: str,   filterable: true,  desc: "Product the customer already holds"}
-      primary_product_name:             {type: str,   filterable: false, desc: "Primary product display name"}
+      primary_product_id:               {type: str,   filterable: true,  desc: "Product the customer already holds", note: "This view is keyed by customer_segment + industry, NOT customer_id, and has no per-customer holdings table. To answer for a specific named customer, filter on that customer's customer_segment and industry (usually stated in the question, e.g. 'Corporate customer in Logistics'). primary_product_name IS the 'already held' product; recommended_product_name is the cross-sell suggestion. Do NOT return CANNOT_ANSWER for a missing holdings table."}
+      primary_product_name:             {type: str,   filterable: false, desc: "The product the customer already holds (display name)"}
       recommended_product_id:           {type: str,   filterable: true,  desc: "Recommended cross-sell product id"}
       recommended_product_name:         {type: str,   filterable: false, desc: "Recommended product display name"}
       expected_incremental_revenue_aed: {type: float, unit: AED, filterable: false, desc: "Expected incremental revenue"}
       cross_sell_priority:              {type: str,   filterable: true,  desc: "Priority label for the recommendation"}
       rationale:                        {type: str,   filterable: false, desc: "Why this cross-sell is recommended"}
-      rule_status:                      {type: enum,  values: [Active, Inactive], filterable: true, desc: "Whether the rule is active"}
+      rule_status:                      {type: enum,  values: [Active, Inactive], filterable: true, desc: "Whether the rule is active", note: "For current cross-sell ideas, filter rule_status = 'Active'."}
     blocked_columns: []
 
   # V15 --------------------------------------------------------------------------
   credit_rating_events:
     schema: fab_semantic
     grain: one row per credit-rating migration event
+    search_terms: >
+      customer's credit rating dropped; rating downgrade; how do we cushion ourselves from
+      the increased risk; what pricing action after a rating change; do we need a floating
+      rate now; additional risk premium after downgrade; credit review required
     primary_key: rating_event_id
     sensitivity_default: internal
     columns:
@@ -570,8 +615,8 @@ tables:
       reason_code:                  {type: str,   filterable: true,  desc: "Reason code for the rating change"}
       recommended_pricing_action:   {type: str,   filterable: false, desc: "Recommended pricing action after the change"}
       additional_risk_premium_pct:  {type: float, unit: pct, filterable: false, desc: "Additional risk premium to apply"}
-      floating_rate_required_flag:  {type: bool,  filterable: true, desc: "True if a floating rate is now required"}
-      credit_review_required_flag:  {type: bool,  filterable: true, desc: "True if a credit review is now required"}
+      floating_rate_required_flag:  {type: enum, values: [Y, N], filterable: true, desc: "'Y' if a floating rate is now required", note: "Stored as 'Y'/'N' characters, NOT a boolean — filter with = 'Y' or = 'N', never = TRUE/1."}
+      credit_review_required_flag:  {type: enum, values: [Y, N], filterable: true, desc: "'Y' if a credit review is now required", note: "Stored as 'Y'/'N' characters, NOT a boolean — filter with = 'Y' or = 'N', never = TRUE/1."}
     blocked_columns: []
     joins:
       customer_master: "customer_id -> customer_master.customer_id"
@@ -580,6 +625,10 @@ tables:
   similar_customer_pricing:
     schema: fab_semantic
     grain: one row per new_customer -> reference_customer similarity mapping
+    search_terms: >
+      I have a customer whose profile is like another customer; can I offer the same price
+      as a similar customer; lookalike customer pricing; reference a similar existing
+      customer's price; price a new customer based on a comparable one
     primary_key: similarity_mapping_id
     sensitivity_default: internal
     columns:

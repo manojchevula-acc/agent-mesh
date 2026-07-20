@@ -40,7 +40,11 @@ def _table_docs() -> dict[str, str]:
         cols = " ".join(
             f"{c.name} {c.desc} {' '.join(c.values)}" for c in table.columns.values()
         )
-        docs[name] = f"{name} {table.grain} {cols}"
+        # search_terms carries NL trigger phrases/synonyms for the view's business
+        # question archetypes — folded into the retrieval doc so a user phrasing like
+        # "explain how the price was calculated" recalls pricing_trace_view even though
+        # those words aren't in the grain/column text.
+        docs[name] = f"{name} {table.grain} {table.search_terms} {cols}"
     return docs
 
 
@@ -101,7 +105,8 @@ def _rrf(rankings: list[list[str]], k: int) -> list[str]:
 
 
 def select_tables(
-    question: str, tables_hint: list[str] | None = None, top_k: int | None = None
+    question: str, tables_hint: list[str] | None = None, top_k: int | None = None,
+    apply_closure: bool = True,
 ) -> set[str]:
     """Return the candidate table set for a dynamic-tier question.
 
@@ -109,7 +114,14 @@ def select_tables(
     widen-and-retry path (query_engine.py) to pull a bigger-but-still-bounded slice of
     the SAME already-computed fused ranking, instead of falling back to literally every
     table in the schema (which is the single largest, most expensive prompt component
-    and was blowing the provider's per-minute token budget on retries)."""
+    and was blowing the provider's per-minute token budget on retries).
+
+    ``apply_closure`` adds tables reachable via one declared join hop (bridge tables) so a
+    join is never missing from the RENDERED schema. The schema-link PLANNER passes False:
+    it only needs to pick among the ranked candidates, and rendering the full join closure
+    (customer_master neighbours almost every view) can blow the provider's per-minute token
+    limit. resolve_joins re-adds any bridge the plan actually needs afterwards, so the final
+    generation schema is unaffected."""
     if not settings.schema_retrieval_enabled:
         return set(ALLOWED_TABLES)  # current behaviour: full schema
 
@@ -130,6 +142,12 @@ def select_tables(
             core.append(t)
     if not core:
         return set(ALLOWED_TABLES)  # safe fallback: never starve generation
+
+    if not apply_closure:
+        # Planner path: ranked candidates only, no join-closure expansion (keeps the
+        # schema-link prompt small enough for the provider's per-minute token limit).
+        log.info("RETRIEVE ranked=%s (no closure — planner)", core)
+        return set(core)
 
     # Join-closure adds tables needed to JOIN the core ones — recall safety, NOT priority.
     closed = join_closure(set(core))
