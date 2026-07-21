@@ -1,5 +1,5 @@
 import { Link, NavLink } from "react-router-dom";
-import { MessageSquare, Activity, X, SquarePen, ThumbsUp, ShieldCheck, Zap, MessagesSquare, ScrollText } from "lucide-react";
+import { MessageSquare, X, SquarePen, ThumbsUp, MessagesSquare, GitBranch, Layers } from "lucide-react";
 import { ApiStatus } from "./ApiStatus";
 import { Logo } from "@/components/ui/Logo";
 import { cn } from "@/lib/utils";
@@ -12,10 +12,16 @@ const NAV_ITEMS = [
     description: "Ask the mesh a question",
   },
   {
-    to: "/app/mesh-status",
-    label: "Mesh Status",
-    icon: Activity,
-    description: "Health of all 6 A2A nodes",
+    to: "/app/activity",
+    label: "Activity",
+    icon: Layers,
+    description: "Pipeline health at a glance",
+  },
+  {
+    to: "/app/logs",
+    label: "Request Journey",
+    icon: GitBranch,
+    description: "Step-by-step request timeline",
   },
   {
     to: "/app/feedback",
@@ -24,28 +30,10 @@ const NAV_ITEMS = [
     description: "User ratings & satisfaction",
   },
   {
-    to: "/app/audit",
-    label: "Audit Trail",
-    icon: ShieldCheck,
-    description: "Full agent invocation log",
-  },
-  {
-    to: "/app/traces",
-    label: "Trace Spans",
-    icon: Zap,
-    description: "A2A wire call latency",
-  },
-  {
     to: "/app/conversations",
     label: "Conversations",
     icon: MessagesSquare,
     description: "All chat session threads",
-  },
-  {
-    to: "/app/logs",
-    label: "Logs",
-    icon: ScrollText,
-    description: "Live agent_mesh.log viewer",
   },
 ];
 
