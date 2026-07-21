@@ -233,11 +233,9 @@ function RequestRow({ group }: { group: RequestGroup }) {
 
   const statusDot = group.has_error
     ? "bg-red-500 ring-red-200 dark:ring-red-500/40"
-    : group.has_warning
-    ? "bg-amber-400 ring-amber-200 dark:ring-amber-500/40"
     : "bg-emerald-500 ring-emerald-200 dark:ring-emerald-500/40";
 
-  const statusLabel = group.has_error ? "Error" : group.has_warning ? "Warning" : "Success";
+  const statusLabel = group.has_error ? "Error" : "Success";
 
   return (
     <div
@@ -307,7 +305,7 @@ export default function RequestActivityPage() {
   }, [data]);
 
   const successCount = useMemo(() =>
-    data?.groups.filter(g => !g.has_error && !g.has_warning).length ?? 0,
+    data?.groups.filter(g => !g.has_error).length ?? 0,
     [data],
   );
 
@@ -329,8 +327,8 @@ export default function RequestActivityPage() {
         if (!(g.user ?? "").toLowerCase().includes(q) &&
             !g.request_id.toLowerCase().includes(q)) return false;
       }
-      if (statusFilter === "success" && (g.has_error || g.has_warning)) return false;
-      if (statusFilter === "issues" && !g.has_error && !g.has_warning) return false;
+      if (statusFilter === "success" && g.has_error) return false;
+      if (statusFilter === "issues" && !g.has_error) return false;
       return true;
     });
   }, [data, userSearch, statusFilter]);
