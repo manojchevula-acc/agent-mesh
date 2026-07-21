@@ -9,6 +9,7 @@ framework emits native observability spans for the whole orchestration:
       └─ executor.process compliance      ──(A2A)──► invoke_agent ComplianceAgent
       └─ executor.process domain           ──(A2A)──► invoke_agent PriceAssistAgent
       └─ executor.process output_redaction
+      
 
 PriceAssistAgent is the primary FAB banking orchestrator. It receives ALL requests
 after the security/RBAC/compliance pipeline, classifies intent internally, and
