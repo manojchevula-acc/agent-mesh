@@ -8,6 +8,7 @@ import type {
   FeedbackListResponse,
   FeedbackRequest,
   FeedbackResponse,
+  HitlDetails,
   LLMReasoningEntry,
   LogsResponse,
   MeshResult,
@@ -88,6 +89,8 @@ export async function* queryMeshStream(
             yield { type: "stage", stage: data.stage, status: data.status, message: data.message };
           } else if (eventType === "reasoning") {
             yield { type: "reasoning", entries: data.entries as LLMReasoningEntry[] };
+          } else if (eventType === "hitl") {
+            yield { type: "hitl", approval_id: data.approval_id as string, details: data.details as HitlDetails };
           } else if (eventType === "result") {
             yield { type: "result", result: data as MeshResult };
           } else if (eventType === "done") {
@@ -161,4 +164,17 @@ export async function getConversations(): Promise<ConversationsResponse> {
 export async function getLogs(): Promise<LogsResponse> {
   const { data } = await apiClient.get<LogsResponse>("/api/logs");
   return data;
+}
+
+export async function getApprovalDetails(approvalId: string): Promise<HitlDetails & { approval_id: string }> {
+  const { data } = await apiClient.get(`/api/approvals/${encodeURIComponent(approvalId)}`);
+  return data;
+}
+
+export async function approveRequest(approvalId: string): Promise<void> {
+  await apiClient.post(`/api/approvals/${encodeURIComponent(approvalId)}/approve`);
+}
+
+export async function rejectRequest(approvalId: string): Promise<void> {
+  await apiClient.post(`/api/approvals/${encodeURIComponent(approvalId)}/reject`);
 }

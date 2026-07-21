@@ -124,6 +124,7 @@ export default function ChatPage() {
         </p>
       </div>
     </div>
+
     </ChatContext.Provider>
   );
 }

@@ -182,6 +182,10 @@ class MeshState:
     permission_scope: str = ""
     allowed_tasks: List[str] = field(default_factory=list)
     denied_tasks: List[str] = field(default_factory=list)
+    # HITL fields — set by ComplianceExecutor when credit_officer role is detected
+    hitl_pending: bool = False
+    hitl_approval_id: str = ""
+    hitl_details: dict = field(default_factory=dict)
     # Prior field snapshot used by the state-transition trace to diff what each
     # executor changed. Managed by src.tracing.state_trace; not persisted.
     _trace_snapshot: dict = field(default_factory=dict, repr=False, compare=False)
@@ -526,6 +530,37 @@ class ComplianceExecutor(Executor):
             except Exception as exc:
                 _set_error(span, str(exc)[:200])
                 raise
+
+        # ── HITL gate: credit_officer requires human approval after compliance passes ──
+        if state.role == "credit_officer":
+            from src.hitl.approval_store import approval_store
+            _reasoning_dicts = [e.to_dict() for e in _reasoning_entries] if _reasoning_entries else []
+            aid = approval_store.create(
+                user_name=state.user_name,
+                role=state.role,
+                query=state.query,
+                compliance_verdict=verdict,
+                compliance_reasoning=_reasoning_dicts,
+            )
+            state.hitl_pending = True
+            state.hitl_approval_id = aid
+            state.hitl_details = {
+                "user_name": state.user_name,
+                "role": state.role,
+                "query": state.query,
+                "compliance_verdict": (verdict or "")[:400],
+                "compliance_reasoning": _reasoning_dicts,
+            }
+            state.trail.append(f"hitl_pending:{aid}")
+            _log.info("HITL pending user=%s approval_id=%s", state.user_name, aid,
+                      extra={"user": state.user_name, "status": "HITL"})
+            _emit_stream_event({"stage": "compliance", "status": "completed",
+                                "message": "Compliance passed — awaiting human approval"})
+            log_state_handoff("compliance", "hitl_pending", state, note=f"hitl:{aid}")
+            await ctx.yield_output(state)
+            return
+        # ── end HITL gate ────────────────────────────────────────────────────────────
+
         _emit_stream_event({"stage": "compliance", "status": "completed", "message": "Compliance check passed"})
         log_state_handoff(
             "compliance", "domain", state,
@@ -1050,6 +1085,27 @@ def build_mesh_workflow(ask: AskRemote):
         .add_edge(guardrail, rbac)
         .add_edge(rbac, compliance)
         .add_edge(compliance, domain)
+        .add_edge(domain, redact)
+        .build()
+    )
+
+
+def build_hitl_resume_workflow(ask: AskRemote):
+    """Builds Domain → OutputRedaction for post-HITL-approval pipeline resumption.
+
+    Skips guardrail, RBAC, and compliance — those already ran and passed.
+    The start_executor is DomainExecutor directly, since the MeshState arriving
+    here already has compliance_verdict stamped and hitl_pending cleared.
+    """
+    domain = DomainExecutor(ask, id="domain", bypass_price_assist=not Config.ENABLE_PRICE_ASSIST)
+    redact = OutputRedactionExecutor(id="output_redaction")
+    return (
+        WorkflowBuilder(
+            start_executor=domain,
+            name="hitl_resume_pipeline",
+            description="HITL approved → domain → redact",
+            output_from=[redact],
+        )
         .add_edge(domain, redact)
         .build()
     )

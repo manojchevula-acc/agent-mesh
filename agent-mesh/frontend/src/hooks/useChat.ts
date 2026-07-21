@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getConversation, queryMeshStream, submitFeedback } from "@/api/mesh";
-import type { ChatMessage, ExecutionEvent, LLMReasoningEntry } from "@/types/mesh";
+import type { ChatMessage, ExecutionEvent, LLMReasoningEntry, MeshResult, SessionMessage } from "@/types/mesh";
 
 const SESSION_ID_KEY = "agent-mesh-session-id";
 
@@ -25,6 +25,31 @@ function writeSessionId(id: string | null) {
   }
 }
 
+function toRestoredMessage(m: SessionMessage): ChatMessage {
+  const base: ChatMessage = {
+    id: makeId(),
+    role: m.role,
+    content: m.content,
+    timestamp: m.ts ? new Date(m.ts) : new Date(),
+  };
+  if (m.role === "assistant" && (m.route || m.trail?.length || m.trace?.length)) {
+    const result: MeshResult = {
+      answer: m.content,
+      blocked: m.blocked ?? false,
+      block_stage: null,
+      trail: m.trail ?? [],
+      request_id: m.request_id,
+      domain: m.domain,
+      route: m.route,
+      total_duration_ms: m.duration_ms,
+      events: m.trace ?? [],
+      llm_reasoning: m.reasoning ?? [],
+    };
+    return { ...base, result };
+  }
+  return base;
+}
+
 interface UseChatOptions {
   username: string;
   role: string;
@@ -45,14 +70,7 @@ export function useChat({ username, role }: UseChatOptions) {
     getConversation(sid)
       .then((history) => {
         if (cancelled || history.messages.length === 0) return;
-        setMessages(
-          history.messages.map((m) => ({
-            id: makeId(),
-            role: m.role,
-            content: m.content,
-            timestamp: m.ts ? new Date(m.ts) : new Date(),
-          })),
-        );
+        setMessages(history.messages.map(toRestoredMessage));
       })
       .catch(() => {
         /* API unreachable or no history — start fresh */
@@ -108,6 +126,26 @@ export function useChat({ username, role }: UseChatOptions) {
                 prev.map((m) =>
                   m.id === assistantId
                     ? { ...m, streamingReasoning: [...(m.streamingReasoning ?? []), ...(event.entries as LLMReasoningEntry[])] }
+                    : m
+                )
+              );
+            } else if (event.type === "hitl") {
+              // Store details in localStorage so the new tab can read them instantly
+              // (same origin = shared storage; avoids any API race condition)
+              try {
+                localStorage.setItem(
+                  `hitl-approval-${event.approval_id}`,
+                  JSON.stringify({ approval_id: event.approval_id, ...event.details })
+                );
+              } catch {
+                // ignore storage quota errors
+              }
+              // Open approval page in a new tab — future: replace with an email link
+              window.open(`/approval/${event.approval_id}`, "_blank");
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId
+                    ? { ...m, streamingStage: "Awaiting human approval in new tab…" }
                     : m
                 )
               );

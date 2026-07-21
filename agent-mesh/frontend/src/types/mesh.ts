@@ -128,11 +128,20 @@ export interface ChatMessage {
   streamingReasoning?: LLMReasoningEntry[];
 }
 
+export interface HitlDetails {
+  user_name: string;
+  role: string;
+  query: string;
+  compliance_verdict: string;
+  compliance_reasoning?: LLMReasoningEntry[];
+}
+
 // SSE stream event types from POST /api/query/stream
 export type StreamEvent =
   | { type: "stage"; stage: string; status: string; message?: string }
   | { type: "result"; result: MeshResult }
   | { type: "reasoning"; entries: LLMReasoningEntry[] }
+  | { type: "hitl"; approval_id: string; details: HitlDetails }
   | { type: "done" }
   | { type: "error"; message: string };
 
@@ -152,16 +161,9 @@ export interface QueryRequest {
   session_id?: string;
 }
 
-// One stored conversation message (mirrors the JSONL records persisted server-side).
-export interface ConversationMessage {
-  role: "user" | "assistant";
-  content: string;
-  ts?: string;
-}
-
 export interface ConversationHistory {
   session_id: string;
-  messages: ConversationMessage[];
+  messages: SessionMessage[];
 }
 
 export interface LoginRequest {

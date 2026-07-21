@@ -5,6 +5,7 @@ import { HomePage } from "@/pages/HomePage";
 import { LoginPage } from "@/pages/LoginPage";
 import { SignupPage } from "@/pages/SignupPage";
 import ChatPage from "@/pages/ChatPage";
+import ApprovalPage from "@/pages/ApprovalPage";
 import FeedbackDashboardPage from "@/pages/FeedbackDashboardPage";
 import AuditDashboardPage from "@/pages/AuditDashboardPage";
 import ConversationsDashboardPage from "@/pages/ConversationsDashboardPage";
@@ -19,6 +20,8 @@ export default function App() {
       <Route path="/" element={<HomePage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/signup" element={<SignupPage />} />
+      {/* Standalone approval page — accessible without login (future: email link) */}
+      <Route path="/approval/:id" element={<ApprovalPage />} />
 
       {/* Authenticated app */}
       <Route element={<ProtectedRoute />}>

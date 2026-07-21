@@ -38,7 +38,7 @@ from src.utils.console_logger import AgentLogger
 from src.observability import get_logger, CAT_SYSTEM
 from src.observability.baggage import set_request_baggage, detach_baggage
 from src.observability.metrics import record_mesh_request
-from src.mesh.workflow import MeshState, build_mesh_workflow, _stream_queue
+from src.mesh.workflow import MeshState, build_mesh_workflow, build_hitl_resume_workflow, _stream_queue, _emit_stream_event
 from src.tracing.execution_trace import get_active_tracer
 from src.tracing.llm_reasoning import strip_reasoning_markers
 from src.memory import ConversationStore
@@ -53,6 +53,8 @@ class MeshResult:
     block_stage: Optional[str] = None
     trail: List[str] = field(default_factory=list)
     session_id: str = ""
+    hitl_pending: bool = False
+    hitl_approval_id: str = ""
 
 
 async def handle_request(user: User, query: str, session_id: str | None = None, request_id: str | None = None) -> MeshResult:
@@ -147,15 +149,49 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
                           block_stage="internal_error", trail=["no_output"],
                           session_id=session_id)
 
+    # ── Human-in-the-Loop interception ──────────────────────────────────────────
+    if getattr(final, "hitl_pending", False):
+        from src.hitl.approval_store import approval_store
+        aid = final.hitl_approval_id
+        _log.info("HITL: awaiting approval id=%s user=%s", aid, user.username,
+                  extra={"user": user.username, "status": "HITL_WAIT"})
+        _emit_stream_event({
+            "event_type": "hitl",
+            "approval_id": aid,
+            "details": final.hitl_details,
+        })
+        approved = await approval_store.wait_for_approval(aid, timeout=120.0)
+        if approved:
+            _log.info("HITL: approved id=%s — resuming pipeline", aid,
+                      extra={"user": user.username, "status": "HITL_APPROVED"})
+            final.hitl_pending = False
+            resume_wf = build_hitl_resume_workflow(ask=ask_remote)
+            resume_events = await resume_wf.run(final)
+            resumed = _final_state(resume_events)
+            if resumed is not None:
+                final = resumed
+        else:
+            _log.info("HITL: rejected or timed out id=%s", aid,
+                      extra={"user": user.username, "status": "HITL_REJECTED"})
+            final.answer = (
+                "This request was reviewed and declined by a human approver. "
+                "Please contact your compliance team if you believe this is an error."
+            )
+            final.blocked = True
+            final.block_stage = "hitl_rejected"
+            final.hitl_pending = False
+            final.trail.append("hitl_rejected")
+    # ── end HITL interception ────────────────────────────────────────────────────
+
     # Safety-net: strip any <llm_reasoning> blocks that slipped through the
     # DomainExecutor extraction pass (e.g. on a retry path or when the LLM
     # placed the synthesis block after the answer text rather than before it).
     if final.answer:
         final.answer = strip_reasoning_markers(final.answer)
 
-    # Persist this turn so the next request in the session sees it. Only non-blocked
-    # turns with a real answer are stored (blocked queries carry no useful context).
-    if Config.ENABLE_CONVERSATION_MEMORY and not final.blocked and final.answer:
+    # Persist this turn (including blocked ones) so the full conversation history
+    # is visible when restoring the session.
+    if Config.ENABLE_CONVERSATION_MEMORY and final.answer:
         try:
             snapshot: dict = {"trail": final.trail, "blocked": final.blocked}
             if request_id:
@@ -182,6 +218,8 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
         block_stage=final.block_stage,
         trail=final.trail,
         session_id=session_id,
+        hitl_pending=getattr(final, "hitl_pending", False),
+        hitl_approval_id=getattr(final, "hitl_approval_id", ""),
     )
 
 

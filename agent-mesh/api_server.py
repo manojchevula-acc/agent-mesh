@@ -58,6 +58,7 @@ from src.auth.identity_provider import login, list_users
 from src.config import Config
 from src.feedback.store import record_feedback
 from src.mesh.orchestrator import handle_request, handle_request_stream
+from src.hitl.approval_store import approval_store
 from src.memory import ConversationStore
 from src.observability import get_logger, CAT_SYSTEM, flush_observability
 from src.tracing.execution_trace import ExecutionTracer, set_active_tracer, clear_active_tracer
@@ -763,6 +764,8 @@ async def post_query_stream(request: Request) -> StreamingResponse:
                 event_type = item.get("event_type", "stage")
                 if event_type == "reasoning":
                     yield f"event: reasoning\ndata: {json.dumps({'entries': item['entries']})}\n\n"
+                elif event_type == "hitl":
+                    yield f"event: hitl\ndata: {json.dumps({'approval_id': item['approval_id'], 'details': item['details']})}\n\n"
                 else:
                     yield f"event: stage\ndata: {json.dumps(item)}\n\n"
         finally:
@@ -781,6 +784,35 @@ _CORS_ORIGINS = [
     "http://localhost:4173",   # Vite preview
     "http://127.0.0.1:4173",
 ]
+
+async def get_approval(request: Request) -> JSONResponse:
+    """Fetch approval details for the standalone approval page. GET /api/approvals/{id}"""
+    aid = request.path_params.get("id", "").strip().upper()
+    details = approval_store.get(aid)
+    if details is None:
+        return JSONResponse({"error": f"Approval '{aid}' not found or already resolved."}, status_code=404)
+    return JSONResponse(details)
+
+
+async def post_approve(request: Request) -> JSONResponse:
+    """Approve a pending HITL request. POST /api/approvals/{id}/approve"""
+    aid = request.path_params.get("id", "").strip().upper()
+    ok = approval_store.approve(aid)
+    if not ok:
+        return JSONResponse({"error": f"Approval '{aid}' not found or already resolved."}, status_code=404)
+    _log.info("HITL approved id=%s", aid, extra={"status": "HITL_APPROVED"})
+    return JSONResponse({"success": True, "approval_id": aid, "decision": "approved"})
+
+
+async def post_reject(request: Request) -> JSONResponse:
+    """Reject a pending HITL request. POST /api/approvals/{id}/reject"""
+    aid = request.path_params.get("id", "").strip().upper()
+    ok = approval_store.reject(aid)
+    if not ok:
+        return JSONResponse({"error": f"Approval '{aid}' not found or already resolved."}, status_code=404)
+    _log.info("HITL rejected id=%s", aid, extra={"status": "HITL_REJECTED"})
+    return JSONResponse({"success": True, "approval_id": aid, "decision": "rejected"})
+
 
 app = Starlette(
     lifespan=_lifespan,
@@ -809,6 +841,9 @@ app = Starlette(
         Route("/api/feedback/stats",             get_feedback_stats,       methods=["GET"]),
         Route("/api/mesh/status",      get_mesh_status,     methods=["GET"]),
         Route("/api/conversations/{session_id}", get_conversation, methods=["GET"]),
+        Route("/api/approvals/{id}",             get_approval,     methods=["GET"]),
+        Route("/api/approvals/{id}/approve",     post_approve,     methods=["POST"]),
+        Route("/api/approvals/{id}/reject",      post_reject,      methods=["POST"]),
     ],
 )
 
