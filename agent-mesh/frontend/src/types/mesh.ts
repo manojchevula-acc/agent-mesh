@@ -17,6 +17,12 @@ export interface LLMReasoningData {
   checks?: string[];
   risk_signals?: string[];
   decision?: string;
+  authorization?: {
+    role?: string;
+    request_task_category?: string;
+    authorized?: boolean;
+    authorization_rationale?: string;
+  };
   // tool_selection phase (data / rag agents)
   tool_selected?: string;
   customer_id?: string;

@@ -152,8 +152,10 @@ _ALLOWED_ROLES = {r.value for r in BankingRole}
 
 # Roles that bypass the LLM semantic compliance check. The deterministic guardrail
 # (layer 1) still applies to everyone — only the A2A compliance agent call is skipped.
+# Only roles with unrestricted access (allowed_tasks: ["*"]) bypass compliance —
+# there is nothing to authorize for them. All other roles, including relationship_manager,
+# must pass through the combined safety + RBAC authorization check.
 _COMPLIANCE_BYPASS_ROLES = {
-    "relationship_manager",
     "platform_administrator",
     "operations_manager",
 }
@@ -175,6 +177,11 @@ class MeshState:
     # orchestrator. Injected into the PriceAssistAgent prompt by DomainExecutor so
     # follow-up questions resolve in-context. Empty when memory is off / first turn.
     conversation_history: List[dict] = field(default_factory=list)
+    # Permission scope resolved from role_permissions matrix at RBAC time.
+    # Injected into the compliance prompt so the LLM can enforce authorization.
+    permission_scope: str = ""
+    allowed_tasks: List[str] = field(default_factory=list)
+    denied_tasks: List[str] = field(default_factory=list)
     # Prior field snapshot used by the state-transition trace to diff what each
     # executor changed. Managed by src.tracing.state_trace; not persisted.
     _trace_snapshot: dict = field(default_factory=dict, repr=False, compare=False)
@@ -349,6 +356,13 @@ class RBACValidationExecutor(Executor):
                 _add_event(span, "rbac.authorized", {"role": state.role})
                 _set_ok(span)
 
+                # Resolve permission scope from the static matrix and stamp on state
+                # so ComplianceExecutor can inject it into the authorization check.
+                from src.auth.role_permissions import get_permission_scope, get_allowed_tasks, get_denied_tasks
+                state.permission_scope = get_permission_scope(state.role)
+                state.allowed_tasks = get_allowed_tasks(state.role)
+                state.denied_tasks = get_denied_tasks(state.role)
+
                 state.trail.append(f"rbac_pass:{state.role}")
                 _log.info("RBAC PASS role=%s", state.role,
                           extra={"user": state.user_name, "status": "PASS"})
@@ -436,7 +450,14 @@ class ComplianceExecutor(Executor):
                 _emit_stream_event({"stage": "compliance", "status": "started", "message": "Running semantic compliance check..."})
 
                 _add_event(span, "compliance.a2a_call.started", {"target": "compliance"})
-                _compliance_prompt = f"Review this request for safety: '{state.query}'"
+                _allowed_str = ", ".join(state.allowed_tasks) if state.allowed_tasks else "none"
+                _denied_str = ", ".join(state.denied_tasks) if state.denied_tasks else "none"
+                _compliance_prompt = (
+                    f"[User: {state.user_name} | Role: {state.role} | Scope: {state.permission_scope}]\n"
+                    f"Allowed task categories: {_allowed_str}\n"
+                    f"Denied task categories: {_denied_str}\n\n"
+                    f"Review this request for safety AND role authorization: '{state.query}'"
+                )
                 verdict = await self._ask("compliance", _compliance_prompt)
                 # Extract and capture LLM reasoning before consuming the verdict text.
                 _reasoning_entries, verdict = extract_reasoning(verdict, "compliance")

@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { User, ShieldCheck, Users, Briefcase } from "lucide-react";
+import { User, ShieldCheck, Users, Briefcase, Settings, BarChart3 } from "lucide-react";
 import { AuthLayout } from "@/components/layout/AuthLayout";
 import { Button } from "@/components/ui/Button";
 import { Alert } from "@/components/ui/Alert";
@@ -43,6 +43,33 @@ const DEMO_USERS = [
     icon: User,
     color: "text-slate-600 dark:text-slate-400",
     bg: "bg-slate-50 dark:bg-slate-900/20 border-slate-200 dark:border-slate-700",
+  },
+  {
+    username: "eve",
+    display_name: "Eve Khalifa",
+    role: "operations_manager",
+    description: "Operations Manager — full operational access, bypasses compliance LLM",
+    icon: BarChart3,
+    color: "text-violet-600 dark:text-violet-400",
+    bg: "bg-violet-50 dark:bg-violet-900/20 border-violet-200 dark:border-violet-800",
+  },
+  {
+    username: "farida",
+    display_name: "Farida Al-Zaabi",
+    role: "platform_administrator",
+    description: "Platform Administrator — full platform access, bypasses compliance LLM",
+    icon: Settings,
+    color: "text-rose-600 dark:text-rose-400",
+    bg: "bg-rose-50 dark:bg-rose-900/20 border-rose-200 dark:border-rose-800",
+  },
+  {
+    username: "cust001",
+    display_name: "Customer CUST001",
+    role: "customer",
+    description: "Customer — own account and public banking info only",
+    icon: User,
+    color: "text-green-600 dark:text-green-400",
+    bg: "bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800",
   },
 ] as const;
 

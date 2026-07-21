@@ -276,6 +276,37 @@ const ReasoningCard = memo(function ReasoningCard({
                   colour="bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300"
                 />
               )}
+              {/* ── Authorization block (rbac_authorization check) ── */}
+              {data.authorization && (
+                <div className="mt-2 rounded border border-line bg-surface p-2 space-y-1.5">
+                  <p className="text-[10px] uppercase tracking-wider text-muted font-semibold">Role Authorization</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {data.authorization.role && (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+                        {data.authorization.role.replace(/_/g, " ")}
+                      </span>
+                    )}
+                    {data.authorization.request_task_category && (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                        {data.authorization.request_task_category.replace(/_/g, " ")}
+                      </span>
+                    )}
+                    <span className={cn(
+                      "ml-auto flex items-center gap-1 text-[10px] font-bold",
+                      data.authorization.authorized
+                        ? "text-green-600 dark:text-green-400"
+                        : "text-red-600 dark:text-red-400"
+                    )}>
+                      {data.authorization.authorized ? "✓ Authorized" : "✗ Unauthorized"}
+                    </span>
+                  </div>
+                  {data.authorization.authorization_rationale && (
+                    <p className="text-[10px] text-muted italic">
+                      {data.authorization.authorization_rationale}
+                    </p>
+                  )}
+                </div>
+              )}
               {data.rationale && (
                 <blockquote className={cn("mt-1.5 border-l-2 pl-2 italic text-muted", decisionPassed ? "border-green-400 dark:border-green-700" : "border-red-400 dark:border-red-700")}>
                   {data.rationale}
