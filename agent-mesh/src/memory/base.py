@@ -32,8 +32,12 @@ class ConversationBackend(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def append(self, session_id: str, role: str, content: str) -> None:
-        """Append a single message (``role``/``content``) to ``session_id``."""
+    def append(self, session_id: str, role: str, content: str, extra: Dict | None = None) -> None:
+        """Append a single message (``role``/``content``) to ``session_id``.
+
+        ``extra`` is an optional dict of additional fields (e.g. trace, reasoning,
+        route) merged into the stored record for rich snapshot support.
+        """
         raise NotImplementedError
 
     def clear(self, session_id: str) -> None:

@@ -22,6 +22,7 @@ import sys
 import time
 import uuid
 import pathlib
+import dataclasses
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -156,7 +157,20 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
     # turns with a real answer are stored (blocked queries carry no useful context).
     if Config.ENABLE_CONVERSATION_MEMORY and not final.blocked and final.answer:
         try:
-            store.append_turn(session_id, query, final.answer)
+            snapshot: dict = {"trail": final.trail, "blocked": final.blocked}
+            if request_id:
+                snapshot["request_id"] = request_id
+            active_tracer = get_active_tracer()
+            if active_tracer is not None:
+                summ = active_tracer.summary()
+                snapshot.update({
+                    "route": summ.route,
+                    "domain": summ.domain,
+                    "duration_ms": summ.total_duration_ms,
+                    "trace": [dataclasses.asdict(e) for e in summ.events],
+                    "reasoning": summ.llm_reasoning,
+                })
+            store.append_turn_rich(session_id, query, final.answer, snapshot=snapshot)
             # Bind owner on the first turn; no-op on subsequent turns in the session.
             store.bind_session(session_id, user.username)
         except Exception as exc:  # never let memory I/O break a request

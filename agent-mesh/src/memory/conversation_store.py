@@ -58,6 +58,23 @@ class ConversationStore:
         self._backend.append(session_id, "user", user_query)
         self._backend.append(session_id, "assistant", assistant_answer)
 
+    def append_turn_rich(
+        self,
+        session_id: str,
+        user_query: str,
+        assistant_answer: str,
+        snapshot: "Dict | None" = None,
+    ) -> None:
+        """Persist one exchange, enriching the assistant record with a full snapshot.
+
+        ``snapshot`` may contain: request_id, route, domain, duration_ms, blocked,
+        trail, trace (list of ExecutionEvent dicts), reasoning (list of LLM reasoning
+        entry dicts).  Fields are stored verbatim alongside role/content/ts so the
+        Conversations dashboard can replay the full chat experience.
+        """
+        self._backend.append(session_id, "user", user_query)
+        self._backend.append(session_id, "assistant", assistant_answer, extra=snapshot or {})
+
     def clear(self, session_id: str) -> None:
         self._backend.clear(session_id)
 

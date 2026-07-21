@@ -270,6 +270,15 @@ export interface SessionMessage {
   role: "user" | "assistant";
   content: string;
   ts?: string;
+  // Rich snapshot fields — present on assistant messages recorded after this feature
+  request_id?: string;
+  route?: string;
+  domain?: string;
+  duration_ms?: number;
+  blocked?: boolean;
+  trail?: string[];
+  trace?: ExecutionEvent[];
+  reasoning?: LLMReasoningEntry[];
 }
 
 export interface SessionSummary {

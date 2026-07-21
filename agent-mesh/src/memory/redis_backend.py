@@ -63,7 +63,7 @@ class RedisBackend(ConversationBackend):
         self._connect()  # raises NotImplementedError until implemented
         return []
 
-    def append(self, session_id: str, role: str, content: str) -> None:
+    def append(self, session_id: str, role: str, content: str, extra=None) -> None:
         # TODO: client = self._connect()
         #       rec = {"role": role, "content": content, "ts": <iso-now>}
         #       client.rpush(self._key(session_id), json.dumps(rec))

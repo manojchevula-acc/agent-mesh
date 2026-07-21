@@ -1,22 +1,19 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import {
   MessagesSquare,
   RefreshCw,
   Search,
   ChevronDown,
   ChevronUp,
-  User,
-  Bot,
 } from "lucide-react";
 import { getConversations } from "@/api/mesh";
 import { Metric } from "@/components/ui/Metric";
 import { Badge } from "@/components/ui/Badge";
 import { CenteredSpinner } from "@/components/ui/Spinner";
 import { cn } from "@/lib/utils";
-import type { SessionSummary, SessionMessage } from "@/types/mesh";
+import MessageBubble from "@/components/chat/MessageBubble";
+import type { SessionSummary, SessionMessage, ChatMessage } from "@/types/mesh";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -51,51 +48,31 @@ function avatarColor(u: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Chat bubble
+// Adapter: SessionMessage → ChatMessage (for MessageBubble reuse)
 // ---------------------------------------------------------------------------
 
-function ChatBubble({ message }: { message: SessionMessage }) {
-  const isUser = message.role === "user";
-  return (
-    <div className={cn("flex gap-2.5", isUser ? "justify-end" : "justify-start")}>
-      {/* Assistant avatar on the left */}
-      {!isUser && (
-        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-100 dark:bg-brand-500/20 mt-1">
-          <Bot className="h-4 w-4 text-brand-600 dark:text-brand-400" />
-        </div>
-      )}
-
-      <div className={cn(
-        "max-w-[80%] rounded-2xl px-3.5 py-2.5",
-        isUser
-          ? "rounded-br-sm bg-brand-600 text-white"
-          : "rounded-bl-sm bg-surface-2 border border-line text-fg",
-      )}>
-        {isUser ? (
-          <p className="text-sm leading-relaxed">{message.content}</p>
-        ) : (
-          <div className="text-sm prose prose-sm dark:prose-invert max-w-none [&_table]:w-full [&_table]:text-xs [&_th]:text-left [&_th]:py-0.5 [&_td]:py-0.5 [&_table]:border-collapse [&_th]:border [&_th]:border-slate-300 [&_td]:border [&_td]:border-slate-300 dark:[&_th]:border-slate-600 dark:[&_td]:border-slate-600 [&_th]:px-1.5 [&_td]:px-1.5 prose-p:my-1 prose-ul:my-1 prose-li:my-0">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
-          </div>
-        )}
-        {message.ts && (
-          <p className={cn(
-            "mt-1 text-[10px] text-right",
-            isUser ? "text-white/60" : "text-faint",
-          )}>
-            {timeAgo(message.ts)}
-          </p>
-        )}
-      </div>
-
-      {/* User avatar on the right */}
-      {isUser && (
-        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-200 dark:bg-slate-700 mt-1">
-          <User className="h-4 w-4 text-slate-600 dark:text-slate-300" />
-        </div>
-      )}
-    </div>
-  );
+function toRichMessage(m: SessionMessage, idx: number): ChatMessage {
+  return {
+    id: m.request_id ?? `hist-${idx}`,
+    role: m.role,
+    content: m.content,
+    timestamp: m.ts ? new Date(m.ts) : new Date(0),
+    isLoading: false,
+    result: m.role === "assistant" && (m.route || m.trail?.length)
+      ? {
+          answer: m.content,
+          blocked: m.blocked ?? false,
+          block_stage: null,
+          trail: m.trail ?? [],
+          request_id: m.request_id,
+          route: m.route ?? null,
+          domain: m.domain ?? null,
+          total_duration_ms: m.duration_ms,
+          events: m.trace ?? [],
+          llm_reasoning: m.reasoning ?? [],
+        }
+      : undefined,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -163,9 +140,9 @@ function SessionCard({ session }: { session: SessionSummary }) {
 
         {/* Expanded chat thread */}
         {expanded && (
-          <div className="rounded-xl border border-line bg-surface-2 p-4 space-y-3 max-h-[480px] overflow-y-auto">
+          <div className="rounded-xl border border-line bg-surface-2 p-4 space-y-4 max-h-[600px] overflow-y-auto">
             {session.messages.map((msg, i) => (
-              <ChatBubble key={i} message={msg} />
+              <MessageBubble key={i} message={toRichMessage(msg, i)} />
             ))}
           </div>
         )}
@@ -209,7 +186,7 @@ export default function ConversationsDashboardPage() {
         <div>
           <h1 className="text-2xl font-bold text-fg">Conversations</h1>
           <p className="text-sm text-muted mt-0.5">
-            All chat sessions with full message history — click any session to read the thread
+            Full session snapshots — responses, execution trace, and AI reasoning preserved for each conversation
           </p>
         </div>
         <button

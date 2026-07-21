@@ -61,13 +61,15 @@ class JsonlBackend(ConversationBackend):
                     messages.append(rec)
         return messages
 
-    def append(self, session_id: str, role: str, content: str) -> None:
+    def append(self, session_id: str, role: str, content: str, extra: Dict | None = None) -> None:
         path = self._path(session_id)
-        record = {
+        record: Dict = {
             "role": role,
             "content": content,
             "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         }
+        if extra:
+            record.update(extra)
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
