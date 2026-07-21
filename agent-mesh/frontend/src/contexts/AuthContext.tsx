@@ -75,7 +75,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [persistSession],
   );
 
-  const logout = useCallback(() => persistSession(null), [persistSession]);
+  const logout = useCallback(() => {
+    localStorage.removeItem("agent-mesh-session-id");
+    persistSession(null);
+  }, [persistSession]);
 
   const value = useMemo<AuthContextValue>(
     () => ({ user, isAuthenticated: Boolean(user), login, logout }),
