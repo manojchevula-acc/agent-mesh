@@ -317,7 +317,16 @@ async def get_logs_list(request: Request) -> JSONResponse:
     hierarchy. Entries with request_id == "-" (system startup noise) are returned separately.
     """
     path = Config.LOG_FILE
-    if not os.path.exists(path):
+    # Collect the active log file plus all rotated backups (.1 … .LOG_BACKUP_COUNT)
+    log_files = []
+    if os.path.exists(path):
+        log_files.append(path)
+    for i in range(1, Config.LOG_BACKUP_COUNT + 1):
+        rotated = f"{path}.{i}"
+        if os.path.exists(rotated):
+            log_files.append(rotated)
+
+    if not log_files:
         return JSONResponse({
             "groups": [], "system_entries": [],
             "total_entries": 0, "unique_requests": 0,
@@ -325,20 +334,21 @@ async def get_logs_list(request: Request) -> JSONResponse:
         })
 
     entries = []
-    try:
-        with open(path, encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                    if isinstance(rec, dict):
-                        entries.append(rec)
-                except Exception:
-                    pass
-    except Exception as exc:
-        _log.warning("logs list read failed: %s", exc)
+    for log_path in log_files:
+        try:
+            with open(log_path, encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                        if isinstance(rec, dict):
+                            entries.append(rec)
+                    except Exception:
+                        pass
+        except Exception as exc:
+            _log.warning("logs list read failed (%s): %s", log_path, exc)
 
     total = len(entries)
     error_count = sum(1 for e in entries if e.get("level") == "ERROR")
