@@ -1,0 +1,1485 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus / Mimir",
+      "description": "Grafana Mimir (or Prometheus) datasource receiving OTLP metrics from agent_mesh",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    },
+    {
+      "name": "DS_TEMPO",
+      "label": "Tempo",
+      "description": "Grafana Tempo datasource receiving OTLP traces from agent_mesh",
+      "type": "datasource",
+      "pluginId": "tempo",
+      "pluginName": "Tempo"
+    },
+    {
+      "name": "DS_LOKI",
+      "label": "Loki",
+      "description": "Grafana Loki datasource receiving OTLP logs from agent_mesh",
+      "type": "datasource",
+      "pluginId": "loki",
+      "pluginName": "Loki"
+    }
+  ],
+  "__elements": {},
+  "__requires": [
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" },
+    { "type": "datasource", "id": "tempo",      "name": "Tempo",      "version": "1.0.0" },
+    { "type": "datasource", "id": "loki",       "name": "Loki",       "version": "1.0.0" },
+    { "type": "panel", "id": "stat",       "name": "Stat",        "version": "" },
+    { "type": "panel", "id": "timeseries", "name": "Time series", "version": "" },
+    { "type": "panel", "id": "piechart",   "name": "Pie chart",   "version": "" },
+    { "type": "panel", "id": "gauge",      "name": "Gauge",       "version": "" },
+    { "type": "panel", "id": "logs",       "name": "Logs",        "version": "" },
+    { "type": "panel", "id": "traces",     "name": "Traces",      "version": "" },
+    { "type": "grafana", "id": "grafana",  "name": "Grafana",     "version": "10.0.0" }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "FAB AgentMesh — full-stack observability: runtime security pipeline, domain routing, A2A/MCP agent calls, evaluation quality scores, financial benchmarks, distributed traces and application logs.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["fab", "agentmesh", "observability", "llm", "security", "operations"],
+  "time": { "from": "now-3h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "FAB AgentMesh — Operations & Observability",
+  "uid": "fab-agentmesh-ops-v1",
+  "version": 2,
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "type": "datasource",
+        "label": "Metrics Source"
+      },
+      {
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "name": "DS_TEMPO",
+        "options": [],
+        "query": "tempo",
+        "refresh": 1,
+        "type": "datasource",
+        "label": "Traces Source"
+      },
+      {
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "name": "DS_LOKI",
+        "options": [],
+        "query": "loki",
+        "refresh": 1,
+        "type": "datasource",
+        "label": "Logs Source"
+      }
+    ]
+  },
+  "panels": [
+
+    {
+      "id": 1,
+      "type": "row",
+      "title": "System Overview",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Total Requests",
+      "description": "Total end-to-end mesh requests completed in the selected time window (fab.mesh.requests.total counter).",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
+          "unit": "short",
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background", "graphMode": "area", "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["sum"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "sum(increase(fab_mesh_requests_total[$__range]))",
+        "instant": true, "legendFormat": "Total Requests", "refId": "A"
+      }]
+    },
+
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Success Rate",
+      "description": "Fraction of mesh requests that completed successfully over the selected time window.",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",    "value": null },
+              { "color": "orange", "value": 0.80 },
+              { "color": "green",  "value": 0.95 }
+            ]
+          },
+          "unit": "percentunit", "min": 0, "max": 1, "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background", "graphMode": "area", "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "sum(increase(fab_mesh_requests_total{result=\"SUCCESS\"}[$__range])) / sum(increase(fab_mesh_requests_total[$__range]))",
+        "instant": true, "legendFormat": "Success Rate", "refId": "A"
+      }]
+    },
+
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Block Rate",
+      "description": "Fraction of mesh requests blocked by any security stage (guardrail, RBAC, compliance) over the selected time window.",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "orange", "value": 0.05 },
+              { "color": "red",    "value": 0.15 }
+            ]
+          },
+          "unit": "percentunit", "min": 0, "max": 1, "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background", "graphMode": "area", "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "sum(increase(fab_mesh_requests_total{result=\"BLOCKED\"}[$__range])) / sum(increase(fab_mesh_requests_total[$__range]))",
+        "instant": true, "legendFormat": "Block Rate", "refId": "A"
+      }]
+    },
+
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Error Rate",
+      "description": "Fraction of mesh requests that encountered an unexpected error (result=ERROR) over the selected time window.",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "orange", "value": 0.01 },
+              { "color": "red",    "value": 0.05 }
+            ]
+          },
+          "unit": "percentunit", "min": 0, "max": 1, "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background", "graphMode": "area", "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "sum(increase(fab_mesh_requests_total{result=\"ERROR\"}[$__range])) / sum(increase(fab_mesh_requests_total[$__range]))",
+        "instant": true, "legendFormat": "Error Rate", "refId": "A"
+      }]
+    },
+
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "P95 End-to-End Latency",
+      "description": "95th-percentile wall-clock time for a full mesh request (fab.mesh.request.duration histogram, unit: milliseconds).",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "orange", "value": 3000 },
+              { "color": "red",    "value": 8000 }
+            ]
+          },
+          "unit": "ms", "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background", "graphMode": "none", "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "histogram_quantile(0.95, sum(rate(fab_mesh_request_duration_milliseconds_bucket[$__rate_interval])) by (le))",
+        "instant": true, "legendFormat": "P95 Latency", "refId": "A"
+      }]
+    },
+
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "PII Tokens Redacted",
+      "description": "Total PII tokens scrubbed from agent output in the selected window (fab.output.redaction.pii_hits histogram count).",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "orange", "value": 5 },
+              { "color": "red",    "value": 20 }
+            ]
+          },
+          "unit": "short", "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background", "graphMode": "area", "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["sum"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "sum(increase(fab_output_redaction_pii_hits_count[$__range]))",
+        "instant": true, "legendFormat": "PII Tokens Redacted", "refId": "A"
+      }]
+    },
+
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Request Throughput by Result",
+      "description": "Requests per second broken down by outcome: SUCCESS, BLOCKED, ERROR (fab.mesh.requests.total counter, rate over 1m).",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never", "spanNulls": false },
+          "unit": "reqps"
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "SUCCESS" }, "properties": [{ "id": "color", "value": { "fixedColor": "#73BF69", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "BLOCKED" }, "properties": [{ "id": "color", "value": { "fixedColor": "#F2495C", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "ERROR" },   "properties": [{ "id": "color", "value": { "fixedColor": "#FF9830", "mode": "fixed" } }] }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "lastNotNull"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "sum(rate(fab_mesh_requests_total[1m])) by (result)",
+        "legendFormat": "{{result}}", "refId": "A"
+      }]
+    },
+
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "End-to-End Latency Percentiles",
+      "description": "P50 / P95 / P99 full mesh request latency over time (fab.mesh.request.duration histogram — unit: milliseconds).",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 5, "lineWidth": 2, "showPoints": "never" },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.50, sum(rate(fab_mesh_request_duration_milliseconds_bucket[$__rate_interval])) by (le))",
+          "legendFormat": "P50", "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.95, sum(rate(fab_mesh_request_duration_milliseconds_bucket[$__rate_interval])) by (le))",
+          "legendFormat": "P95", "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.99, sum(rate(fab_mesh_request_duration_milliseconds_bucket[$__rate_interval])) by (le))",
+          "legendFormat": "P99", "refId": "C"
+        }
+      ]
+    },
+
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Input Guardrail",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 21 }
+    },
+
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Guardrail Block Rate",
+      "description": "Fraction of input guardrail checks that resulted in BLOCK over the selected window (fab.guardrail.requests.total).",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 22 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "orange", "value": 0.05 },
+              { "color": "red",    "value": 0.20 }
+            ]
+          },
+          "unit": "percentunit", "min": 0, "max": 1, "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background", "graphMode": "area", "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "sum(increase(fab_guardrail_requests_total{result=\"BLOCK\"}[$__range])) / sum(increase(fab_guardrail_requests_total[$__range]))",
+        "instant": true, "legendFormat": "Block Rate", "refId": "A"
+      }]
+    },
+
+    {
+      "id": 12,
+      "type": "stat",
+      "title": "Guardrail P95 Latency",
+      "description": "95th-percentile guardrail evaluation time (fab.guardrail.duration histogram — unit: milliseconds).",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 22 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "orange", "value": 500 },
+              { "color": "red",    "value": 2000 }
+            ]
+          },
+          "unit": "ms", "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background", "graphMode": "none", "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "histogram_quantile(0.95, sum(rate(fab_guardrail_duration_milliseconds_bucket[$__rate_interval])) by (le))",
+        "instant": true, "legendFormat": "P95 Latency", "refId": "A"
+      }]
+    },
+
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Guardrail Evaluations/sec by Result",
+      "description": "Rate of guardrail checks split by PASS vs BLOCK over time.",
+      "gridPos": { "h": 4, "w": 16, "x": 8, "y": 22 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "unit": "reqps"
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "PASS" },  "properties": [{ "id": "color", "value": { "fixedColor": "#73BF69", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "BLOCK" }, "properties": [{ "id": "color", "value": { "fixedColor": "#F2495C", "mode": "fixed" } }] }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "right" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "sum(rate(fab_guardrail_requests_total[1m])) by (result)",
+        "legendFormat": "{{result}}", "refId": "A"
+      }]
+    },
+
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Guardrail Violations by Category",
+      "description": "Rate of BLOCK outcomes broken down by violation category (e.g. prompt_injection, destructive_intent).",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 26 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "bars", "fillOpacity": 80, "lineWidth": 1, "showPoints": "never", "stacking": { "group": "A", "mode": "normal" } },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["sum"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "sum(rate(fab_guardrail_requests_total{result=\"BLOCK\"}[2m])) by (category)",
+        "legendFormat": "{{category}}", "refId": "A"
+      }]
+    },
+
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Guardrail Latency Percentiles",
+      "description": "P50 / P95 / P99 guardrail evaluation latency (fab.guardrail.duration histogram — unit: milliseconds).",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 26 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 5, "lineWidth": 2, "showPoints": "never" },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.50, sum(rate(fab_guardrail_duration_milliseconds_bucket[$__rate_interval])) by (le))",
+          "legendFormat": "P50", "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.95, sum(rate(fab_guardrail_duration_milliseconds_bucket[$__rate_interval])) by (le))",
+          "legendFormat": "P95", "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.99, sum(rate(fab_guardrail_duration_milliseconds_bucket[$__rate_interval])) by (le))",
+          "legendFormat": "P99", "refId": "C"
+        }
+      ]
+    },
+
+    {
+      "id": 16,
+      "type": "row",
+      "title": "RBAC Access Control",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 34 }
+    },
+
+    {
+      "id": 17,
+      "type": "stat",
+      "title": "RBAC Block Rate",
+      "description": "Fraction of RBAC role-validation checks that resulted in BLOCK over the selected window (fab.rbac.requests.total).",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 35 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "orange", "value": 0.03 },
+              { "color": "red",    "value": 0.10 }
+            ]
+          },
+          "unit": "percentunit", "min": 0, "max": 1, "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background", "graphMode": "area", "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "sum(increase(fab_rbac_requests_total{result=\"BLOCK\"}[$__range])) / sum(increase(fab_rbac_requests_total[$__range]))",
+        "instant": true, "legendFormat": "Block Rate", "refId": "A"
+      }]
+    },
+
+    {
+      "id": 18,
+      "type": "stat",
+      "title": "RBAC P95 Latency",
+      "description": "95th-percentile RBAC validation time (fab.rbac.duration histogram — unit: milliseconds).",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 35 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "orange", "value": 200 },
+              { "color": "red",    "value": 1000 }
+            ]
+          },
+          "unit": "ms", "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background", "graphMode": "none", "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "histogram_quantile(0.95, sum(rate(fab_rbac_duration_milliseconds_bucket[$__rate_interval])) by (le))",
+        "instant": true, "legendFormat": "P95 Latency", "refId": "A"
+      }]
+    },
+
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "RBAC Checks/sec by Result",
+      "description": "Rate of RBAC validations split by PASS vs BLOCK over time.",
+      "gridPos": { "h": 4, "w": 16, "x": 8, "y": 35 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "unit": "reqps"
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "PASS" },  "properties": [{ "id": "color", "value": { "fixedColor": "#73BF69", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "BLOCK" }, "properties": [{ "id": "color", "value": { "fixedColor": "#F2495C", "mode": "fixed" } }] }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "right" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "sum(rate(fab_rbac_requests_total[1m])) by (result)",
+        "legendFormat": "{{result}}", "refId": "A"
+      }]
+    },
+
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "RBAC Checks by Banking Role",
+      "description": "Rate of RBAC checks broken down by FAB banking role (credit_officer, relationship_manager, compliance_officer, etc.).",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 39 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 5, "lineWidth": 2, "showPoints": "never" },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "sum(rate(fab_rbac_requests_total[2m])) by (role)",
+        "legendFormat": "{{role}}", "refId": "A"
+      }]
+    },
+
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "RBAC Latency Percentiles",
+      "description": "P50 / P95 / P99 RBAC validation latency (fab.rbac.duration histogram — unit: milliseconds).",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 39 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 5, "lineWidth": 2, "showPoints": "never" },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.50, sum(rate(fab_rbac_duration_milliseconds_bucket[$__rate_interval])) by (le))",
+          "legendFormat": "P50", "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.95, sum(rate(fab_rbac_duration_milliseconds_bucket[$__rate_interval])) by (le))",
+          "legendFormat": "P95", "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.99, sum(rate(fab_rbac_duration_milliseconds_bucket[$__rate_interval])) by (le))",
+          "legendFormat": "P99", "refId": "C"
+        }
+      ]
+    },
+
+    {
+      "id": 22,
+      "type": "row",
+      "title": "Compliance Review (A2A)",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 47 }
+    },
+
+    {
+      "id": 23,
+      "type": "stat",
+      "title": "Compliance Pass Rate",
+      "description": "Fraction of compliance A2A reviews that returned PASSED over the selected window (fab.compliance.requests.total).",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 48 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",    "value": null },
+              { "color": "orange", "value": 0.80 },
+              { "color": "green",  "value": 0.95 }
+            ]
+          },
+          "unit": "percentunit", "min": 0, "max": 1, "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background", "graphMode": "area", "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "sum(increase(fab_compliance_requests_total{result=\"PASSED\"}[$__range])) / sum(increase(fab_compliance_requests_total[$__range]))",
+        "instant": true, "legendFormat": "Pass Rate", "refId": "A"
+      }]
+    },
+
+    {
+      "id": 24,
+      "type": "stat",
+      "title": "Compliance Bypass Rate",
+      "description": "Fraction of compliance checks skipped via role-bypass logic (result=BYPASSED). Elevated values may indicate misconfigured bypass rules.",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 48 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "orange", "value": 0.30 },
+              { "color": "red",    "value": 0.60 }
+            ]
+          },
+          "unit": "percentunit", "min": 0, "max": 1, "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background", "graphMode": "area", "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "sum(increase(fab_compliance_requests_total{result=\"BYPASSED\"}[$__range])) / sum(increase(fab_compliance_requests_total[$__range]))",
+        "instant": true, "legendFormat": "Bypass Rate", "refId": "A"
+      }]
+    },
+
+    {
+      "id": 25,
+      "type": "stat",
+      "title": "Compliance P95 Latency",
+      "description": "95th-percentile compliance A2A review time including the full LLM round-trip (fab.compliance.duration histogram — unit: milliseconds).",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 48 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "orange", "value": 5000 },
+              { "color": "red",    "value": 15000 }
+            ]
+          },
+          "unit": "ms", "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background", "graphMode": "none", "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "histogram_quantile(0.95, sum(rate(fab_compliance_duration_milliseconds_bucket[$__rate_interval])) by (le))",
+        "instant": true, "legendFormat": "P95 Latency", "refId": "A"
+      }]
+    },
+
+    {
+      "id": 26,
+      "type": "timeseries",
+      "title": "Compliance Reviews/sec by Result",
+      "description": "Rate of compliance A2A reviews split by PASSED, FAILED, BYPASSED over time.",
+      "gridPos": { "h": 4, "w": 12, "x": 12, "y": 48 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "unit": "reqps"
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "PASSED" },   "properties": [{ "id": "color", "value": { "fixedColor": "#73BF69", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "FAILED" },   "properties": [{ "id": "color", "value": { "fixedColor": "#F2495C", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "BYPASSED" }, "properties": [{ "id": "color", "value": { "fixedColor": "#B877D9", "mode": "fixed" } }] }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "right" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "sum(rate(fab_compliance_requests_total[1m])) by (result)",
+        "legendFormat": "{{result}}", "refId": "A"
+      }]
+    },
+
+    {
+      "id": 27,
+      "type": "timeseries",
+      "title": "Compliance Latency Percentiles",
+      "description": "P50 / P95 / P99 compliance A2A review latency (fab.compliance.duration histogram — unit: milliseconds). Includes full LLM round-trip.",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 52 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 5, "lineWidth": 2, "showPoints": "never" },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.50, sum(rate(fab_compliance_duration_milliseconds_bucket[$__rate_interval])) by (le))",
+          "legendFormat": "P50", "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.95, sum(rate(fab_compliance_duration_milliseconds_bucket[$__rate_interval])) by (le))",
+          "legendFormat": "P95", "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.99, sum(rate(fab_compliance_duration_milliseconds_bucket[$__rate_interval])) by (le))",
+          "legendFormat": "P99", "refId": "C"
+        }
+      ]
+    },
+
+    {
+      "id": 28,
+      "type": "row",
+      "title": "Domain Routing & Agent Calls",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 60 }
+    },
+
+    {
+      "id": 29,
+      "type": "piechart",
+      "title": "Route Distribution",
+      "description": "Share of domain dispatch decisions by route type over the selected window: Data Layer Service, RAG Service, Hybrid (fab.domain.route.total).",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 61 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" },
+        "overrides": []
+      },
+      "options": {
+        "displayLabels": ["percent", "name"],
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["sum"] },
+        "pieType": "pie",
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "sum(increase(fab_domain_route_total[$__range])) by (route)",
+        "instant": true, "legendFormat": "{{route}}", "refId": "A"
+      }]
+    },
+
+    {
+      "id": 30,
+      "type": "timeseries",
+      "title": "Domain Routing Throughput by Route",
+      "description": "Requests/sec routed to each domain path over time (fab.domain.route.total).",
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 61 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "sum(rate(fab_domain_route_total[2m])) by (route)",
+        "legendFormat": "{{route}}", "refId": "A"
+      }]
+    },
+
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "A2A Calls by Agent Node",
+      "description": "Rate of agent-to-agent (A2A) hops per target node and outcome. Elevated ERROR rate indicates a downstream agent outage (fab.a2a.calls.total).",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 69 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 5, "lineWidth": 2, "showPoints": "never" },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "sum(rate(fab_a2a_calls_total[2m])) by (target_node, result)",
+        "legendFormat": "{{target_node}} — {{result}}", "refId": "A"
+      }]
+    },
+
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "MCP Tool Calls by Service & Tool",
+      "description": "Rate of MCP tool invocations by service (datalayer / rag) and tool name, split by SUCCESS vs ERROR (fab.mcp.calls.total).",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 69 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 5, "lineWidth": 2, "showPoints": "never" },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "sum(rate(fab_mcp_calls_total[2m])) by (service, tool_name, result)",
+        "legendFormat": "{{service}} / {{tool_name}} — {{result}}", "refId": "A"
+      }]
+    },
+
+    {
+      "id": 33,
+      "type": "timeseries",
+      "title": "Domain Dispatch Latency Percentiles by Route",
+      "description": "P50 / P95 / P99 domain dispatch wall-clock time per route type (fab.domain.duration histogram — unit: milliseconds).",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 77 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 5, "lineWidth": 2, "showPoints": "never" },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.50, sum(rate(fab_domain_duration_milliseconds_bucket[$__rate_interval])) by (le, route))",
+          "legendFormat": "P50 — {{route}}", "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.95, sum(rate(fab_domain_duration_milliseconds_bucket[$__rate_interval])) by (le, route))",
+          "legendFormat": "P95 — {{route}}", "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.99, sum(rate(fab_domain_duration_milliseconds_bucket[$__rate_interval])) by (le, route))",
+          "legendFormat": "P99 — {{route}}", "refId": "C"
+        }
+      ]
+    },
+
+    {
+      "id": 34,
+      "type": "row",
+      "title": "Output Redaction (PII)",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 85 }
+    },
+
+    {
+      "id": 35,
+      "type": "timeseries",
+      "title": "PII Tokens Redacted per Request over Time",
+      "description": "Rate of PII tokens scrubbed from agent output (fab.output.redaction.pii_hits histogram — unit: {match}, count per second). Spikes may indicate data-leak risk from upstream agents.",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 86 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "#F2495C" },
+          "custom": { "drawStyle": "bars", "fillOpacity": 60, "lineWidth": 1, "showPoints": "never" },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "sum(rate(fab_output_redaction_pii_hits_count[$__rate_interval]))",
+        "legendFormat": "PII tokens/sec", "refId": "A"
+      }]
+    },
+
+    {
+      "id": 36,
+      "type": "row",
+      "title": "Evaluation Quality Scores",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 94 }
+    },
+
+    {
+      "id": 37,
+      "type": "stat",
+      "title": "PII Safety Score",
+      "description": "Evaluation pass rate for PII non-leakage across eval test cases (fab_eval_pii_score gauge pushed by workflow_evaluations).",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 95 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",    "value": null },
+              { "color": "orange", "value": 0.85 },
+              { "color": "green",  "value": 0.95 }
+            ]
+          },
+          "unit": "percentunit", "min": 0, "max": 1, "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background", "graphMode": "area", "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "fab_eval_pii_score",
+        "instant": true, "legendFormat": "PII Safety", "refId": "A"
+      }]
+    },
+
+    {
+      "id": 38,
+      "type": "stat",
+      "title": "RBAC Scope Score",
+      "description": "Evaluation pass rate for RBAC role-scope enforcement across eval test cases (fab_eval_rbac_score gauge).",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 95 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",    "value": null },
+              { "color": "orange", "value": 0.85 },
+              { "color": "green",  "value": 0.95 }
+            ]
+          },
+          "unit": "percentunit", "min": 0, "max": 1, "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background", "graphMode": "area", "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "fab_eval_rbac_score",
+        "instant": true, "legendFormat": "RBAC Scope", "refId": "A"
+      }]
+    },
+
+    {
+      "id": 39,
+      "type": "stat",
+      "title": "Compliance Accuracy Score",
+      "description": "Evaluation accuracy for compliance A2A review decisions across eval test cases (fab_eval_compliance_score gauge).",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 95 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",    "value": null },
+              { "color": "orange", "value": 0.80 },
+              { "color": "green",  "value": 0.90 }
+            ]
+          },
+          "unit": "percentunit", "min": 0, "max": 1, "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background", "graphMode": "area", "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "fab_eval_compliance_score",
+        "instant": true, "legendFormat": "Compliance Accuracy", "refId": "A"
+      }]
+    },
+
+    {
+      "id": 40,
+      "type": "stat",
+      "title": "Overall Eval Pass Rate",
+      "description": "Aggregate pass rate across all evaluation dimensions for the latest eval run (fab_eval_overall_pass_rate gauge).",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 95 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",    "value": null },
+              { "color": "orange", "value": 0.75 },
+              { "color": "green",  "value": 0.90 }
+            ]
+          },
+          "unit": "percentunit", "min": 0, "max": 1, "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background", "graphMode": "area", "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "fab_eval_overall_pass_rate",
+        "instant": true, "legendFormat": "Overall Pass Rate", "refId": "A"
+      }]
+    },
+
+    {
+      "id": 41,
+      "type": "gauge",
+      "title": "Red Team Attack Block Rate",
+      "description": "Fraction of adversarial red-team attack prompts successfully blocked (fab_redteam_blocked_rate). Target: > 0.95.",
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 95 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",    "value": null },
+              { "color": "orange", "value": 0.80 },
+              { "color": "green",  "value": 0.95 }
+            ]
+          },
+          "unit": "percentunit", "min": 0, "max": 1, "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "minVizHeight": 75, "minVizWidth": 75, "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showThresholdLabels": false, "showThresholdMarkers": true
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "fab_redteam_blocked_rate",
+        "instant": true, "legendFormat": "Block Rate", "refId": "A"
+      }]
+    },
+
+    {
+      "id": 42,
+      "type": "timeseries",
+      "title": "Evaluation Quality Scores Over Time",
+      "description": "Trending quality scores from the automated evaluation framework: task adherence, citation (RAG), tool accuracy, and intent resolution (1-hour rolling average from fab_eval_* gauges).",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 99 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 5, "lineWidth": 2, "showPoints": "auto" },
+          "unit": "percentunit", "min": 0, "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "lastNotNull", "min"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "avg_over_time(fab_eval_task_adherence_score[1h])",
+          "legendFormat": "Task Adherence", "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "avg_over_time(fab_eval_citation_rate[1h])",
+          "legendFormat": "Citation Rate (RAG)", "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "avg_over_time(fab_eval_tool_accuracy[1h])",
+          "legendFormat": "Tool Accuracy", "refId": "C"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "avg_over_time(fab_eval_intent_resolution_score[1h])",
+          "legendFormat": "Intent Resolution", "refId": "D"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "avg_over_time(fab_eval_overall_pass_rate[1h])",
+          "legendFormat": "Overall Pass Rate", "refId": "E"
+        }
+      ]
+    },
+
+    {
+      "id": 43,
+      "type": "row",
+      "title": "Financial Benchmarks (FLARE)",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 107 }
+    },
+
+    {
+      "id": 44,
+      "type": "timeseries",
+      "title": "FLARE Benchmark F1 Scores",
+      "description": "F1 scores on FLARE financial NLP benchmarks — Market Analysis, BigData22, Headlines — pushed after each benchmark run. Dashed line = 0.50 random baseline. Higher is better.",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 108 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 5, "lineWidth": 2, "showPoints": "auto" },
+          "unit": "percentunit", "min": 0, "max": 1
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Baseline (0.50)" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "rgba(200,200,200,0.4)", "mode": "fixed" } },
+              { "id": "custom.lineStyle", "value": { "dash": [8, 4], "fill": "dash" } },
+              { "id": "custom.lineWidth", "value": 1 }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "avg_over_time(flare_ma_f1[1h])",
+          "legendFormat": "FLARE Market Analysis F1", "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "avg_over_time(flare_bigdata22_f1[1h])",
+          "legendFormat": "FLARE BigData22 F1", "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "avg_over_time(flare_headlines_f1[1h])",
+          "legendFormat": "FLARE Headlines F1", "refId": "C"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "vector(0.5)",
+          "legendFormat": "Baseline (0.50)", "refId": "D"
+        }
+      ]
+    },
+
+    {
+      "id": 45,
+      "type": "row",
+      "title": "Distributed Traces (Tempo)",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 116 }
+    },
+
+    {
+      "id": 46,
+      "type": "traces",
+      "title": "Recent Mesh Request Traces",
+      "description": "Live trace list from Grafana Tempo. Each row is one fab.request_id waterfall — click to open the full span tree. Spans are emitted by agent_mesh_orchestrator and all downstream agent services. Use the search bar to filter by service, duration, or span attributes (e.g. guardrail.result=BLOCK).",
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 117 },
+      "datasource": { "type": "tempo", "uid": "${DS_TEMPO}" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogsSample": false,
+        "liveNow": false,
+        "showTime": false,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false
+      },
+      "targets": [
+        {
+          "datasource": { "type": "tempo", "uid": "${DS_TEMPO}" },
+          "queryType": "traceqlSearch",
+          "refId": "A",
+          "tableType": "traces",
+          "limit": 20,
+          "filters": [
+            {
+              "id": "service-name",
+              "operator": "=~",
+              "scope": "resource",
+              "tag": "service.name",
+              "value": ["agent_mesh_orchestrator"],
+              "valueType": "string"
+            }
+          ]
+        }
+      ]
+    },
+
+    {
+      "id": 47,
+      "type": "row",
+      "title": "Application Logs (Loki)",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 129 }
+    },
+
+    {
+      "id": 48,
+      "type": "logs",
+      "title": "All Agent Services — Structured Logs",
+      "description": "Structured JSON logs from all agent_mesh services (mesh.workflow, mesh.a2a, mesh.mcp, mesh.approvals, mesh.system). Each line carries trace_id and request_id — click trace_id to jump directly to the matching Tempo trace waterfall.",
+      "gridPos": { "h": 14, "w": 24, "x": 0, "y": 130 },
+      "datasource": { "type": "loki", "uid": "${DS_LOKI}" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": true,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [{
+        "datasource": { "type": "loki", "uid": "${DS_LOKI}" },
+        "expr": "{service_name=~\"agent_mesh.*\"} | json",
+        "refId": "A"
+      }]
+    },
+
+    {
+      "id": 49,
+      "type": "logs",
+      "title": "Errors & Warnings Only",
+      "description": "Filtered view showing only ERROR and WARNING log entries across all agent_mesh services — useful for rapid incident triage.",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 144 },
+      "datasource": { "type": "loki", "uid": "${DS_LOKI}" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": true,
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [{
+        "datasource": { "type": "loki", "uid": "${DS_LOKI}" },
+        "expr": "{service_name=~\"agent_mesh.*\"} | json | level =~ \"ERROR|WARNING\"",
+        "refId": "A"
+      }]
+    }
+
+  ]
+}
