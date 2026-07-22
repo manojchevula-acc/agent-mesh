@@ -25,6 +25,10 @@ tables:
   customer_master:
     grain: one row per customer
     purpose: "The master record for one customer — identity, segment, industry, region, risk, credit score, exposure. Join here for any customer ATTRIBUTE a view lacks."
+    search_terms: >
+      customer region, industry, segment, risk category, credit score, exposure not
+      already on a view; the base customer join anchor when the query must reach a base
+      table (e.g. product_master, treasury_rate_sheet) that no semantic view may join to
     primary_key: customer_id
     sensitivity_default: internal
     columns:
@@ -52,6 +56,10 @@ tables:
   product_master:
     grain: one row per product
     purpose: "The master record for one product — name, type, standard margin, ticket-size limits. Join here for product attributes."
+    search_terms: >
+      product name and type; minimum and maximum ticket size; ticket-size utilisation or
+      limit; standard margin, maximum margin, maximum discount allowed for a product; the
+      only source of product-level caps and limits — no semantic view carries them
     primary_key: product_id
     sensitivity_default: public
     columns:
@@ -76,6 +84,10 @@ tables:
   treasury_rate_sheet:
     grain: one row per currency + tenor (+ effective_date)
     purpose: "Funding/benchmark cost by currency and tenor — the treasury rate inputs to pricing. Pick for funding-cost / benchmark-rate questions by currency+tenor."
+    search_terms: >
+      treasury benchmark index, EIBOR vs SOFR; benchmark rate; funding cost by currency
+      and tenor; the only source of the benchmark_index category — no semantic view
+      carries it, so any question naming EIBOR or SOFR must join here
     primary_key: rate_id
     sensitivity_default: public
     columns:
@@ -88,7 +100,7 @@ tables:
       funding_cost_pct:   {type: float, unit: pct, filterable: false, desc: "Bank funding cost; first term of price formula"}
     blocked_columns: []
     joins:
-      treasury_rate_sheet: "(implicit) product/deal currency + tenor -> treasury_rate_sheet.currency + tenor"
+      historical_deals: "currency -> historical_deals.currency AND tenor -> historical_deals.tenor"
 
   # 3.4 ---------------------------------------------------------------------------
   pricing_policy:
@@ -117,6 +129,10 @@ tables:
   historical_deals:
     grain: one row per past deal
     purpose: "The raw per-deal transaction record (requested amount, tenor, channel, outcome, dates). Pick for deal-level facts and time/channel analysis not already rolled up in a view."
+    search_terms: >
+      raw per-deal facts not already rolled up in a view; the base deal grain to join
+      directly to product_master or treasury_rate_sheet when the metric (e.g. maximum
+      ticket size, benchmark index) lives only on a base table a semantic view can't reach
     primary_key: deal_id
     sensitivity_default: internal
     columns:
@@ -141,6 +157,7 @@ tables:
     joins:
       customer_master: "customer_id"
       product_master: "product_id"
+      treasury_rate_sheet: "currency -> treasury_rate_sheet.currency AND tenor -> treasury_rate_sheet.tenor"
 
   # ===========================================================================
   # SEMANTIC VIEWS (fab_semantic schema) — maintained by the DATA PIPELINE service.

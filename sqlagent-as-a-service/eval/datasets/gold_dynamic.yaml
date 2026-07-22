@@ -1,64 +1,64 @@
-# =============================================================================
-# FAB SQL Agent — Gold Evaluation Set, DYNAMIC TIER  (gold_dynamic)
-# =============================================================================
-# Scope: full_dynamic (tier-3) ONLY — the free-text-to-SQL path through
-# analytical_query -> run_dynamic_pipeline. Parameterised / semantic-view / calculation
-# / safety items are deliberately NOT here: those are routing and refusal tests, not
-# text-to-SQL accuracy tests, and they answer from fixed SQL the agent never writes.
-#
-# SELF-CONTAINED BY DESIGN ----------------------------------------------------
-# Every item carries all three things the evaluation needs:
-#   question     — what the user asks
-#   gold_sql     — the reference query
-#   gold_result  — the ACTUAL ROWS gold_sql returned from the live database
-# gold_result is NOT hand-written. It is materialized by eval/materialize_gold.py, which
-# executes each gold_sql through the same validated read path the agent uses
-# (sql_agent.db.Executor -> six-check validator -> live DB) and rewrites this file in
-# place. Re-run it whenever the DB snapshot changes.
-#
-# GROUNDING -------------------------------------------------------------------
-# Every table/column referenced is declared in sql_agent/semantic_layer/schema.yaml, and
-# every gold_sql has been executed against the snapshot and returns a NON-EMPTY result —
-# a gold returning zero rows cannot distinguish a correct agent from one that filters
-# everything away.
-#
-# Gold SQL obeys the same rules the tier-3 generator must obey:
-#   * MySQL dialect, schema-qualified names (fab_curated.* / fab_semantic.*)
-#   * SELECT only, LIMIT <= 50 (the validator force-appends LIMIT 50 otherwise)
-#   * NEVER AVG() a pre-aggregated column (customer_360.win_rate_pct / avg_*,
-#     profitability_summary.avg_net_margin_pct) — compute the true population statistic
-#     from the deal-grain view, or as SUM(x)/SUM(y).
-#   * A fab_semantic VIEW may be joined ONLY to customer_master, never to another view or
-#     a second base table (validator check #9) — this applies to SUBQUERIES too.
-#
-# TIE-SAFETY ------------------------------------------------------------------
-# Every LIMIT-ed ranking was checked to have NO tie straddling the cutoff, so the returned
-# row SET is deterministic however the agent breaks ties. Questions whose natural answer
-# WOULD straddle a tie are phrased as full group-bys instead (D23, D29, D33).
-#
-# HOW THE EVALUATION USES THIS ------------------------------------------------
-#   1. eval/run_agent.py     sends `question` through the live agent, captures the SQL it
-#                            generated and the rows that SQL returns.
-#   2. eval/compare_llm.py   diffs agent vs gold — deterministic row comparison plus an
-#                            LLM verdict on whether the two QUERIES are literally
-#                            identical, logically equivalent, or genuinely different.
-#   gold_sql is NEVER string-matched against the agent's SQL: many different queries
-#   answer the same question correctly.
-#
-#   gold_tables / gold_columns : parsed back out of gold_sql by eval/sql_introspect.py and
-#                            verified against it by materialize_gold.py --check, so they
-#                            cannot drift. Output aliases (`... AS foo`) are not columns.
-#   order_sensitive          : true only when the question asks for a RANKING (row order IS
-#                            the answer). Otherwise results compare as an unordered SET.
-#   variants                 : extra surface forms (paraphrase / other language) that
-#                            inherit this item's gold — same meaning, same answer.
-# =============================================================================
+# =============================================================================
+# FAB SQL Agent — Gold Evaluation Set, DYNAMIC TIER  (gold_dynamic)
+# =============================================================================
+# Scope: full_dynamic (tier-3) ONLY — the free-text-to-SQL path through
+# analytical_query -> run_dynamic_pipeline. Parameterised / semantic-view / calculation
+# / safety items are deliberately NOT here: those are routing and refusal tests, not
+# text-to-SQL accuracy tests, and they answer from fixed SQL the agent never writes.
+#
+# SELF-CONTAINED BY DESIGN ----------------------------------------------------
+# Every item carries all three things the evaluation needs:
+#   question     — what the user asks
+#   gold_sql     — the reference query
+#   gold_result  — the ACTUAL ROWS gold_sql returned from the live database
+# gold_result is NOT hand-written. It is materialized by eval/materialize_gold.py, which
+# executes each gold_sql through the same validated read path the agent uses
+# (sql_agent.db.Executor -> six-check validator -> live DB) and rewrites this file in
+# place. Re-run it whenever the DB snapshot changes.
+#
+# GROUNDING -------------------------------------------------------------------
+# Every table/column referenced is declared in sql_agent/semantic_layer/schema.yaml, and
+# every gold_sql has been executed against the snapshot and returns a NON-EMPTY result —
+# a gold returning zero rows cannot distinguish a correct agent from one that filters
+# everything away.
+#
+# Gold SQL obeys the same rules the tier-3 generator must obey:
+#   * MySQL dialect, schema-qualified names (fab_curated.* / fab_semantic.*)
+#   * SELECT only, LIMIT <= 50 (the validator force-appends LIMIT 50 otherwise)
+#   * NEVER AVG() a pre-aggregated column (customer_360.win_rate_pct / avg_*,
+#     profitability_summary.avg_net_margin_pct) — compute the true population statistic
+#     from the deal-grain view, or as SUM(x)/SUM(y).
+#   * A fab_semantic VIEW may be joined ONLY to customer_master, never to another view or
+#     a second base table (validator check #9) — this applies to SUBQUERIES too.
+#
+# TIE-SAFETY ------------------------------------------------------------------
+# Every LIMIT-ed ranking was checked to have NO tie straddling the cutoff, so the returned
+# row SET is deterministic however the agent breaks ties. Questions whose natural answer
+# WOULD straddle a tie are phrased as full group-bys instead (D23, D29, D33).
+#
+# HOW THE EVALUATION USES THIS ------------------------------------------------
+#   1. eval/run_agent.py     sends `question` through the live agent, captures the SQL it
+#                            generated and the rows that SQL returns.
+#   2. eval/compare_llm.py   diffs agent vs gold — deterministic row comparison plus an
+#                            LLM verdict on whether the two QUERIES are literally
+#                            identical, logically equivalent, or genuinely different.
+#   gold_sql is NEVER string-matched against the agent's SQL: many different queries
+#   answer the same question correctly.
+#
+#   gold_tables / gold_columns : parsed back out of gold_sql by eval/sql_introspect.py and
+#                            verified against it by materialize_gold.py --check, so they
+#                            cannot drift. Output aliases (`... AS foo`) are not columns.
+#   order_sensitive          : true only when the question asks for a RANKING (row order IS
+#                            the answer). Otherwise results compare as an unordered SET.
+#   variants                 : extra surface forms (paraphrase / other language) that
+#                            inherit this item's gold — same meaning, same answer.
+# =============================================================================
 
 meta:
   version: gold_dynamic
   tier: full_dynamic
   dialect: mysql
-  db_snapshot: "poc_synthetic_v1"          # gold_result is only valid against this snapshot
+  db_snapshot: "poc_synthetic_v1"          # gold_result is only valid against this snapshot
   scopes_required: [dynamic_sql]
   entity_space:
     customers: "CUST001-CUST020"
@@ -66,11 +66,11 @@ meta:
     deals: "DEAL001-DEAL060"
     deal_dates: "2025-01-02 .. 2026-05-05"
   defaults:
-    order_sensitive: false                  # result sets compared as a SET unless overridden
-    numeric_tolerance: 0.01                 # 2.14 == 2.144 ; rounding-insensitive
+    order_sensitive: false                  # result sets compared as a SET unless overridden
+    numeric_tolerance: 0.01                 # 2.14 == 2.144 ; rounding-insensitive
 
 items:
-  # --- AGGREGATES / GROUP-BY -----------------------------------------------
+  # --- AGGREGATES / GROUP-BY -----------------------------------------------
 
   - id: D01
     question: "What is the average expected margin across all Won deals?"
@@ -1018,10 +1018,10 @@ items:
       - {deal_id: DEAL033, product_type: Trade Finance, exposure_aed: 6800000, risk_weight_pct: 75, rwa_aed: 5100000, capital_required_aed: 408000, net_revenue_aed: 95200.0, return_on_rwa_pct: 1.8667, is_high_rwa: 0}
       - {deal_id: DEAL041, product_type: Trade Finance, exposure_aed: 7600000, risk_weight_pct: 75, rwa_aed: 5700000, capital_required_aed: 456000, net_revenue_aed: 95000.0, return_on_rwa_pct: 1.6667, is_high_rwa: 0}
     row_count: 2
-  # --- NAME -> ID RESOLUTION (the resolver) --------------------------------
-  # The question names a customer by NAME; the agent must resolve it to its id via
-  # routing/entity_resolver.py and filter WHERE customer_id = 'CUSTxxx' (never on the name).
-  # CUST004 = 'Oasis Retail Group' (see D18). Gold filters on the id it should resolve to.
+  # --- NAME -> ID RESOLUTION (the resolver) --------------------------------
+  # The question names a customer by NAME; the agent must resolve it to its id via
+  # routing/entity_resolver.py and filter WHERE customer_id = 'CUSTxxx' (never on the name).
+  # CUST004 = 'Oasis Retail Group' (see D18). Gold filters on the id it should resolve to.
 
   - id: D45
     question: "What price are we recommending for Oasis Retail Group's deals?"
@@ -1059,7 +1059,7 @@ items:
       - {deal_id: DEAL025, product_type: Loan, treasury_rate_component: 5.25, target_margin_component: 2.45, risk_premium_component: 0.45, operations_cost_component: 1.1167, relationship_discount_component: 0.2, final_recommended_price: 9.0667, approved_price_pct: 7.3, explanation_text: Treasury/funding 5.25% + target margin 2.45% + risk premium 0.45% + ops cost 1.12% - relationship discount 0.2% = recommended 9.07%}
       - {deal_id: DEAL060, product_type: Trade Finance, treasury_rate_component: 5.05, target_margin_component: 1.8, risk_premium_component: 0.45, operations_cost_component: 1.4667, relationship_discount_component: 0.2, final_recommended_price: 8.5667, approved_price_pct: 6.6, explanation_text: Treasury/funding 5.05% + target margin 1.8% + risk premium 0.45% + ops cost 1.47% - relationship discount 0.2% = recommended 8.57%}
     row_count: 3
-  # --- ANALYTICAL SANITY + PRE-AGGREGATE TRAP ------------------------------
+  # --- ANALYTICAL SANITY + PRE-AGGREGATE TRAP ------------------------------
 
   - id: D47
     question: "Compare the average recommended and approved price by product type."
@@ -1123,12 +1123,12 @@ items:
       - {new_customer_id: CUST022, new_customer_name: Mira Electronics Trading, reference_customer_id: CUST015, reference_customer_name: Prime Tech Solutions, similarity_score: 0.91, reference_final_price_pct: 6.55, adjustment_for_new_customer_pct: 0.35, suggested_price_pct: 6.9, suggested_price_adjustment_rationale: Reference price adjusted upward because new customer has no relationship history.}
     row_count: 1
 
-  # --- COMPLEX JOINS (D50-D57) ---------------------------------------------
-  # Multi-table join questions: base<->base, view->dimension (customer_master),
-  # 3-table (+pricing_policy), 4-table, and CASE/HAVING over joins. Every join pair
-  # is declared in schema.yaml's relationship graph, so a correct agent can see it in
-  # AVAILABLE JOINS. Dimensions chosen to be customer_master-ONLY (industry, credit_score,
-  # relationship_tenure_years) so the join is genuinely required, not decorative.
+  # --- COMPLEX JOINS (D50-D57) ---------------------------------------------
+  # Multi-table join questions: base<->base, view->dimension (customer_master),
+  # 3-table (+pricing_policy), 4-table, and CASE/HAVING over joins. Every join pair
+  # is declared in schema.yaml's relationship graph, so a correct agent can see it in
+  # AVAILABLE JOINS. Dimensions chosen to be customer_master-ONLY (industry, credit_score,
+  # relationship_tenure_years) so the join is genuinely required, not decorative.
 
   - id: D50
     question: "For each product, what is the total requested amount and the average expected margin on won deals?"
@@ -1400,15 +1400,15 @@ items:
       - {region: Abu Dhabi, product_name: Trade Finance LC, total_requested_amount: 3800000}
     row_count: 26
 
-  # --- FORCED MULTI-JOIN, NEW TABLE PAIRINGS (D58-D61) ----------------------
-  # Every item below needs a JOIN no single view can substitute, because the
-  # discriminating column lives on ONE base table only and appears on no view:
-  #   * benchmark_index          -> treasury_rate_sheet ONLY (no view exposes it)
-  #   * max_discount_allowed_pct -> product_master ONLY (distinct from the pricing_policy
-  #                                 cap in D53 and the relationship_discount_view in D28)
-  #   * min_margin_pct           -> pricing_policy ONLY, compared raw to a deal-grain fact
-  # treasury_rate_sheet is joined here for the first time in the set, on its compound
-  # key currency+tenor (exactly one sheet row per pair, so no fan-out).
+  # --- FORCED MULTI-JOIN, NEW TABLE PAIRINGS (D58-D61) ----------------------
+  # Every item below needs a JOIN no single view can substitute, because the
+  # discriminating column lives on ONE base table only and appears on no view:
+  #   * benchmark_index          -> treasury_rate_sheet ONLY (no view exposes it)
+  #   * max_discount_allowed_pct -> product_master ONLY (distinct from the pricing_policy
+  #                                 cap in D53 and the relationship_discount_view in D28)
+  #   * min_margin_pct           -> pricing_policy ONLY, compared raw to a deal-grain fact
+  # treasury_rate_sheet is joined here for the first time in the set, on its compound
+  # key currency+tenor (exactly one sheet row per pair, so no fan-out).
 
   - id: D58
     question: "For each treasury benchmark index (EIBOR vs SOFR), how many deals were booked and what was the total requested amount?"
@@ -1432,7 +1432,6 @@ items:
     gold_result:
       - {benchmark_index: EIBOR, deal_count: 47, total_requested_amount: 2195700000}
       - {benchmark_index: SOFR, deal_count: 13, total_requested_amount: 338600000}
-
   - id: D59
     question: "Which deals have a relationship discount above the maximum discount allowed for that product, and what are the two values?"
     domain: policy
@@ -1459,16 +1458,18 @@ items:
       - {deal_id: DEAL022, product_name: Corporate Deposit, relationship_discount_pct: 0.4, max_discount_allowed_pct: 0.25}
       - {deal_id: DEAL032, product_name: Corporate Deposit, relationship_discount_pct: 0.35, max_discount_allowed_pct: 0.25}
       - {deal_id: DEAL039, product_name: Corporate Deposit, relationship_discount_pct: 0.4, max_discount_allowed_pct: 0.25}
-
   - id: D60
-    question: "For won deals, break down the deal count, total requested volume and average expected margin by product and its treasury benchmark index."
+    question: "For won deals, break down the deal count, total requested volume and average expected margin by product and by treasury benchmark index (EIBOR vs SOFR)."
     domain: product
     persona: pricing-desk
     difficulty: multi-table-join
     note: >-
       A three-table join across historical_deals, product_master and treasury_rate_sheet:
-      product_name is on product_master ONLY and benchmark_index on treasury_rate_sheet ONLY,
-      so neither can come from a view. The rate sheet join is on the compound key currency+tenor.
+      product_name is on product_master ONLY and the CATEGORICAL benchmark_index (EIBOR/SOFR)
+      on treasury_rate_sheet ONLY, so neither can come from a view. The question names EIBOR vs
+      SOFR on purpose: without it the generator grabs the numeric benchmark_rate_pct_treasury
+      column that the deal-grain views expose and skips the treasury join entirely. The rate
+      sheet join is on the compound key currency+tenor.
     gold_sql: >
       SELECT pm.product_name, trs.benchmark_index, COUNT(*) AS won_deals,
              SUM(hd.requested_amount) AS won_volume_aed,
@@ -1491,42 +1492,547 @@ items:
       - {product_name: Overdraft Facility, benchmark_index: EIBOR, won_deals: 5, won_volume_aed: 67800000, avg_expected_margin_pct: 2.42}
       - {product_name: FX Forward Facility, benchmark_index: SOFR, won_deals: 4, won_volume_aed: 51000000, avg_expected_margin_pct: 1.03}
       - {product_name: Invoice Discounting, benchmark_index: EIBOR, won_deals: 5, won_volume_aed: 31300000, avg_expected_margin_pct: 1.09}
-
   - id: D61
-    question: "Among won deals, how many fell below the applicable policy minimum margin, broken down by customer segment and product?"
+    question: "For won deals, what is the average ticket-size utilisation (the requested amount as a percentage of the product's maximum ticket size) by customer region and product?"
+    domain: product
+    persona: cfo
+    difficulty: multi-table-join
+    note: >-
+      A three-table base join (historical_deals + customer_master + product_master). The metric
+      needs max_ticket_size, which lives on product_master ONLY — no semantic view carries it,
+      and a fab_semantic view may only be joined to customer_master (validator check #9), never
+      to product_master — so the whole query is forced into the base tables: requested_amount
+      from historical_deals, region from customer_master, max_ticket_size from product_master.
+      There is no single-view shortcut. (An earlier version compared expected margin to the
+      policy floor, but pricing_recommendation_view exposes both policy_min_margin_pct and
+      product_name, so a correct agent could answer it from that one view with no join.)
+    gold_sql: >
+      SELECT cm.region, pm.product_name,
+             ROUND(AVG(hd.requested_amount * 100.0 / pm.max_ticket_size), 2) AS avg_ticket_utilisation_pct
+      FROM fab_curated.historical_deals hd
+      JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id
+      JOIN fab_curated.product_master pm ON hd.product_id = pm.product_id
+      WHERE hd.deal_outcome = 'Won'
+      GROUP BY cm.region, pm.product_name
+      ORDER BY avg_ticket_utilisation_pct DESC
+      LIMIT 50
+    gold_tables: [historical_deals, customer_master, product_master]
+    gold_columns: [customer_id, deal_outcome, max_ticket_size, product_id, product_name, region, requested_amount]
+    row_count: 22
+    gold_result:
+      - {region: Abu Dhabi, product_name: Working Capital Loan, avg_ticket_utilisation_pct: 81.07}
+      - {region: Ras Al Khaimah, product_name: Corporate Deposit, avg_ticket_utilisation_pct: 80.8}
+      - {region: Ajman, product_name: Corporate Deposit, avg_ticket_utilisation_pct: 80.75}
+      - {region: Ajman, product_name: Working Capital Loan, avg_ticket_utilisation_pct: 79.2}
+      - {region: Dubai, product_name: Corporate Deposit, avg_ticket_utilisation_pct: 76.75}
+      - {region: Ras Al Khaimah, product_name: Overdraft Facility, avg_ticket_utilisation_pct: 75.67}
+      - {region: Ras Al Khaimah, product_name: Term Loan, avg_ticket_utilisation_pct: 67.6}
+      - {region: Dubai, product_name: Working Capital Loan, avg_ticket_utilisation_pct: 65.47}
+      - {region: Fujairah, product_name: FX Forward Facility, avg_ticket_utilisation_pct: 63.75}
+      - {region: Dubai, product_name: USD Term Loan, avg_ticket_utilisation_pct: 62.63}
+      - {region: Abu Dhabi, product_name: Corporate Deposit, avg_ticket_utilisation_pct: 58}
+      - {region: Abu Dhabi, product_name: USD Term Loan, avg_ticket_utilisation_pct: 57.59}
+      - {region: Sharjah, product_name: Working Capital Loan, avg_ticket_utilisation_pct: 55.8}
+      - {region: Abu Dhabi, product_name: Term Loan, avg_ticket_utilisation_pct: 53.7}
+      - {region: Dubai, product_name: Term Loan, avg_ticket_utilisation_pct: 50}
+      - {region: Ajman, product_name: Trade Finance LC, avg_ticket_utilisation_pct: 50}
+      - {region: Dubai, product_name: Trade Finance LC, avg_ticket_utilisation_pct: 45.6}
+      - {region: Sharjah, product_name: Invoice Discounting, avg_ticket_utilisation_pct: 41.83}
+      - {region: Ajman, product_name: Invoice Discounting, avg_ticket_utilisation_pct: 41.33}
+      - {region: Dubai, product_name: Overdraft Facility, avg_ticket_utilisation_pct: 40.56}
+      - {region: Ajman, product_name: Term Loan, avg_ticket_utilisation_pct: 33.6}
+      - {region: Sharjah, product_name: Overdraft Facility, avg_ticket_utilisation_pct: 28.67}
+  - id: D62
+    question: "For won deals, how does the average funding cost we charged compare to the average treasury benchmark funding cost, by customer region and currency?"
+    domain: treasury
+    persona: cfo
+    difficulty: multi-table-join
+    note: >-
+      New pairing: historical_deals + customer_master + treasury_rate_sheet together.
+      D58 joined deals to the rate sheet alone (no customer); D59-D61 joined deals to
+      customer/product but never to the rate sheet. region comes from customer_master,
+      the benchmark funding_cost_pct from treasury_rate_sheet on the compound key
+      currency+tenor — both joins are required, no view exposes region alongside the
+      rate-sheet's funding cost.
+    gold_sql: >
+      SELECT cm.region, hd.currency,
+             ROUND(AVG(hd.funding_cost_pct), 2) AS avg_charged_funding_cost_pct,
+             ROUND(AVG(trs.funding_cost_pct), 2) AS avg_benchmark_funding_cost_pct
+      FROM fab_curated.historical_deals hd
+      JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id
+      JOIN fab_curated.treasury_rate_sheet trs ON hd.currency = trs.currency AND hd.tenor = trs.tenor
+      WHERE hd.deal_outcome = 'Won'
+      GROUP BY cm.region, hd.currency
+      ORDER BY avg_charged_funding_cost_pct DESC
+    gold_tables: [historical_deals, customer_master, treasury_rate_sheet]
+    gold_columns: [region, currency, funding_cost_pct, customer_id, tenor, deal_outcome]
+    gold_result:
+      - {region: Ras Al Khaimah, currency: AED, avg_charged_funding_cost_pct: 5.7, avg_benchmark_funding_cost_pct: 5.7}
+      - {region: Dubai, currency: AED, avg_charged_funding_cost_pct: 5.44, avg_benchmark_funding_cost_pct: 5.44}
+      - {region: Ajman, currency: AED, avg_charged_funding_cost_pct: 5.32, avg_benchmark_funding_cost_pct: 5.32}
+      - {region: Abu Dhabi, currency: USD, avg_charged_funding_cost_pct: 5.32, avg_benchmark_funding_cost_pct: 5.32}
+      - {region: Abu Dhabi, currency: AED, avg_charged_funding_cost_pct: 5.28, avg_benchmark_funding_cost_pct: 5.28}
+      - {region: Sharjah, currency: AED, avg_charged_funding_cost_pct: 5.23, avg_benchmark_funding_cost_pct: 5.23}
+      - {region: Dubai, currency: USD, avg_charged_funding_cost_pct: 5.15, avg_benchmark_funding_cost_pct: 5.15}
+      - {region: Fujairah, currency: USD, avg_charged_funding_cost_pct: 5.0, avg_benchmark_funding_cost_pct: 5.0}
+    row_count: 8
+  - id: D63
+    question: "Give me a deal tape for won Treasury-product deals: deal id, customer region, product name, requested amount, and the treasury benchmark index and rate used for that deal's currency and tenor."
+    domain: treasury
+    persona: pricing-desk
+    difficulty: multi-table-join
+    note: >-
+      Forces all FOUR base tables into one plan (three joins): historical_deals is the
+      grain, customer_master for region, product_master for product_name, and
+      treasury_rate_sheet for benchmark_index/benchmark_rate_pct on currency+tenor.
+      product_type = 'Treasury' is already on historical_deals so it does NOT excuse
+      dropping the product_master join — product_name still only lives there. (An
+      earlier draft asked for deals where the charged funding cost exceeds the
+      benchmark, but funding_cost_pct is always booked EQUAL to the benchmark rate in
+      this dataset, so that comparison is an empty-gold trap — this version pulls the
+      same four-table join without relying on a threshold that never fires.)
+    order_sensitive: true
+    gold_sql: >
+      SELECT hd.deal_id, cm.region, pm.product_name, hd.requested_amount,
+             trs.benchmark_index, trs.benchmark_rate_pct
+      FROM fab_curated.historical_deals hd
+      JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id
+      JOIN fab_curated.product_master pm ON hd.product_id = pm.product_id
+      JOIN fab_curated.treasury_rate_sheet trs ON hd.currency = trs.currency AND hd.tenor = trs.tenor
+      WHERE hd.deal_outcome = 'Won' AND hd.product_type = 'Treasury'
+      ORDER BY hd.deal_id
+    gold_tables: [historical_deals, customer_master, product_master, treasury_rate_sheet]
+    gold_columns: [deal_id, region, product_name, requested_amount, benchmark_index, benchmark_rate_pct, customer_id, product_id, currency, tenor, deal_outcome, product_type]
+    gold_result:
+      - {deal_id: DEAL010, region: Fujairah, product_name: FX Forward Facility, requested_amount: 18700000, benchmark_index: SOFR, benchmark_rate_pct: 4.88}
+      - {deal_id: DEAL030, region: Fujairah, product_name: FX Forward Facility, requested_amount: 17900000, benchmark_index: SOFR, benchmark_rate_pct: 4.75}
+      - {deal_id: DEAL048, region: Fujairah, product_name: FX Forward Facility, requested_amount: 11500000, benchmark_index: SOFR, benchmark_rate_pct: 4.8}
+      - {deal_id: DEAL055, region: Fujairah, product_name: FX Forward Facility, requested_amount: 2900000, benchmark_index: SOFR, benchmark_rate_pct: 4.75}
+    row_count: 4
+  - id: D64
+    question: "For won deals, how many required approval because the relationship discount exceeded the policy's approval threshold, broken down by customer risk category and product type?"
     domain: compliance
     persona: pricing-desk
     difficulty: multi-table-join
     note: >-
-      A four-table aggregate: customer_segment+risk_category on customer_master, product_name
-      on product_master, min_margin_pct on pricing_policy (the policy row is keyed by
-      segment+product_type+risk), and the raw expected_margin_pct on historical_deals. No view
-      precomputes a below-floor count at the segment x product_name grain, so all three joins
-      are required. Distinct from D11 (segment x risk, no product) and D54 (a detail listing).
+      approval_required_if_discount_above_pct lives on pricing_policy ONLY, keyed on the
+      compound (customer_segment, risk_category, product_type) — same policy join shape
+      as D53/D54. (An earlier draft of this item read rwa_risk_weight_pct instead, but
+      pricing_recommendation_view exposes that column renamed as
+      policy_rwa_risk_weight_pct ALONGSIDE deal_outcome, risk_category and product_type —
+      a correct agent could have answered the whole thing from that one view, no base
+      join at all. approval_required_if_discount_above_pct is NOT exposed on any view
+      that also carries deal_outcome, so this version genuinely forces the base tables.)
     gold_sql: >
-      SELECT cm.customer_segment, pm.product_name, COUNT(*) AS deals_below_floor
+      SELECT cm.risk_category, pm.product_type, COUNT(*) AS deals_needing_approval
       FROM fab_curated.historical_deals hd
       JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id
       JOIN fab_curated.product_master pm ON hd.product_id = pm.product_id
-      JOIN fab_curated.pricing_policy pp ON cm.customer_segment = pp.customer_segment AND hd.product_type = pp.product_type AND cm.risk_category = pp.risk_category
-      WHERE hd.deal_outcome = 'Won' AND hd.expected_margin_pct < pp.min_margin_pct
-      GROUP BY cm.customer_segment, pm.product_name
-      ORDER BY deals_below_floor DESC
+      JOIN fab_curated.pricing_policy pp ON pp.customer_segment = cm.customer_segment
+        AND pp.risk_category = cm.risk_category AND pp.product_type = pm.product_type
+      WHERE hd.deal_outcome = 'Won' AND hd.relationship_discount_pct > pp.approval_required_if_discount_above_pct
+      GROUP BY cm.risk_category, pm.product_type
+      ORDER BY deals_needing_approval DESC
     gold_tables: [historical_deals, customer_master, product_master, pricing_policy]
-    gold_columns: [customer_id, customer_segment, deal_outcome, expected_margin_pct, min_margin_pct, product_id, product_name, product_type, risk_category]
-    row_count: 14
+    gold_columns: [risk_category, product_type, approval_required_if_discount_above_pct, relationship_discount_pct, customer_id, product_id, customer_segment, deal_outcome]
     gold_result:
-      - {customer_segment: Corporate, product_name: Term Loan, deals_below_floor: 7}
-      - {customer_segment: SME, product_name: Invoice Discounting, deals_below_floor: 5}
-      - {customer_segment: Corporate, product_name: Corporate Deposit, deals_below_floor: 5}
-      - {customer_segment: Corporate, product_name: Working Capital Loan, deals_below_floor: 5}
-      - {customer_segment: Corporate, product_name: USD Term Loan, deals_below_floor: 4}
-      - {customer_segment: Corporate, product_name: FX Forward Facility, deals_below_floor: 4}
-      - {customer_segment: SME, product_name: Trade Finance LC, deals_below_floor: 3}
-      - {customer_segment: SME, product_name: Working Capital Loan, deals_below_floor: 3}
-      - {customer_segment: SME, product_name: Term Loan, deals_below_floor: 3}
-      - {customer_segment: Corporate, product_name: Trade Finance LC, deals_below_floor: 2}
-      - {customer_segment: SME, product_name: Overdraft Facility, deals_below_floor: 2}
-      - {customer_segment: SME, product_name: Corporate Deposit, deals_below_floor: 2}
-      - {customer_segment: Corporate, product_name: Overdraft Facility, deals_below_floor: 1}
-      - {customer_segment: SME, product_name: USD Term Loan, deals_below_floor: 1}
+      - {risk_category: Low, product_type: Loan, deals_needing_approval: 8}
+      - {risk_category: Medium, product_type: Loan, deals_needing_approval: 5}
+      - {risk_category: Medium, product_type: Trade Finance, deals_needing_approval: 3}
+      - {risk_category: Low, product_type: Deposit, deals_needing_approval: 3}
+      - {risk_category: Low, product_type: Trade Finance, deals_needing_approval: 3}
+      - {risk_category: Medium, product_type: Deposit, deals_needing_approval: 1}
+    row_count: 6
+
+  # --- FORCED MULTI-JOIN, DEEPER TOPOLOGIES (D65-D72) -------------------------
+  # D58-D64 each held at most one bridge beyond historical_deals. pricing_recommendation_view
+  # turned out to be a wider trap than the D58-D61 notes accounted for: it pre-joins deal +
+  # customer + product + a RENAMED slice of policy (policy_min_margin_pct,
+  # policy_min_expected_margin_pct, policy_max_discount_pct, policy_rwa_risk_weight_pct) into
+  # ONE row, alongside deal_outcome, risk_category and product_type. So "Won deals" is NOT
+  # enough to force a base-table join by itself if the pricing_policy column asked for has a
+  # renamed twin on that view (this is what broke the original D64 — see its note).
+  # The columns below were verified column-by-column against every view's declared fields:
+  #   * approval_required_if_discount_above_pct — NOT exposed on pricing_recommendation_view
+  #     under any name (the view only renames min_margin/min_expected_margin/max_discount/
+  #     rwa_risk_weight); the views that DO carry it (segment_pricing_benchmark,
+  #     relationship_discount_view, policy_exception_view) all lack deal_outcome. Safe.
+  #   * pricing_policy.risk_premium_pct (the POLICY premium, not the deal's charged one) has
+  #     NO renamed twin on any view at all. Safe unconditionally.
+  #   * min_ticket_size / max_ticket_size / max_discount_allowed_pct / eligible_segments /
+  #     eligible_tenors — product_master ONLY, confirmed by a full-file grep. Safe.
+  #   * benchmark_index — treasury_rate_sheet ONLY (D58-D63's existing guarantee).
+  #   * Any question needing a treasury_rate_sheet fact TOGETHER WITH a pricing_policy fact
+  #     is structurally shortcut-proof regardless of either column individually: validator
+  #     check #9 lets a view join ONLY to customer_master, and no view's declared joins reach
+  #     pricing_policy or treasury_rate_sheet at all — so the base historical_deals hub is the
+  #     only legal way to combine the two (D65, D66, D70).
+
+  - id: D65
+    question: "For won deals, how does the average risk premium we charged compare to the average policy risk premium, broken down by treasury benchmark index (EIBOR vs SOFR) and customer risk category?"
+    domain: risk-capital
+    persona: cfo
+    difficulty: multi-table-join
+    note: >-
+      New 4-table combo: historical_deals + customer_master + treasury_rate_sheet +
+      pricing_policy, no product_master (the policy join uses hd.product_type directly,
+      same pattern as D53). Shortcut-proof by construction: pricing_policy.risk_premium_pct
+      has no renamed twin on any view, and benchmark_index is treasury_rate_sheet-only, so
+      no single view can supply both facts in one row (views may only join to
+      customer_master, never to pricing_policy or treasury_rate_sheet).
+    gold_sql: >
+      SELECT trs.benchmark_index, cm.risk_category, COUNT(*) AS won_deals,
+             ROUND(AVG(hd.risk_premium_pct), 2) AS avg_charged_risk_premium_pct,
+             ROUND(AVG(pp.risk_premium_pct), 2) AS avg_policy_risk_premium_pct
+      FROM fab_curated.historical_deals hd
+      JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id
+      JOIN fab_curated.treasury_rate_sheet trs ON hd.currency = trs.currency AND hd.tenor = trs.tenor
+      JOIN fab_curated.pricing_policy pp ON cm.customer_segment = pp.customer_segment
+        AND hd.product_type = pp.product_type AND cm.risk_category = pp.risk_category
+      WHERE hd.deal_outcome = 'Won'
+      GROUP BY trs.benchmark_index, cm.risk_category
+      ORDER BY avg_charged_risk_premium_pct DESC
+    gold_tables: [historical_deals, customer_master, treasury_rate_sheet, pricing_policy]
+    gold_columns: [benchmark_index, risk_category, risk_premium_pct, customer_id, tenor, currency, customer_segment, product_type, deal_outcome]
+    gold_result:
+      - {benchmark_index: EIBOR, risk_category: High, won_deals: 9, avg_charged_risk_premium_pct: 0.95, avg_policy_risk_premium_pct: 0.95}
+      - {benchmark_index: SOFR, risk_category: High, won_deals: 4, avg_charged_risk_premium_pct: 0.95, avg_policy_risk_premium_pct: 0.95}
+      - {benchmark_index: SOFR, risk_category: Medium, won_deals: 2, avg_charged_risk_premium_pct: 0.45, avg_policy_risk_premium_pct: 0.45}
+      - {benchmark_index: EIBOR, risk_category: Medium, won_deals: 22, avg_charged_risk_premium_pct: 0.45, avg_policy_risk_premium_pct: 0.45}
+      - {benchmark_index: EIBOR, risk_category: Low, won_deals: 11, avg_charged_risk_premium_pct: 0.1, avg_policy_risk_premium_pct: 0.1}
+      - {benchmark_index: SOFR, risk_category: Low, won_deals: 3, avg_charged_risk_premium_pct: 0.1, avg_policy_risk_premium_pct: 0.1}
+    row_count: 6
+  - id: D66
+    question: "Pull a compliance audit tape for won deals: deal id, product name, customer risk category, treasury benchmark index, the risk premium we charged, and the policy risk premium for that segment/risk/product combination."
+    domain: compliance
+    persona: pricing-desk
+    difficulty: multi-table-join
+    note: >-
+      ALL FIVE base tables in one plan (four joins) — the deepest combo in the set.
+      Shortcut-proof for the same reason as D65 (risk_premium_pct + benchmark_index
+      together can only come from the base tables), with product_master added purely
+      for product_name display.
+    order_sensitive: true
+    gold_sql: >
+      SELECT hd.deal_id, pm.product_name, cm.risk_category, trs.benchmark_index,
+             hd.risk_premium_pct AS charged_risk_premium_pct,
+             pp.risk_premium_pct AS policy_risk_premium_pct
+      FROM fab_curated.historical_deals hd
+      JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id
+      JOIN fab_curated.product_master pm ON hd.product_id = pm.product_id
+      JOIN fab_curated.treasury_rate_sheet trs ON hd.currency = trs.currency AND hd.tenor = trs.tenor
+      JOIN fab_curated.pricing_policy pp ON cm.customer_segment = pp.customer_segment
+        AND pm.product_type = pp.product_type AND cm.risk_category = pp.risk_category
+      WHERE hd.deal_outcome = 'Won'
+      ORDER BY hd.deal_id
+      LIMIT 50
+    gold_tables: [historical_deals, customer_master, product_master, treasury_rate_sheet, pricing_policy]
+    gold_columns: [deal_id, product_name, risk_category, benchmark_index, risk_premium_pct, customer_id, product_id, currency, tenor, customer_segment, product_type, deal_outcome]
+    gold_result:
+      - {deal_id: DEAL001, product_name: Term Loan, risk_category: Medium, benchmark_index: EIBOR, charged_risk_premium_pct: 0.45, policy_risk_premium_pct: 0.45}
+      - {deal_id: DEAL002, product_name: Corporate Deposit, risk_category: High, benchmark_index: EIBOR, charged_risk_premium_pct: 0.95, policy_risk_premium_pct: 0.95}
+      - {deal_id: DEAL003, product_name: Invoice Discounting, risk_category: Medium, benchmark_index: EIBOR, charged_risk_premium_pct: 0.45, policy_risk_premium_pct: 0.45}
+      - {deal_id: DEAL004, product_name: USD Term Loan, risk_category: Medium, benchmark_index: SOFR, charged_risk_premium_pct: 0.45, policy_risk_premium_pct: 0.45}
+      - {deal_id: DEAL005, product_name: Term Loan, risk_category: Low, benchmark_index: EIBOR, charged_risk_premium_pct: 0.1, policy_risk_premium_pct: 0.1}
+      - {deal_id: DEAL006, product_name: Corporate Deposit, risk_category: Low, benchmark_index: EIBOR, charged_risk_premium_pct: 0.1, policy_risk_premium_pct: 0.1}
+      - {deal_id: DEAL007, product_name: Working Capital Loan, risk_category: High, benchmark_index: EIBOR, charged_risk_premium_pct: 0.95, policy_risk_premium_pct: 0.95}
+      - {deal_id: DEAL008, product_name: Overdraft Facility, risk_category: Medium, benchmark_index: EIBOR, charged_risk_premium_pct: 0.45, policy_risk_premium_pct: 0.45}
+      - {deal_id: DEAL009, product_name: Term Loan, risk_category: Medium, benchmark_index: EIBOR, charged_risk_premium_pct: 0.45, policy_risk_premium_pct: 0.45}
+      - {deal_id: DEAL010, product_name: FX Forward Facility, risk_category: High, benchmark_index: SOFR, charged_risk_premium_pct: 0.95, policy_risk_premium_pct: 0.95}
+      - {deal_id: DEAL011, product_name: Overdraft Facility, risk_category: Medium, benchmark_index: EIBOR, charged_risk_premium_pct: 0.45, policy_risk_premium_pct: 0.45}
+      - {deal_id: DEAL012, product_name: Working Capital Loan, risk_category: Medium, benchmark_index: EIBOR, charged_risk_premium_pct: 0.45, policy_risk_premium_pct: 0.45}
+      - {deal_id: DEAL013, product_name: Corporate Deposit, risk_category: High, benchmark_index: EIBOR, charged_risk_premium_pct: 0.95, policy_risk_premium_pct: 0.95}
+      - {deal_id: DEAL014, product_name: Working Capital Loan, risk_category: Low, benchmark_index: EIBOR, charged_risk_premium_pct: 0.1, policy_risk_premium_pct: 0.1}
+      - {deal_id: DEAL016, product_name: Working Capital Loan, risk_category: Low, benchmark_index: EIBOR, charged_risk_premium_pct: 0.1, policy_risk_premium_pct: 0.1}
+      - {deal_id: DEAL017, product_name: Invoice Discounting, risk_category: Low, benchmark_index: EIBOR, charged_risk_premium_pct: 0.1, policy_risk_premium_pct: 0.1}
+      - {deal_id: DEAL018, product_name: Trade Finance LC, risk_category: Medium, benchmark_index: EIBOR, charged_risk_premium_pct: 0.45, policy_risk_premium_pct: 0.45}
+      - {deal_id: DEAL019, product_name: Overdraft Facility, risk_category: High, benchmark_index: EIBOR, charged_risk_premium_pct: 0.95, policy_risk_premium_pct: 0.95}
+      - {deal_id: DEAL020, product_name: USD Term Loan, risk_category: Medium, benchmark_index: SOFR, charged_risk_premium_pct: 0.45, policy_risk_premium_pct: 0.45}
+      - {deal_id: DEAL021, product_name: Working Capital Loan, risk_category: Medium, benchmark_index: EIBOR, charged_risk_premium_pct: 0.45, policy_risk_premium_pct: 0.45}
+      - {deal_id: DEAL022, product_name: Corporate Deposit, risk_category: Low, benchmark_index: EIBOR, charged_risk_premium_pct: 0.1, policy_risk_premium_pct: 0.1}
+      - {deal_id: DEAL023, product_name: Invoice Discounting, risk_category: Low, benchmark_index: EIBOR, charged_risk_premium_pct: 0.1, policy_risk_premium_pct: 0.1}
+      - {deal_id: DEAL024, product_name: Term Loan, risk_category: Medium, benchmark_index: EIBOR, charged_risk_premium_pct: 0.45, policy_risk_premium_pct: 0.45}
+      - {deal_id: DEAL025, product_name: Working Capital Loan, risk_category: Medium, benchmark_index: EIBOR, charged_risk_premium_pct: 0.45, policy_risk_premium_pct: 0.45}
+      - {deal_id: DEAL026, product_name: Term Loan, risk_category: Medium, benchmark_index: EIBOR, charged_risk_premium_pct: 0.45, policy_risk_premium_pct: 0.45}
+      - {deal_id: DEAL027, product_name: Working Capital Loan, risk_category: Low, benchmark_index: EIBOR, charged_risk_premium_pct: 0.1, policy_risk_premium_pct: 0.1}
+      - {deal_id: DEAL030, product_name: FX Forward Facility, risk_category: High, benchmark_index: SOFR, charged_risk_premium_pct: 0.95, policy_risk_premium_pct: 0.95}
+      - {deal_id: DEAL031, product_name: Term Loan, risk_category: High, benchmark_index: EIBOR, charged_risk_premium_pct: 0.95, policy_risk_premium_pct: 0.95}
+      - {deal_id: DEAL033, product_name: Trade Finance LC, risk_category: Medium, benchmark_index: EIBOR, charged_risk_premium_pct: 0.45, policy_risk_premium_pct: 0.45}
+      - {deal_id: DEAL034, product_name: Trade Finance LC, risk_category: High, benchmark_index: EIBOR, charged_risk_premium_pct: 0.95, policy_risk_premium_pct: 0.95}
+      - {deal_id: DEAL035, product_name: Trade Finance LC, risk_category: Medium, benchmark_index: EIBOR, charged_risk_premium_pct: 0.45, policy_risk_premium_pct: 0.45}
+      - {deal_id: DEAL036, product_name: Working Capital Loan, risk_category: High, benchmark_index: EIBOR, charged_risk_premium_pct: 0.95, policy_risk_premium_pct: 0.95}
+      - {deal_id: DEAL037, product_name: Overdraft Facility, risk_category: High, benchmark_index: EIBOR, charged_risk_premium_pct: 0.95, policy_risk_premium_pct: 0.95}
+      - {deal_id: DEAL038, product_name: Term Loan, risk_category: Medium, benchmark_index: EIBOR, charged_risk_premium_pct: 0.45, policy_risk_premium_pct: 0.45}
+      - {deal_id: DEAL039, product_name: Corporate Deposit, risk_category: Low, benchmark_index: EIBOR, charged_risk_premium_pct: 0.1, policy_risk_premium_pct: 0.1}
+      - {deal_id: DEAL041, product_name: Trade Finance LC, risk_category: Medium, benchmark_index: EIBOR, charged_risk_premium_pct: 0.45, policy_risk_premium_pct: 0.45}
+      - {deal_id: DEAL043, product_name: Term Loan, risk_category: Medium, benchmark_index: EIBOR, charged_risk_premium_pct: 0.45, policy_risk_premium_pct: 0.45}
+      - {deal_id: DEAL044, product_name: Term Loan, risk_category: Low, benchmark_index: EIBOR, charged_risk_premium_pct: 0.1, policy_risk_premium_pct: 0.1}
+      - {deal_id: DEAL045, product_name: Corporate Deposit, risk_category: Medium, benchmark_index: EIBOR, charged_risk_premium_pct: 0.45, policy_risk_premium_pct: 0.45}
+      - {deal_id: DEAL046, product_name: USD Term Loan, risk_category: Low, benchmark_index: SOFR, charged_risk_premium_pct: 0.1, policy_risk_premium_pct: 0.1}
+      - {deal_id: DEAL048, product_name: FX Forward Facility, risk_category: High, benchmark_index: SOFR, charged_risk_premium_pct: 0.95, policy_risk_premium_pct: 0.95}
+      - {deal_id: DEAL049, product_name: Invoice Discounting, risk_category: Low, benchmark_index: EIBOR, charged_risk_premium_pct: 0.1, policy_risk_premium_pct: 0.1}
+      - {deal_id: DEAL050, product_name: Corporate Deposit, risk_category: Medium, benchmark_index: EIBOR, charged_risk_premium_pct: 0.45, policy_risk_premium_pct: 0.45}
+      - {deal_id: DEAL051, product_name: USD Term Loan, risk_category: Low, benchmark_index: SOFR, charged_risk_premium_pct: 0.1, policy_risk_premium_pct: 0.1}
+      - {deal_id: DEAL052, product_name: Term Loan, risk_category: High, benchmark_index: EIBOR, charged_risk_premium_pct: 0.95, policy_risk_premium_pct: 0.95}
+      - {deal_id: DEAL053, product_name: Term Loan, risk_category: Medium, benchmark_index: EIBOR, charged_risk_premium_pct: 0.45, policy_risk_premium_pct: 0.45}
+      - {deal_id: DEAL054, product_name: Overdraft Facility, risk_category: Medium, benchmark_index: EIBOR, charged_risk_premium_pct: 0.45, policy_risk_premium_pct: 0.45}
+      - {deal_id: DEAL055, product_name: FX Forward Facility, risk_category: High, benchmark_index: SOFR, charged_risk_premium_pct: 0.95, policy_risk_premium_pct: 0.95}
+      - {deal_id: DEAL058, product_name: USD Term Loan, risk_category: Low, benchmark_index: SOFR, charged_risk_premium_pct: 0.1, policy_risk_premium_pct: 0.1}
+      - {deal_id: DEAL059, product_name: Trade Finance LC, risk_category: Medium, benchmark_index: EIBOR, charged_risk_premium_pct: 0.45, policy_risk_premium_pct: 0.45}
+    row_count: 50
+  - id: D67
+    question: "For won deals, what is the average headroom above the product's minimum ticket size — requested amount minus the minimum — by customer region and product? I want to see where we're closest to the floor."
+    domain: product
+    persona: pricing-desk
+    difficulty: multi-table-join
+    note: >-
+      New metric off the D57/D61/D63 historical_deals+customer_master+product_master
+      combo: min_ticket_size (product_master-only, confirmed absent from every view).
+      (An earlier draft filtered for deals BELOW the minimum, but that comparison is
+      empty-gold in this dataset — every booked deal already clears its product's floor
+      — so this version keeps the same join and column but asks for the headroom
+      instead of a violation count.)
+    gold_sql: >
+      SELECT cm.region, pm.product_name,
+             ROUND(AVG(hd.requested_amount - pm.min_ticket_size), 2) AS avg_headroom_above_min_ticket_aed
+      FROM fab_curated.historical_deals hd
+      JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id
+      JOIN fab_curated.product_master pm ON hd.product_id = pm.product_id
+      WHERE hd.deal_outcome = 'Won'
+      GROUP BY cm.region, pm.product_name
+      ORDER BY avg_headroom_above_min_ticket_aed ASC
+      LIMIT 50
+    gold_tables: [historical_deals, customer_master, product_master]
+    gold_columns: [region, product_name, requested_amount, min_ticket_size, customer_id, product_id, deal_outcome]
+    gold_result:
+      - {region: Ajman, product_name: Invoice Discounting, avg_headroom_above_min_ticket_aed: 6100000}
+      - {region: Sharjah, product_name: Invoice Discounting, avg_headroom_above_min_ticket_aed: 6175000}
+      - {region: Sharjah, product_name: Overdraft Facility, avg_headroom_above_min_ticket_aed: 8400000}
+      - {region: Dubai, product_name: Trade Finance LC, avg_headroom_above_min_ticket_aed: 11150000}
+      - {region: Dubai, product_name: Overdraft Facility, avg_headroom_above_min_ticket_aed: 11966666.67}
+      - {region: Ajman, product_name: Trade Finance LC, avg_headroom_above_min_ticket_aed: 12250000}
+      - {region: Fujairah, product_name: FX Forward Facility, avg_headroom_above_min_ticket_aed: 12650000}
+      - {region: Ras Al Khaimah, product_name: Overdraft Facility, avg_headroom_above_min_ticket_aed: 22500000}
+      - {region: Sharjah, product_name: Working Capital Loan, avg_headroom_above_min_ticket_aed: 27400000}
+      - {region: Dubai, product_name: Working Capital Loan, avg_headroom_above_min_ticket_aed: 32233333.33}
+      - {region: Ajman, product_name: Term Loan, avg_headroom_above_min_ticket_aed: 32600000}
+      - {region: Ajman, product_name: Working Capital Loan, avg_headroom_above_min_ticket_aed: 39100000}
+      - {region: Abu Dhabi, product_name: Working Capital Loan, avg_headroom_above_min_ticket_aed: 40033333.33}
+      - {region: Abu Dhabi, product_name: USD Term Loan, avg_headroom_above_min_ticket_aed: 45575000}
+      - {region: Dubai, product_name: Term Loan, avg_headroom_above_min_ticket_aed: 49000000}
+      - {region: Dubai, product_name: USD Term Loan, avg_headroom_above_min_ticket_aed: 49600000}
+      - {region: Abu Dhabi, product_name: Term Loan, avg_headroom_above_min_ticket_aed: 52700000}
+      - {region: Ras Al Khaimah, product_name: Term Loan, avg_headroom_above_min_ticket_aed: 66600000}
+      - {region: Abu Dhabi, product_name: Corporate Deposit, avg_headroom_above_min_ticket_aed: 115000000}
+      - {region: Dubai, product_name: Corporate Deposit, avg_headroom_above_min_ticket_aed: 152500000}
+      - {region: Ajman, product_name: Corporate Deposit, avg_headroom_above_min_ticket_aed: 160500000}
+      - {region: Ras Al Khaimah, product_name: Corporate Deposit, avg_headroom_above_min_ticket_aed: 160600000}
+    row_count: 22
+  - id: D68
+    question: "For won deals on products eligible for both Corporate and SME segments, how many deals came from each segment, by product?"
+    domain: product
+    persona: relationship-manager
+    difficulty: multi-table-join
+    note: >-
+      eligible_segments is a comma-delimited product_master-only column (confirmed
+      absent from every view) — the note on product_master flags it as "app-side parse
+      or SQL LIKE; not 1NF". 'Corporate' and 'SME' share no substring, so a plain LIKE
+      has no false-negative risk here (unlike tenor codes such as '1M' inside '12M').
+      (An earlier draft asked which deals VIOLATED eligible_segments, but no such deal
+      exists in this dataset — empty gold — so this version uses eligible_segments as a
+      product FILTER instead of a violation check, over the same three-table join.)
+    gold_sql: >
+      SELECT pm.product_name, cm.customer_segment, COUNT(*) AS won_deal_count
+      FROM fab_curated.historical_deals hd
+      JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id
+      JOIN fab_curated.product_master pm ON hd.product_id = pm.product_id
+      WHERE hd.deal_outcome = 'Won'
+        AND pm.eligible_segments LIKE '%Corporate%' AND pm.eligible_segments LIKE '%SME%'
+      GROUP BY pm.product_name, cm.customer_segment
+      ORDER BY pm.product_name, cm.customer_segment
+    gold_tables: [historical_deals, customer_master, product_master]
+    gold_columns: [product_name, customer_segment, eligible_segments, customer_id, product_id, deal_outcome]
+    gold_result:
+      - {product_name: Corporate Deposit, customer_segment: Corporate, won_deal_count: 5}
+      - {product_name: Corporate Deposit, customer_segment: SME, won_deal_count: 2}
+      - {product_name: FX Forward Facility, customer_segment: Corporate, won_deal_count: 4}
+      - {product_name: Overdraft Facility, customer_segment: Corporate, won_deal_count: 3}
+      - {product_name: Overdraft Facility, customer_segment: SME, won_deal_count: 2}
+      - {product_name: Term Loan, customer_segment: Corporate, won_deal_count: 8}
+      - {product_name: Term Loan, customer_segment: SME, won_deal_count: 3}
+      - {product_name: Trade Finance LC, customer_segment: Corporate, won_deal_count: 3}
+      - {product_name: Trade Finance LC, customer_segment: SME, won_deal_count: 3}
+      - {product_name: USD Term Loan, customer_segment: Corporate, won_deal_count: 4}
+      - {product_name: USD Term Loan, customer_segment: SME, won_deal_count: 1}
+      - {product_name: Working Capital Loan, customer_segment: Corporate, won_deal_count: 5}
+      - {product_name: Working Capital Loan, customer_segment: SME, won_deal_count: 3}
+    row_count: 13
+  - id: D69
+    question: "Run an eligibility check across our won deal book: for each deal, show the region, product name, tenor booked, and whether that tenor is on the product's eligible tenor list."
+    domain: compliance
+    persona: pricing-desk
+    difficulty: multi-table-join
+    note: >-
+      Same product_master-only eligible_tenors column as D68's eligible_segments, but
+      tenor codes like '1M' are substrings of '12M', so a naive LIKE would
+      false-negative — FIND_IN_SET gives an exact comma-boundary match instead. (An
+      earlier draft filtered to only the VIOLATIONS, which is empty-gold here — every
+      booked tenor is already eligible — so this version audits every won deal instead
+      of only the [nonexistent] breaches, over the same join.)
+    order_sensitive: true
+    gold_sql: >
+      SELECT hd.deal_id, cm.region, pm.product_name, hd.tenor,
+             CASE WHEN FIND_IN_SET(hd.tenor, pm.eligible_tenors) > 0 THEN 'Yes' ELSE 'No' END AS tenor_eligible
+      FROM fab_curated.historical_deals hd
+      JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id
+      JOIN fab_curated.product_master pm ON hd.product_id = pm.product_id
+      WHERE hd.deal_outcome = 'Won'
+      ORDER BY hd.deal_id
+      LIMIT 50
+    gold_tables: [historical_deals, customer_master, product_master]
+    gold_columns: [deal_id, region, product_name, tenor, eligible_tenors, customer_id, product_id, deal_outcome]
+    gold_result:
+      - {deal_id: DEAL001, region: Ras Al Khaimah, product_name: Term Loan, tenor: 60M, tenor_eligible: Yes}
+      - {deal_id: DEAL002, region: Dubai, product_name: Corporate Deposit, tenor: 1M, tenor_eligible: Yes}
+      - {deal_id: DEAL003, region: Ajman, product_name: Invoice Discounting, tenor: 1M, tenor_eligible: Yes}
+      - {deal_id: DEAL004, region: Abu Dhabi, product_name: USD Term Loan, tenor: 24M, tenor_eligible: Yes}
+      - {deal_id: DEAL005, region: Abu Dhabi, product_name: Term Loan, tenor: 12M, tenor_eligible: Yes}
+      - {deal_id: DEAL006, region: Abu Dhabi, product_name: Corporate Deposit, tenor: 1M, tenor_eligible: Yes}
+      - {deal_id: DEAL007, region: Dubai, product_name: Working Capital Loan, tenor: 1M, tenor_eligible: Yes}
+      - {deal_id: DEAL008, region: Dubai, product_name: Overdraft Facility, tenor: 6M, tenor_eligible: Yes}
+      - {deal_id: DEAL009, region: Dubai, product_name: Term Loan, tenor: 24M, tenor_eligible: Yes}
+      - {deal_id: DEAL010, region: Fujairah, product_name: FX Forward Facility, tenor: 6M, tenor_eligible: Yes}
+      - {deal_id: DEAL011, region: Sharjah, product_name: Overdraft Facility, tenor: 12M, tenor_eligible: Yes}
+      - {deal_id: DEAL012, region: Ajman, product_name: Working Capital Loan, tenor: 1M, tenor_eligible: Yes}
+      - {deal_id: DEAL013, region: Dubai, product_name: Corporate Deposit, tenor: 12M, tenor_eligible: Yes}
+      - {deal_id: DEAL014, region: Abu Dhabi, product_name: Working Capital Loan, tenor: 1M, tenor_eligible: Yes}
+      - {deal_id: DEAL016, region: Abu Dhabi, product_name: Working Capital Loan, tenor: 3M, tenor_eligible: Yes}
+      - {deal_id: DEAL017, region: Sharjah, product_name: Invoice Discounting, tenor: 3M, tenor_eligible: Yes}
+      - {deal_id: DEAL018, region: Dubai, product_name: Trade Finance LC, tenor: 3M, tenor_eligible: Yes}
+      - {deal_id: DEAL019, region: Dubai, product_name: Overdraft Facility, tenor: 3M, tenor_eligible: Yes}
+      - {deal_id: DEAL020, region: Dubai, product_name: USD Term Loan, tenor: 12M, tenor_eligible: Yes}
+      - {deal_id: DEAL021, region: Dubai, product_name: Working Capital Loan, tenor: 3M, tenor_eligible: Yes}
+      - {deal_id: DEAL022, region: Abu Dhabi, product_name: Corporate Deposit, tenor: 1M, tenor_eligible: Yes}
+      - {deal_id: DEAL023, region: Sharjah, product_name: Invoice Discounting, tenor: 1M, tenor_eligible: Yes}
+      - {deal_id: DEAL024, region: Dubai, product_name: Term Loan, tenor: 60M, tenor_eligible: Yes}
+      - {deal_id: DEAL025, region: Sharjah, product_name: Working Capital Loan, tenor: 3M, tenor_eligible: Yes}
+      - {deal_id: DEAL026, region: Dubai, product_name: Term Loan, tenor: 60M, tenor_eligible: Yes}
+      - {deal_id: DEAL027, region: Abu Dhabi, product_name: Working Capital Loan, tenor: 1M, tenor_eligible: Yes}
+      - {deal_id: DEAL030, region: Fujairah, product_name: FX Forward Facility, tenor: 1M, tenor_eligible: Yes}
+      - {deal_id: DEAL031, region: Dubai, product_name: Term Loan, tenor: 36M, tenor_eligible: Yes}
+      - {deal_id: DEAL033, region: Dubai, product_name: Trade Finance LC, tenor: 6M, tenor_eligible: Yes}
+      - {deal_id: DEAL034, region: Dubai, product_name: Trade Finance LC, tenor: 3M, tenor_eligible: Yes}
+      - {deal_id: DEAL035, region: Ajman, product_name: Trade Finance LC, tenor: 3M, tenor_eligible: Yes}
+      - {deal_id: DEAL036, region: Dubai, product_name: Working Capital Loan, tenor: 1M, tenor_eligible: Yes}
+      - {deal_id: DEAL037, region: Dubai, product_name: Overdraft Facility, tenor: 6M, tenor_eligible: Yes}
+      - {deal_id: DEAL038, region: Dubai, product_name: Term Loan, tenor: 24M, tenor_eligible: Yes}
+      - {deal_id: DEAL039, region: Abu Dhabi, product_name: Corporate Deposit, tenor: 12M, tenor_eligible: Yes}
+      - {deal_id: DEAL041, region: Dubai, product_name: Trade Finance LC, tenor: 3M, tenor_eligible: Yes}
+      - {deal_id: DEAL043, region: Dubai, product_name: Term Loan, tenor: 12M, tenor_eligible: Yes}
+      - {deal_id: DEAL044, region: Abu Dhabi, product_name: Term Loan, tenor: 24M, tenor_eligible: Yes}
+      - {deal_id: DEAL045, region: Ras Al Khaimah, product_name: Corporate Deposit, tenor: 12M, tenor_eligible: Yes}
+      - {deal_id: DEAL046, region: Abu Dhabi, product_name: USD Term Loan, tenor: 12M, tenor_eligible: Yes}
+      - {deal_id: DEAL048, region: Fujairah, product_name: FX Forward Facility, tenor: 3M, tenor_eligible: Yes}
+      - {deal_id: DEAL049, region: Sharjah, product_name: Invoice Discounting, tenor: 3M, tenor_eligible: Yes}
+      - {deal_id: DEAL050, region: Ajman, product_name: Corporate Deposit, tenor: 6M, tenor_eligible: Yes}
+      - {deal_id: DEAL051, region: Abu Dhabi, product_name: USD Term Loan, tenor: 60M, tenor_eligible: Yes}
+      - {deal_id: DEAL052, region: Dubai, product_name: Term Loan, tenor: 24M, tenor_eligible: Yes}
+      - {deal_id: DEAL053, region: Ajman, product_name: Term Loan, tenor: 36M, tenor_eligible: Yes}
+      - {deal_id: DEAL054, region: Ras Al Khaimah, product_name: Overdraft Facility, tenor: 12M, tenor_eligible: Yes}
+      - {deal_id: DEAL055, region: Fujairah, product_name: FX Forward Facility, tenor: 1M, tenor_eligible: Yes}
+      - {deal_id: DEAL058, region: Abu Dhabi, product_name: USD Term Loan, tenor: 24M, tenor_eligible: Yes}
+      - {deal_id: DEAL059, region: Dubai, product_name: Trade Finance LC, tenor: 3M, tenor_eligible: Yes}
+    row_count: 50
+  - id: D70
+    question: "For won deals, broken down by product name, how does the risk premium we charged compare to the policy risk premium, and how does the funding cost we charged compare to the treasury benchmark funding cost?"
+    domain: treasury
+    persona: cfo
+    difficulty: multi-table-join
+    note: >-
+      All five base tables again, aggregate style instead of D66's row listing — two
+      independent comparisons (policy and treasury) collapsed onto one line per product.
+      funding_cost_pct is always booked equal to the treasury benchmark in this dataset
+      (see D63's note), so those two columns will match exactly; the risk-premium pair is
+      where real variance shows up.
+    gold_sql: >
+      SELECT pm.product_name,
+             ROUND(AVG(hd.risk_premium_pct), 2) AS avg_charged_risk_premium_pct,
+             ROUND(AVG(pp.risk_premium_pct), 2) AS avg_policy_risk_premium_pct,
+             ROUND(AVG(hd.funding_cost_pct), 2) AS avg_charged_funding_cost_pct,
+             ROUND(AVG(trs.funding_cost_pct), 2) AS avg_benchmark_funding_cost_pct
+      FROM fab_curated.historical_deals hd
+      JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id
+      JOIN fab_curated.product_master pm ON hd.product_id = pm.product_id
+      JOIN fab_curated.treasury_rate_sheet trs ON hd.currency = trs.currency AND hd.tenor = trs.tenor
+      JOIN fab_curated.pricing_policy pp ON cm.customer_segment = pp.customer_segment
+        AND pm.product_type = pp.product_type AND cm.risk_category = pp.risk_category
+      WHERE hd.deal_outcome = 'Won'
+      GROUP BY pm.product_name
+      ORDER BY pm.product_name
+    gold_tables: [historical_deals, customer_master, product_master, treasury_rate_sheet, pricing_policy]
+    gold_columns: [product_name, risk_premium_pct, funding_cost_pct, customer_id, product_id, currency, tenor, customer_segment, risk_category, product_type, deal_outcome]
+    gold_result:
+      - {product_name: Corporate Deposit, avg_charged_risk_premium_pct: 0.44, avg_policy_risk_premium_pct: 0.44, avg_charged_funding_cost_pct: 5.31, avg_benchmark_funding_cost_pct: 5.31}
+      - {product_name: FX Forward Facility, avg_charged_risk_premium_pct: 0.95, avg_policy_risk_premium_pct: 0.95, avg_charged_funding_cost_pct: 5.0, avg_benchmark_funding_cost_pct: 5.0}
+      - {product_name: Invoice Discounting, avg_charged_risk_premium_pct: 0.24, avg_policy_risk_premium_pct: 0.24, avg_charged_funding_cost_pct: 5.13, avg_benchmark_funding_cost_pct: 5.13}
+      - {product_name: Overdraft Facility, avg_charged_risk_premium_pct: 0.65, avg_policy_risk_premium_pct: 0.65, avg_charged_funding_cost_pct: 5.43, avg_benchmark_funding_cost_pct: 5.43}
+      - {product_name: Term Loan, avg_charged_risk_premium_pct: 0.48, avg_policy_risk_premium_pct: 0.48, avg_charged_funding_cost_pct: 5.78, avg_benchmark_funding_cost_pct: 5.78}
+      - {product_name: Trade Finance LC, avg_charged_risk_premium_pct: 0.53, avg_policy_risk_premium_pct: 0.53, avg_charged_funding_cost_pct: 5.28, avg_benchmark_funding_cost_pct: 5.28}
+      - {product_name: USD Term Loan, avg_charged_risk_premium_pct: 0.24, avg_policy_risk_premium_pct: 0.24, avg_charged_funding_cost_pct: 5.29, avg_benchmark_funding_cost_pct: 5.29}
+      - {product_name: Working Capital Loan, avg_charged_risk_premium_pct: 0.44, avg_policy_risk_premium_pct: 0.44, avg_charged_funding_cost_pct: 5.12, avg_benchmark_funding_cost_pct: 5.12}
+    row_count: 8
+  - id: D71
+    question: "For won deals, what is the deal count and total requested volume by customer region and treasury benchmark index (EIBOR vs SOFR)? I need our interest-rate-index exposure by region."
+    domain: treasury
+    persona: cfo
+    difficulty: multi-table-join
+    note: >-
+      Same historical_deals + customer_master + treasury_rate_sheet combo as D62, but a
+      different metric (volume/count exposure, not a funding-cost comparison) and a
+      different cut (benchmark_index instead of currency) — a realistic ALM/rate-exposure
+      question distinct from D62's cost-comparison framing.
+    gold_sql: >
+      SELECT cm.region, trs.benchmark_index, COUNT(*) AS won_deals,
+             SUM(hd.requested_amount) AS won_volume_aed
+      FROM fab_curated.historical_deals hd
+      JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id
+      JOIN fab_curated.treasury_rate_sheet trs ON hd.currency = trs.currency AND hd.tenor = trs.tenor
+      WHERE hd.deal_outcome = 'Won'
+      GROUP BY cm.region, trs.benchmark_index
+      ORDER BY won_volume_aed DESC
+    gold_tables: [historical_deals, customer_master, treasury_rate_sheet]
+    gold_columns: [region, benchmark_index, requested_amount, customer_id, currency, tenor, deal_outcome]
+    gold_result:
+      - {region: Dubai, benchmark_index: EIBOR, won_deals: 20, won_volume_aed: 848700000}
+      - {region: Abu Dhabi, benchmark_index: EIBOR, won_deals: 8, won_volume_aed: 577000000}
+      - {region: Ajman, benchmark_index: EIBOR, won_deals: 5, won_volume_aed: 253400000}
+      - {region: Ras Al Khaimah, benchmark_index: EIBOR, won_deals: 3, won_volume_aed: 251900000}
+      - {region: Abu Dhabi, benchmark_index: SOFR, won_deals: 4, won_volume_aed: 184300000}
+      - {region: Sharjah, benchmark_index: EIBOR, won_deals: 6, won_volume_aed: 61600000}
+      - {region: Fujairah, benchmark_index: SOFR, won_deals: 4, won_volume_aed: 51000000}
+      - {region: Dubai, benchmark_index: SOFR, won_deals: 1, won_volume_aed: 50100000}
+    row_count: 8
+  - id: D72
+    question: "How many deals breached the PRODUCT's own maximum discount cap (not the policy cap), broken down by customer region?"
+    domain: policy
+    persona: pricing-desk
+    difficulty: multi-table-join
+    note: >-
+      Same historical_deals+product_master combo as D59, with customer_master added for
+      the region cut. Deliberately named "the PRODUCT's own cap" to distinguish from D53,
+      which breaches the POLICY cap (pricing_policy.max_relationship_discount_pct) — the
+      two caps are independent columns on different tables and can disagree.
+    gold_sql: >
+      SELECT cm.region, COUNT(*) AS discount_breaches
+      FROM fab_curated.historical_deals hd
+      JOIN fab_curated.customer_master cm ON hd.customer_id = cm.customer_id
+      JOIN fab_curated.product_master pm ON hd.product_id = pm.product_id
+      WHERE hd.relationship_discount_pct > pm.max_discount_allowed_pct
+      GROUP BY cm.region
+      ORDER BY discount_breaches DESC
+    gold_tables: [historical_deals, customer_master, product_master]
+    gold_columns: [region, relationship_discount_pct, max_discount_allowed_pct, customer_id, product_id]
+    gold_result:
+      - {region: Abu Dhabi, discount_breaches: 3}
+      - {region: Sharjah, discount_breaches: 2}
+    row_count: 2
