@@ -95,16 +95,13 @@ def _sparse_ranking(question: str) -> list[str]:
     return [names[i] for i in order]
 
 
-def _rrf(rankings: list[list[str]], k: int) -> dict[str, float]:
-    """Reciprocal Rank Fusion: score(t) = Σ 1 / (k + rank_in_each_ranking).
-
-    Returns the {table: fused_score} map — callers that want ranked names sort it, and the
-    archetype router (ranked_tables below) needs the scores, not just the order."""
+def _rrf(rankings: list[list[str]], k: int) -> list[str]:
+    """Reciprocal Rank Fusion: score(t) = Σ 1 / (k + rank_in_each_ranking)."""
     fused: dict[str, float] = {}
     for ranking in rankings:
         for rank, table in enumerate(ranking):
             fused[table] = fused.get(table, 0.0) + 1.0 / (k + rank)
-    return fused
+    return sorted(fused, key=lambda t: fused[t], reverse=True)
 
 
 def select_tables(
@@ -132,8 +129,7 @@ def select_tables(
 
     try:
         q = glossary_expand(question)
-        fused_scores = _rrf([_dense_ranking(q), _sparse_ranking(q)], settings.rrf_k)
-        fused = sorted(fused_scores, key=lambda t: fused_scores[t], reverse=True)
+        fused = _rrf([_dense_ranking(q), _sparse_ranking(q)], settings.rrf_k)
     except Exception as exc:  # noqa: BLE001 — retrieval must never break the turn
         log.warning("retrieval failed | %s | falling back to full schema", exc)
         return set(ALLOWED_TABLES)
@@ -159,39 +155,3 @@ def select_tables(
     # Log core in RANK ORDER (most relevant first); closure additions listed separately.
     log.info("RETRIEVE ranked=%s +join_closure=%s", core, added)
     return closed
-
-
-def dense_table_scores(question: str, k: int | None = None) -> dict[str, float]:
-    """{table: cosine similarity} for the question against the table docs, best-effort.
-
-    Cosine is on 0..1 (the same interpretable scale as examples_min_score), so the
-    archetype router's floor/margin thresholds are meaningful. Returns {} when the dense
-    embedding backend is unavailable — the router then abstains rather than guessing."""
-    index = _dense_index()
-    if index is None:
-        return {}
-    from sql_agent.semantic_layer.embeddings import get_backend
-
-    qv = get_backend().embed_query(glossary_expand(question))  # bge query-prefix applied
-    k = k or max(settings.embedding_top_k * 3, 25)
-    return {name: score for name, score in index.search(qv, k) if name in ALLOWED_TABLES}
-
-
-def ranked_tables(question: str) -> list[tuple[str, float]]:
-    """Fused dense+BM25 RRF ranking WITH scores, best first, no join-closure, no hint.
-
-    Returns [] when retrieval is off/unavailable so the caller (archetype_router.route)
-    falls back to select_tables / an abstain. This is the candidate-ordering signal; the
-    interpretable per-table confidence comes from dense_table_scores above."""
-    if not settings.schema_retrieval_enabled:
-        return []
-    try:
-        q = glossary_expand(question)
-        fused = _rrf([_dense_ranking(q), _sparse_ranking(q)], settings.rrf_k)
-    except Exception as exc:  # noqa: BLE001 — retrieval must never break the turn
-        log.warning("ranked_tables failed | %s", exc)
-        return []
-    return sorted(
-        ((t, s) for t, s in fused.items() if t in ALLOWED_TABLES),
-        key=lambda ts: ts[1], reverse=True,
-    )

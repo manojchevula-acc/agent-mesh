@@ -51,6 +51,40 @@ def _is_tool_call_failure(exc: Exception) -> bool:
                (m.lower() for m in _TOOL_FAIL_MARKERS))
 
 
+def _enforce_verbatim_question(messages, tool_calls, cid: str = "-") -> None:
+    """In dynamic-only mode, overwrite analytical_query's ``question`` arg with the VERBATIM
+    latest user turn. Mutates ``tool_calls`` in place; no-op unless the fixed tiers are off.
+
+    Why: analytical_query is then the SOLE tool and its whole job is to take the user's
+    natural-language question. Reasoning models (gpt-oss) paraphrase or DECOMPOSE it in the
+    tool arg — e.g. reducing "new customer like X, can I offer the same price?" to "what price
+    for X?" — silently dropping most of the ask before the router/generator ever see it, so
+    the pipeline then answers a different question. The system prompt forbids this but the
+    model does it anyway, so it is enforced deterministically here.
+
+    Trade-off: this drops the agent's ability to fold a prior-turn pronoun into the question
+    ("match THAT price"); single-turn faithfulness is worth far more than that, and the
+    entity resolver / memory cover most reference cases. Scoped to dynamic-only mode — in
+    full-tier mode analytical_query is a last resort and a focused analytical question is
+    legitimate, so the arg is left untouched.
+    """
+    if not fixed_tiers_disabled():
+        return
+    last_human = next(
+        (m for m in reversed(messages) if isinstance(m, HumanMessage)), None
+    )
+    if last_human is None or not isinstance(last_human.content, str):
+        return
+    for call in tool_calls or []:
+        if (call.get("name") == "analytical_query"
+                and isinstance(call.get("args"), dict)
+                and call["args"].get("question") != last_human.content):
+            log.info("[%s] TOOL arg override | analytical_query.question restored to verbatim "
+                     "user turn (agent had paraphrased it) | was=%r",
+                     cid, str(call["args"].get("question"))[:120])
+            call["args"]["question"] = last_human.content
+
+
 def _parse_tool_content(content) -> dict | None:
     if isinstance(content, dict):
         return content
@@ -255,6 +289,13 @@ def build_sql_agent_graph(llm=None, checkpointer=None):
     def tool_node(state: AgentState):
         last = state["messages"][-1]
         tool_calls = last.tool_calls
+        cid = state.get("correlation_id") or "-"
+        # Enforce that analytical_query receives the user's question VERBATIM (dynamic-only
+        # mode). See _enforce_verbatim_question for the why. Mutates tool_calls in place
+        # BEFORE dispatch, so the router/generator and the audit log all see the faithful
+        # question, not the model's paraphrase.
+        _enforce_verbatim_question(state["messages"], tool_calls, cid)
+
         dynamic_in_batch = 0
         for call in tool_calls:
             guard_tool_call(state, call["name"])  # circuit breaker, Section 9.3

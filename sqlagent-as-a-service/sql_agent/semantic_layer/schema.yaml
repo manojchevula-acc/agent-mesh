@@ -24,6 +24,7 @@ tables:
   # 3.1 ---------------------------------------------------------------------------
   customer_master:
     grain: one row per customer
+    purpose: "The master record for one customer — identity, segment, industry, region, risk, credit score, exposure. Join here for any customer ATTRIBUTE a view lacks."
     primary_key: customer_id
     sensitivity_default: internal
     columns:
@@ -50,6 +51,7 @@ tables:
   # 3.2 ---------------------------------------------------------------------------
   product_master:
     grain: one row per product
+    purpose: "The master record for one product — name, type, standard margin, ticket-size limits. Join here for product attributes."
     primary_key: product_id
     sensitivity_default: public
     columns:
@@ -73,6 +75,7 @@ tables:
   # 3.3 ---------------------------------------------------------------------------
   treasury_rate_sheet:
     grain: one row per currency + tenor (+ effective_date)
+    purpose: "Funding/benchmark cost by currency and tenor — the treasury rate inputs to pricing. Pick for funding-cost / benchmark-rate questions by currency+tenor."
     primary_key: rate_id
     sensitivity_default: public
     columns:
@@ -90,6 +93,7 @@ tables:
   # 3.4 ---------------------------------------------------------------------------
   pricing_policy:
     grain: one row per customer_segment + product_type + risk_category
+    purpose: "The policy rulebook by segment x product x risk — minimum margins, floors, discount caps. Pick to look up the POLICY LIMIT that applies, not actual deal data."
     primary_key: policy_id
     sensitivity_default: internal
     columns:
@@ -112,6 +116,7 @@ tables:
   # 3.5 ---------------------------------------------------------------------------
   historical_deals:
     grain: one row per past deal
+    purpose: "The raw per-deal transaction record (requested amount, tenor, channel, outcome, dates). Pick for deal-level facts and time/channel analysis not already rolled up in a view."
     primary_key: deal_id
     sensitivity_default: internal
     columns:
@@ -153,6 +158,7 @@ tables:
   customer_360:
     schema: fab_semantic
     grain: one row per customer — profile enriched with aggregated deal KPIs
+    purpose: "One pre-aggregated profile row per customer with deal KPIs (win rate, avg margin, volume, counts). Pick for a customer OVERVIEW/profile. Its avg_*/win_rate columns are pre-aggregated — do not re-average across customers."
     primary_key: customer_id
     sensitivity_default: internal
     columns:
@@ -187,6 +193,11 @@ tables:
   pricing_recommendation_view:
     schema: fab_semantic
     grain: one row per historical deal — deal annotated with policy benchmarks and compliance flags
+    purpose: "Every EXISTING customer's per-deal recommended vs approved price, margin, and policy-compliance flags. Pick for an existing customer's actual deal pricing/compliance, or deal-grain price/margin aggregates."
+    search_terms: >
+      deal-level recommended vs approved price and expected margin; per-deal spread and
+      profitability; policy compliance flags per booked deal; the deal-grain source for
+      price and margin analysis across product, segment, industry, region, or won/lost outcome
     primary_key: deal_id
     sensitivity_default: internal
     columns:
@@ -233,6 +244,7 @@ tables:
   margin_analysis:
     schema: fab_semantic
     grain: one row per historical deal — margin decomposition with treasury benchmark comparison
+    purpose: "Per-deal margin decomposition vs the treasury benchmark (spread, net margin, below-minimum flag). Pick for margin-breakdown / margin-vs-benchmark questions."
     primary_key: deal_id
     sensitivity_default: internal
     columns:
@@ -270,6 +282,7 @@ tables:
   profitability_summary:
     schema: fab_semantic
     grain: one row per customer x product_type — won-deals roll-up with profitability tier
+    purpose: "Won-deals profitability rolled up per customer x product type (revenue, net profit, tier). Pick for profitability / net-profit / loss-making questions."
     search_terms: >
       how profitable is this customer; profitability by product; net profit for a customer;
       profitability tier; show profitability for a customer; revenue and cost breakdown
@@ -298,6 +311,7 @@ tables:
   rwa_impact_view:
     schema: fab_semantic
     grain: one row per won historical deal — Basel III RWA and capital metrics
+    purpose: "Basel III RWA and capital metrics per WON deal (exposure, risk weight, RWA, capital, return on RWA). Pick for RWA / capital / return-on-RWA questions."
     search_terms: >
       RWA and capital impact for a customer; risk-weighted assets; Basel III capital charge;
       return on RWA; how much capital does this deal or customer consume
@@ -331,6 +345,7 @@ tables:
   segment_pricing_benchmark:
     schema: fab_semantic
     grain: one row per customer_segment x product x risk_category — aggregated pricing guideline
+    purpose: "The pricing GUIDELINE (floor/target margins, max discount) by segment x product x risk. Pick for 'what are the target/floor margins' guideline lookups, not actual deals."
     search_terms: >
       pricing guideline by segment; target and floor margins for a segment; new-customer
       buffer; pricing cushion for a rating drop; max relationship discount for a segment;
@@ -357,6 +372,7 @@ tables:
   operations_cost_impact:
     schema: fab_semantic
     grain: one row per product x customer_segment — operational cost margin roll-up
+    purpose: "Operational cost margin per product x segment (onboarding, servicing, annual cost). Pick for operational-cost-of-pricing questions."
     search_terms: >
       operations cost per product and customer; operational cost differs by product and
       segment; onboarding and servicing cost; how much does it cost to run this product;
@@ -379,6 +395,7 @@ tables:
   new_customer_pricing_view:
     schema: fab_semantic
     grain: one row per prospect customer — recommended price with no relationship history
+    purpose: "The recommended price for a PROSPECT / brand-new customer with NO relationship history. Pick ONLY for a new customer/prospect; never for an existing customer's deals."
     search_terms: >
       what interest rate should I offer a new customer; rate for a customer with no
       previous relationship; quote a price for a prospect; pricing for a brand new
@@ -417,6 +434,7 @@ tables:
   competitor_price_analysis:
     schema: fab_semantic
     grain: one row per negotiation-memory interaction — FAB vs competitor with a suggested action
+    purpose: "FAB's price vs a named COMPETITOR's offer per negotiation — the gap, how much we can reduce, and a suggested match/counter/reject action. Pick for competitor-undercut / 'should we match' questions."
     search_terms: >
       customer came back with a lower competitor offer; should we match counter or reject;
       competitor undercut our price; how much can we reduce the price without hurting
@@ -450,6 +468,7 @@ tables:
   pricing_trace_view:
     schema: fab_semantic
     grain: one row per historical deal — step-by-step recommended-price decomposition
+    purpose: "The STEP-BY-STEP component build-up of one deal's recommended price (funding + margin + risk + ops − discount) with an explanation. Pick for 'explain / how was the price calculated / break down the price' questions."
     search_terms: >
       explain step by step how the price was calculated; how did we arrive at the current
       price; break down the recommended price; price build-up; walk me through the pricing
@@ -483,6 +502,7 @@ tables:
   relationship_discount_view:
     schema: fab_semantic
     grain: one row per customer — relationship discount eligibility and approval requirement
+    purpose: "One row per customer — relationship-discount eligibility, the policy cap, and whether approval is required. Pick for 'does the discount need approval / is the discount allowed' questions."
     search_terms: >
       is the customer's relationship discount allowed; does this discount need approval;
       relationship discount eligibility; how much discount can we give this customer;
@@ -510,6 +530,7 @@ tables:
   win_loss_insights:
     schema: fab_semantic
     grain: one row per customer x product — won/lost aggregation with pricing gap
+    purpose: "Won/lost counts and win rate per customer x product with the pricing gap. Pick for win-rate / win-loss analysis. Its rate/avg columns are pre-aggregated — sum won/total across rows for a population rate."
     primary_key: null
     sensitivity_default: internal
     columns:
@@ -535,6 +556,7 @@ tables:
   policy_exception_view:
     schema: fab_semantic
     grain: one row per historical deal — which policy rules the deal breached
+    purpose: "Per deal, WHICH policy rules it breached and why (exception flags + reason text). Pick for 'which deals are non-compliant and why / policy breaches'. Default filter is_exception = TRUE."
     search_terms: >
       which deals are non-compliant and why; policy breaches; policy exceptions; why did a
       deal break policy; deals that violated pricing rules; non-compliant deals with reasons;
@@ -571,6 +593,7 @@ tables:
   cross_sell_opportunity:
     schema: fab_semantic
     grain: one row per active cross-sell rule — segment x industry recommendation
+    purpose: "Active cross-sell/upsell product recommendations by segment x industry. Pick for cross-sell/upsell ideas. Default filter rule_status = 'Active'."
     search_terms: >
       cross-selling ideas; what other products can we offer; next best product to sell;
       upsell recommendations; cross-sell opportunities alongside the current product;
@@ -596,6 +619,7 @@ tables:
   credit_rating_events:
     schema: fab_semantic
     grain: one row per credit-rating migration event
+    purpose: "One row per credit-rating migration (up/downgrade) with the recommended pricing action and extra risk premium. Pick for rating-change / downgrade  questions."
     search_terms: >
       customer's credit rating dropped; rating downgrade; how do we cushion ourselves from
       the increased risk; what pricing action after a rating change; do we need a floating
@@ -625,6 +649,7 @@ tables:
   similar_customer_pricing:
     schema: fab_semantic
     grain: one row per new_customer -> reference_customer similarity mapping
+    purpose: "Maps a NEW customer to the most similar EXISTING (reference) customer and suggests a price based on that reference. Pick for 'new customer like an existing one, what price' questions."
     search_terms: >
       I have a customer whose profile is like another customer; can I offer the same price
       as a similar customer; lookalike customer pricing; reference a similar existing

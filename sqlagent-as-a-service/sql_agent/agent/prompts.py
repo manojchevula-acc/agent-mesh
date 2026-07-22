@@ -268,21 +268,21 @@ HARD CONSTRAINTS
 - Reference each object by the EXACT name shown after "TABLE"/"VIEW", including its schema
   prefix when present (e.g. fab_semantic.customer_360). Do NOT drop the schema
   prefix — an unqualified name will resolve to the wrong schema and fail.
+- Use each object's `purpose` and `grain` lines to pick the RIGHT one when several look
+  similar — the purpose says what it is for, the grain says what one row represents.
 - PREFER a single pre-joined VIEW (marked "VIEW ... query STANDALONE") when one fully
   answers the question — it already has the joined/enriched columns, so no JOIN is needed.
-- A VIEW may be joined to customer_master ONLY when customer_master is listed under that
-  view's own "joins:" line above, AND the question needs a customer attribute (e.g.
-  industry, region) that is NOT already a column on the view — check the view's column
-  list first. This is the ONE exception. Never join a view to any other table, never join
-  two views together, and never add a third table to a view+customer_master join — the
-  view is grain-one-row-per-<entity> and customer_master is grain-one-row-per-customer, so
-  this specific join cannot duplicate or drop rows, but chaining a further table onto
-  customer_master (e.g. historical_deals) WOULD silently fan out the view's rows. Every
-  other VIEW must appear alone in FROM. Only base TABLEs may otherwise be joined. Respect
-  a view's grain/population.
-- When you DO join base tables, qualify every column with the table that actually owns it
-  (e.g. customer_segment is on customer_master, not historical_deals).
-- Use the declared join keys exactly. Do not invent relationships.
+- Join ONLY table pairs listed under "AVAILABLE JOINS" below, using exactly the key shown
+  there. Never invent a relationship, and never join a pair that is not listed.
+- A VIEW may be joined to another table ONLY via a pair that appears in AVAILABLE JOINS, and
+  ONLY when the question needs a column that other table has but the view lacks — check the
+  view's own column list first. Never join two VIEWs together, and never add a third table
+  to a view join: a view is one-row-per-entity, so chaining a further table onto its join
+  partner can silently fan out (duplicate) its rows. Otherwise query the VIEW ALONE. Only
+  base TABLEs may be freely joined (again, only via pairs in AVAILABLE JOINS). Respect each
+  object's grain/population.
+- When you join base tables, qualify every column with the table that actually owns it
+  (read the column lists above).
 - If the question is about ONE specific customer or deal, filter on its id
   (customer_id / deal_id). When an "ENTITY RESOLUTION" block appears below, use the
   customer_id it provides in your WHERE clause rather than filtering on the customer name.
@@ -299,9 +299,8 @@ HARD CONSTRAINTS
   product) is a PRE-AGGREGATE — re-averaging it across rows is an unweighted average-of-
   averages, NOT the true population statistic, and will give a WRONG number even though the
   query runs without error. When a column's note flags this, aggregate the underlying
-  deal-grain table/view instead (e.g. pricing_recommendation_view, margin_analysis), never
-  the pre-aggregate, for any question asking about a statistic "across" or "for all" some
-  population.
+  deal-grain table/view the note points to instead, never the pre-aggregate, for any
+  question asking about a statistic "across" or "for all" some population.
 - Always include a LIMIT of at most 50 rows.
 - The SQL MUST be valid for {dialect}. Follow these dialect rules exactly:
 {dialect_notes}
@@ -346,36 +345,57 @@ SCHEMA_LINK_PROMPT = """
 You are planning a SQL query. Your ONE job is to pick the MINIMAL set of tables that
 answers the question — then stop.
 
->>> RETURN THE FEWEST TABLES POSSIBLE. Most questions need EXACTLY ONE table or view. <<<
+REASON IN THIS ORDER:
+  1. UNDERSTAND the ask: which entity is it about (a specific customer, a prospect with no
+     history, one deal, a segment...), and what is being asked (a price, a step-by-step
+     breakdown, a competitor comparison, compliance, RWA, a ranking, an aggregate...)?
+  2. MATCH to the object whose `purpose` and `grain` lines fit BOTH. When several candidates
+     look similar, the `purpose` line (what it is for) and `grain` line (what one row is)
+     are how you tell them apart — read them; do not guess from the table name.
+
 The CANDIDATE TABLES below are a broad shortlist from search — they are NOT all relevant.
-Do NOT return all of them. Choose only the one(s) whose columns the question actually needs;
-ignore the rest. Returning an unneeded table is a mistake that breaks the query.
+Do NOT return all of them until they are required to answer user question. Choose only the one(s) whose columns the question actually needs.
 
-DECISION PROCEDURE (follow in order):
-  1. Is there a SINGLE table or VIEW that already has every column the question needs?
-     -> Return JUST that one, with an EMPTY join_path. This is the common case. Prefer a
-        VIEW (marked "VIEW ... query STANDALONE"): it is pre-joined, so no join is needed.
-  2. Only if NO single object has all the needed columns, pick the 2 base TABLEs that do,
-     and put that ONE pair in join_path.
-  3. Never add a third table unless the question truly spans three.
+DECISION PROCEDURE:
+  1. Is there a SINGLE table or VIEW whose purpose/grain fit and that already has every
+     column the question needs? -> Return JUST that one, EMPTY join_path. Common case.
+     Prefer a VIEW (marked "query STANDALONE"): it is pre-joined, so no join is needed.
+  2. If no single object has EVERY needed column, include EVERY base table that owns a
+     needed column, and add ONE join_path pair for EACH hop that links them: a 3-table join
+     has TWO pairs, a 4-table join THREE, and so on. Every pair MUST appear in AVAILABLE
+     JOINS. There is NO cap on table count — the only rule is "the fewest tables that still
+     cover every needed column".
+  3. A question that needs a MEASURE/fact from one table plus DIMENSIONS that live on two
+     different tables genuinely spans THREE tables (e.g. a metric on historical_deals broken
+     down by customer_master.industry AND product_master.product_name). Return all three and
+     both join pairs. Do NOT drop a needed dimension, and do NOT substitute a convenient view
+     whose column is defined differently, just to keep the table count at one or two.
+  4. VIEW limit: a VIEW may join ONLY to its single listed partner (customer_master) and
+     never inside a 3+-table chain — a view is pre-aggregated/one-row-per-entity, so adding a
+     further table can fan out (duplicate) its rows. Multi-table (3+) joins are BASE-table
+     only.
 
-CANDIDATE TABLES (pick ONLY from these; the only tables/columns you may use):
+CANDIDATE TABLES (pick ONLY from these; the only tables/columns you may use). The schema
+below includes each object's purpose, grain, columns, and an AVAILABLE JOINS map:
 {candidate_schema}
 
-Return a strict JSON query plan:
-  {{"tables": ["..."], "columns": ["..."], "join_path": [["tableA", "tableB"]],
+Return a strict JSON query plan (join_path holds ONE pair per join hop — it may hold two,
+three, or more pairs for a multi-table join, not just one):
+  {{"tables": ["..."], "columns": ["..."],
+    "join_path": [["tableA", "tableB"], ["tableA", "tableC"]],
     "group_by": ["..."], "aggregations": ["AVG(col)"], "filters": ["col = 'value'"]}}
 
 Hard rules:
-- A VIEW may appear in join_path paired with customer_master ONLY, and ONLY when the
-  question needs a customer attribute (industry, region, etc.) missing from the view's own
-  columns — check the view's "joins:" line to confirm customer_master is listed there
-  first. Never pair a view with any other table, never pair two views together, and never
-  add a third table to a view+customer_master pair. Otherwise: joining a view is rejected;
-  only base TABLEs may appear in a join_path; if you pick a view for any other reason, use
-  it ALONE.
-- Respect each object's grain/population (e.g. some views contain WON deals only).
-- join_path lists table PAIRS to connect; do NOT specify join keys (resolved elsewhere).
+- ``columns``: list ONLY the columns needed to answer the question (the ones selected, plus
+  any id/filter/group-by columns) — not every column of the chosen table.
+- ``join_path``: ONE pair per join hop — a 3-table join lists TWO pairs, a 4-table join
+  THREE. Every pair MUST be listed in AVAILABLE JOINS; never propose a pair that is not
+  listed there. List table PAIRS only; do NOT specify join keys (resolved elsewhere).
+- A VIEW may appear in a join pair ONLY via a pair shown in AVAILABLE JOINS, and only when
+  the question needs a column the view lacks. Never pair two VIEWs, and never add a third
+  table to a pair that includes a view. Otherwise use the view ALONE.
+- Respect each object's grain/population (some views contain WON deals only, prospects only,
+  etc. — the grain line states it).
 - If the candidates cannot answer the question, return {{"tables": []}}.
 
 QUESTION: {question}

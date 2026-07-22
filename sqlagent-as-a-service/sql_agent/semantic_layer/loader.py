@@ -44,6 +44,9 @@ class Table:
     is_view: bool = False  # a pre-joined fab_semantic read model — query standalone, don't join
     search_terms: str = ""  # extra NL trigger phrases/synonyms for retrieval ONLY (not rendered
                             # to the generator); boosts recall of business-question phrasings
+    purpose: str = ""       # one-line "what this table/view is for / when to pick it"; RENDERED
+                            # into the planner+generator schema context so the model can tell
+                            # near-synonym tables apart. Sourced here, never hardcoded in a prompt.
 
     @property
     def filterable_columns(self) -> list[str]:
@@ -103,6 +106,7 @@ def load_semantic_layer() -> SemanticLayer:
             # A fab_semantic object is a pre-joined view; overridable via `view:` in yaml.
             is_view=bool(tspec.get("view", schema == "fab_semantic")),
             search_terms=str(tspec.get("search_terms", "") or ""),
+            purpose=str(tspec.get("purpose", "") or ""),
         )
 
     blocked = {c.lower() for c in raw.get("blocked_columns", [])}

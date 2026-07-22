@@ -30,17 +30,5 @@ def analytical_query(question: str) -> dict:
     # then the only data path and the tier_router has already bound it for every caller.
     if not caller_has_scope(GATED_SCOPE) and not fixed_tiers_disabled():
         raise AuthError("analytical_query requires the dynamic_sql scope")
-    from sql_agent.config import settings
     from sql_agent.routing.query_engine import run_dynamic_pipeline
-
-    # Deterministic archetype hint so the pipeline's retrieval force-includes the
-    # strongest-matching view(s) even in dynamic-only mode (where the intent classifier's
-    # tables_hint never reaches this tool). Cheap + cached; _plan_schema calls route()
-    # again but the embedding indices are lru_cached, so it's a cache hit. No-op when the
-    # router is off.
-    hint = None
-    if settings.archetype_router_enabled:
-        from sql_agent.semantic_layer.archetype_router import route
-
-        hint = route(question).candidates or None
-    return run_dynamic_pipeline(question, tables_hint=hint)  # §9.2 gen + §8 validation
+    return run_dynamic_pipeline(question)  # Section 9.2 generation + Section 8 validation
