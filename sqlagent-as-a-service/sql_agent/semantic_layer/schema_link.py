@@ -20,7 +20,7 @@ from sql_agent.agent.prompts import SCHEMA_LINK_PROMPT
 from sql_agent.config import settings
 from sql_agent.llm import Step, get_llm, log_usage
 from sql_agent.logging_config import get_logger
-from sql_agent.semantic_layer.loader import load_semantic_layer
+from sql_agent.semantic_layer.loader import VIEW_TABLES, load_semantic_layer
 from sql_agent.semantic_layer.renderer import render_schema_context
 
 log = get_logger("schema_link")
@@ -41,6 +41,24 @@ def _parse(text: str) -> dict:
     if start == -1 or end == -1 or end < start:
         raise ValueError("no JSON object found")
     return json.loads(text[start : end + 1])
+
+
+def _violates_view_scope(tables: set[str]) -> bool:
+    """Mirror the validator's check #9 on the PLAN, before it reaches generation.
+
+    A view may be queried alone or joined ONLY to customer_master; it may never sit in a
+    query alongside a further table (it is one-row-per-entity, so chaining a third table
+    onto its join partner fans out its rows). The planner, seeing a deal-grain view that
+    superficially carries most of the SELECT columns, repeatedly picks
+    ``view + customer_master + pricing_policy`` to reach a POLICY value the view lacks —
+    a plan the validator always rejects, burning self-correction attempts. Detect it here."""
+    views = tables & VIEW_TABLES
+    if not views:
+        return False
+    if len(views) > 1:
+        return True
+    others = tables - views
+    return bool(others) and others != {"customer_master"}
 
 
 def _bare(name: str) -> str:
@@ -78,6 +96,22 @@ def link_schema(question: str, candidates: set[str]) -> QueryPlan:
     tables = {_bare(t) for t in data.get("tables", []) if _bare(t) in candidates}
     if not tables:
         tables = set(candidates)  # safe fallback (also covers the explicit "cannot answer")
+
+    # Guard: if the planner picked a structurally-illegal view-chain (a view joined
+    # alongside anything but customer_master — see _violates_view_scope), the validator
+    # would reject it and waste self-correction attempts. Rewrite deterministically to the
+    # BASE tables in the candidate set. base_join_closure (selector.py) has already ensured
+    # the base lookup/bridge tables a multi-base-table join needs are candidates, so
+    # dropping the views leaves exactly the base tables that answer the question. Clearing
+    # the planner's view-qualified join_path lets resolve_joins recompute the base path.
+    if _violates_view_scope(tables):
+        base_only = {t for t in candidates if t not in VIEW_TABLES}
+        if base_only:
+            log.info("PLAN illegal view-chain %s -> base-only %s",
+                     sorted(tables), sorted(base_only))
+            tables = base_only
+            data = {**data, "join_path": []}
+
     allowed_cols = {
         c.name for t in tables for c in layer.tables[t].columns.values()
     }

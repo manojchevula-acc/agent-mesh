@@ -24,6 +24,7 @@ from sql_agent.logging_config import get_logger
 from sql_agent.semantic_layer.catalog import glossary_expand
 from sql_agent.semantic_layer.loader import (
     ALLOWED_TABLES,
+    base_join_closure,
     join_closure,
     load_semantic_layer,
 )
@@ -144,10 +145,19 @@ def select_tables(
         return set(ALLOWED_TABLES)  # safe fallback: never starve generation
 
     if not apply_closure:
-        # Planner path: ranked candidates only, no join-closure expansion (keeps the
-        # schema-link prompt small enough for the provider's per-minute token limit).
-        log.info("RETRIEVE ranked=%s (no closure — planner)", core)
-        return set(core)
+        # Planner path: ranked candidates PLUS a BASE-table-only join closure. The full
+        # view-inclusive closure is still withheld here (it pulls customer_master's dozen
+        # view neighbours and blows the per-minute token limit), but the base bridges it
+        # would have added — product_master, treasury_rate_sheet, and customer_master as
+        # the bridge into pricing_policy — are exactly the tables the deal-grain views
+        # crowd out of the ranking, leaving a multi-base-table join unbuildable. Adding
+        # only base neighbours (at most the five base tables) keeps the planner prompt
+        # small while making those joins reachable. resolve_joins still prunes to the
+        # minimal path the plan actually uses.
+        closed = base_join_closure(set(core))
+        added = [t for t in sorted(closed) if t not in core]
+        log.info("RETRIEVE ranked=%s +base_closure=%s (planner)", core, added)
+        return closed
 
     # Join-closure adds tables needed to JOIN the core ones — recall safety, NOT priority.
     closed = join_closure(set(core))

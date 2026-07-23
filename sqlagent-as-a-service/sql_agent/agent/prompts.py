@@ -373,7 +373,18 @@ DECISION PROCEDURE:
   4. VIEW limit: a VIEW may join ONLY to its single listed partner (customer_master) and
      never inside a 3+-table chain — a view is pre-aggregated/one-row-per-entity, so adding a
      further table can fan out (duplicate) its rows. Multi-table (3+) joins are BASE-table
-     only.
+     only. So the moment you need a view PLUS any table other than customer_master alone,
+     DROP the view and build the whole query from BASE tables instead.
+  5. A view is NOT a shortcut when the question compares an actual deal value to the POLICY
+     or benchmark value behind it. "The risk premium we CHARGED" (the deal's own
+     risk_premium_pct, on historical_deals) and "the POLICY risk premium for that
+     segment/risk/product" (pricing_policy.risk_premium_pct) are TWO DIFFERENT columns on
+     TWO DIFFERENT tables that happen to share a name — a deal-grain view carries only the
+     first. The policy/benchmark value lives on a base lookup table (pricing_policy,
+     treasury_rate_sheet, product_master) that NO view can join to. In that case anchor on
+     historical_deals and join the base tables (customer_master, product_master,
+     treasury_rate_sheet, pricing_policy) — never anchor on a view and try to attach
+     pricing_policy.
 
 CANDIDATE TABLES (pick ONLY from these; the only tables/columns you may use). The schema
 below includes each object's purpose, grain, columns, and an AVAILABLE JOINS map:

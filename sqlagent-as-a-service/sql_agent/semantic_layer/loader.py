@@ -155,6 +155,28 @@ def join_closure(tables: set[str]) -> set[str]:
     return {t for t in closed if t in ALLOWED_TABLES}
 
 
+def base_join_closure(tables: set[str]) -> set[str]:
+    """Expand a table set with one-hop neighbours that are BASE tables (never views).
+
+    The retrieval bias problem: the deal-grain semantic views duplicate the descriptive
+    columns of the base tables (product_name, benchmark_rate, risk_category, region), so
+    they out-rank — and crowd out — the base lookup/dimension tables a multi-base-table
+    join actually needs (product_master, treasury_rate_sheet, and customer_master as the
+    bridge into pricing_policy). Those dropped tables are, however, always exactly one
+    declared join hop from a base table that DID survive retrieval, so re-adding the
+    base-table neighbourhood recovers them deterministically.
+
+    Restricted to non-view neighbours on purpose: adding a view is what the full
+    ``join_closure`` does that blows the planner's token budget — customer_master
+    neighbours nearly every view — so this expansion adds only base tables (at most the
+    five that exist), never a view. See selector.select_tables (planner path)."""
+    graph = relationship_graph()
+    closed = set(tables)
+    for t in list(tables):
+        closed.update(n for n in graph.get(t, {}) if n not in VIEW_TABLES)
+    return {t for t in closed if t in ALLOWED_TABLES}
+
+
 def enum_values(table: str, column: str) -> tuple[str, ...]:
     """The declared enum values for a column, or () if it has none."""
     t = load_semantic_layer().tables.get(table)
