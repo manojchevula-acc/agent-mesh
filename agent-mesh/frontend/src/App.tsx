@@ -28,6 +28,7 @@ export default function App() {
         <Route path="/app" element={<AppLayout />}>
           <Route index element={<Navigate to="/app/chat" replace />} />
           <Route path="chat" element={<ChatPage />} />
+          <Route path="chat/:sessionId" element={<ChatPage />} />
           <Route path="activity" element={<RequestActivityPage />} />
           <Route path="feedback" element={<FeedbackDashboardPage />} />
           <Route path="audit" element={<AuditDashboardPage />} />

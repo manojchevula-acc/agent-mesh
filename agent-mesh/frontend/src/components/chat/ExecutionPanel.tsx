@@ -196,6 +196,7 @@ function HandoffTree({ path }: { path: string[] }) {
 
 function SummaryTable({ result }: { result: MeshResult }) {
   const rows: Array<{ label: string; value: string; cls?: string }> = [];
+  if (result.session_id) rows.push({ label: "Session ID", value: result.session_id });
   if (result.request_id) rows.push({ label: "Request ID", value: result.request_id });
   if (result.domain) rows.push({ label: "Domain", value: result.domain });
   if (result.route) rows.push({ label: "Route", value: result.route });
@@ -255,7 +256,7 @@ export default function ExecutionPanel({ result, liveEvents, liveReasoning }: Ex
     ? `${(result.total_duration_ms / 1000).toFixed(1)} s`
     : null;
 
-  const hasSummary = result?.request_id || result?.route || result?.domain;
+  const hasSummary = result?.session_id || result?.request_id || result?.route || result?.domain;
 
   if (!hasSummary && stepCount === 0 && reasoningCount === 0) return null;
 

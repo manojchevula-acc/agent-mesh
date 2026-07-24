@@ -1,11 +1,13 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import {
   MessagesSquare,
   RefreshCw,
   Search,
   ChevronDown,
   ChevronUp,
+  ExternalLink,
 } from "lucide-react";
 import { getConversations } from "@/api/mesh";
 import { Metric } from "@/components/ui/Metric";
@@ -81,6 +83,7 @@ function toRichMessage(m: SessionMessage, idx: number): ChatMessage {
 
 function SessionCard({ session }: { session: SessionSummary }) {
   const [expanded, setExpanded] = useState(false);
+  const navigate = useNavigate();
 
   return (
     <div className="rounded-xl border border-line bg-surface shadow-sm overflow-hidden">
@@ -104,13 +107,20 @@ function SessionCard({ session }: { session: SessionSummary }) {
           </div>
         </div>
 
-        {/* Time range */}
-        <div className="shrink-0 text-right">
+        {/* Time range + Resume */}
+        <div className="shrink-0 text-right flex flex-col items-end gap-1.5">
+          <button
+            onClick={() => navigate(`/app/chat/${session.session_id}`)}
+            className="flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-lg bg-brand-600 text-white hover:bg-brand-700 dark:bg-brand-500 dark:hover:bg-brand-400 transition-colors"
+          >
+            <ExternalLink className="h-3 w-3" />
+            Resume
+          </button>
           <p className="text-xs text-fg font-medium" title={formatTs(session.last_ts)}>
             {timeAgo(session.last_ts)}
           </p>
           {session.first_ts !== session.last_ts && (
-            <p className="text-[10px] text-faint mt-0.5" title={formatTs(session.first_ts)}>
+            <p className="text-[10px] text-faint" title={formatTs(session.first_ts)}>
               started {timeAgo(session.first_ts)}
             </p>
           )}

@@ -299,6 +299,24 @@ const MessageBubble = memo(function MessageBubble({ message, onFeedback }: Messa
                   );
                 })()}
 
+              {/* Session / Request ID chips — always visible metadata */}
+              {result && (result.session_id || result.request_id) && (
+                <div className="flex flex-wrap gap-2 mt-3 pt-2 border-t border-line">
+                  {result.session_id && (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-mono text-muted bg-surface border border-line rounded px-1.5 py-0.5" title="Session ID — persistent conversation thread">
+                      <span className="text-faint font-sans not-italic">session</span>
+                      {result.session_id}
+                    </span>
+                  )}
+                  {result.request_id && (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-mono text-muted bg-surface border border-line rounded px-1.5 py-0.5" title="Request ID — unique to this turn">
+                      <span className="text-faint font-sans not-italic">req</span>
+                      {result.request_id}
+                    </span>
+                  )}
+                </div>
+              )}
+
               {/* Pipeline trail */}
               {result && result.trail.length > 0 && (
                 <div className="mt-3 pt-3 border-t border-line">

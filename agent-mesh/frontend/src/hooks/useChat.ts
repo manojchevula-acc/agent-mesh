@@ -53,19 +53,30 @@ function toRestoredMessage(m: SessionMessage): ChatMessage {
 interface UseChatOptions {
   username: string;
   role: string;
+  /** When set (from URL param), this session is loaded instead of localStorage. */
+  initialSessionId?: string;
 }
 
-export function useChat({ username, role }: UseChatOptions) {
+export function useChat({ username, role, initialSessionId }: UseChatOptions) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   // Holds the active conversation id. Persisted to localStorage so the thread
   // survives a page refresh; pinned by the first response that returns it.
   const sessionIdRef = useRef<string | null>(readSessionId());
 
-  // On mount, restore prior turns for the stored session so a refresh doesn't
-  // lose the conversation. Best-effort — failure just leaves the chat empty.
+  // Restore conversation history on mount (or when the URL session param changes).
+  // If initialSessionId is provided (resume from dashboard), it overrides localStorage.
+  // Otherwise falls back to whatever is stored in localStorage (existing behaviour).
   useEffect(() => {
-    const sid = sessionIdRef.current;
+    const sid = initialSessionId || readSessionId();
     if (!sid) return;
+
+    // Pin this session so subsequent sends continue on the same thread.
+    sessionIdRef.current = sid;
+    writeSessionId(sid);
+
+    // Clear stale messages before loading the new session's history.
+    setMessages([]);
+
     let cancelled = false;
     getConversation(sid)
       .then((history) => {
@@ -73,14 +84,14 @@ export function useChat({ username, role }: UseChatOptions) {
         setMessages(history.messages.map(toRestoredMessage));
       })
       .catch(() => {
-        /* API unreachable or no history — start fresh */
+        /* API unreachable or session not found — start fresh */
       });
     return () => {
       cancelled = true;
     };
-    // Restore once on mount.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Re-run when the URL session param changes (browser back/forward between sessions).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialSessionId]);
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);

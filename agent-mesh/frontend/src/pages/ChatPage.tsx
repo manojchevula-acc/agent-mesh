@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Send, SquarePen, Bot } from "lucide-react";
+import { useParams } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { ChatContext } from "@/contexts/ChatContext";
 import { useChat } from "@/hooks/useChat";
@@ -11,10 +12,12 @@ import { SAMPLE_QUERY_GROUPS } from "@/config/constants";
 export default function ChatPage() {
   const { user } = useAuth();
   const username = user?.username ?? "bob";
+  const { sessionId } = useParams<{ sessionId?: string }>();
 
   const { messages, sendMessage, clearChat, handleFeedback, isLoading } = useChat({
     username,
     role: user?.role ?? "customer",
+    initialSessionId: sessionId,
   });
 
   const [input, setInput] = useState("");
