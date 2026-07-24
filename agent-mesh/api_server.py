@@ -612,7 +612,10 @@ async def get_conversations_list(request: Request) -> JSONResponse:
                         if not line:
                             continue
                         try:
-                            messages.append(json.loads(line))
+                            rec = json.loads(line)
+                            if not isinstance(rec, dict) or rec.get("role") not in ("user", "assistant"):
+                                continue
+                            messages.append(rec)
                         except Exception:
                             pass
             except Exception:

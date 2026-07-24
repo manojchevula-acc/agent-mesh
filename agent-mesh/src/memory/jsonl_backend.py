@@ -28,14 +28,6 @@ _PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _UNSAFE = re.compile(r"[^A-Za-z0-9_-]")
 
 
-def _is_summary_line(raw_line: str) -> bool:
-    """Return True if a raw JSONL line is a summary record."""
-    try:
-        rec = json.loads(raw_line.strip())
-        return isinstance(rec, dict) and rec.get("role") == "summary"
-    except (json.JSONDecodeError, AttributeError):
-        return False
-
 
 class JsonlBackend(ConversationBackend):
     """Stores conversation messages as append-only JSONL files, one per session."""
@@ -90,17 +82,24 @@ class JsonlBackend(ConversationBackend):
             pass
 
     # ------------------------------------------------------------------
-    # Rolling summary — stored as a single {"role": "summary", ...} record.
-    # On each save the old summary line is replaced (rewrite) so the file
-    # never accumulates stale summaries.
+    # Rolling summary — stored as a bare {"rolling_summary": "...", "ts": "..."}
+    # record (no "role" field) appended after each async summarization call.
+    # Every assistant record also carries the prior summary inline as
+    # "rolling_summary" for audit trail and as a graceful fallback.
     # ------------------------------------------------------------------
 
     def load_summary(self, session_id: str) -> str:
-        """Return the latest rolling summary text, or ``""`` if none stored."""
+        """Return the latest rolling summary, or ``""`` for new sessions.
+
+        Priority:
+          1. Last bare ``{rolling_summary, ts}`` record (async update, no role field)
+          2. Last ``role=assistant`` record's ``rolling_summary`` field (sync fallback)
+        """
         path = self._path(session_id)
         if not path.exists():
             return ""
-        latest = ""
+        latest_update = ""
+        latest_assistant_summary = ""
         with path.open("r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
@@ -110,32 +109,29 @@ class JsonlBackend(ConversationBackend):
                     rec = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if isinstance(rec, dict) and rec.get("role") == "summary":
-                    latest = rec.get("content", "")
-        return latest
+                if not isinstance(rec, dict):
+                    continue
+                role = rec.get("role")
+                if role is None and "rolling_summary" in rec:
+                    # Bare async update record — most authoritative
+                    latest_update = rec["rolling_summary"]
+                elif role == "assistant" and "rolling_summary" in rec:
+                    # Inline field on assistant record — sync fallback
+                    latest_assistant_summary = rec.get("rolling_summary", "")
+        return latest_update or latest_assistant_summary
 
     def save_summary(self, session_id: str, summary: str) -> None:
-        """Replace (or create) the rolling summary record in the JSONL file."""
+        """Append a bare rolling_summary update record (append-only, no file rewrite)."""
         path = self._path(session_id)
-        new_record = json.dumps(
+        record = json.dumps(
             {
-                "role": "summary",
-                "content": summary,
+                "rolling_summary": summary,
                 "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             },
             ensure_ascii=False,
         )
-        if not path.exists():
-            with path.open("w", encoding="utf-8") as f:
-                f.write(new_record + "\n")
-            return
-        # Rewrite file keeping all non-summary lines, then append new summary.
-        with path.open("r", encoding="utf-8") as f:
-            lines = f.readlines()
-        kept = [ln for ln in lines if not _is_summary_line(ln)]
-        kept.append(new_record + "\n")
-        with path.open("w", encoding="utf-8") as f:
-            f.writelines(kept)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(record + "\n")
 
     # ------------------------------------------------------------------
     # Session ownership — stored in a lightweight sidecar file so the

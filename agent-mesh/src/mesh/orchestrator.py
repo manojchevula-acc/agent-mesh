@@ -208,6 +208,9 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
                     "trace": [dataclasses.asdict(e) for e in summ.events],
                     "reasoning": summ.llm_reasoning,
                 })
+            # Embed the prior summary inline so every assistant record carries the
+            # context that was used to answer this turn (audit trail + fallback for load).
+            snapshot["rolling_summary"] = _prior_summary
             store.append_turn_rich(session_id, query, final.answer, snapshot=snapshot)
             # Bind owner on the first turn; no-op on subsequent turns in the session.
             store.bind_session(session_id, user.username)

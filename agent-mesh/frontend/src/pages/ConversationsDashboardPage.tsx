@@ -141,7 +141,7 @@ function SessionCard({ session }: { session: SessionSummary }) {
         {/* Expanded chat thread */}
         {expanded && (
           <div className="rounded-xl border border-line bg-surface-2 p-4 space-y-4 max-h-[600px] overflow-y-auto">
-            {session.messages.map((msg, i) => (
+            {session.messages.filter(msg => msg.role === "user" || msg.role === "assistant").map((msg, i) => (
               <MessageBubble key={i} message={toRichMessage(msg, i)} />
             ))}
           </div>
