@@ -109,9 +109,11 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
     # Load prior conversation turns for this session so PriceAssistAgent can resolve
     # follow-ups in-context. No-op (empty history) when memory is disabled.
     store = ConversationStore()
+    _prior_summary: str = ""
     if Config.ENABLE_CONVERSATION_MEMORY:
         try:
-            initial.conversation_history = store.load(session_id, Config.CONVERSATION_MAX_TURNS)
+            _prior_summary, _ = store.load_with_summary(session_id)
+            initial.conversation_summary = _prior_summary
         except Exception as exc:  # never let memory I/O break a request
             _log.warning("conversation history load failed session=%s: %s", session_id, exc)
 
@@ -209,6 +211,16 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
             store.append_turn_rich(session_id, query, final.answer, snapshot=snapshot)
             # Bind owner on the first turn; no-op on subsequent turns in the session.
             store.bind_session(session_id, user.username)
+            # Fire rolling summarization as a non-blocking background task so it
+            # never adds latency to the response path.
+            if Config.ENABLE_ROLLING_SUMMARIZATION:
+                try:
+                    from src.memory.summarizer import summarize_and_persist
+                    asyncio.create_task(
+                        summarize_and_persist(session_id, _prior_summary, query, final.answer)
+                    )
+                except Exception as exc_sum:
+                    _log.warning("summarization task creation failed session=%s: %s", session_id, exc_sum)
         except Exception as exc:  # never let memory I/O break a request
             _log.warning("conversation history save failed session=%s: %s", session_id, exc)
 

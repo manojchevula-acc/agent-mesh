@@ -44,12 +44,16 @@ class Config:
     # Multi-turn memory: the orchestrator loads prior turns for a session_id and
     # injects them into the PriceAssistAgent prompt; turns are persisted per session.
     ENABLE_CONVERSATION_MEMORY: bool = os.getenv("ENABLE_CONVERSATION_MEMORY", "true").lower() in ("1", "true", "yes")
-    # How many prior Q/A turns to replay into the prompt (history is capped to keep tokens bounded).
+    # How many prior Q/A turns to replay into the prompt (legacy — used only when rolling summarization is off).
     CONVERSATION_MAX_TURNS: int = int(os.getenv("CONVERSATION_MAX_TURNS", "3"))
     # Storage backend: "jsonl" (active default, file-based) | "redis" (placeholder for future use).
     CONVERSATION_BACKEND: str = os.getenv("CONVERSATION_BACKEND", "jsonl")
     # Connection URL used only by the future Redis backend (placeholder — not active yet).
     CONVERSATION_REDIS_URL: str = os.getenv("CONVERSATION_REDIS_URL", "redis://127.0.0.1:6379/0")
+    # Rolling LLM summarization — summarizes all prior turns into a ≤200-word block instead of truncating.
+    ENABLE_ROLLING_SUMMARIZATION: bool = os.getenv("ENABLE_ROLLING_SUMMARIZATION", "true").lower() in ("1", "true", "yes")
+    # Model used for summarization calls (defaults to GROQ_MODEL; override for a cheaper/faster model).
+    SUMMARY_MODEL: str = os.getenv("SUMMARY_MODEL", "")
 
     # ----------------------------------------------------------------------
     # Observability (Microsoft Agent Framework-native OpenTelemetry + logging)

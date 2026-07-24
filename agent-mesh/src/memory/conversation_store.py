@@ -4,10 +4,13 @@ Selects a :class:`~src.memory.base.ConversationBackend` from
 ``Config.CONVERSATION_BACKEND`` (``"jsonl"`` active default; ``"redis"`` future)
 and exposes the higher-level operations the orchestrator/workflow need:
 
-  - ``load(session_id, max_turns)``  — recent history capped to N turns (for the prompt)
-  - ``append_turn(session_id, q, a)`` — persist one user→assistant exchange
-  - ``load_messages(session_id)``    — full history (for the API restore endpoint)
-  - ``format_history_block(messages)`` — render history as a prompt-injectable block
+  - ``load(session_id, max_turns)``      — recent history capped to N turns (legacy)
+  - ``load_with_summary(session_id)``    — rolling summary + (empty) message list
+  - ``save_summary(session_id, text)``   — persist a new rolling summary
+  - ``append_turn(session_id, q, a)``    — persist one user→assistant exchange
+  - ``load_messages(session_id)``        — full history (for the API restore endpoint)
+  - ``format_history_block(messages)``   — render raw messages as a prompt block (legacy)
+  - ``format_summary_block(summary)``    — render rolling summary as a prompt block
 """
 from __future__ import annotations
 
@@ -37,6 +40,20 @@ class ConversationStore:
 
     def __init__(self, backend: ConversationBackend | None = None) -> None:
         self._backend = backend or _build_backend()
+
+    def load_with_summary(self, session_id: str) -> "tuple[str, List[Dict]]":
+        """Return ``(summary_str, [])`` for the rolling-summarization prompt path.
+
+        ``summary_str`` is the latest persisted summary (empty string for new sessions).
+        The second element is always an empty list — the raw message list is not used
+        when summarization is active; callers should use ``format_summary_block`` instead.
+        """
+        summary = self._backend.load_summary(session_id)
+        return summary, []
+
+    def save_summary(self, session_id: str, summary: str) -> None:
+        """Persist a new rolling summary for ``session_id``."""
+        self._backend.save_summary(session_id, summary)
 
     def load(self, session_id: str, max_turns: int) -> List[Dict]:
         """Return the last ``max_turns`` exchanges as role/content message dicts.
@@ -119,6 +136,24 @@ class ConversationStore:
         return "\n".join(lines)
 
     @staticmethod
+    def format_summary_block(summary: str) -> str:
+        """Render a rolling summary as a delimited block to prepend to a query.
+
+        Returns ``""`` when ``summary`` is empty so the caller can pass the
+        raw query through unchanged (first turn of a session has no summary).
+        """
+        if not summary or not summary.strip():
+            return ""
+        lines = [
+            "[Conversation Summary]",
+            summary.strip(),
+            "",
+            "[Current question]",
+            "",
+        ]
+        return "\n".join(lines)
+
+    @staticmethod
     def strip_history_echo(answer: str, original_query: str | None = None) -> str:
         """Remove any accidentally echoed [Conversation so far] block from an answer.
 
@@ -126,13 +161,15 @@ class ConversationStore:
         this strips everything up to and including the [Current question] marker
         (and the echoed user query, if present) so only the actual answer is returned.
         """
-        if "[Conversation so far]" not in answer:
+        has_old_header = "[Conversation so far]" in answer
+        has_new_header = "[Conversation Summary]" in answer
+        if not has_old_header and not has_new_header:
             return answer
         marker = "[Current question]"
         idx = answer.find(marker)
         if idx == -1:
             # Partial echo without the closing marker — strip from the block start
-            block_start = answer.find("[Conversation so far]")
+            block_start = answer.find("[Conversation so far]") if has_old_header else answer.find("[Conversation Summary]")
             return answer[:block_start].strip() or answer
         after_marker = answer[idx + len(marker):].lstrip("\n ")
         # Skip an echoed copy of the user's own question if present

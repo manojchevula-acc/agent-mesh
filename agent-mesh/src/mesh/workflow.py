@@ -178,6 +178,9 @@ class MeshState:
     # orchestrator. Injected into the PriceAssistAgent prompt by DomainExecutor so
     # follow-up questions resolve in-context. Empty when memory is off / first turn.
     conversation_history: List[dict] = field(default_factory=list)
+    # Rolling summary of all prior turns (replaces raw history for prompt injection).
+    # Set by the orchestrator from the JSONL summary record; empty on first turn.
+    conversation_summary: str = ""
     # Permission scope resolved from role_permissions matrix at RBAC time.
     # Injected into the compliance prompt so the LLM can enforce authorization.
     permission_scope: str = ""
@@ -653,10 +656,14 @@ class DomainExecutor(Executor):
             # (e.g. a 'customer' role may only access their own account data).
             # History travels inline in the prompt; bare query is preserved on span.
             role_context = f"[User: {state.user_name} | Role: {state.role}]\n"
-            history_block = ConversationStore.format_history_block(state.conversation_history)
+            # Prefer rolling summary (new path); fall back to raw history block (legacy).
+            if state.conversation_summary:
+                context_block = ConversationStore.format_summary_block(state.conversation_summary)
+            else:
+                context_block = ConversationStore.format_history_block(state.conversation_history)
             base_prompt = (
-                f"{role_context}{history_block}{state.query}"
-                if history_block
+                f"{role_context}{context_block}{state.query}"
+                if context_block
                 else f"{role_context}{state.query}"
             )
             _set_attr(span, "domain.history_turns", len(state.conversation_history) // 2)

@@ -45,7 +45,7 @@ my_KB/*
 Thumbs.db
 
 # ── Logs & Temporary Files ────────────────────────────────────────────────────
-*.log
-*.jsonl
+# *.log
+# *.jsonl
 *.tmp
 *.swp

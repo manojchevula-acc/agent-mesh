@@ -47,3 +47,17 @@ class ConversationBackend(abc.ABC):
         feature; backends may override.
         """
         return None
+
+    def load_summary(self, session_id: str) -> str:
+        """Return the latest rolling summary for ``session_id``, or ``""`` if none exists.
+
+        Optional — default returns empty string (no-op for backends that don't support it).
+        """
+        return ""
+
+    def save_summary(self, session_id: str, summary: str) -> None:
+        """Persist a new rolling summary for ``session_id``.
+
+        Optional — default is a no-op. Backends that support summaries should override.
+        """
+        return None

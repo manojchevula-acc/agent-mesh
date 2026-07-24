@@ -28,6 +28,15 @@ _PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _UNSAFE = re.compile(r"[^A-Za-z0-9_-]")
 
 
+def _is_summary_line(raw_line: str) -> bool:
+    """Return True if a raw JSONL line is a summary record."""
+    try:
+        rec = json.loads(raw_line.strip())
+        return isinstance(rec, dict) and rec.get("role") == "summary"
+    except (json.JSONDecodeError, AttributeError):
+        return False
+
+
 class JsonlBackend(ConversationBackend):
     """Stores conversation messages as append-only JSONL files, one per session."""
 
@@ -57,7 +66,7 @@ class JsonlBackend(ConversationBackend):
                     rec = json.loads(line)
                 except json.JSONDecodeError:
                     continue  # tolerate corrupt lines
-                if isinstance(rec, dict) and rec.get("role") and "content" in rec:
+                if isinstance(rec, dict) and rec.get("role") and rec.get("role") != "summary" and "content" in rec:
                     messages.append(rec)
         return messages
 
@@ -79,6 +88,54 @@ class JsonlBackend(ConversationBackend):
             path.unlink(missing_ok=True)
         except OSError:
             pass
+
+    # ------------------------------------------------------------------
+    # Rolling summary — stored as a single {"role": "summary", ...} record.
+    # On each save the old summary line is replaced (rewrite) so the file
+    # never accumulates stale summaries.
+    # ------------------------------------------------------------------
+
+    def load_summary(self, session_id: str) -> str:
+        """Return the latest rolling summary text, or ``""`` if none stored."""
+        path = self._path(session_id)
+        if not path.exists():
+            return ""
+        latest = ""
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(rec, dict) and rec.get("role") == "summary":
+                    latest = rec.get("content", "")
+        return latest
+
+    def save_summary(self, session_id: str, summary: str) -> None:
+        """Replace (or create) the rolling summary record in the JSONL file."""
+        path = self._path(session_id)
+        new_record = json.dumps(
+            {
+                "role": "summary",
+                "content": summary,
+                "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            },
+            ensure_ascii=False,
+        )
+        if not path.exists():
+            with path.open("w", encoding="utf-8") as f:
+                f.write(new_record + "\n")
+            return
+        # Rewrite file keeping all non-summary lines, then append new summary.
+        with path.open("r", encoding="utf-8") as f:
+            lines = f.readlines()
+        kept = [ln for ln in lines if not _is_summary_line(ln)]
+        kept.append(new_record + "\n")
+        with path.open("w", encoding="utf-8") as f:
+            f.writelines(kept)
 
     # ------------------------------------------------------------------
     # Session ownership — stored in a lightweight sidecar file so the
