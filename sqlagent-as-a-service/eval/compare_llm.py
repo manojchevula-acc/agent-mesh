@@ -35,11 +35,33 @@ verdict is what tells you WHY: a FAIL with sql_verdict=DIFFERENT is a logic erro
 with sql_verdict=DIFFERENT is the agent finding a legitimate alternative route to the same
 answer — which is exactly what a text-to-SQL eval must not punish.
 
+DETERMINISTIC EVALUATOR (eval/deterministic/) — the LLM judge's transparent counterpart
+---------------------------------------------------------------------------------------
+Alongside the coarse deterministic signals above, every question is graded by the
+deterministic evaluation layer: structural SQL precision/recall/F1 per schema element
+(tables, columns, joins, filters, group-by, order-by, aggregations), result-set similarity
+(row P/R/F1, cell accuracy, exact-match, Jaccard, fuzzy), and schema-aware id<->name
+equivalence — composed into its OWN PASS/FAIL + confidence, with NO LLM involved. The
+report then sets that verdict beside the LLM judge's data_verdict and quantifies their
+agreement (Cohen's Kappa, stricter/leaner counts, the exact ids where they diverge) so the
+strengths and blind spots of each evaluator are visible. See eval/deterministic/__init__.py.
+
+THIS SCRIPT ALWAYS RUNS THE LLM JUDGE — that comparison is its entire purpose. For a
+deterministic-only pass (no LLM, no tokens, its own report/output folder), use
+eval/deterministic_eval.py instead; it shares the same eval/deterministic/ evaluator and
+eval/deterministic/report.py rendering, so the "Deterministic evaluation" section here and
+there are always computed identically.
+
+ONE REPORT PER --runs FILE — evaluating a different recorded-runs file writes a
+DIFFERENTLY-NAMED report (tag derived from the --runs filename, e.g. agent_runs_JOIN.yaml
+-> EVAL_REPORT_JOIN.md) instead of overwriting the last one. Pass --tag to name it
+explicitly. Re-running against the SAME --runs file still overwrites (idempotent).
+
 Run:
     .venv/Scripts/python.exe eval/compare_llm.py                 # LLM + deterministic
-    .venv/Scripts/python.exe eval/compare_llm.py --no-llm        # deterministic only, free
     .venv/Scripts/python.exe eval/compare_llm.py --ids D01,D02
     .venv/Scripts/python.exe eval/compare_llm.py --pause 3       # rate-limit friendly
+    .venv/Scripts/python.exe eval/compare_llm.py --runs eval/results/agent_runs_JOIN.yaml
 """
 
 from __future__ import annotations
@@ -58,12 +80,15 @@ sys.path.insert(0, str(HERE.parent))
 
 import yaml  # noqa: E402
 
-from eval.sql_introspect import extract, overlap  # noqa: E402
+from eval.deterministic import agreement  # noqa: E402
+from eval.deterministic import report as det_report  # noqa: E402
+from eval.deterministic.evaluator import DeterministicEvaluator  # noqa: E402
+from eval.sql_introspect import overlap  # noqa: E402
 
 GOLD_PATH = HERE / "datasets" / "gold_dynamic.yaml"
 RUNS_PATH = HERE / "results" / "agent_runs.yaml"
-REPORT_PATH = HERE / "results" / "EVAL_REPORT.md"
-REPORT_JSON = HERE / "results" / "EVAL_REPORT.json"
+OUT_DIR = HERE / "results"
+REPORT_BASENAME = "EVAL_REPORT"
 
 
 # --------------------------------------------------------------------------- #
@@ -360,6 +385,22 @@ def diagnose(run: dict, cmp: dict) -> str:
     return "correct-via-different-tables" if thin_tables else "correct-equivalent-sql"
 
 
+def _llm_pass(verdict: dict):
+    """The LLM judge's INDEPENDENT correctness verdict, as a tri-state.
+
+    The judge reports data_verdict MATCH/MISMATCH; that — not the deterministic row check —
+    is the LLM's own opinion of correctness, and comparing IT against the deterministic
+    evaluator is the whole point of running both. Returns True/False, or None when the
+    judge was unavailable/unparseable ("?") or disabled ("-"), so those rows are excluded
+    from the agreement statistic rather than being silently scored as failures."""
+    dv = str(verdict.get("data_verdict", "?")).upper()
+    if dv == "MATCH":
+        return True
+    if dv == "MISMATCH":
+        return False
+    return None
+
+
 def _fmt_rows(rows, limit=5) -> str:
     if rows is None:
         return "_(none)_"
@@ -378,11 +419,14 @@ def main() -> int:
     ap.add_argument("--gold", default=str(GOLD_PATH))
     ap.add_argument("--runs", default=str(RUNS_PATH))
     ap.add_argument("--ids", help="only compare these ids, comma-separated")
-    ap.add_argument("--no-llm", action="store_true",
-                    help="deterministic comparison only — no tokens spent")
     ap.add_argument("--pause", type=float, default=0.0,
                     help="seconds between judge calls (rate limits)")
+    ap.add_argument("--tag", help="name the output report explicitly (default: derived "
+                    "from the --runs filename, e.g. agent_runs_JOIN.yaml -> ..._JOIN.md)")
     args = ap.parse_args()
+
+    tag = args.tag if args.tag is not None else det_report.derive_tag(args.runs)
+    REPORT_PATH, REPORT_JSON = det_report.report_paths(OUT_DIR, REPORT_BASENAME, tag)
 
     gold_doc = yaml.safe_load(Path(args.gold).read_text(encoding="utf-8"))
     gold = {i["id"]: i for i in gold_doc["items"]}
@@ -405,11 +449,15 @@ def main() -> int:
     defaults = (gold_doc.get("meta") or {}).get("defaults") or {}
     tol = defaults.get("numeric_tolerance", 0.01)
 
-    print(f"Comparing {len(runs)} agent run(s) against {len(gold)} gold item(s)"
-          f"{' — deterministic only' if args.no_llm else ' — with LLM judge'}")
+    print(f"Comparing {len(runs)} agent run(s) against {len(gold)} gold item(s) "
+          f"— with LLM judge")
     if unrun:
         print(f"Coverage: {len(covered)}/{len(gold)} gold questions have a recorded run — "
               f"{len(unrun)} NOT run: {', '.join(unrun)}")
+
+    # One evaluator for the whole run so the schema-aware matcher's lookup cache (and its
+    # single DB touch per entity) is shared across every question.
+    det_ev = DeterministicEvaluator(numeric_tolerance=tol)
 
     rows_out = []
     stale: list[str] = []
@@ -446,18 +494,26 @@ def main() -> int:
             "tables_extra": t_ov["extra"],
             "column_recall": c_ov["recall"], "columns_missing": c_ov["missing"],
         }
-        verdict = ({"sql_verdict": "-", "sql_reason": "(--no-llm)",
-                    "data_verdict": "-", "data_reason": ""}
-                   if args.no_llm else judge(item, run))
+        verdict = judge(item, run)
         cmp["diagnosis"] = diagnose(run, cmp)
         passed = bool(cmp["data_match"])
+        # Deterministic evaluator — the LLM judge's transparent counterpart. Runs the full
+        # metric suite (structural SQL P/R/F1, result-set similarity, schema-aware id<->name
+        # equivalence) and renders its OWN PASS/FAIL + confidence, to be compared with the
+        # LLM's data_verdict below.
+        det = det_ev.evaluate(item, run)
+        llm_pass = _llm_pass(verdict)
+        agree = (llm_pass is None) or (llm_pass == det.passed)
         rows_out.append({"id": run["id"], "item": item, "run": run, "cmp": cmp,
-                         "verdict": verdict, "passed": passed})
+                         "verdict": verdict, "passed": passed, "det": det,
+                         "llm_pass": llm_pass, "det_pass": det.passed, "agree": agree})
         flag = "  <== STALE" if run["id"] in stale else ""
+        disagree = "" if agree else "  <== LLM/DET DISAGREE"
         print(f"[{'PASS' if passed else 'FAIL'}] {run['id']:12s} "
               f"{cmp['diagnosis']:24s} sql={verdict['sql_verdict']:10s} "
-              f"data={'MATCH' if cmp['data_match'] else 'MISMATCH'}{flag}")
-        if args.pause and not args.no_llm:
+              f"data={'MATCH' if cmp['data_match'] else 'MISMATCH'} "
+              f"det={det.verdict}({det.confidence}){flag}{disagree}")
+        if args.pause:
             time.sleep(args.pause)
 
     if stale:
@@ -520,40 +576,87 @@ def main() -> int:
     L += ["\n## Outcome breakdown\n", "| Diagnosis | n |", "|---|---|"]
     L += [f"| {k} | {v} |" for k, v in sorted(modes.items(), key=lambda kv: -kv[1])]
 
-    if not args.no_llm:
-        sv: dict[str, int] = {}
-        for r in rows_out:
-            k = r["verdict"]["sql_verdict"]
-            sv[k] = sv.get(k, 0) + 1
-        L += ["\n## LLM query-equivalence verdicts\n", "| Verdict | n | Meaning |",
-              "|---|---|---|"]
-        meaning = {
-            "IDENTICAL": "same query bar formatting",
-            "EQUIVALENT": "written differently, computes the same thing",
-            "DIFFERENT": "answers a different question",
-            "?": "judge unavailable / unparseable",
-        }
-        L += [f"| {k} | {v} | {meaning.get(k,'')} |"
-              for k, v in sorted(sv.items(), key=lambda kv: -kv[1])]
+    sv: dict[str, int] = {}
+    for r in rows_out:
+        k = r["verdict"]["sql_verdict"]
+        sv[k] = sv.get(k, 0) + 1
+    L += ["\n## LLM query-equivalence verdicts\n", "| Verdict | n | Meaning |",
+          "|---|---|---|"]
+    meaning = {
+        "IDENTICAL": "same query bar formatting",
+        "EQUIVALENT": "written differently, computes the same thing",
+        "DIFFERENT": "answers a different question",
+        "?": "judge unavailable / unparseable",
+    }
+    L += [f"| {k} | {v} | {meaning.get(k,'')} |"
+          for k, v in sorted(sv.items(), key=lambda kv: -kv[1])]
+
+    # ---------------- deterministic evaluation (shared with eval/deterministic_eval.py) --
+    # Rendered via eval/deterministic/report.py so this section is computed and worded
+    # IDENTICALLY to the standalone deterministic-only report — the two can never drift.
+    det_rows = [r["det"] for r in rows_out]
+    det_passed = sum(1 for d in det_rows if d.passed)
+    core_passed = sum(1 for d in det_rows if d.core_answer_match)
+    nden = len(det_rows)
+    L += det_report.render_headline(rows_out)
+    L += det_report.render_answer_correctness(rows_out)
+    L += det_report.render_query_construction(rows_out)
+
+    # ---------------- LLM vs deterministic agreement ----------------
+    pairs = [{"id": r["id"], "llm_pass": r["llm_pass"], "det_pass": r["det_pass"]}
+             for r in rows_out]
+    agr = agreement.compute_agreement(pairs)
+    L += ["\n## LLM vs deterministic agreement\n",
+          "_How often the LLM judge and the deterministic evaluator reach the SAME "
+          "PASS/FAIL, corrected for chance. Kappa near 1 = concordant; near 0 = no better "
+          "than chance. Rows where the judge gave no verdict are excluded._\n",
+          "| | Value |", "|---|---|",
+          f"| Comparable questions (both rendered a verdict) | {agr.n} |",
+          f"| Both PASS | {agr.both_pass} |",
+          f"| Both FAIL | {agr.both_fail} |",
+          f"| LLM PASS, deterministic FAIL | {agr.llm_only_pass} |",
+          f"| Deterministic PASS, LLM FAIL | {agr.det_only_pass} |",
+          f"| Raw agreement | {round(agr.raw_agreement, 3)} |",
+          f"| **Cohen's Kappa** | **{'—' if agr.cohen_kappa is None else round(agr.cohen_kappa, 3)}** "
+          f"({agr.kappa_interpretation}) |",
+          f"| LLM pass rate | {round(agr.llm_pass_rate, 3)} |",
+          f"| Deterministic pass rate | {round(agr.deterministic_pass_rate, 3)} |",
+          f"| Stricter evaluator | {agr.stricter} |"]
+    if agr.disagreement_ids.get("llm_pass_deterministic_fail"):
+        ids = ", ".join(f"`{i}`" for i in agr.disagreement_ids["llm_pass_deterministic_fail"])
+        L += [f"\n**LLM lenient / deterministic strict** — {ids}. Usually a semantic "
+              f"equivalence the metrics cannot yet see (a candidate rule for "
+              f"`eval/deterministic/schema_semantic.py`), or the judge overlooking a real "
+              f"difference. Inspect each below."]
+    if agr.disagreement_ids.get("deterministic_pass_llm_fail"):
+        ids = ", ".join(f"`{i}`" for i in agr.disagreement_ids["deterministic_pass_llm_fail"])
+        L += [f"\n**Deterministic lenient / LLM strict** — {ids}. Usually the metrics "
+              f"proving equivalence (identical rows, or id<->name resolution) while the "
+              f"judge was misled by cosmetic SQL differences."]
 
     L += ["\n## Per-question results\n",
-          "| id | Question | Pass | Diagnosis | SQL verdict (LLM) | Data | "
-          "Tables | Cols | Rows g/a |", "|---|---|---|---|---|---|---|---|---|"]
+          "| id | Question | Pass | Diagnosis | SQL verdict (LLM) | Data | Det | Conf | "
+          "Agree | Tables | Cols | Rows g/a |",
+          "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in rows_out:
-        it, run, c, v = r["item"], r["run"], r["cmp"], r["verdict"]
+        it, run, c, v, d = r["item"], r["run"], r["cmp"], r["verdict"], r["det"]
         gr = len(it.get("gold_result") or [])
         ar = "-" if run.get("agent_result") is None else len(run["agent_result"])
+        agree_mark = "=" if r["agree"] else "≠"
         L.append(
-            f"| {r['id']} | {it['question'][:58]} | {'✅' if r['passed'] else '❌'} | "
+            f"| {r['id']} | {it['question'][:52]} | {'✅' if r['passed'] else '❌'} | "
             f"{c['diagnosis']} | {v['sql_verdict']} | "
             f"{'MATCH' if c['data_match'] else 'MISMATCH'} | "
+            f"{'✅' if d.passed else '❌'} | {d.confidence} | {agree_mark} | "
             f"{c['table_recall']} | {c['column_recall']} | {gr}/{ar} |")
 
     L.append("\n## Per-question detail\n")
     for r in rows_out:
-        it, run, c, v = r["item"], r["run"], r["cmp"], r["verdict"]
-        L.append(f"### {r['id']} — {'✅ PASS' if r['passed'] else '❌ FAIL'} "
-                 f"({c['diagnosis']})\n")
+        it, run, c, v, d = r["item"], r["run"], r["cmp"], r["verdict"], r["det"]
+        # Header carries the DETERMINISTIC verdict — the corrected pass/fail (it credits the
+        # schema-aware id<->name equivalence the raw row match cannot see).
+        L.append(f"### {r['id']} — Deterministic: {'✅ PASS' if d.passed else '❌ FAIL'} "
+                 f"(confidence {d.confidence} · {d.diagnosis})\n")
         L.append(f"**Question:** {run['question']}\n")
         L.append(f"- Tools called: `{', '.join(run.get('tools_called') or []) or '-'}` · "
                  f"status `{run['status']}` · {run.get('latency_ms','?')}ms")
@@ -574,10 +677,55 @@ def main() -> int:
         L.append(f"\n- **Data comparison (deterministic):** "
                  f"{'MATCH' if c['data_match'] else 'MISMATCH'}"
                  + (" — order-sensitive (ranking)" if it.get("order_sensitive") else ""))
-        if not args.no_llm:
-            L.append(f"- **LLM SQL verdict:** `{v['sql_verdict']}` — {v['sql_reason']}")
-            L.append(f"- **LLM data verdict:** `{v['data_verdict']}` — {v['data_reason']}")
-        L.append(f"- **Agent answer:** {(run.get('agent_answer') or '-')[:400]}\n")
+        L.append(f"- **LLM SQL verdict:** `{v['sql_verdict']}` — {v['sql_reason']}")
+        L.append(f"- **LLM data verdict:** `{v['data_verdict']}` — {v['data_reason']}")
+
+        # ---- per-question deterministic METRICS (explicit, this question only) --------
+        el, rd = d.sql_elements, d.result_detail
+        L.append(f"\n**Deterministic evaluation — {'✅ PASS' if d.passed else '❌ FAIL'}** "
+                 f"· confidence {d.confidence} · `{d.diagnosis}`"
+                 + ("" if d.evaluable else " · _no result produced, not graded_"))
+        if r["llm_pass"] is not None:
+            L.append(f"- LLM verdict: **{'PASS' if r['llm_pass'] else 'FAIL'}** — "
+                     f"{'✅ agrees' if r['agree'] else '⚠️ DISAGREES'} with deterministic")
+
+        # Answer correctness — the metrics that decide pass/fail for THIS question.
+        L.append("\n_Answer correctness (returned rows):_\n")
+        L.append("| exact match | row precision | row recall | row F1 | cell accuracy "
+                 "| Jaccard | fuzzy | semantic equiv |")
+        L.append("|---|---|---|---|---|---|---|---|")
+        sem_cell = ("✅ yes" if d.semantic_equivalent
+                    else ("—" if d.metrics.get("semantic_equivalence") is None else "✗ no"))
+        L.append(f"| {rd['exact_match']} | {rd['row_precision']} | {rd['row_recall']} | "
+                 f"{rd['row_f1']} | {rd['cell_accuracy']} | {rd['jaccard']} | "
+                 f"{rd['fuzzy_similarity']} | {sem_cell} |")
+
+        # SQL construction — precision / recall / F1 for every schema element.
+        L.append("\n_Query construction — precision / recall / F1 per SQL element "
+                 f"(structural similarity **{d.structural_similarity}**, "
+                 f"exact SQL `{d.exact_sql_match}`):_\n")
+        L.append("| SQL element | precision | recall | F1 |")
+        L.append("|---|---|---|---|")
+        for elem, lbl in (("tables", "Tables"), ("columns", "Columns"), ("joins", "Joins"),
+                          ("filters", "Filters (WHERE)"), ("group_by", "Group by"),
+                          ("order_by", "Order by"), ("aggregations", "Aggregations")):
+            e = el[elem]
+            miss = f" · missing `{e['missing']}`" if e.get("missing") else ""
+            extra = f" · extra `{e['extra']}`" if e.get("extra") else ""
+            L.append(f"| {lbl} | {e['precision']} | {e['recall']} | {e['f1']}{miss}{extra} |")
+
+        if d.semantic_equivalent or (d.semantic_reason
+                                     and "no id/name" not in d.semantic_reason):
+            L.append(f"\n- **Schema-aware equivalence:** "
+                     f"{'✅ EQUIVALENT' if d.semantic_equivalent else 'ℹ️ note'} — "
+                     f"{d.semantic_reason}")
+
+        L.append(f"\n- **Agent answer:** {(run.get('agent_answer') or '-')[:400]}\n")
+
+    # Same builder eval/deterministic_eval.py uses, so the machine-readable sidecar of both
+    # reports is computed identically and can never drift apart.
+    det_dashboard = det_report.build_json_dashboard(rows_out)
+    no_answer = [d for d in det_rows if not d.evaluable]
 
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
     REPORT_PATH.write_text("\n".join(L), encoding="utf-8")
@@ -592,7 +740,19 @@ def main() -> int:
                      "sql_exec_rate": round(execd / n, 3) if n else None,
                      "table_recall": mean(t_vals), "column_recall": mean(c_vals),
                      "outcomes": modes},
-         "rows": [{"id": r["id"], "passed": r["passed"], **r["cmp"], **r["verdict"]}
+         "deterministic_dashboard": det_dashboard,
+         "llm_vs_deterministic_agreement": agr.as_dict(),
+         "rows": [{"id": r["id"], "passed": r["passed"],
+                   "llm_pass": r["llm_pass"], "deterministic_pass": r["det_pass"],
+                   "agree": r["agree"],
+                   "deterministic_verdict": r["det"].verdict,
+                   "deterministic_confidence": r["det"].confidence,
+                   "deterministic_diagnosis": r["det"].diagnosis,
+                   "deterministic_evaluable": r["det"].evaluable,
+                   "semantic_equivalent": r["det"].semantic_equivalent,
+                   "core_answer_match": r["det"].core_answer_match,
+                   "deterministic_metrics": r["det"].metrics,
+                   **r["cmp"], **r["verdict"]}
                   for r in rows_out]},
         indent=2, default=str), encoding="utf-8")
 
@@ -600,6 +760,12 @@ def main() -> int:
     print(f"JSON   -> {REPORT_JSON}")
     print(f"PASSED {passed}/{n}  ·  " + ", ".join(f"{k}={v}" for k, v in
                                                   sorted(modes.items(), key=lambda kv: -kv[1])))
+    print(f"Deterministic (strict): {det_passed}/{nden} PASS  ·  "
+          f"core-answer (lenient, ignores missing/extra columns): {core_passed}/{nden}"
+          + (f"  ·  {len(no_answer)} produced no result" if no_answer else ""))
+    print(f"LLM vs deterministic: agree {agr.both_pass + agr.both_fail}/{agr.n}, "
+          f"kappa {'—' if agr.cohen_kappa is None else round(agr.cohen_kappa, 3)} "
+          f"({agr.kappa_interpretation})")
     return 0
 
 
