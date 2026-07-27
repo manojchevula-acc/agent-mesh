@@ -2,9 +2,9 @@
 
 Reads the two files the previous steps produced:
     eval/datasets/gold_dynamic.yaml   question + gold_sql + gold_result   (materialize_gold.py)
-    eval/results/agent_runs.yaml      question + agent_sql + agent_result (run_agent.py)
+    eval/results/agent_runs/agent_runs.yaml      question + agent_sql + agent_result (run_agent.py)
 
-and writes a tabular markdown analysis to eval/results/EVAL_REPORT.md.
+and writes a tabular markdown analysis to eval/results/llm_comparison/EVAL_REPORT.md.
 
 TWO KINDS OF SIGNAL, DELIBERATELY SEPARATED
 -------------------------------------------
@@ -61,7 +61,7 @@ Run:
     .venv/Scripts/python.exe eval/compare_llm.py                 # LLM + deterministic
     .venv/Scripts/python.exe eval/compare_llm.py --ids D01,D02
     .venv/Scripts/python.exe eval/compare_llm.py --pause 3       # rate-limit friendly
-    .venv/Scripts/python.exe eval/compare_llm.py --runs eval/results/agent_runs_JOIN.yaml
+    .venv/Scripts/python.exe eval/compare_llm.py --runs eval/results/agent_runs/agent_runs_JOIN.yaml
 """
 
 from __future__ import annotations
@@ -86,8 +86,8 @@ from eval.deterministic.evaluator import DeterministicEvaluator  # noqa: E402
 from eval.sql_introspect import overlap  # noqa: E402
 
 GOLD_PATH = HERE / "datasets" / "gold_dynamic.yaml"
-RUNS_PATH = HERE / "results" / "agent_runs.yaml"
-OUT_DIR = HERE / "results"
+RUNS_PATH = HERE / "results" / "agent_runs" / "agent_runs.yaml"
+OUT_DIR = HERE / "results" / "llm_comparison"
 REPORT_BASENAME = "EVAL_REPORT"
 
 

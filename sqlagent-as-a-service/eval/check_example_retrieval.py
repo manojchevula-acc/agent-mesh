@@ -35,7 +35,8 @@ QDRANT_PATH file lock (qdrant is exclusive-locked while the server holds it). Pa
 stopped first in that case).
 
 Every run writes a full record — every retrieved example per question, not just the
-console verdict — to eval/results/example_retrieval.yaml (override with --out), so a
+console verdict — to eval/results/example_retrieval/example_retrieval.yaml (override with --out),
+plus a readable per-question eval/results/example_retrieval/example_retrieval.md alongside it, so a
 retrieval-tuning change can be diffed against a prior run without re-executing it.
 
 Run:
@@ -65,8 +66,23 @@ from sql_agent.memory.example_index import _example_tables, rank_examples  # noq
 from sql_agent.memory.examples import all_approved_examples  # noqa: E402
 from sql_agent.memory.sql_pattern import classify_sql, sql_pattern  # noqa: E402
 
-OUT_DIR = HERE / "results"
+OUT_DIR = HERE / "results" / "example_retrieval"
 OUT_PATH = OUT_DIR / "example_retrieval.yaml"
+
+
+def _jaccard(a: set, b: set) -> float:
+    """|A n B| / |A u B|; two empty sets score 0.0 here (absence of signal, not a match)."""
+    union = a | b
+    return len(a & b) / len(union) if union else 0.0
+
+
+def _ndcg(grades: list[float]) -> float:
+    """NDCG over a ranked list of graded relevances in [0,1], log2 positional discount.
+    1.0 when the most-relevant examples are already first; 0.0 when there is no signal."""
+    import math
+    dcg = sum(g / math.log2(i + 2) for i, g in enumerate(grades))
+    idcg = sum(g / math.log2(i + 2) for i, g in enumerate(sorted(grades, reverse=True)))
+    return dcg / idcg if idcg else 0.0
 
 
 def _select(items: list[dict], args) -> list[dict]:
@@ -93,6 +109,56 @@ def _select(items: list[dict], args) -> list[dict]:
     if missing:
         raise SystemExit(f"id(s) not found in dataset: {sorted(missing)}")
     return selected
+
+
+def _render_markdown(doc: dict, summary: dict, records: list[dict]) -> str:
+    """A human-readable per-question report — the readable sibling of the YAML record."""
+    L = [f"# Few-shot Example Retrieval — {doc['dataset']}", "",
+         f"_Generated {doc['generated_at']} · corpus {doc['corpus_size']} · top_k {doc['top_k']} · "
+         f"dense/bm25 {doc['examples_dense_weight']}/{doc['examples_bm25_weight']} · "
+         f"min_score {doc['examples_min_score']} · backend {doc['vector_backend']}_", ""]
+
+    if summary:
+        def _pct(d):
+            return f"{d['hits']}/{d['n']} ({d['pct']}%)"
+        L += ["## Summary", "", "| Metric | Value |", "| --- | --- |",
+              f"| table match | {_pct(summary['table_match'])} |",
+              f"| pattern match | {_pct(summary['pattern_match'])} |",
+              f"| either match | {_pct(summary['either_match'])} |",
+              f"| operator coverage (headline) | {summary['operator_coverage']} |",
+              f"| strong hit (headline) | {_pct(summary['strong_hit'])} |",
+              f"| pattern Jaccard | {summary['pattern_jaccard']} |",
+              f"| table set coverage | {summary['table_set_coverage']} |",
+              f"| precision@k | {summary['precision_at_k']} |",
+              f"| MRR | {summary['mrr']} |",
+              f"| NDCG@k | {summary['ndcg_at_k']} |",
+              f"| no retrieval | {summary['no_retrieval']} |", ""]
+
+    L += ["## Per-question", ""]
+    for r in records:
+        verdict = "OK" if r["either_hit"] else "MISS"
+        oc = r["operator_coverage"]
+        L += [f"### `{verdict}` {r['id']} — {r['question']}", "",
+              f"- **gold pattern:** {r['gold_pattern'] or '—'} · "
+              f"**gold tables:** {', '.join(r['gold_tables']) or '—'}",
+              f"- **table hit:** {'Y' if r['table_hit'] else 'n'} · "
+              f"**pattern hit:** {'Y' if r['pattern_hit'] else 'n'} · "
+              f"**strong hit:** {'Y' if r['strong_hit'] else 'n'}",
+              f"- **operator coverage:** {oc if oc is not None else '—'} · "
+              f"**P@k:** {r['precision_at_k']} · **MRR:** {r['mrr']} · "
+              f"**NDCG@k:** {r['ndcg_at_k']} · **pattern-Jaccard:** {r['pattern_jaccard']}"]
+        if r["retrieved"]:
+            L += ["", "| # | hit | patterns | tables | example question |",
+                  "| --- | --- | --- | --- | --- |"]
+            for i, e in enumerate(r["retrieved"], 1):
+                q = (e["question"] or "").replace("|", "\\|")
+                L.append(f"| {i} | {'✓' if e['hit'] else ''} | "
+                         f"{', '.join(e['patterns']) or '—'} | "
+                         f"{', '.join(e['tables']) or '—'} | {q} |")
+        else:
+            L += ["", "_(no examples retrieved — confidence gate suppressed all)_"]
+        L.append("")
+    return "\n".join(L)
 
 
 def main() -> int:
@@ -141,6 +207,11 @@ def main() -> int:
         return set(shape["patterns"]) if shape else set()
 
     table_hits = pattern_hits = either_hits = no_retrieval = 0
+    # H2/M2/M3 accumulators — set-level usefulness and rank-aware quality (proxy labels).
+    strong_hits = 0
+    op_cov_sum = tbl_cov_sum = 0.0
+    op_cov_n = 0
+    p_at_k_sum = mrr_sum = ndcg_sum = pat_jaccard_sum = 0.0
     records: list[dict] = []
     for it in items:
         question = it["question"]
@@ -165,27 +236,74 @@ def main() -> int:
               f"| {question[:70]}")
 
         retrieved_records = []
+        rel_flags: list[bool] = []          # per-example proxy relevance (table OR pattern)
+        grades: list[float] = []            # graded relevance in [0,1], for NDCG
+        pat_jaccs: list[float] = []
+        union_patterns: set[str] = set()
+        union_tables: set[str] = set()
+        strong_hit = False
         for r in retrieved:
-            r_tables = sorted(_example_tables(r))
-            r_patterns = _patterns(r.get("validated_sql"))
+            rt_set = _example_tables(r)
+            rp_set = _patterns(r.get("validated_sql"))
+            r_tables = sorted(rt_set)
             r_pattern = sql_pattern(r.get("validated_sql"))
-            hit = bool((_example_tables(r) & gold_tables) or (r_patterns & gold_patterns))
+            t_ok, p_ok = bool(rt_set & gold_tables), bool(rp_set & gold_patterns)
+            hit = t_ok or p_ok
+            rel_flags.append(hit)
+            pj = _jaccard(rp_set, gold_patterns)
+            pat_jaccs.append(pj)
+            grades.append(0.5 * (_jaccard(rt_set, gold_tables) + pj))
+            union_patterns |= rp_set
+            union_tables |= rt_set
+            strong_hit = strong_hit or (t_ok and p_ok)
             retrieved_records.append({"question": r["question"], "tables": r_tables,
-                                      "pattern": r_pattern, "patterns": sorted(r_patterns),
+                                      "pattern": r_pattern, "patterns": sorted(rp_set),
                                       "hit": hit})
             if args.verbose:
                 mark = "+" if hit else " "
-                print(f"       {mark}  [{','.join(sorted(r_patterns)) or '?':30s}] "
+                print(f"       {mark}  [{','.join(sorted(rp_set)) or '?':30s}] "
                       f"{', '.join(r_tables) or '-':30s} {r['question'][:55]}")
         if args.verbose and not retrieved:
             print("         (no examples retrieved — confidence gate suppressed all, "
                   "or the corpus/index is empty)")
+
+        # H2 (headline): does the retrieved SET collectively demonstrate EVERY SQL construct
+        # the gold query uses? A per-example "looks similar" hit can still leave the prompt
+        # missing a construct the answer needs; this measures the set, not each example.
+        op_coverage = (len(gold_patterns & union_patterns) / len(gold_patterns)
+                       if gold_patterns else None)
+        tbl_coverage = (len(gold_tables & union_tables) / len(gold_tables)
+                        if gold_tables else None)
+        # M3: rank-aware quality over the proxy relevance labels (order the model sees).
+        kk = len(retrieved)
+        p_at_k = sum(rel_flags) / kk if kk else 0.0
+        mrr = next((1 / (i + 1) for i, f in enumerate(rel_flags) if f), 0.0)
+        ndcg = _ndcg(grades)
+        pat_jaccard = max(pat_jaccs) if pat_jaccs else 0.0   # M2: best graded pattern overlap
+
+        strong_hits += strong_hit
+        p_at_k_sum += p_at_k
+        mrr_sum += mrr
+        ndcg_sum += ndcg
+        pat_jaccard_sum += pat_jaccard
+        if op_coverage is not None:
+            op_cov_sum += op_coverage
+            op_cov_n += 1
+        if tbl_coverage is not None:
+            tbl_cov_sum += tbl_coverage
 
         records.append({
             "id": it["id"], "question": question,
             "gold_tables": sorted(gold_tables), "gold_pattern": gold_pattern,
             "table_hit": table_hit, "pattern_hit": pattern_hit,
             "either_hit": table_hit or pattern_hit,
+            "strong_hit": strong_hit,
+            "operator_coverage": round(op_coverage, 3) if op_coverage is not None else None,
+            "table_set_coverage": round(tbl_coverage, 3) if tbl_coverage is not None else None,
+            "pattern_jaccard": round(pat_jaccard, 3),
+            "precision_at_k": round(p_at_k, 3),
+            "mrr": round(mrr, 3),
+            "ndcg_at_k": round(ndcg, 3),
             "retrieved": retrieved_records,
         })
 
@@ -196,18 +314,35 @@ def main() -> int:
             "table_match": {"hits": table_hits, "n": n, "pct": round(100 * table_hits / n, 1)},
             "pattern_match": {"hits": pattern_hits, "n": n, "pct": round(100 * pattern_hits / n, 1)},
             "either_match": {"hits": either_hits, "n": n, "pct": round(100 * either_hits / n, 1)},
+            # H2 (headline): fraction of the gold query's constructs the retrieved SET teaches.
+            "operator_coverage": round(op_cov_sum / op_cov_n, 3) if op_cov_n else 0.0,
+            # M2 (headline-secondary): >=1 example matching on BOTH tables AND pattern.
+            "strong_hit": {"hits": strong_hits, "n": n, "pct": round(100 * strong_hits / n, 1)},
+            # M2/M3 (diagnostic): graded overlap and rank-aware quality over proxy labels.
+            "pattern_jaccard": round(pat_jaccard_sum / n, 3),
+            "table_set_coverage": round(tbl_cov_sum / n, 3),
+            "precision_at_k": round(p_at_k_sum / n, 3),
+            "mrr": round(mrr_sum / n, 3),
+            "ndcg_at_k": round(ndcg_sum / n, 3),
             "no_retrieval": no_retrieval,
         }
         print(f"\n{'-' * 70}")
         print(f"table match   : {table_hits}/{n} ({100 * table_hits / n:.0f}%)")
         print(f"pattern match : {pattern_hits}/{n} ({100 * pattern_hits / n:.0f}%)")
         print(f"either match  : {either_hits}/{n} ({100 * either_hits / n:.0f}%)  <- headline")
+        if op_cov_n:
+            print(f"operator cover: {100 * op_cov_sum / op_cov_n:.0f}%  <- headline "
+                  f"(retrieved set teaches every gold construct)")
+        print(f"strong hit    : {strong_hits}/{n} ({100 * strong_hits / n:.0f}%)  "
+              f"(>=1 example matching table AND pattern)")
+        print(f"P@k / MRR     : {p_at_k_sum / n:.2f} / {mrr_sum / n:.2f}   "
+              f"NDCG@k {ndcg_sum / n:.2f}   pattern-Jaccard {pat_jaccard_sum / n:.2f}")
         if no_retrieval:
             print(f"no examples   : {no_retrieval}/{n} question(s) got zero examples "
                   f"(confidence gate or empty corpus)")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(yaml.safe_dump({
+    doc = {
         "dataset": args.dataset,
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "corpus_size": len(corpus),
@@ -218,9 +353,12 @@ def main() -> int:
         "vector_backend": args.vector_backend,
         "summary": summary,
         "items": records,
-    }, sort_keys=False, allow_unicode=True, width=4096, default_flow_style=False),
-        encoding="utf-8")
-    print(f"\nWrote {out_path}  ({len(records)} question(s) recorded)")
+    }
+    out_path.write_text(yaml.safe_dump(doc, sort_keys=False, allow_unicode=True,
+                                       width=4096, default_flow_style=False), encoding="utf-8")
+    md_path = out_path.with_suffix(".md")
+    md_path.write_text(_render_markdown(doc, summary, records), encoding="utf-8")
+    print(f"\nWrote {out_path}\n      {md_path}  ({len(records)} question(s) recorded)")
     return 0
 
 

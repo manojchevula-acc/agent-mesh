@@ -21,12 +21,12 @@ computed identically and can't quietly drift apart.
 
 Reads:
     eval/datasets/gold_dynamic.yaml   question + gold_sql + gold_result
-    eval/results/agent_runs.yaml      question + agent_sql + agent_result
+    eval/results/agent_runs/agent_runs.yaml      question + agent_sql + agent_result
 
-Writes (its OWN folder — never touches eval/results/EVAL_REPORT.*, which belongs to
+Writes (its OWN folder — never touches eval/results/llm_comparison/EVAL_REPORT.*, which belongs to
 eval/compare_llm.py's LLM-comparison report):
-    eval/results/deterministic/DETERMINISTIC_EVAL_REPORT.md          (default --runs)
-    eval/results/deterministic/DETERMINISTIC_EVAL_REPORT_<TAG>.md    (any other --runs)
+    eval/results/sql_eval/DETERMINISTIC_EVAL_REPORT.md          (default --runs)
+    eval/results/sql_eval/DETERMINISTIC_EVAL_REPORT_<TAG>.md    (any other --runs)
 
 ONE REPORT PER --runs FILE, NEVER A SHARED/OVERWRITTEN ONE
 ------------------------------------------------------------
@@ -39,8 +39,8 @@ recorded runs never clobber each other. Pass --tag to name it explicitly instead
 Run:
     .venv/Scripts/python.exe eval/deterministic_eval.py
     .venv/Scripts/python.exe eval/deterministic_eval.py --ids D01,D02
-    .venv/Scripts/python.exe eval/deterministic_eval.py --runs eval/results/agent_runs_22JULY_MULTIJOIN.yaml
-    .venv/Scripts/python.exe eval/deterministic_eval.py --runs eval/results/agent_runs_JOIN.yaml --tag my-run
+    .venv/Scripts/python.exe eval/deterministic_eval.py --runs eval/results/agent_runs/agent_runs_22JULY_MULTIJOIN.yaml
+    .venv/Scripts/python.exe eval/deterministic_eval.py --runs eval/results/agent_runs/agent_runs_JOIN.yaml --tag my-run
 """
 
 from __future__ import annotations
@@ -58,8 +58,8 @@ from eval.deterministic import report as det_report  # noqa: E402
 from eval.deterministic.evaluator import DeterministicEvaluator  # noqa: E402
 
 GOLD_PATH = HERE / "datasets" / "gold_dynamic.yaml"
-RUNS_PATH = HERE / "results" / "agent_runs.yaml"
-OUT_DIR = HERE / "results" / "deterministic"
+RUNS_PATH = HERE / "results" / "agent_runs" / "agent_runs.yaml"
+OUT_DIR = HERE / "results" / "sql_eval"
 REPORT_BASENAME = "DETERMINISTIC_EVAL_REPORT"
 
 

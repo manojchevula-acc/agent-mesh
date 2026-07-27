@@ -105,6 +105,38 @@ def _rrf(rankings: list[list[str]], k: int) -> list[str]:
     return sorted(fused, key=lambda t: fused[t], reverse=True)
 
 
+def ranked_core(
+    question: str, tables_hint: list[str] | None = None, top_k: int | None = None,
+) -> list[str] | None:
+    """The retriever's ranked candidate tables BEFORE any join-closure recall net:
+    the top-K by fused RRF rank (best first), with any ``tables_hint`` force-appended
+    (kept in rank order; a hint that already ranked is not duplicated).
+
+    Returns ``None`` in exactly the cases ``select_tables`` falls back to the full
+    schema — retrieval disabled, the hybrid fetch raised, or nothing ranked — so the two
+    never diverge. Exposed so retrieval QUALITY (did the ranking itself surface the right
+    tables?) can be measured on its own, separately from the join-closure safety net that
+    can otherwise mask a ranking miss (see eval/check_table_retrieval.py)."""
+    if not settings.schema_retrieval_enabled:
+        return None
+
+    k = top_k if top_k is not None else settings.embedding_top_k
+    try:
+        q = glossary_expand(question)
+        fused = _rrf([_dense_ranking(q), _sparse_ranking(q)], settings.rrf_k)
+    except Exception as exc:  # noqa: BLE001 — retrieval must never break the turn
+        log.warning("retrieval failed | %s | falling back to full schema", exc)
+        return None
+
+    # Core candidates = the top-K by fused RRF rank (kept in rank order, best first),
+    # plus any tables the intent classifier hinted.
+    core = [t for t in fused if t in ALLOWED_TABLES][:k]
+    for t in tables_hint or []:
+        if t in ALLOWED_TABLES and t not in core:
+            core.append(t)
+    return core or None
+
+
 def select_tables(
     question: str, tables_hint: list[str] | None = None, top_k: int | None = None,
     apply_closure: bool = True,
@@ -123,26 +155,11 @@ def select_tables(
     (customer_master neighbours almost every view) can blow the provider's per-minute token
     limit. resolve_joins re-adds any bridge the plan actually needs afterwards, so the final
     generation schema is unaffected."""
-    if not settings.schema_retrieval_enabled:
-        return set(ALLOWED_TABLES)  # current behaviour: full schema
-
-    k = top_k if top_k is not None else settings.embedding_top_k
-
-    try:
-        q = glossary_expand(question)
-        fused = _rrf([_dense_ranking(q), _sparse_ranking(q)], settings.rrf_k)
-    except Exception as exc:  # noqa: BLE001 — retrieval must never break the turn
-        log.warning("retrieval failed | %s | falling back to full schema", exc)
+    core = ranked_core(question, tables_hint, top_k)
+    if core is None:
+        # Retrieval disabled, the hybrid fetch raised, or nothing ranked — fall back to
+        # the full schema so generation is never starved (unchanged behaviour).
         return set(ALLOWED_TABLES)
-
-    # Core candidates = the top-K by fused RRF rank (kept in rank order, best first),
-    # plus any tables the intent classifier hinted.
-    core = [t for t in fused if t in ALLOWED_TABLES][:k]
-    for t in tables_hint or []:
-        if t in ALLOWED_TABLES and t not in core:
-            core.append(t)
-    if not core:
-        return set(ALLOWED_TABLES)  # safe fallback: never starve generation
 
     if not apply_closure:
         # Planner path: ranked candidates PLUS a BASE-table-only join closure. The full

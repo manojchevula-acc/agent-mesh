@@ -5,7 +5,7 @@ comparison, so that judging (eval/compare_llm.py) is a separate, cheap, re-runna
 that never needs to re-invoke the agent. That split matters on a rate-limited free tier:
 one expensive pass over the agent, then as many judging passes as you like.
 
-For each question it captures, into eval/results/agent_runs.yaml:
+For each question it captures, into eval/results/agent_runs/agent_runs.yaml:
     question        — exactly what was asked (the gold item's question)
     agent_sql       — the SQL the agent generated
     agent_result    — the rows that SQL returns, re-executed HERE against the DB
@@ -59,7 +59,7 @@ from sql_agent.tools.registry import set_caller_scopes  # noqa: E402
 
 from eval.sql_introspect import extract  # noqa: E402
 
-OUT_DIR = HERE / "results"
+OUT_DIR = HERE / "results" / "agent_runs"
 OUT_PATH = OUT_DIR / "agent_runs.yaml"
 
 
