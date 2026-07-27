@@ -58,6 +58,7 @@ from src.observability.metrics import (
     record_domain_route,
     record_a2a_call,
     record_pii_hits,
+    record_cache,
 )
 from src.tracing.execution_trace import get_active_tracer, infer_route_and_scores
 from src.tracing.llm_reasoning import extract_reasoning, strip_reasoning_markers
@@ -190,6 +191,11 @@ class MeshState:
     hitl_pending: bool = False
     hitl_approval_id: str = ""
     hitl_details: dict = field(default_factory=dict)
+    # Semantic cache fields — set by CacheCheckExecutor on a cache hit
+    cache_hit: bool = False
+    cache_answer: str = ""
+    cache_age_hours: float = 0.0
+    cache_similarity: float = 0.0
     # Prior field snapshot used by the state-transition trace to diff what each
     # executor changed. Managed by src.tracing.state_trace; not persisted.
     _trace_snapshot: dict = field(default_factory=dict, repr=False, compare=False)
@@ -388,7 +394,117 @@ class RBACValidationExecutor(Executor):
                 _set_error(span, str(exc)[:200])
                 raise
         _emit_stream_event({"stage": "rbac", "status": "completed", "message": f"Role '{state.role}' authorized"})
-        log_state_handoff("rbac_validation", "compliance", state)
+        log_state_handoff("rbac_validation", "cache_check", state)
+        await ctx.send_message(state)
+
+
+class CacheCheckExecutor(Executor):
+    """Semantic response cache gate — placed after RBAC, before Compliance.
+
+    On HIT (recent, role-matched, above similarity threshold):
+        Sets state.cache_hit=True, populates state.answer, and calls
+        ctx.yield_output — skipping Compliance and Domain entirely.
+    On MISS or DISABLED:
+        Calls ctx.send_message to continue to ComplianceExecutor.
+    Errors degrade gracefully — any exception falls through to compliance.
+    """
+
+    @handler
+    async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
+        tracer = get_active_tracer()
+        if tracer:
+            tracer.emit_stage("cache_check", "started", message="Checking semantic cache...")
+        _emit_stream_event({"stage": "cache_check", "status": "started", "message": "Checking semantic cache..."})
+
+        t0 = time.perf_counter()
+
+        if not Config.ENABLE_RESPONSE_CACHE:
+            elapsed = (time.perf_counter() - t0) * 1000
+            record_cache("SKIP", state.role, elapsed)
+            if tracer:
+                tracer.emit_stage("cache_check", "completed", result="SKIP",
+                                  message="Cache disabled (ENABLE_RESPONSE_CACHE=false)")
+            _emit_stream_event({"stage": "cache_check", "status": "completed", "message": "Cache disabled"})
+            log_state_handoff("cache_check", "compliance", state, note="cache_disabled")
+            await ctx.send_message(state)
+            return
+
+        otel = _mesh_tracer()
+        with _span_ctx(otel, "fab.cache.check", kind_internal=True) as span:
+            _set_attr(span, "cache.role", state.role)
+            _set_attr(span, "cache.query_length", len(state.query))
+            try:
+                from src.cache import get_cache_store
+                cache = get_cache_store()
+                # lookup() is CPU-bound (embedding) — run in thread pool
+                entry = await asyncio.to_thread(cache.lookup, state.query, state.role)
+                elapsed = (time.perf_counter() - t0) * 1000
+
+                if entry is not None:
+                    # ── CACHE HIT ────────────────────────────────────────────
+                    _set_attr(span, "cache.result", "HIT")
+                    _set_attr(span, "cache.similarity", entry.similarity)
+                    _set_attr(span, "cache.age_hours", entry.age_hours)
+                    _set_ok(span)
+
+                    state.cache_hit = True
+                    state.cache_answer = entry.answer
+                    state.cache_age_hours = entry.age_hours
+                    state.cache_similarity = entry.similarity
+                    state.answer = entry.answer
+                    state.trail.append(
+                        f"cache_hit:age={entry.age_hours:.1f}h:sim={entry.similarity:.3f}"
+                    )
+                    _log.info(
+                        "Cache HIT role=%s sim=%.3f age=%.1fh",
+                        state.role, entry.similarity, entry.age_hours,
+                        extra={"user": state.user_name, "status": "HIT"},
+                    )
+                    if tracer:
+                        tracer.emit_stage(
+                            "cache_check", "completed",
+                            result="HIT",
+                            message=(
+                                f"Cached answer found "
+                                f"(age {entry.age_hours:.1f}h, similarity {entry.similarity:.3f})"
+                            ),
+                            checks=[
+                                f"Role-matched ({state.role})",
+                                f"Similarity {entry.similarity:.3f} ≥ threshold {Config.CACHE_SIMILARITY_THRESHOLD}",
+                                f"Age {entry.age_hours:.1f}h ≤ max {Config.CACHE_MAX_AGE_HOURS}h",
+                            ],
+                        )
+                    record_cache("HIT", state.role, elapsed)
+                    _emit_stream_event({
+                        "stage": "cache_check", "status": "completed",
+                        "message": f"Cache hit — serving cached answer (age {entry.age_hours:.1f}h)",
+                    })
+                    log_state_handoff("cache_check", "END", state, note="cache_hit -> early yield")
+                    await ctx.yield_output(state)
+                    return
+
+                # ── CACHE MISS ───────────────────────────────────────────────
+                _set_attr(span, "cache.result", "MISS")
+                _set_ok(span)
+                state.trail.append("cache_miss")
+                _log.info("Cache MISS role=%s", state.role, extra={"user": state.user_name, "status": "MISS"})
+                if tracer:
+                    tracer.emit_stage(
+                        "cache_check", "completed",
+                        result="MISS",
+                        message="No cached answer found — running full pipeline",
+                    )
+                record_cache("MISS", state.role, elapsed)
+
+            except Exception as exc:
+                elapsed = (time.perf_counter() - t0) * 1000
+                _set_error(span, str(exc)[:200])
+                _log.warning("Cache lookup error: %s", exc, extra={"status": "ERROR"})
+                record_cache("ERROR", state.role, elapsed)
+                # Degrade gracefully — proceed to compliance on any error
+
+        _emit_stream_event({"stage": "cache_check", "status": "completed", "message": "Cache miss — proceeding"})
+        log_state_handoff("cache_check", "compliance", state)
         await ctx.send_message(state)
 
 
@@ -1077,21 +1193,23 @@ def build_mesh_workflow(ask: AskRemote):
     Returns:
         An immutable, reusable ``Workflow`` instance.
     """
-    guardrail = InputGuardrailExecutor(id="input_guardrail")
-    rbac = RBACValidationExecutor(id="rbac_validation")
+    guardrail  = InputGuardrailExecutor(id="input_guardrail")
+    rbac       = RBACValidationExecutor(id="rbac_validation")
+    cache      = CacheCheckExecutor(id="cache_check")
     compliance = ComplianceExecutor(ask, id="compliance", enabled=Config.ENABLE_COMPLIANCE)
-    domain = DomainExecutor(ask, id="domain", bypass_price_assist=not Config.ENABLE_PRICE_ASSIST)
-    redact = OutputRedactionExecutor(id="output_redaction")
+    domain     = DomainExecutor(ask, id="domain", bypass_price_assist=not Config.ENABLE_PRICE_ASSIST)
+    redact     = OutputRedactionExecutor(id="output_redaction")
 
     return (
         WorkflowBuilder(
             start_executor=guardrail,
             name="agent_mesh_pipeline",
-            description="Guardrail -> RBAC -> compliance -> price_assist -> redact",
-            output_from=[guardrail, rbac, compliance, redact],
+            description="Guardrail -> RBAC -> cache_check -> compliance -> price_assist -> redact",
+            output_from=[guardrail, rbac, cache, compliance, redact],
         )
         .add_edge(guardrail, rbac)
-        .add_edge(rbac, compliance)
+        .add_edge(rbac, cache)
+        .add_edge(cache, compliance)
         .add_edge(compliance, domain)
         .add_edge(domain, redact)
         .build()
@@ -1126,23 +1244,25 @@ def build_devui_workflow(ask: AskRemote, user_name: str, role: str):
     :class:`DevUIEntryExecutor` so the graph accepts the plain ``str`` that DevUI
     sends and stamps it with the configured ``user_name`` / ``role``.
     """
-    entry = DevUIEntryExecutor(user_name, role, id="devui_entry")
-    guardrail = InputGuardrailExecutor(id="input_guardrail")
-    rbac = RBACValidationExecutor(id="rbac_validation")
+    entry      = DevUIEntryExecutor(user_name, role, id="devui_entry")
+    guardrail  = InputGuardrailExecutor(id="input_guardrail")
+    rbac       = RBACValidationExecutor(id="rbac_validation")
+    cache      = CacheCheckExecutor(id="cache_check")
     compliance = ComplianceExecutor(ask, id="compliance", enabled=Config.ENABLE_COMPLIANCE)
-    domain = DomainExecutor(ask, id="domain", bypass_price_assist=not Config.ENABLE_PRICE_ASSIST)
-    redact = OutputRedactionExecutor(id="output_redaction")
+    domain     = DomainExecutor(ask, id="domain", bypass_price_assist=not Config.ENABLE_PRICE_ASSIST)
+    redact     = OutputRedactionExecutor(id="output_redaction")
 
     return (
         WorkflowBuilder(
             start_executor=entry,
             name="agent_mesh_pipeline",
-            description="DevUI entry -> guardrail -> RBAC -> compliance -> price_assist -> redact",
-            output_from=[guardrail, rbac, compliance, redact],
+            description="DevUI entry -> guardrail -> RBAC -> cache_check -> compliance -> price_assist -> redact",
+            output_from=[guardrail, rbac, cache, compliance, redact],
         )
         .add_edge(entry, guardrail)
         .add_edge(guardrail, rbac)
-        .add_edge(rbac, compliance)
+        .add_edge(rbac, cache)
+        .add_edge(cache, compliance)
         .add_edge(compliance, domain)
         .add_edge(domain, redact)
         .build()

@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, CheckCircle2, XCircle, Activity, Brain } from "lucide-react";
+import { ChevronDown, ChevronRight, CheckCircle2, XCircle, Activity, Brain, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { MeshResult, ExecutionEvent, LLMReasoningEntry } from "@/types/mesh";
 import LLMReasoningPanel from "./LLMReasoningPanel";
@@ -16,6 +16,7 @@ const STAGE_LABELS: Record<string, string> = {
   data_retrieval:        "Data Retrieval",
   response_generation:   "Response Generation",
   output_redaction:      "Output Redaction",
+  cache_check:           "Cache Check",
 };
 
 function stageLabel(stage: string): string {
@@ -49,6 +50,7 @@ interface StepProps {
 const Step = memo(function Step({ index, event }: StepProps) {
   const [open, setOpen] = useState(true);
   const isBlocked = event.status === "blocked" || event.status === "failed";
+  const isCacheHit = event.stage === "cache_check" && event.result === "HIT";
   const hasDetail =
     (event.checks && event.checks.length > 0) ||
     event.result ||
@@ -61,7 +63,9 @@ const Step = memo(function Step({ index, event }: StepProps) {
         "rounded-lg border text-xs",
         isBlocked
           ? "border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/20"
-          : "border-line bg-canvas"
+          : isCacheHit
+            ? "border-amber-200 dark:border-amber-800/50 bg-amber-50 dark:bg-amber-950/20"
+            : "border-line bg-canvas"
       )}
     >
       {/* Step header */}
@@ -77,17 +81,19 @@ const Step = memo(function Step({ index, event }: StepProps) {
             "shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold",
             isBlocked
               ? "bg-red-200 dark:bg-red-800 text-red-700 dark:text-red-300"
-              : "bg-brand-100 dark:bg-brand-900/50 text-brand-700 dark:text-brand-300"
+              : isCacheHit
+                ? "bg-amber-200 dark:bg-amber-800/50 text-amber-700 dark:text-amber-300"
+                : "bg-brand-100 dark:bg-brand-900/50 text-brand-700 dark:text-brand-300"
           )}
         >
-          {index}
+          {isCacheHit ? <Zap className="h-3 w-3" /> : index}
         </span>
         <span className={cn("flex-1 font-semibold uppercase tracking-wide text-[10px]",
-          isBlocked ? "text-red-700 dark:text-red-400" : "text-fg")}>
+          isBlocked ? "text-red-700 dark:text-red-400" : isCacheHit ? "text-amber-700 dark:text-amber-300" : "text-fg")}>
           {stageLabel(event.stage)}
         </span>
         {event.result && !isBlocked && (
-          <span className="text-green-600 dark:text-green-400 font-medium truncate max-w-[120px]">
+          <span className={cn("font-medium truncate max-w-[120px]", isCacheHit ? "text-amber-600 dark:text-amber-400" : "text-green-600 dark:text-green-400")}>
             {event.result}
           </span>
         )}

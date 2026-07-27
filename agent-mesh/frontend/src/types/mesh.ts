@@ -94,6 +94,10 @@ export interface MeshResult {
   events?: ExecutionEvent[];
   // Captured LLM reasoning entries for the AI Reasoning explainability panel
   llm_reasoning?: LLMReasoningEntry[];
+  // Semantic cache provenance — set when the answer was served from ChromaDB
+  cache_hit?: boolean;
+  cache_age_hours?: number;
+  cache_similarity?: number;
 }
 
 export interface FeedbackRequest {

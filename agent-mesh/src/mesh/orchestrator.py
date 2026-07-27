@@ -55,6 +55,9 @@ class MeshResult:
     session_id: str = ""
     hitl_pending: bool = False
     hitl_approval_id: str = ""
+    cache_hit: bool = False
+    cache_age_hours: float = 0.0
+    cache_similarity: float = 0.0
 
 
 async def handle_request(user: User, query: str, session_id: str | None = None, request_id: str | None = None) -> MeshResult:
@@ -191,11 +194,39 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
     if final.answer:
         final.answer = strip_reasoning_markers(final.answer)
 
+    # ── Populate semantic cache (post-redaction, final answer only) ─────────────
+    # Only store when: cache is enabled, answer is non-empty, request was not
+    # blocked, and the answer was NOT itself a cache hit (avoid re-caching stale data).
+    if (
+        Config.ENABLE_RESPONSE_CACHE
+        and final.answer
+        and not final.blocked
+        and not getattr(final, "cache_hit", False)
+    ):
+        try:
+            from src.cache import get_cache_store
+            _route = "unknown"
+            _active_tracer = get_active_tracer()
+            if _active_tracer is not None:
+                _summ = _active_tracer.summary()
+                _route = _summ.route or "unknown"
+            get_cache_store().store(
+                query=query,
+                answer=final.answer,
+                role=user.role.value,
+                route=_route,
+                session_id=session_id,
+                request_id=request_id or "",
+            )
+        except Exception as exc:
+            _log.warning("cache store failed: %s", exc)
+    # ── end cache population ─────────────────────────────────────────────────────
+
     # Persist this turn (including blocked ones) so the full conversation history
     # is visible when restoring the session.
     if Config.ENABLE_CONVERSATION_MEMORY and final.answer:
         try:
-            snapshot: dict = {"trail": final.trail, "blocked": final.blocked}
+            snapshot: dict = {"trail": final.trail, "blocked": final.blocked, "role_at_time": user.role.value}
             if request_id:
                 snapshot["request_id"] = request_id
             active_tracer = get_active_tracer()
@@ -235,6 +266,9 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
         session_id=session_id,
         hitl_pending=getattr(final, "hitl_pending", False),
         hitl_approval_id=getattr(final, "hitl_approval_id", ""),
+        cache_hit=getattr(final, "cache_hit", False),
+        cache_age_hours=getattr(final, "cache_age_hours", 0.0),
+        cache_similarity=getattr(final, "cache_similarity", 0.0),
     )
 
 

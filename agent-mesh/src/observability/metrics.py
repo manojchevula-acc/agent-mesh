@@ -57,6 +57,10 @@ _a2a_duration = None
 _mesh_request_duration = None
 _pii_hits = None
 
+# Cache
+_cache_counter = None
+_cache_duration = None
+
 
 def _get_meter():
     global _meter
@@ -346,6 +350,46 @@ def record_mcp_call(service: str, tool_name: str, result: str) -> None:
         return
     try:
         _mcp_ctr().add(1, {"service": service, "tool_name": tool_name, "result": result})
+    except Exception:
+        pass
+
+
+def _cache_ctr():
+    global _cache_counter
+    if _cache_counter is None:
+        _cache_counter = _get_meter().create_counter(
+            "fab.cache.lookups.total",
+            unit="{request}",
+            description="Total semantic cache lookups by result (HIT/MISS/SKIP/ERROR)",
+        )
+    return _cache_counter
+
+
+def _cache_hist():
+    global _cache_duration
+    if _cache_duration is None:
+        _cache_duration = _get_meter().create_histogram(
+            "fab.cache.lookup.duration",
+            unit="ms",
+            description="Semantic cache lookup wall-clock time in milliseconds",
+        )
+    return _cache_duration
+
+
+def record_cache(result: str, role: str, duration_ms: float) -> None:
+    """Record one semantic cache lookup.
+
+    Args:
+        result:      ``"HIT"``, ``"MISS"``, ``"SKIP"`` (cache disabled), or ``"ERROR"``
+        role:        the requesting user's role
+        duration_ms: lookup wall-clock time in milliseconds
+    """
+    if not Config.ENABLE_BUSINESS_METRICS:
+        return
+    try:
+        attrs = {"result": result, "role": role}
+        _cache_ctr().add(1, attrs)
+        _cache_hist().record(duration_ms, {"result": result})
     except Exception:
         pass
 

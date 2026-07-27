@@ -167,6 +167,10 @@ async def post_query(request: Request) -> JSONResponse:
         "events": [dataclasses.asdict(e) for e in summary.events],
         # Captured LLM reasoning entries for the AI Reasoning explainability panel
         "llm_reasoning": summary.llm_reasoning,
+        # Semantic cache provenance — visible in the UI
+        "cache_hit": result.cache_hit,
+        "cache_age_hours": result.cache_age_hours,
+        "cache_similarity": result.cache_similarity,
     })
 
 
@@ -685,14 +689,42 @@ async def get_feedback_list(request: Request):
 # App assembly
 # ---------------------------------------------------------------------------
 
+async def get_cache_stats(request: Request) -> JSONResponse:
+    """Return semantic cache statistics.
+
+    Response: {enabled, total_entries, similarity_threshold, max_age_hours,
+               embed_model, chroma_dir, collection_name}
+    """
+    if not Config.ENABLE_RESPONSE_CACHE:
+        return JSONResponse({
+            "enabled": False,
+            "total_entries": 0,
+            "similarity_threshold": Config.CACHE_SIMILARITY_THRESHOLD,
+            "max_age_hours": Config.CACHE_MAX_AGE_HOURS,
+            "embed_model": Config.CACHE_EMBED_MODEL,
+            "chroma_dir": Config.CACHE_CHROMA_DIR,
+            "collection_name": Config.CACHE_COLLECTION_NAME,
+        })
+    try:
+        from src.cache import get_cache_store
+        stats = get_cache_store().stats()
+        return JSONResponse(stats)
+    except Exception as exc:
+        _log.warning("cache stats error: %s", exc)
+        return JSONResponse({"enabled": True, "error": str(exc)}, status_code=500)
+
+
 @contextlib.asynccontextmanager
 async def _lifespan(app):
-    """Flush pending OTel telemetry on graceful shutdown.
-
-    Without this, the Grafana metrics PeriodicExportingMetricReader may not
-    have fired its export tick before the process exits, silently dropping
-    all metrics from the current session.
-    """
+    """Startup indexer + graceful shutdown OTel flush."""
+    # Pre-populate the semantic cache from existing conversation JSONL files.
+    # Runs in a background thread (asyncio.to_thread) so it never blocks startup.
+    if Config.ENABLE_RESPONSE_CACHE:
+        try:
+            from src.cache.cache_indexer import index_conversations_async
+            asyncio.create_task(index_conversations_async())
+        except Exception as exc:
+            _log.warning("cache indexer startup failed: %s", exc)
     yield
     _log.info("api_server shutting down — flushing observability exporters.")
     flush_observability()
@@ -770,6 +802,9 @@ async def post_query_stream(request: Request) -> StreamingResponse:
                         "confidence": summary.confidence,
                         "events": [dataclasses.asdict(e) for e in summary.events],
                         "llm_reasoning": summary.llm_reasoning,
+                        "cache_hit": result.cache_hit,
+                        "cache_age_hours": result.cache_age_hours,
+                        "cache_similarity": result.cache_similarity,
                     }
                     yield f"event: result\ndata: {json.dumps(result_payload)}\n\n"
                     yield "event: done\ndata: {}\n\n"
@@ -857,6 +892,7 @@ app = Starlette(
         Route("/api/approvals/{id}",             get_approval,     methods=["GET"]),
         Route("/api/approvals/{id}/approve",     post_approve,     methods=["POST"]),
         Route("/api/approvals/{id}/reject",      post_reject,      methods=["POST"]),
+        Route("/api/cache/stats",                get_cache_stats,  methods=["GET"]),
     ],
 )
 

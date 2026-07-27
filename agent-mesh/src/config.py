@@ -118,6 +118,19 @@ class Config:
     ENABLE_COMPLIANCE:   bool = os.getenv("ENABLE_COMPLIANCE",   "true").lower() in ("1", "true", "yes")
 
     # ----------------------------------------------------------------------
+    # Semantic Response Cache (ChromaDB + sentence-transformers)
+    # After RBAC validation, check if a semantically similar question was
+    # answered recently for the same role. Cache hit skips Compliance + Domain.
+    # ENABLE_RESPONSE_CACHE=false (default): CacheCheckExecutor is a no-op.
+    # ----------------------------------------------------------------------
+    ENABLE_RESPONSE_CACHE:      bool  = os.getenv("ENABLE_RESPONSE_CACHE",      "false").lower() in ("1", "true", "yes")
+    CACHE_MAX_AGE_HOURS:        float = float(os.getenv("CACHE_MAX_AGE_HOURS",   "24.0"))
+    CACHE_SIMILARITY_THRESHOLD: float = float(os.getenv("CACHE_SIMILARITY_THRESHOLD", "0.92"))
+    CACHE_CHROMA_DIR:           str   = os.getenv("CACHE_CHROMA_DIR",           "data/cache/chroma")
+    CACHE_EMBED_MODEL:          str   = os.getenv("CACHE_EMBED_MODEL",          "all-MiniLM-L6-v2")
+    CACHE_COLLECTION_NAME:      str   = os.getenv("CACHE_COLLECTION_NAME",      "mesh_response_cache")
+
+    # ----------------------------------------------------------------------
     # User feedback — thumbs up/down + comment stored for future fine-tuning.
     # Records include a fine_tune_record.messages array (OpenAI/Anthropic format)
     # so the JSONL can be exported directly to a fine-tuning job.

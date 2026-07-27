@@ -1,5 +1,5 @@
 import { memo, useMemo, useEffect, useRef, useState } from "react";
-import { ThumbsUp, ThumbsDown } from "lucide-react";
+import { ThumbsUp, ThumbsDown, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Markdown } from "@/components/ui/Markdown";
 import PipelineTrail from "./PipelineTrail";
@@ -253,6 +253,28 @@ const MessageBubble = memo(function MessageBubble({ message, onFeedback }: Messa
               {/* Security blocked indicator */}
               {isBlocked && result && (
                 <SecurityBadge blockStage={result.block_stage} />
+              )}
+
+              {/* Cache hit banner */}
+              {result?.cache_hit && (
+                <div className="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/50">
+                  <Zap className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                  <span className="text-xs font-medium text-amber-700 dark:text-amber-300">
+                    Served from semantic cache
+                  </span>
+                  {result.cache_age_hours != null && (
+                    <span className="text-xs text-amber-600 dark:text-amber-400">
+                      · {result.cache_age_hours < 1
+                          ? `${Math.round(result.cache_age_hours * 60)}m ago`
+                          : `${result.cache_age_hours.toFixed(1)}h ago`}
+                    </span>
+                  )}
+                  {result.cache_similarity != null && (
+                    <span className="text-xs text-amber-500 dark:text-amber-500 ml-auto font-mono">
+                      {(result.cache_similarity * 100).toFixed(0)}% match
+                    </span>
+                  )}
+                </div>
               )}
 
               {/* Answer text */}
