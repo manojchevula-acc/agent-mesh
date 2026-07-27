@@ -58,6 +58,7 @@ class MeshResult:
     cache_hit: bool = False
     cache_age_hours: float = 0.0
     cache_similarity: float = 0.0
+    cache_reasoning: List = field(default_factory=list)
 
 
 async def handle_request(user: User, query: str, session_id: str | None = None, request_id: str | None = None) -> MeshResult:
@@ -206,10 +207,12 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
         try:
             from src.cache import get_cache_store
             _route = "unknown"
+            _reasoning = []
             _active_tracer = get_active_tracer()
             if _active_tracer is not None:
                 _summ = _active_tracer.summary()
                 _route = _summ.route or "unknown"
+                _reasoning = _summ.llm_reasoning or []
             get_cache_store().store(
                 query=query,
                 answer=final.answer,
@@ -217,6 +220,7 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
                 route=_route,
                 session_id=session_id,
                 request_id=request_id or "",
+                reasoning=_reasoning,
             )
         except Exception as exc:
             _log.warning("cache store failed: %s", exc)
@@ -269,6 +273,7 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
         cache_hit=getattr(final, "cache_hit", False),
         cache_age_hours=getattr(final, "cache_age_hours", 0.0),
         cache_similarity=getattr(final, "cache_similarity", 0.0),
+        cache_reasoning=getattr(final, "cache_reasoning", []),
     )
 
 

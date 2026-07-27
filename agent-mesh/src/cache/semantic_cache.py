@@ -20,13 +20,14 @@ the first real request.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import threading
 import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional
+from typing import List, Optional
 
 from src.config import Config
 
@@ -49,6 +50,7 @@ class CacheEntry:
     ts_iso: str            # ISO timestamp when stored
     similarity: float      # Cosine similarity score [0, 1]
     age_hours: float       # Age of the entry in hours at lookup time
+    reasoning: List[dict]  # LLM reasoning entries from the original pipeline run
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +136,12 @@ class SemanticCacheStore:
                 return None
 
             doc = results["documents"][0][0] if results.get("documents") else ""
+            try:
+                reasoning = json.loads(meta.get("reasoning", "[]") or "[]")
+                if not isinstance(reasoning, list):
+                    reasoning = []
+            except (json.JSONDecodeError, TypeError):
+                reasoning = []
             return CacheEntry(
                 query_original=doc,
                 answer=meta.get("answer", ""),
@@ -144,6 +152,7 @@ class SemanticCacheStore:
                 ts_iso=meta.get("ts_iso", ""),
                 similarity=similarity,
                 age_hours=age_hours,
+                reasoning=reasoning,
             )
         except Exception as exc:
             _log.warning("cache lookup error (traceback follows): %s", exc, exc_info=True)
@@ -158,12 +167,33 @@ class SemanticCacheStore:
         session_id: str,
         request_id: str,
         ts: Optional[datetime] = None,
+        reasoning: Optional[List[dict]] = None,
     ) -> None:
         """Persist a cache entry. No-op when disabled. Thread-safe via _write_lock."""
         if not self._enabled:
             return
         if not query or not answer:
             return
+        # Serialize reasoning entries before acquiring the write lock.
+        # Falls back to "[]" if entries contain non-serializable objects or
+        # if the serialized form exceeds the 8192-byte metadata cap.
+        reasoning_json = "[]"
+        try:
+            _raw = json.dumps(reasoning or [], ensure_ascii=False)
+            if len(_raw) <= 8192:
+                reasoning_json = _raw
+            else:
+                # Truncate to as many complete entries as fit.
+                truncated: list = []
+                for entry in (reasoning or []):
+                    candidate = json.dumps(truncated + [entry], ensure_ascii=False)
+                    if len(candidate) <= 8192:
+                        truncated.append(entry)
+                    else:
+                        break
+                reasoning_json = json.dumps(truncated, ensure_ascii=False)
+        except (TypeError, ValueError) as _e:
+            _log.warning("cache store: reasoning serialization failed (%s) — storing without reasoning", _e)
         try:
             with self._write_lock:
                 self._ensure_initialized()
@@ -182,6 +212,7 @@ class SemanticCacheStore:
                         "request_id": request_id,
                         "ts_iso": ts_now.isoformat(),
                         "ts_unix": float(ts_now.timestamp()),
+                        "reasoning": reasoning_json,
                     }],
                 )
                 _log.info("cache store: upsert OK id=%s role=%s total=%d",

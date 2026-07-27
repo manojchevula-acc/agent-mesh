@@ -36,7 +36,7 @@ build/
 .ipynb_checkpoints/
 
 # ── Knowledge Base (large/generated data) ────────────────────────────────────
-my_KB/*
+# my_KB/*
 
 # ── IDE & OS ──────────────────────────────────────────────────────────────────
 .vscode/

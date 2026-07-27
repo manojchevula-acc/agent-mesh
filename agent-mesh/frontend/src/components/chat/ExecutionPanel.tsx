@@ -257,6 +257,7 @@ export default function ExecutionPanel({ result, liveEvents, liveReasoning }: Ex
   const steps = useMemo(() => collapseEvents(eventSource), [eventSource]);
   const stepCount = steps.length;
   const reasoningEntries = result?.llm_reasoning ?? liveReasoning ?? [];
+  const reasoningFromCache = result?.cache_hit && (result?.cache_reasoning?.length ?? 0) > 0;
   const reasoningCount = reasoningEntries.length;
   const durationLabel = result?.total_duration_ms != null
     ? `${(result.total_duration_ms / 1000).toFixed(1)} s`
@@ -324,6 +325,11 @@ export default function ExecutionPanel({ result, liveEvents, liveReasoning }: Ex
             >
               <Brain className="h-3 w-3" />
               AI Reasoning
+              {reasoningFromCache && (
+                <span className="ml-1 text-[9px] font-medium text-amber-500 dark:text-amber-400 italic">
+                  replayed
+                </span>
+              )}
               {reasoningCount > 0 && (
                 <span className={cn(
                   "ml-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold",

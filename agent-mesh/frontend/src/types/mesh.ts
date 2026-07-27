@@ -98,6 +98,7 @@ export interface MeshResult {
   cache_hit?: boolean;
   cache_age_hours?: number;
   cache_similarity?: number;
+  cache_reasoning?: LLMReasoningEntry[];
 }
 
 export interface FeedbackRequest {

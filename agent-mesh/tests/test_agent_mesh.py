@@ -9,7 +9,7 @@ Architecture (15.0.6.2026):
   PriceAssistAgent is the primary banking orchestrator (all requests go to it).
   GatewayAgent and PolicyAgent have been removed.
 
-Run: python -m unittest test_agent_mesh.py
+Run: python -m unittest tests/test_agent_mesh.py
 """
 import os
 os.environ.setdefault("PYTHONWARNINGS", "ignore")
@@ -20,7 +20,7 @@ import pathlib
 import unittest
 from unittest.mock import patch
 
-project_root = str(pathlib.Path(__file__).resolve().parent)
+project_root = str(pathlib.Path(__file__).resolve().parents[1])
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 

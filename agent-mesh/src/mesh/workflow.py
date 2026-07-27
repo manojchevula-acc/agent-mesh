@@ -196,6 +196,7 @@ class MeshState:
     cache_answer: str = ""
     cache_age_hours: float = 0.0
     cache_similarity: float = 0.0
+    cache_reasoning: List[dict] = field(default_factory=list)
     # Prior field snapshot used by the state-transition trace to diff what each
     # executor changed. Managed by src.tracing.state_trace; not persisted.
     _trace_snapshot: dict = field(default_factory=dict, repr=False, compare=False)
@@ -451,13 +452,14 @@ class CacheCheckExecutor(Executor):
                     state.cache_answer = entry.answer
                     state.cache_age_hours = entry.age_hours
                     state.cache_similarity = entry.similarity
+                    state.cache_reasoning = entry.reasoning
                     state.answer = entry.answer
                     state.trail.append(
                         f"cache_hit:age={entry.age_hours:.1f}h:sim={entry.similarity:.3f}"
                     )
                     _log.info(
-                        "Cache HIT role=%s sim=%.3f age=%.1fh",
-                        state.role, entry.similarity, entry.age_hours,
+                        "Cache HIT role=%s sim=%.3f age=%.1fh reasoning_entries=%d",
+                        state.role, entry.similarity, entry.age_hours, len(entry.reasoning),
                         extra={"user": state.user_name, "status": "HIT"},
                     )
                     if tracer:
@@ -474,11 +476,22 @@ class CacheCheckExecutor(Executor):
                                 f"Age {entry.age_hours:.1f}h ≤ max {Config.CACHE_MAX_AGE_HOURS}h",
                             ],
                         )
+                        # Replay stored reasoning into the tracer so the UI AI Reasoning
+                        # tab is populated identically to a full pipeline run.
+                        if entry.reasoning:
+                            tracer.add_llm_reasoning(entry.reasoning)
                     record_cache("HIT", state.role, elapsed)
                     _emit_stream_event({
                         "stage": "cache_check", "status": "completed",
                         "message": f"Cache hit — serving cached answer (age {entry.age_hours:.1f}h)",
                     })
+                    # Stream reasoning entries so the SSE client receives them in real-time.
+                    if entry.reasoning:
+                        _emit_stream_event({
+                            "event_type": "reasoning",
+                            "entries": entry.reasoning,
+                            "replayed_from_cache": True,
+                        })
                     log_state_handoff("cache_check", "END", state, note="cache_hit -> early yield")
                     await ctx.yield_output(state)
                     return

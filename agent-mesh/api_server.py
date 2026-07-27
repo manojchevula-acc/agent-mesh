@@ -165,12 +165,14 @@ async def post_query(request: Request) -> JSONResponse:
         "confidence": summary.confidence,
         # Full event stream for the UI transparency panel
         "events": [dataclasses.asdict(e) for e in summary.events],
-        # Captured LLM reasoning entries for the AI Reasoning explainability panel
-        "llm_reasoning": summary.llm_reasoning,
+        # Captured LLM reasoning entries for the AI Reasoning explainability panel.
+        # On a cache hit the tracer has no live reasoning — replay from stored entries.
+        "llm_reasoning": summary.llm_reasoning or result.cache_reasoning,
         # Semantic cache provenance — visible in the UI
         "cache_hit": result.cache_hit,
         "cache_age_hours": result.cache_age_hours,
         "cache_similarity": result.cache_similarity,
+        "cache_reasoning": result.cache_reasoning,
     })
 
 
@@ -801,10 +803,11 @@ async def post_query_stream(request: Request) -> StreamingResponse:
                         "total_duration_ms": summary.total_duration_ms,
                         "confidence": summary.confidence,
                         "events": [dataclasses.asdict(e) for e in summary.events],
-                        "llm_reasoning": summary.llm_reasoning,
+                        "llm_reasoning": summary.llm_reasoning or result.cache_reasoning,
                         "cache_hit": result.cache_hit,
                         "cache_age_hours": result.cache_age_hours,
                         "cache_similarity": result.cache_similarity,
+                        "cache_reasoning": result.cache_reasoning,
                     }
                     yield f"event: result\ndata: {json.dumps(result_payload)}\n\n"
                     yield "event: done\ndata: {}\n\n"
