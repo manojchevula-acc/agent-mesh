@@ -30,7 +30,7 @@ pip install "datasets>=5.0.0" "huggingface-hub>=1.20.1" rouge-score
 ```
 
 ### Step 2: (Optional) HuggingFace login — only for Tier 2 datasets
-token: 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
+token: ***
 19 datasets are public (Tier 1) — no login needed.
 17 datasets are gated (Tier 2) — require login:
 
