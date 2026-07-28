@@ -296,6 +296,13 @@ export interface SessionMessage {
   trail?: string[];
   trace?: ExecutionEvent[];
   reasoning?: LLMReasoningEntry[];
+  // Cache provenance — set when the answer was served from semantic cache
+  cache_hit?: boolean;
+  cache_age_hours?: number;
+  cache_similarity?: number;
+  cache_judge_invoked?: boolean;
+  cache_judge_decision?: string;
+  cache_judge_reason?: string;
 }
 
 export interface SessionSummary {

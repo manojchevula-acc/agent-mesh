@@ -247,6 +247,16 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
                     "trace": [dataclasses.asdict(e) for e in summ.events],
                     "reasoning": summ.llm_reasoning,
                 })
+            # Cache provenance — preserve so the UI can replay the cache banner on history load
+            if getattr(final, "cache_hit", False):
+                snapshot.update({
+                    "cache_hit": True,
+                    "cache_age_hours": getattr(final, "cache_age_hours", 0.0),
+                    "cache_similarity": getattr(final, "cache_similarity", 0.0),
+                    "cache_judge_invoked": getattr(final, "cache_judge_invoked", False),
+                    "cache_judge_decision": getattr(final, "cache_judge_decision", ""),
+                    "cache_judge_reason": getattr(final, "cache_judge_reason", ""),
+                })
             # Embed the prior summary inline so every assistant record carries the
             # context that was used to answer this turn (audit trail + fallback for load).
             snapshot["rolling_summary"] = _prior_summary

@@ -32,7 +32,7 @@ function toRestoredMessage(m: SessionMessage): ChatMessage {
     content: m.content,
     timestamp: m.ts ? new Date(m.ts) : new Date(),
   };
-  if (m.role === "assistant" && (m.route || m.trail?.length || m.trace?.length)) {
+  if (m.role === "assistant" && (m.route || m.trail?.length || m.trace?.length || m.cache_hit || m.request_id)) {
     const result: MeshResult = {
       answer: m.content,
       blocked: m.blocked ?? false,
@@ -44,6 +44,13 @@ function toRestoredMessage(m: SessionMessage): ChatMessage {
       total_duration_ms: m.duration_ms,
       events: m.trace ?? [],
       llm_reasoning: m.reasoning ?? [],
+      // Cache provenance — restores the amber banner on history load
+      cache_hit: m.cache_hit,
+      cache_age_hours: m.cache_age_hours,
+      cache_similarity: m.cache_similarity,
+      cache_judge_invoked: m.cache_judge_invoked,
+      cache_judge_decision: m.cache_judge_decision,
+      cache_judge_reason: m.cache_judge_reason,
     };
     return { ...base, result };
   }
