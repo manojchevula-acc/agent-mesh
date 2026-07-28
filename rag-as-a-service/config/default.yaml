@@ -86,6 +86,31 @@ ingestion:
     - .pdf
     - .docx
 
+# ── Multimodal image-as-text extension (all additive, disabled by default) ──
+enrichment:
+  enabled: false                       # ingest-time figure/table captioning
+  provider: anthropic                  # 'anthropic' | 'openai'
+  vlm_model_name: claude-haiku-4-5-20251001
+  max_tokens: 1024
+  timeout_seconds: 20
+  min_image_bytes: 2048                # skip decorative logos/rules/icons
+  table_confidence_threshold: 0.7
+  max_concurrent: 4
+  images_scale: 2.0
+  max_media_chunk_tokens: 0            # 0 = atomic; >0 enables row-group split for oversized tables
+
+hydration:
+  enabled: false                       # answer-time image loading — off by default
+  mode: conditional                    # off | conditional | always
+  trigger_modalities: [figure, table, page_image]
+  vision_provider: anthropic
+  vision_model_name: claude-sonnet-5
+  max_image_bytes: 5000000
+
+artifact_store:
+  backend: local                       # 'local' | 's3' (s3 stubbed)
+  local_path: ./artifacts
+
 evaluation:
   judge_provider: groq                 # 'groq' | 'ollama' | 'openai'
   judge_model: qwen/qwen3.6-27b        # strong reasoning for RAGAS eval metrics

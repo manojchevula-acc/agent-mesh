@@ -3,13 +3,17 @@
 import asyncio
 import re
 import sys
+from pathlib import Path
 
 sys.path.insert(0, "src")
 
 from qdrant_client import AsyncQdrantClient
 
+from gernas_rag.config.settings import get_settings
+
 
 async def main():
+    settings = get_settings()
     client = AsyncQdrantClient(path="./qdrant_storage")
     results = await client.scroll(
         collection_name="fab_gernas_docs", limit=200, with_payload=True, with_vectors=False
@@ -72,6 +76,28 @@ async def main():
     for d in docs_missing_date:
         issues.append(f"NO DATE         [{d[:40]}]  (effective_date empty — not found in doc text)")
 
+    # ── Multimodal (image-as-text) checks ────────────────────────────
+    media = [pay for pay in all_payloads if pay.get("modality") in ("figure", "table", "page_image")]
+    artifact_root = Path(settings.artifact_store.local_path)
+    for pay in media:
+        doc = pay.get("document_name", "")[:40]
+        page = pay.get("source_page")
+        modality = pay.get("modality", "")
+        ref = pay.get("artifact_ref", "")
+        text = pay.get("text", "")
+        tag = f"[{doc}] p.{page} ({modality})"
+
+        if not pay.get("enrichment_model"):
+            issues.append(f"DEGRADED CAPTION {tag}  enrichment_model=None — VLM failed/skipped, caption is fallback text")
+        if ref:
+            digest, _, ext = ref.removeprefix("sha256:").partition(".")
+            if not (artifact_root / f"{digest}.{ext}").exists():
+                issues.append(f"MISSING ARTIFACT {tag}  artifact_ref={ref} has no file under {artifact_root}")
+        else:
+            issues.append(f"NO ARTIFACT REF  {tag}  media chunk has no artifact_ref — hydration impossible for this chunk")
+        if len(text.strip()) < 20:
+            issues.append(f"SHORT CAPTION    {tag}  only {len(text)} chars — likely a failed/empty transcription")
+
     if issues:
         for issue in issues:
             print(f"  WARN  {issue}")
@@ -84,6 +110,12 @@ async def main():
     parent_sizes = [len(pay.get("text", "")) for pay in parents.values()]
     print(f"  Children : {len(child_sizes):3}  |  min={min(child_sizes)}  avg={sum(child_sizes)//len(child_sizes)}  max={max(child_sizes)} chars")
     print(f"  Parents  : {len(parent_sizes):3}  |  min={min(parent_sizes)}  avg={sum(parent_sizes)//len(parent_sizes)}  max={max(parent_sizes)} chars")
+    if media:
+        by_mod: dict[str, int] = {}
+        for pay in media:
+            by_mod[pay.get("modality", "")] = by_mod.get(pay.get("modality", ""), 0) + 1
+        print(f"  Media    : {len(media):3}  |  " + ", ".join(f"{k}={v}" for k, v in sorted(by_mod.items())))
+        print("             run `python scripts/view_media_chunks.py` to inspect captions + artifacts")
 
 
 if __name__ == "__main__":

@@ -36,6 +36,23 @@ async def lifespan(app: FastAPI):
         settings.redis_url, settings.redis_cache_ttl_seconds, enabled=settings.redis_enabled
     )
 
+    # Multimodal answer-time hydration (optional). When enabled, build an artifact
+    # store (to load images) and a separate vision-capable LLM (reusing LLM creds).
+    artifact_store = None
+    vision_llm = None
+    if settings.hydration.enabled or settings.enrichment.enabled:
+        from .storage.artifact_store import get_artifact_store
+
+        artifact_store = get_artifact_store(settings.artifact_store)
+    if settings.hydration.enabled:
+        vision_llm_config = settings.llm.model_copy(
+            update={
+                "provider": settings.hydration.vision_provider,
+                "model_name": settings.hydration.vision_model_name,
+            }
+        )
+        vision_llm = get_llm(vision_llm_config)
+
     # Ensure the collection exists.
     await vectordb.create_collection(settings.vectordb.collection_name, embedder.dense_dim)
 
@@ -47,7 +64,9 @@ async def lifespan(app: FastAPI):
     app.state.cache = cache
     app.state.ingestion_pipeline = IngestionPipeline(settings, embedder, vectordb)
     app.state.retrieval_pipeline = RetrievalPipeline(settings, embedder, vectordb)
-    app.state.generator = ResponseGenerator(settings, llm)
+    app.state.generator = ResponseGenerator(
+        settings, llm, artifact_store=artifact_store, vision_llm=vision_llm
+    )
 
     yield
 

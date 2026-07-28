@@ -24,3 +24,12 @@ def make_point_uuid(chunk_id: str) -> str:
     constraint.
     """
     return str(uuid.uuid5(_NAMESPACE, chunk_id))
+
+
+def hash_bytes(data: bytes) -> str:
+    """Content hash for artifact storage — sha256 hex of raw bytes.
+
+    Used by the artifact store so identical images map to the same key,
+    giving idempotent writes (the same guarantee chunk ids already have).
+    """
+    return hashlib.sha256(data).hexdigest()

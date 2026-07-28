@@ -6,14 +6,20 @@ from pathlib import Path
 from ..chunking.factory import get_chunker
 from ..config.settings import Settings
 from ..embeddings.base import BaseEmbedder
+from ..enrichment.base import EnrichmentInput
+from ..enrichment.factory import get_enricher
+from ..extraction.base import ElementType, ExtractedElement, ExtractionResult
 from ..extraction.factory import get_extractor
 from ..models.chunk import Chunk, EmbeddedChunk
 from ..models.ingestion import IngestionResult, IngestionStatus
+from ..storage.artifact_store import get_artifact_store
 from ..utils.logging import get_logger
 from ..vectordb.base import BaseVectorDB
 from .metadata import MetadataExtractor
 
 logger = get_logger(__name__)
+
+_MEDIA_TYPES = (ElementType.FIGURE, ElementType.TABLE)
 
 
 class IngestionPipeline:
@@ -32,8 +38,18 @@ class IngestionPipeline:
         self._vectordb = vectordb
         self._chunker = get_chunker(settings.chunking)
         self._metadata = MetadataExtractor()
+        # Multimodal enrichment (image-as-text). Disabled by default; when off,
+        # the extractor never rasterises images and the Enrich stage is skipped.
+        self._enrichment_enabled = settings.enrichment.enabled
+        self._enricher = None
+        self._artifact_store = None
+        if self._enrichment_enabled:
+            self._enricher = get_enricher(settings.enrichment, settings.llm)
+            self._artifact_store = get_artifact_store(settings.artifact_store)
         # Extractor is shared across all files — avoids reloading Docling weights per document.
-        self._extractor = get_extractor(settings.chunking, Path("placeholder.pdf"))
+        self._extractor = get_extractor(
+            settings.chunking, Path("placeholder.pdf"), settings.enrichment
+        )
 
     async def ingest_file(
         self,
@@ -53,7 +69,11 @@ class IngestionPipeline:
             # Step 1: Extract
             extraction = await self._extractor.extract(file_path)
 
-            # Step 2: Chunk with metadata
+            # Step 2: Enrich media elements (image-as-text). No-op when disabled.
+            if self._enrichment_enabled:
+                extraction = await self._enrich(extraction)
+
+            # Step 3: Chunk with metadata
             base_metadata = self._metadata.build_base_metadata(
                 file_path,
                 document_type,
@@ -64,10 +84,10 @@ class IngestionPipeline:
             )
             chunks = self._chunker.chunk(extraction, base_metadata)
 
-            # Step 3: Embed in batches
+            # Step 4: Embed in batches
             embedded_chunks = await self._embed_chunks_in_batches(chunks)
 
-            # Step 4: Upsert
+            # Step 5: Upsert
             count = await self._vectordb.upsert(embedded_chunks)
             logger.info("Ingestion complete", file=str(file_path), chunks_upserted=count)
             return IngestionResult(
@@ -103,6 +123,54 @@ class IngestionPipeline:
                 return await self.ingest_file(f, document_type)
 
         return await asyncio.gather(*[ingest_with_sem(f) for f in files])
+
+    async def _enrich(self, extraction: ExtractionResult) -> ExtractionResult:
+        """Enrich media elements in place: store each image, caption it with the
+        VLM, and write ``caption``/``artifact_ref``/``enrichment_model`` back onto
+        the element. ``raw_markdown`` is untouched — the chunker turns each enriched
+        element into one atomic media chunk (design §8, §9). Fail-soft throughout:
+        a VLM failure keeps the element's source text and never breaks ingestion.
+        """
+        candidates = [
+            el
+            for el in extraction.elements
+            if el.element_type in _MEDIA_TYPES
+            and el.image_bytes is not None
+            and len(el.image_bytes) >= self._settings.enrichment.min_image_bytes
+        ]
+        if not candidates or self._enricher is None or self._artifact_store is None:
+            return extraction
+
+        semaphore = asyncio.Semaphore(self._settings.enrichment.max_concurrent)
+
+        async def _process(el: ExtractedElement) -> None:
+            async with semaphore:
+                assert el.image_bytes is not None
+                try:
+                    ref = await self._artifact_store.put_bytes(el.image_bytes, "image/png")
+                except Exception as exc:  # noqa: BLE001 — storage failure = skip this element.
+                    logger.warning("Artifact store failed; skipping element", error=str(exc))
+                    return
+                result = await self._enricher.enrich(
+                    EnrichmentInput(
+                        image_bytes=el.image_bytes,
+                        mime_type="image/png",
+                        element_type=el.element_type.value,
+                        context_text=el.metadata.get("nearest_heading", ""),
+                        confidence=el.metadata.get("table_confidence"),
+                    )
+                )
+                if result.ok and result.caption_text:
+                    el.text = result.caption_text  # Full caption becomes the chunk text.
+                el.metadata["artifact_ref"] = ref  # Marks this as an enriched media chunk.
+                el.metadata["enrichment_model"] = result.model_name  # None on degrade.
+                # Free the raw bytes now they are persisted (kept only for the chunk ref).
+                el.image_bytes = None
+
+        await asyncio.gather(*(_process(el) for el in candidates))
+        enriched = sum(1 for el in candidates if el.metadata.get("artifact_ref"))
+        logger.info("Enrichment complete", media_elements=len(candidates), enriched=enriched)
+        return extraction
 
     async def _embed_chunks_in_batches(self, chunks: list[Chunk]) -> list[EmbeddedChunk]:
         batch_size = self._settings.embedding.batch_size

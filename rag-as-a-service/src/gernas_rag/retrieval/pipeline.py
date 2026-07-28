@@ -91,6 +91,8 @@ class RetrievalPipeline:
                 freshness_warning=r.metadata.get("freshness_score", 1.0)
                 < _FRESHNESS_WARNING_THRESHOLD,
                 parent_text=parent_map.get(r.metadata.get("parent_chunk_id", ""), None),
+                modality=r.metadata.get("modality", "text"),
+                artifact_ref=r.metadata.get("artifact_ref"),
             )
             for r in candidates
         ]

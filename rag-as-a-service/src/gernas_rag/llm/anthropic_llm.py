@@ -3,7 +3,7 @@
 from ..config.llm import LLMConfig
 from ..utils.logging import get_logger
 from ..utils.retry import async_retry
-from .base import BaseLLM, Message
+from .base import BaseLLM, Message, flatten_text, to_anthropic_content
 
 logger = get_logger(__name__)
 
@@ -25,9 +25,11 @@ class AnthropicLLM(BaseLLM):
 
     @async_retry(max_attempts=3, backoff_factor=2.0)
     async def generate(self, messages: list[Message]) -> str:
-        system = "\n\n".join(m.content for m in messages if m.role == "system")
+        system = "\n\n".join(
+            flatten_text(m.content) for m in messages if m.role == "system"
+        )
         turns = [
-            {"role": m.role, "content": m.content}
+            {"role": m.role, "content": to_anthropic_content(m.content)}
             for m in messages
             if m.role in ("user", "assistant")
         ]

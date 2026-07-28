@@ -67,6 +67,7 @@ class QdrantVectorDB(BaseVectorDB):
             ("product_applicability", "keyword"),
             ("deprecated", "bool"),
             ("effective_date", "keyword"),
+            ("modality", "keyword"),  # NEW — enables "tables only" / "figures only" filtering.
         ]:
             await self._client.create_payload_index(name, field_name, field_type)
         logger.info("Collection created", collection=name, dense_dim=dense_dim)
@@ -179,6 +180,10 @@ class QdrantVectorDB(BaseVectorDB):
                         key="product_applicability",
                         match=MatchAny(any=filters.product_applicability),
                     )
+                )
+            if filters.modality:
+                must.append(
+                    FieldCondition(key="modality", match=MatchAny(any=filters.modality))
                 )
         return Filter(must=must)
 

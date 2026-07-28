@@ -3,13 +3,17 @@
 from ..config.llm import LLMConfig
 from ..utils.logging import get_logger
 from ..utils.retry import async_retry
-from .base import BaseLLM, Message
+from .base import BaseLLM, Message, to_openai_content
 
 logger = get_logger(__name__)
 
 
 class OpenAICompatLLM(BaseLLM):
-    """Any OpenAI-compatible chat completions endpoint via the async OpenAI SDK."""
+    """Any OpenAI-compatible chat completions endpoint via the async OpenAI SDK.
+
+    Vision-capable: content parts serialize to ``image_url`` blocks, so a
+    self-hosted vision model (e.g. Qwen2-VL) can be used as the hydration provider.
+    """
 
     def __init__(self, config: LLMConfig) -> None:
         from openai import AsyncOpenAI
@@ -25,7 +29,7 @@ class OpenAICompatLLM(BaseLLM):
     async def generate(self, messages: list[Message]) -> str:
         response = await self._client.chat.completions.create(
             model=self._config.model_name,
-            messages=[{"role": m.role, "content": m.content} for m in messages],
+            messages=[{"role": m.role, "content": to_openai_content(m.content)} for m in messages],
             temperature=self._config.temperature,
             max_tokens=self._config.max_tokens,
         )

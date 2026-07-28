@@ -3,21 +3,27 @@
 from pathlib import Path
 
 from ..config.chunking import ChunkingConfig, ExtractionStrategy
+from ..config.enrichment import EnrichmentConfig
 from .base import BaseExtractor
 
 
-def get_extractor(config: ChunkingConfig, file_path: Path) -> BaseExtractor:
+def get_extractor(
+    config: ChunkingConfig,
+    file_path: Path,
+    enrichment: EnrichmentConfig | None = None,
+) -> BaseExtractor:
     """Return an extractor for ``file_path`` per the configured strategy.
 
     ``AUTO`` selects Docling for office/PDF formats and falls back to PyMuPDF for
-    anything else.
+    anything else. ``enrichment`` (when enabled) makes the Docling extractor
+    rasterise picture regions for downstream vision captioning.
     """
     strategy = config.extraction_strategy
     match strategy:
         case ExtractionStrategy.DOCLING:
             from .docling_extractor import DoclingExtractor
 
-            return DoclingExtractor()
+            return DoclingExtractor(enrichment)
         case ExtractionStrategy.UNSTRUCTURED:
             from .unstructured_extractor import UnstructuredExtractor
 
@@ -29,7 +35,7 @@ def get_extractor(config: ChunkingConfig, file_path: Path) -> BaseExtractor:
         case ExtractionStrategy.AUTO:
             from .docling_extractor import DoclingExtractor
 
-            docling = DoclingExtractor()
+            docling = DoclingExtractor(enrichment)
             if docling.supports(file_path):
                 return docling
             from .pymupdf_extractor import PyMuPDFExtractor

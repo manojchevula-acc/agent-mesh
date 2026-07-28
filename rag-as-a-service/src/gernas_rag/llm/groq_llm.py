@@ -3,7 +3,7 @@
 from ..config.llm import LLMConfig
 from ..utils.logging import get_logger
 from ..utils.retry import async_retry
-from .base import BaseLLM, Message
+from .base import BaseLLM, Message, flatten_text
 
 logger = get_logger(__name__)
 
@@ -23,7 +23,7 @@ class GroqLLM(BaseLLM):
     async def generate(self, messages: list[Message]) -> str:
         response = await self._client.chat.completions.create(
             model=self._config.model_name,
-            messages=[{"role": m.role, "content": m.content} for m in messages],
+            messages=[{"role": m.role, "content": flatten_text(m.content)} for m in messages],
             temperature=self._config.temperature,
             max_tokens=self._config.max_tokens,
         )

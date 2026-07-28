@@ -10,6 +10,7 @@ class DocumentFilter(BaseModel):
     product_applicability: list[str] | None = None
     effective_date_from: str | None = None
     deprecated: bool = False
+    modality: list[str] | None = None  # NEW — e.g. ["table"] for "pricing grids only"
 
 
 class RetrieveRequest(BaseModel):
@@ -33,6 +34,10 @@ class RetrievedChunk(BaseModel):
     effective_date: str
     freshness_warning: bool
     parent_text: str | None = None
+    modality: str = "text"  # NEW — "text" | "table" | "figure" | "page_image"
+    # NEW — content-addressed key for the source image; citation metadata only
+    # (no bytes in the response). The generator resolves it for hydration (§13).
+    artifact_ref: str | None = None
 
 
 class RetrieveResponse(BaseModel):

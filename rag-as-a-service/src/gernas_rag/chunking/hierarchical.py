@@ -5,8 +5,8 @@ from typing import Any
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from ..config.chunking import ChunkingConfig
-from ..extraction.base import ExtractionResult
-from ..models.chunk import Chunk, ChunkMetadata
+from ..extraction.base import ExtractedElement, ExtractionResult
+from ..models.chunk import Chunk, ChunkMetadata, Modality
 from ..utils.hashing import make_chunk_id
 from ..utils.logging import get_logger
 from .base import BaseChunker
@@ -96,6 +96,47 @@ class HierarchicalChunker(BaseChunker):
                 )
                 chunks.append(Chunk(id=chunk_id, text=child_text, metadata=meta))
 
+        # Media chunks are built atomically from enriched elements — one figure /
+        # table = exactly one chunk, never routed through the text splitter (so a
+        # long caption can never be fragmented). See design §9.
+        chunks.extend(self._build_media_chunks(extraction.elements, base_metadata))
+
         logger.info("Chunking complete", total_chunks=len(chunks), document=doc_name)
+        return chunks
+
+    def _build_media_chunks(
+        self, elements: list[ExtractedElement], base_metadata: dict[str, Any]
+    ) -> list[Chunk]:
+        """Turn each enriched media element (those carrying an ``artifact_ref``)
+        into exactly one atomic chunk. The full caption goes in as a single unit.
+        """
+        doc_name = base_metadata["document_name"]
+        chunks: list[Chunk] = []
+        for el in elements:
+            ref = el.metadata.get("artifact_ref")
+            if not ref or not el.text.strip():
+                continue  # Not an enriched media element, or empty caption.
+            modality = el.element_type.value  # "figure" | "table"
+            heading = el.metadata.get("nearest_heading", "")
+            page = el.page_number
+            clause_ref = (
+                self._extract_clause_ref(el.text, heading)
+                or (f"{modality} p.{page}" if page is not None else modality)
+            )
+            meta = ChunkMetadata(
+                **{
+                    **base_metadata,
+                    "section_heading": heading,
+                    "clause_reference": clause_ref,
+                    "source_page": page,
+                    "modality": Modality(modality),
+                    "artifact_ref": ref,
+                    "enrichment_model": el.metadata.get("enrichment_model"),
+                }
+            )
+            # Keyed on the artifact ref so re-ingesting maps the same image to the
+            # same chunk id → idempotent upsert, same guarantee as text chunks.
+            chunk_id = make_chunk_id(doc_name, f"{modality}:{ref}")
+            chunks.append(Chunk(id=chunk_id, text=el.text, metadata=meta))
         return chunks
 

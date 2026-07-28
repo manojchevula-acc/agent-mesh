@@ -22,9 +22,12 @@ import yaml
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .artifact_store import ArtifactStoreConfig
 from .chunking import ChunkingConfig
 from .embedding import EmbeddingConfig
+from .enrichment import EnrichmentConfig
 from .evaluation import EvaluationConfig
+from .hydration import HydrationConfig
 from .ingestion import IngestionConfig
 from .llm import LLMConfig
 from .retrieval import RetrievalConfig
@@ -90,6 +93,10 @@ class Settings(BaseSettings):
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     ingestion: IngestionConfig = Field(default_factory=IngestionConfig)
     evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
+    # Multimodal image-as-text extension (all additive, disabled by default).
+    enrichment: EnrichmentConfig = Field(default_factory=EnrichmentConfig)
+    hydration: HydrationConfig = Field(default_factory=HydrationConfig)
+    artifact_store: ArtifactStoreConfig = Field(default_factory=ArtifactStoreConfig)
 
 
 def _load_yaml_overrides() -> dict[str, Any]:
