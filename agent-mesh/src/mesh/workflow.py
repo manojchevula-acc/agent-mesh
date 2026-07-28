@@ -197,6 +197,12 @@ class MeshState:
     cache_age_hours: float = 0.0
     cache_similarity: float = 0.0
     cache_reasoning: List[dict] = field(default_factory=list)
+    cache_judge_invoked: bool = False
+    cache_judge_decision: str = ""
+    cache_judge_reason: str = ""
+    # When True, CacheCheckExecutor skips the lookup and runs the full pipeline.
+    # The fresh answer is still stored back into the cache, replacing the stale entry.
+    bypass_cache: bool = False
     # Prior field snapshot used by the state-transition trace to diff what each
     # executor changed. Managed by src.tracing.state_trace; not persisted.
     _trace_snapshot: dict = field(default_factory=dict, repr=False, compare=False)
@@ -430,22 +436,67 @@ class CacheCheckExecutor(Executor):
             await ctx.send_message(state)
             return
 
+        if getattr(state, "bypass_cache", False):
+            elapsed = (time.perf_counter() - t0) * 1000
+            record_cache("SKIP", state.role, elapsed)
+            if tracer:
+                tracer.emit_stage("cache_check", "completed", result="BYPASS",
+                                  message="Cache bypassed — running full pipeline for fresh answer")
+            _emit_stream_event({"stage": "cache_check", "status": "completed",
+                                "message": "Cache bypassed — fetching fresh answer"})
+            log_state_handoff("cache_check", "compliance", state, note="cache_bypassed")
+            await ctx.send_message(state)
+            return
+
         otel = _mesh_tracer()
         with _span_ctx(otel, "fab.cache.check", kind_internal=True) as span:
             _set_attr(span, "cache.role", state.role)
             _set_attr(span, "cache.query_length", len(state.query))
             try:
-                from src.cache import get_cache_store
+                from src.cache import get_cache_store, llm_cache_judge
                 cache = get_cache_store()
                 # lookup() is CPU-bound (embedding) — run in thread pool
                 entry = await asyncio.to_thread(cache.lookup, state.query, state.role)
+
+                # ── GRAY ZONE: LLM judge decides ────────────────────────────
+                # entry.confidence == "pending_judge" when similarity is between
+                # CACHE_MISS_THRESHOLD and CACHE_SIMILARITY_THRESHOLD.
+                judge_invoked = False
+                judge_decision = None
+                judge_reason = ""
+                if entry is not None and entry.confidence == "pending_judge":
+                    judge_invoked = True
+                    cache._judge_invocations += 1
+                    _log.info(
+                        "Cache gray zone — invoking LLM judge role=%s sim=%.3f",
+                        state.role, entry.similarity,
+                        extra={"user": state.user_name},
+                    )
+                    is_valid, judge_reason = await llm_cache_judge(
+                        new_query=state.query,
+                        cached_query=entry.query_original,
+                        cached_answer=entry.answer,
+                        role=state.role,
+                    )
+                    if is_valid:
+                        cache._judge_hits += 1
+                        entry.confidence = "judge_hit"
+                        judge_decision = "HIT"
+                    else:
+                        cache._judge_misses += 1
+                        entry = None   # treat as MISS
+                        judge_decision = "MISS"
+
                 elapsed = (time.perf_counter() - t0) * 1000
 
                 if entry is not None:
-                    # ── CACHE HIT ────────────────────────────────────────────
+                    # ── CACHE HIT (high confidence or judge-validated) ───────
+                    hit_label = "HIT" if not judge_invoked else f"HIT (judge)"
                     _set_attr(span, "cache.result", "HIT")
                     _set_attr(span, "cache.similarity", entry.similarity)
                     _set_attr(span, "cache.age_hours", entry.age_hours)
+                    _set_attr(span, "cache.confidence", entry.confidence)
+                    _set_attr(span, "cache.judge_invoked", judge_invoked)
                     _set_ok(span)
 
                     state.cache_hit = True
@@ -453,14 +504,23 @@ class CacheCheckExecutor(Executor):
                     state.cache_age_hours = entry.age_hours
                     state.cache_similarity = entry.similarity
                     state.cache_reasoning = entry.reasoning
+                    state.cache_judge_invoked = judge_invoked
+                    state.cache_judge_decision = judge_decision or ""
+                    state.cache_judge_reason = judge_reason
                     state.answer = entry.answer
                     state.trail.append(
                         f"cache_hit:age={entry.age_hours:.1f}h:sim={entry.similarity:.3f}"
+                        + (":judge" if judge_invoked else "")
                     )
                     _log.info(
-                        "Cache HIT role=%s sim=%.3f age=%.1fh reasoning_entries=%d",
-                        state.role, entry.similarity, entry.age_hours, len(entry.reasoning),
+                        "Cache %s role=%s sim=%.3f age=%.1fh reasoning_entries=%d",
+                        hit_label, state.role, entry.similarity, entry.age_hours, len(entry.reasoning),
                         extra={"user": state.user_name, "status": "HIT"},
+                    )
+                    threshold_check = (
+                        f"LLM judge: YES — {judge_reason}" if (judge_invoked and judge_reason)
+                        else "LLM judge: YES" if judge_invoked
+                        else f"Similarity {entry.similarity:.3f} ≥ threshold {Config.CACHE_SIMILARITY_THRESHOLD}"
                     )
                     if tracer:
                         tracer.emit_stage(
@@ -468,24 +528,28 @@ class CacheCheckExecutor(Executor):
                             result="HIT",
                             message=(
                                 f"Cached answer found "
-                                f"(age {entry.age_hours:.1f}h, similarity {entry.similarity:.3f})"
+                                f"(age {entry.age_hours:.1f}h, similarity {entry.similarity:.3f}"
+                                + (", LLM judge: YES)" if judge_invoked else ")")
                             ),
                             checks=[
                                 f"Role-matched ({state.role})",
-                                f"Similarity {entry.similarity:.3f} ≥ threshold {Config.CACHE_SIMILARITY_THRESHOLD}",
+                                threshold_check,
                                 f"Age {entry.age_hours:.1f}h ≤ max {Config.CACHE_MAX_AGE_HOURS}h",
                             ],
                         )
-                        # Replay stored reasoning into the tracer so the UI AI Reasoning
-                        # tab is populated identically to a full pipeline run.
                         if entry.reasoning:
                             tracer.add_llm_reasoning(entry.reasoning)
                     record_cache("HIT", state.role, elapsed)
                     _emit_stream_event({
                         "stage": "cache_check", "status": "completed",
-                        "message": f"Cache hit — serving cached answer (age {entry.age_hours:.1f}h)",
+                        "message": (
+                            f"Cache hit — serving cached answer (age {entry.age_hours:.1f}h)"
+                            + (" [LLM judge: YES]" if judge_invoked else "")
+                        ),
+                        "judge_invoked": judge_invoked,
+                        "judge_decision": judge_decision,
+                        "judge_reason": judge_reason,
                     })
-                    # Stream reasoning entries so the SSE client receives them in real-time.
                     if entry.reasoning:
                         _emit_stream_event({
                             "event_type": "reasoning",
@@ -498,14 +562,28 @@ class CacheCheckExecutor(Executor):
 
                 # ── CACHE MISS ───────────────────────────────────────────────
                 _set_attr(span, "cache.result", "MISS")
+                _set_attr(span, "cache.judge_invoked", judge_invoked)
+                if judge_invoked:
+                    _set_attr(span, "cache.judge_decision", "MISS")
+                    if judge_reason:
+                        _set_attr(span, "cache.judge_reason", judge_reason)
                 _set_ok(span)
-                state.trail.append("cache_miss")
-                _log.info("Cache MISS role=%s", state.role, extra={"user": state.user_name, "status": "MISS"})
+                state.trail.append("cache_miss" + (":judge_rejected" if judge_invoked else ""))
+                _log.info(
+                    "Cache MISS role=%s judge_invoked=%s judge_reason=%r",
+                    state.role, judge_invoked, judge_reason,
+                    extra={"user": state.user_name, "status": "MISS"},
+                )
+                miss_message = (
+                    f"LLM judge rejected — {judge_reason}" if (judge_invoked and judge_reason)
+                    else "LLM judge rejected gray-zone candidate — running full pipeline" if judge_invoked
+                    else "No cached answer found — running full pipeline"
+                )
                 if tracer:
                     tracer.emit_stage(
                         "cache_check", "completed",
                         result="MISS",
-                        message="No cached answer found — running full pipeline",
+                        message=miss_message,
                     )
                 record_cache("MISS", state.role, elapsed)
 

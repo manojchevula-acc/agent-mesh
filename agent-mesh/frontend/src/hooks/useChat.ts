@@ -95,6 +95,11 @@ export function useChat({ username, role, initialSessionId }: UseChatOptions) {
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const stopGeneration = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
 
   const sendMessage = useCallback(
     (query: string) => {
@@ -102,6 +107,7 @@ export function useChat({ username, role, initialSessionId }: UseChatOptions) {
       if (!trimmed || isLoading) return;
 
       const assistantId = makeId();
+      abortRef.current = new AbortController();
       setIsLoading(true);
       setError(null);
 
@@ -113,7 +119,7 @@ export function useChat({ username, role, initialSessionId }: UseChatOptions) {
 
       (async () => {
         try {
-          const stream = queryMeshStream(username, trimmed, sessionIdRef.current ?? undefined);
+          const stream = queryMeshStream(username, trimmed, sessionIdRef.current ?? undefined, undefined, abortRef.current!.signal);
           for await (const event of stream) {
             if (event.type === "stage") {
               setMessages((prev) =>
@@ -190,26 +196,141 @@ export function useChat({ username, role, initialSessionId }: UseChatOptions) {
             }
           }
         } catch (err) {
-          setError(err instanceof Error ? err : new Error(String(err)));
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantId
-                ? {
-                    ...m,
-                    content: "Failed to reach the mesh. Make sure the mesh is running (`python launch_mesh.py`) and the API server is up (`python api_server.py`).",
-                    isLoading: false,
-                    streamingStage: undefined,
-                    result: { answer: "", blocked: true, block_stage: "api_error", trail: [] },
-                  }
-                : m
-            )
-          );
+          // AbortError = user clicked Stop — settle the message silently
+          if (err instanceof DOMException && err.name === "AbortError") {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId
+                  ? { ...m, isLoading: false, streamingStage: undefined }
+                  : m
+              )
+            );
+          } else {
+            setError(err instanceof Error ? err : new Error(String(err)));
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId
+                  ? {
+                      ...m,
+                      content: "Failed to reach the mesh. Make sure the mesh is running (`python launch_mesh.py`) and the API server is up (`python api_server.py`).",
+                      isLoading: false,
+                      streamingStage: undefined,
+                      result: { answer: "", blocked: true, block_stage: "api_error", trail: [] },
+                    }
+                  : m
+              )
+            );
+          }
         } finally {
           setIsLoading(false);
         }
       })();
     },
     [isLoading, username]
+  );
+
+  // Re-runs the query for a cached assistant message with bypass_cache=true,
+  // replacing that message in-place with the fresh pipeline response.
+  // The preceding user message content is used as the query.
+  const refreshAnswer = useCallback(
+    (messageId: string) => {
+      if (isLoading) return;
+
+      const msgIndex = messages.findIndex((m) => m.id === messageId);
+      if (msgIndex === -1) return;
+      const userMsg = msgIndex > 0 ? messages[msgIndex - 1] : null;
+      const query = userMsg?.content?.trim();
+      if (!query) return;
+
+      setIsLoading(true);
+      setError(null);
+
+      // Reset the target message to loading state, keeping its id stable.
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === messageId
+            ? { ...m, content: "", result: undefined, isLoading: true, streamingStage: undefined, streamingEvents: undefined, streamingReasoning: undefined, timestamp: new Date() }
+            : m
+        )
+      );
+
+      abortRef.current = new AbortController();
+
+      (async () => {
+        try {
+          const stream = queryMeshStream(username, query, sessionIdRef.current ?? undefined, true, abortRef.current!.signal);
+          for await (const event of stream) {
+            if (event.type === "stage") {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === messageId
+                    ? {
+                        ...m,
+                        streamingStage: event.message ? `${event.message}` : event.stage,
+                        streamingEvents: [
+                          ...(m.streamingEvents ?? []),
+                          { stage: event.stage, status: event.status, message: event.message } as ExecutionEvent,
+                        ],
+                      }
+                    : m
+                )
+              );
+            } else if (event.type === "reasoning") {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === messageId
+                    ? { ...m, streamingReasoning: [...(m.streamingReasoning ?? []), ...(event.entries as LLMReasoningEntry[])] }
+                    : m
+                )
+              );
+            } else if (event.type === "result") {
+              const result = event.result;
+              if (result.session_id && result.session_id !== sessionIdRef.current) {
+                sessionIdRef.current = result.session_id;
+                writeSessionId(result.session_id);
+              }
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === messageId
+                    ? { ...m, content: result.answer, result, isLoading: false, streamingStage: undefined, timestamp: new Date() }
+                    : m
+                )
+              );
+            } else if (event.type === "error") {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === messageId
+                    ? { ...m, content: event.message || "Failed to refresh answer.", isLoading: false, streamingStage: undefined }
+                    : m
+                )
+              );
+            }
+          }
+        } catch (err) {
+          if (err instanceof DOMException && err.name === "AbortError") {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === messageId
+                  ? { ...m, isLoading: false, streamingStage: undefined }
+                  : m
+              )
+            );
+          } else {
+            setError(err instanceof Error ? err : new Error(String(err)));
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === messageId
+                  ? { ...m, content: "Failed to reach the mesh.", isLoading: false, streamingStage: undefined }
+                  : m
+              )
+            );
+          }
+        } finally {
+          setIsLoading(false);
+        }
+      })();
+    },
+    [isLoading, messages, username]
   );
 
   const clearChat = useCallback(() => {
@@ -253,6 +374,8 @@ export function useChat({ username, role, initialSessionId }: UseChatOptions) {
   return {
     messages,
     sendMessage,
+    refreshAnswer,
+    stopGeneration,
     clearChat,
     handleFeedback,
     isLoading,

@@ -51,6 +51,10 @@ class CacheEntry:
     similarity: float      # Cosine similarity score [0, 1]
     age_hours: float       # Age of the entry in hours at lookup time
     reasoning: List[dict]  # LLM reasoning entries from the original pipeline run
+    # "high"          → similarity ≥ CACHE_SIMILARITY_THRESHOLD (definitive HIT, no judge needed)
+    # "pending_judge" → similarity in gray zone; CacheCheckExecutor will call llm_cache_judge
+    # "judge_hit"     → set by CacheCheckExecutor after judge returns YES
+    confidence: str = "high"
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +96,11 @@ class SemanticCacheStore:
         self._init_lock = threading.Lock()
         self._initialized = False
 
+        # In-memory counters for LLM judge activity (reset on restart)
+        self._judge_invocations: int = 0
+        self._judge_hits: int = 0
+        self._judge_misses: int = 0
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -125,8 +134,17 @@ class SemanticCacheStore:
             distance = results["distances"][0][0]
             # ChromaDB cosine space: distance = 1 - cosine_similarity
             similarity = 1.0 - distance
-            _log.info("cache lookup: best similarity=%.4f threshold=%.4f", similarity, self._threshold)
-            if similarity < self._threshold:
+            miss_threshold = Config.CACHE_MISS_THRESHOLD
+            _log.info(
+                "cache lookup: best similarity=%.4f miss_threshold=%.4f hit_threshold=%.4f",
+                similarity, miss_threshold, self._threshold,
+            )
+
+            # Three-zone decision:
+            #   similarity < miss_threshold          → definitive MISS (too dissimilar)
+            #   miss_threshold ≤ similarity < threshold → gray zone (LLM judge needed)
+            #   similarity ≥ threshold               → definitive HIT
+            if similarity < miss_threshold:
                 return None
 
             meta = results["metadatas"][0][0]
@@ -142,6 +160,9 @@ class SemanticCacheStore:
                     reasoning = []
             except (json.JSONDecodeError, TypeError):
                 reasoning = []
+
+            confidence = "high" if similarity >= self._threshold else "pending_judge"
+            _log.info("cache lookup: confidence=%s similarity=%.4f", confidence, similarity)
             return CacheEntry(
                 query_original=doc,
                 answer=meta.get("answer", ""),
@@ -153,6 +174,7 @@ class SemanticCacheStore:
                 similarity=similarity,
                 age_hours=age_hours,
                 reasoning=reasoning,
+                confidence=confidence,
             )
         except Exception as exc:
             _log.warning("cache lookup error (traceback follows): %s", exc, exc_info=True)
@@ -225,10 +247,16 @@ class SemanticCacheStore:
         base = {
             "enabled": self._enabled,
             "similarity_threshold": self._threshold,
+            "miss_threshold": Config.CACHE_MISS_THRESHOLD,
+            "judge_enabled": Config.CACHE_JUDGE_ENABLED,
+            "judge_model": Config.CACHE_JUDGE_MODEL,
             "max_age_hours": self._max_age_hours,
             "embed_model": self._embed_model_name,
             "chroma_dir": self._chroma_dir,
             "collection_name": self._collection_name,
+            "judge_invocations": self._judge_invocations,
+            "judge_hits": self._judge_hits,
+            "judge_misses": self._judge_misses,
         }
         if not self._enabled:
             base["total_entries"] = 0

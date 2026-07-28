@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Send, SquarePen, Bot } from "lucide-react";
+import { Send, SquarePen, Bot, Square } from "lucide-react";
 import { useParams } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { ChatContext } from "@/contexts/ChatContext";
@@ -14,7 +14,7 @@ export default function ChatPage() {
   const username = user?.username ?? "bob";
   const { sessionId } = useParams<{ sessionId?: string }>();
 
-  const { messages, sendMessage, clearChat, handleFeedback, isLoading } = useChat({
+  const { messages, sendMessage, refreshAnswer, stopGeneration, clearChat, handleFeedback, isLoading } = useChat({
     username,
     role: user?.role ?? "customer",
     initialSessionId: sessionId,
@@ -89,7 +89,7 @@ export default function ChatPage() {
           <EmptyState onSampleClick={handleSampleClick} />
         ) : (
           messages.map((msg) => (
-            <MessageBubble key={msg.id} message={msg} onFeedback={handleFeedback} />
+            <MessageBubble key={msg.id} message={msg} onFeedback={handleFeedback} onRefresh={refreshAnswer} />
           ))
         )}
         <div ref={bottomRef} />
@@ -113,14 +113,28 @@ export default function ChatPage() {
               "disabled:opacity-60 transition-colors"
             )}
           />
-          <Button
-            type="submit"
-            disabled={!input.trim() || isLoading}
-            loading={isLoading}
-            className="shrink-0 h-[52px] px-4"
-          >
-            <Send className="h-4 w-4" />
-          </Button>
+          {isLoading ? (
+            <button
+              type="button"
+              onClick={stopGeneration}
+              title="Stop generation"
+              className={cn(
+                "shrink-0 h-[52px] px-4 rounded-xl",
+                "bg-red-500 hover:bg-red-600 text-white transition-colors",
+                "flex items-center justify-center"
+              )}
+            >
+              <Square className="h-4 w-4 fill-current" />
+            </button>
+          ) : (
+            <Button
+              type="submit"
+              disabled={!input.trim()}
+              className="shrink-0 h-[52px] px-4"
+            >
+              <Send className="h-4 w-4" />
+            </Button>
+          )}
         </form>
         <p className="text-xs text-muted mt-1.5 text-right">
           Ctrl+Enter to send

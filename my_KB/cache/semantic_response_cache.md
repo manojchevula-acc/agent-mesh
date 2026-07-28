@@ -73,14 +73,91 @@ Document IDs are **deterministic**: `uuid5(sha256(role + "::" + query))` — thi
 1. Embed query → 384-dim float vector
 2. ChromaDB cosine query, filtered by role, n_results=1
 3. similarity = 1.0 - distance
-4. If similarity < CACHE_SIMILARITY_THRESHOLD → MISS
+4. Three-zone decision:
+     similarity < CACHE_MISS_THRESHOLD        → definitive MISS (return None)
+     CACHE_MISS_THRESHOLD ≤ sim < CACHE_SIMILARITY_THRESHOLD → CacheEntry(confidence="pending_judge")
+     similarity ≥ CACHE_SIMILARITY_THRESHOLD  → CacheEntry(confidence="high")
 5. age_hours = (now - ts_unix) / 3600
 6. If age_hours > CACHE_MAX_AGE_HOURS → MISS
 7. Deserialize reasoning JSON from metadata
-8. Return CacheEntry(answer, similarity, age_hours, reasoning, ...)
+8. Return CacheEntry (with confidence flag) or None
 ```
 
 All exceptions are caught — any ChromaDB or embedding failure degrades gracefully to a MISS so the full pipeline runs as a fallback.
+
+---
+
+## LLM Judge — Gray Zone Validation (`src/cache/cache_judge.py`)
+
+Pure cosine similarity has two failure modes that a hard threshold cannot solve:
+
+- **False negatives**: "What is Alice's credit limit?" vs "List Alice's credit limit" scores 0.89 — same intent, but hard threshold 0.92 would MISS it and run the full pipeline unnecessarily.
+- **False positives**: "What is Alice's credit limit?" vs "Has Alice's credit limit changed recently?" scores 0.88 — different intent, yet a lower threshold would wrongly serve the cached answer.
+
+The LLM judge solves both by reading the actual query text:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        SIMILARITY ZONES                             │
+│                                                                     │
+│  similarity < 0.75          0.75 – 0.92          similarity ≥ 0.92  │
+│  ─────────────────        ──────────────        ──────────────────  │
+│  Definitive MISS           Gray Zone              Definitive HIT    │
+│  No LLM call              LLM Judge called        No LLM call       │
+│  (~50 ms)                 (~300–600 ms)            (~50 ms)          │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Judge Prompt
+
+```
+You are a cache validation assistant for a financial services AI system.
+
+User role: {role}
+New query: "{new_query}"
+Original cached query: "{cached_query}"
+Cached answer (excerpt): "{first 400 chars of cached answer}"
+
+Task: Decide whether the cached answer fully and accurately addresses the new query for this user role.
+Consider: same intent, same scope, same subject — minor rephrasing is fine.
+Reject if: different entity, different time scope, different intent, or the answer would not satisfy the new query.
+
+Reply with exactly one word: YES or NO.
+```
+
+### Implementation Details
+
+- **Model**: `CACHE_JUDGE_MODEL` (default `openai/gpt-oss-20b`) — same model as Compliance agent, already on free tier
+- **Provider**: same `LLM_BASE_URL` + `GROQ_API_KEY` as all other agents — no new config or credentials
+- **`max_tokens=5`**, `temperature=0` — binary response only, deterministic
+- **Timeout**: 5 s — on timeout or any error → returns `False` (MISS, graceful degradation)
+- **HTTP client**: `httpx.AsyncClient` — same pattern as `src/memory/summarizer.py`, no new dependency
+- **CacheEntry.confidence** field signals the zone: `"high"` (definitive HIT), `"pending_judge"` (gray zone), `"judge_hit"` (set by executor after YES)
+
+### Flow in `CacheCheckExecutor`
+
+```
+entry = lookup(query, role)                 # sync, in thread pool
+
+if entry.confidence == "pending_judge":
+    judge_invoked = True
+    is_valid = await llm_cache_judge(...)
+    if is_valid:
+        entry.confidence = "judge_hit"      # → HIT path
+    else:
+        entry = None                        # → MISS path
+
+# HIT path: yield cached answer (same as before)
+# MISS path: send_message to compliance (same as before)
+```
+
+### SSE / UI Changes on Judge Invocation
+
+The `cache_check` SSE event includes two new fields when the judge is called:
+- `"judge_invoked": true`
+- `"judge_decision": "HIT"` or `"MISS"`
+
+The amber HIT banner message includes `[LLM judge: YES]` to distinguish a judge-validated hit from a high-confidence hit. Trail entry is `cache_hit:...:judge` or `cache_miss:judge_rejected`.
 
 ---
 
@@ -128,7 +205,10 @@ All settings live in `agent-mesh/.env` and are read by `src/config.py` at startu
 | Variable | Default | Description |
 |---|---|---|
 | `ENABLE_RESPONSE_CACHE` | `false` | Master switch — must be `true` to activate |
-| `CACHE_SIMILARITY_THRESHOLD` | `0.92` | Minimum cosine similarity to accept a hit (0.0–1.0) |
+| `CACHE_SIMILARITY_THRESHOLD` | `0.92` | Definitive HIT floor — at or above this, no judge needed |
+| `CACHE_MISS_THRESHOLD` | `0.75` | Definitive MISS ceiling — below this, no judge needed |
+| `CACHE_JUDGE_ENABLED` | `true` | Enable LLM judge for gray zone (0.75–0.92). Set `false` to restore single-threshold behavior |
+| `CACHE_JUDGE_MODEL` | `openai/gpt-oss-20b` | Model for binary YES/NO judge call (uses same `LLM_BASE_URL`/`GROQ_API_KEY`) |
 | `CACHE_MAX_AGE_HOURS` | `24.0` | Maximum age of a cached entry in hours |
 | `CACHE_CHROMA_DIR` | `data/cache/chroma` | On-disk path for ChromaDB persistent storage |
 | `CACHE_EMBED_MODEL` | `all-MiniLM-L6-v2` | Label only — model is always `DefaultEmbeddingFunction` |
@@ -180,6 +260,12 @@ GET /api/cache/stats
   "enabled": true,
   "total_entries": 42,
   "similarity_threshold": 0.92,
+  "miss_threshold": 0.75,
+  "judge_enabled": true,
+  "judge_model": "openai/gpt-oss-20b",
+  "judge_invocations": 8,
+  "judge_hits": 6,
+  "judge_misses": 2,
   "max_age_hours": 24.0,
   "embed_model": "all-MiniLM-L6-v2",
   "chroma_dir": "data/cache/chroma",
@@ -187,18 +273,21 @@ GET /api/cache/stats
 }
 ```
 
+`judge_invocations`, `judge_hits`, and `judge_misses` are in-memory counters that reset on server restart. They show how often the gray zone was encountered and whether the judge is helping.
+
 ---
 
 ## Key Files
 
 | File | Role |
 |---|---|
-| `src/cache/semantic_cache.py` | `SemanticCacheStore` — lookup, store, embed, ChromaDB lifecycle |
+| `src/cache/semantic_cache.py` | `SemanticCacheStore` — lookup (three-zone), store, embed, ChromaDB lifecycle, judge counters |
+| `src/cache/cache_judge.py` | `llm_cache_judge()` — async binary YES/NO LLM judge for gray-zone candidates |
 | `src/cache/cache_indexer.py` | Startup warmup + historical JSONL indexer |
-| `src/cache/__init__.py` | Package init, exports `get_cache_store()` singleton |
-| `src/mesh/workflow.py` | `CacheCheckExecutor` — pipeline gate + reasoning replay |
+| `src/cache/__init__.py` | Package init, exports `get_cache_store()`, `CacheEntry`, `llm_cache_judge` |
+| `src/mesh/workflow.py` | `CacheCheckExecutor` — pipeline gate, gray-zone judge call, reasoning replay |
 | `src/mesh/orchestrator.py` | Calls `cache.store()` post-redaction; propagates cache fields to `MeshResult` |
-| `src/config.py` | All `CACHE_*` config vars |
+| `src/config.py` | All `CACHE_*` config vars including new judge vars |
 | `src/observability/metrics.py` | `record_cache(result, role, duration_ms)` — OTel counter + histogram |
 | `api_server.py` | `/api/cache/stats` endpoint; startup indexer task; `llm_reasoning` fallback |
 

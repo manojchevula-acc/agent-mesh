@@ -51,6 +51,9 @@ const Step = memo(function Step({ index, event }: StepProps) {
   const [open, setOpen] = useState(true);
   const isBlocked = event.status === "blocked" || event.status === "failed";
   const isCacheHit = event.stage === "cache_check" && event.result === "HIT";
+  // True when the LLM judge was invoked for a gray-zone similarity score
+  const isCacheJudgeInvoked = event.stage === "cache_check" &&
+    (event.checks ?? []).some((c) => c.startsWith("LLM judge"));
   const hasDetail =
     (event.checks && event.checks.length > 0) ||
     event.result ||
@@ -93,8 +96,11 @@ const Step = memo(function Step({ index, event }: StepProps) {
           {stageLabel(event.stage)}
         </span>
         {event.result && !isBlocked && (
-          <span className={cn("font-medium truncate max-w-[120px]", isCacheHit ? "text-amber-600 dark:text-amber-400" : "text-green-600 dark:text-green-400")}>
+          <span className={cn("flex items-center gap-1 font-medium truncate max-w-[160px]", isCacheHit ? "text-amber-600 dark:text-amber-400" : "text-green-600 dark:text-green-400")}>
             {event.result}
+            {isCacheJudgeInvoked && (
+              <Brain className="h-3 w-3 shrink-0 text-amber-500 dark:text-amber-400" title="LLM judge was invoked for this gray-zone result" />
+            )}
           </span>
         )}
         {isBlocked && (
@@ -113,12 +119,18 @@ const Step = memo(function Step({ index, event }: StepProps) {
           {/* Checks list */}
           {event.checks && event.checks.length > 0 && (
             <ul className="mt-2 space-y-0.5">
-              {event.checks.map((chk, i) => (
-                <li key={`${i}-${chk}`} className="flex items-start gap-1.5 text-muted">
-                  <CheckCircle2 className="shrink-0 h-3 w-3 text-green-500 mt-0.5" />
-                  <span>{chk}</span>
-                </li>
-              ))}
+              {event.checks.map((chk, i) => {
+                const isJudgeCheck = chk.startsWith("LLM judge");
+                return (
+                  <li key={`${i}-${chk}`} className={cn("flex items-start gap-1.5", isJudgeCheck ? "text-amber-600 dark:text-amber-400" : "text-muted")}>
+                    {isJudgeCheck
+                      ? <Brain className="shrink-0 h-3 w-3 text-amber-500 mt-0.5" />
+                      : <CheckCircle2 className="shrink-0 h-3 w-3 text-green-500 mt-0.5" />
+                    }
+                    <span className={isJudgeCheck ? "italic" : ""}>{chk}</span>
+                  </li>
+                );
+              })}
             </ul>
           )}
 

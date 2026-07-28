@@ -39,9 +39,16 @@ export async function* queryMeshStream(
   username: string,
   query: string,
   sessionId?: string,
+  bypassCache?: boolean,
+  signal?: AbortSignal,
 ): AsyncGenerator<StreamEvent> {
   const url = `${config.apiBaseURL}/api/query/stream`;
-  const body = JSON.stringify({ username, query, ...(sessionId ? { session_id: sessionId } : {}) });
+  const body = JSON.stringify({
+    username,
+    query,
+    ...(sessionId ? { session_id: sessionId } : {}),
+    ...(bypassCache ? { bypass_cache: true } : {}),
+  });
 
   let response: Response;
   try {
@@ -49,8 +56,10 @@ export async function* queryMeshStream(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body,
+      signal,
     });
-  } catch {
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") return;
     yield { type: "error", message: "Cannot reach the API server. Is the backend running?" };
     return;
   }
@@ -66,6 +75,7 @@ export async function* queryMeshStream(
 
   try {
     while (true) {
+      if (signal?.aborted) break;
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
@@ -86,7 +96,7 @@ export async function* queryMeshStream(
         try {
           const data = JSON.parse(dataLine);
           if (eventType === "stage") {
-            yield { type: "stage", stage: data.stage, status: data.status, message: data.message };
+            yield { type: "stage", stage: data.stage, status: data.status, message: data.message, judge_invoked: data.judge_invoked, judge_decision: data.judge_decision, judge_reason: data.judge_reason };
           } else if (eventType === "reasoning") {
             yield { type: "reasoning", entries: data.entries as LLMReasoningEntry[] };
           } else if (eventType === "hitl") {

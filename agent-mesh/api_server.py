@@ -113,7 +113,7 @@ async def post_login(request: Request) -> JSONResponse:
 async def post_query(request: Request) -> JSONResponse:
     """Submit a query to the mesh and return the MeshResult.
 
-    Body: {"username": str, "query": str, "session_id"?: str}
+    Body: {"username": str, "query": str, "session_id"?: str, "bypass_cache"?: bool}
     Response: MeshResult JSON — answer, blocked, block_stage, trail, session_id,
     plus full execution summary and event stream for the UI transparency panel.
     """
@@ -122,6 +122,8 @@ async def post_query(request: Request) -> JSONResponse:
         username = str(body.get("username", "bob")).strip() or "bob"
         query = str(body.get("query", "")).strip()
         session_id = str(body.get("session_id", "")).strip() or None
+        bypass_cache = bool(body.get("bypass_cache", False))
+
     except Exception:
         return JSONResponse(
             {"error": "Invalid JSON body. Expected {username, query}."},
@@ -137,7 +139,7 @@ async def post_query(request: Request) -> JSONResponse:
     tracer = ExecutionTracer(user=user.username, query=query, request_id=shared_request_id)
     token = set_active_tracer(tracer)
     try:
-        result = await handle_request(user, query, session_id, request_id=shared_request_id)
+        result = await handle_request(user, query, session_id, request_id=shared_request_id, bypass_cache=bypass_cache)
     except Exception as exc:
         _log.exception("mesh query error: %s", exc)
         return JSONResponse(
@@ -173,6 +175,9 @@ async def post_query(request: Request) -> JSONResponse:
         "cache_age_hours": result.cache_age_hours,
         "cache_similarity": result.cache_similarity,
         "cache_reasoning": result.cache_reasoning,
+        "cache_judge_invoked": result.cache_judge_invoked,
+        "cache_judge_decision": result.cache_judge_decision,
+        "cache_judge_reason": result.cache_judge_reason,
     })
 
 
@@ -751,6 +756,7 @@ async def post_query_stream(request: Request) -> StreamingResponse:
         username = str(body.get("username", "bob")).strip() or "bob"
         query = str(body.get("query", "")).strip()
         session_id = str(body.get("session_id", "")).strip() or None
+        bypass_cache = bool(body.get("bypass_cache", False))
     except Exception:
         async def _err_body():
             yield 'event: error\ndata: {"message": "Invalid JSON body"}\n\n'
@@ -773,7 +779,7 @@ async def post_query_stream(request: Request) -> StreamingResponse:
         tracer = ExecutionTracer(user=user.username, query=query, request_id=shared_request_id)
         token = set_active_tracer(tracer)
         pipeline_task = asyncio.ensure_future(
-            handle_request_stream(user, query, session_id, request_id=shared_request_id, event_queue=event_queue)
+            handle_request_stream(user, query, session_id, request_id=shared_request_id, event_queue=event_queue, bypass_cache=bypass_cache)
         )
         try:
             while True:
@@ -808,6 +814,9 @@ async def post_query_stream(request: Request) -> StreamingResponse:
                         "cache_age_hours": result.cache_age_hours,
                         "cache_similarity": result.cache_similarity,
                         "cache_reasoning": result.cache_reasoning,
+                        "cache_judge_invoked": result.cache_judge_invoked,
+                        "cache_judge_decision": result.cache_judge_decision,
+                        "cache_judge_reason": result.cache_judge_reason,
                     }
                     yield f"event: result\ndata: {json.dumps(result_payload)}\n\n"
                     yield "event: done\ndata: {}\n\n"

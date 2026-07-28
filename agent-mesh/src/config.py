@@ -130,6 +130,13 @@ class Config:
     CACHE_EMBED_MODEL:          str   = os.getenv("CACHE_EMBED_MODEL",          "all-MiniLM-L6-v2")
     CACHE_COLLECTION_NAME:      str   = os.getenv("CACHE_COLLECTION_NAME",      "mesh_response_cache")
 
+    # LLM Judge for gray-zone cache validation (similarity between CACHE_MISS_THRESHOLD and CACHE_SIMILARITY_THRESHOLD).
+    # When cosine similarity is ambiguous, a lightweight LLM call decides YES/NO instead of hard-threshold rejection.
+    # Set CACHE_JUDGE_ENABLED=false to restore the original single-threshold behavior.
+    CACHE_MISS_THRESHOLD:  float = float(os.getenv("CACHE_MISS_THRESHOLD", "0.75"))
+    CACHE_JUDGE_ENABLED:   bool  = os.getenv("CACHE_JUDGE_ENABLED", "true").lower() in ("1", "true", "yes")
+    CACHE_JUDGE_MODEL:     str   = os.getenv("CACHE_JUDGE_MODEL", "openai/gpt-oss-20b")
+
     # ----------------------------------------------------------------------
     # User feedback — thumbs up/down + comment stored for future fine-tuning.
     # Records include a fine_tune_record.messages array (OpenAI/Anthropic format)

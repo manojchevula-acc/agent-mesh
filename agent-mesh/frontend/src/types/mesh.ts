@@ -99,6 +99,10 @@ export interface MeshResult {
   cache_age_hours?: number;
   cache_similarity?: number;
   cache_reasoning?: LLMReasoningEntry[];
+  // LLM judge fields — populated only when similarity was in the gray zone
+  cache_judge_invoked?: boolean;
+  cache_judge_decision?: string;   // "HIT" | "MISS" | ""
+  cache_judge_reason?: string;     // one-line reason from LLM judge
 }
 
 export interface FeedbackRequest {
@@ -143,7 +147,7 @@ export interface HitlDetails {
 
 // SSE stream event types from POST /api/query/stream
 export type StreamEvent =
-  | { type: "stage"; stage: string; status: string; message?: string }
+  | { type: "stage"; stage: string; status: string; message?: string; judge_invoked?: boolean; judge_decision?: string; judge_reason?: string }
   | { type: "result"; result: MeshResult }
   | { type: "reasoning"; entries: LLMReasoningEntry[] }
   | { type: "hitl"; approval_id: string; details: HitlDetails }

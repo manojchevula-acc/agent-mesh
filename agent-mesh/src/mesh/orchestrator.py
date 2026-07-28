@@ -59,9 +59,12 @@ class MeshResult:
     cache_age_hours: float = 0.0
     cache_similarity: float = 0.0
     cache_reasoning: List = field(default_factory=list)
+    cache_judge_invoked: bool = False
+    cache_judge_decision: str = ""   # "HIT" | "MISS" | ""
+    cache_judge_reason: str = ""     # one-line reason from LLM judge
 
 
-async def handle_request(user: User, query: str, session_id: str | None = None, request_id: str | None = None) -> MeshResult:
+async def handle_request(user: User, query: str, session_id: str | None = None, request_id: str | None = None, bypass_cache: bool = False) -> MeshResult:
     """Runs one request through the full mesh workflow.
 
     Opens a root ``mesh.request`` span so every downstream executor / agent / A2A
@@ -108,6 +111,7 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
         role=user.role.value,
         query=query,
         session_id=session_id,
+        bypass_cache=bypass_cache,
     )
 
     # Load prior conversation turns for this session so PriceAssistAgent can resolve
@@ -274,6 +278,9 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
         cache_age_hours=getattr(final, "cache_age_hours", 0.0),
         cache_similarity=getattr(final, "cache_similarity", 0.0),
         cache_reasoning=getattr(final, "cache_reasoning", []),
+        cache_judge_invoked=getattr(final, "cache_judge_invoked", False),
+        cache_judge_decision=getattr(final, "cache_judge_decision", ""),
+        cache_judge_reason=getattr(final, "cache_judge_reason", ""),
     )
 
 
@@ -283,6 +290,7 @@ async def handle_request_stream(
     session_id: str | None = None,
     request_id: str | None = None,
     event_queue: "asyncio.Queue | None" = None,
+    bypass_cache: bool = False,
 ) -> MeshResult:
     """Same as handle_request() but pushes per-stage events into event_queue for SSE streaming.
 
@@ -293,7 +301,7 @@ async def handle_request_stream(
     if event_queue is not None:
         token = _stream_queue.set(event_queue)
     try:
-        result = await handle_request(user, query, session_id, request_id)
+        result = await handle_request(user, query, session_id, request_id, bypass_cache=bypass_cache)
     except Exception:
         if event_queue is not None:
             event_queue.put_nowait(None)
