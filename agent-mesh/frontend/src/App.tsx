@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { AppLayout } from "@/components/layout/AppLayout";
+import { ChatContextProvider } from "@/contexts/ChatContext";
 import { HomePage } from "@/pages/HomePage";
 import { LoginPage } from "@/pages/LoginPage";
 import { SignupPage } from "@/pages/SignupPage";
@@ -25,7 +26,7 @@ export default function App() {
 
       {/* Authenticated app */}
       <Route element={<ProtectedRoute />}>
-        <Route path="/app" element={<AppLayout />}>
+        <Route path="/app" element={<ChatContextProvider><AppLayout /></ChatContextProvider>}>
           <Route index element={<Navigate to="/app/chat" replace />} />
           <Route path="chat" element={<ChatPage />} />
           <Route path="chat/:sessionId" element={<ChatPage />} />

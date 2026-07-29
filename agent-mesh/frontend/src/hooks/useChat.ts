@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getConversation, queryMeshStream, submitFeedback } from "@/api/mesh";
-import type { ChatMessage, ExecutionEvent, LLMReasoningEntry, MeshResult, SessionMessage } from "@/types/mesh";
+import { getConversation, queryMeshStream, resolveIntentDecision, submitFeedback } from "@/api/mesh";
+import type { ChatMessage, ExecutionEvent, IntentSuggestion, LLMReasoningEntry, MeshResult, SessionMessage } from "@/types/mesh";
 
 const SESSION_ID_KEY = "agent-mesh-session-id";
 
@@ -173,6 +173,41 @@ export function useChat({ username, role, initialSessionId }: UseChatOptions) {
                     : m
                 )
               );
+            } else if (event.type === "intent_suggestion") {
+              // Pause indicator: keep isLoading=true, show the suggestion banner
+              const suggestion: IntentSuggestion = {
+                rootQuery: event.root_query,
+                entryId: event.entry_id,
+                similarity: event.similarity,
+                ageHours: event.age_hours,
+                answerPreview: event.answer_preview,
+                confidence: event.confidence,
+                judgeVerdict: event.judge_verdict,
+                judgeReason: event.judge_reason,
+              };
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId
+                    ? { ...m, intentSuggestion: suggestion, streamingStage: "Waiting for your confirmation…" }
+                    : m
+                )
+              );
+            } else if (event.type === "intent_suggestion_judge") {
+              // LLM judge result arrived — update the banner confidence badge in place
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId && m.intentSuggestion?.entryId === event.entry_id
+                    ? {
+                        ...m,
+                        intentSuggestion: {
+                          ...m.intentSuggestion!,
+                          judgeVerdict: event.judge_verdict,
+                          judgeReason: event.judge_reason,
+                        },
+                      }
+                    : m
+                )
+              );
             } else if (event.type === "result") {
               const result = event.result;
               if (result.session_id && result.session_id !== sessionIdRef.current) {
@@ -182,7 +217,7 @@ export function useChat({ username, role, initialSessionId }: UseChatOptions) {
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === assistantId
-                    ? { ...m, content: result.answer, result, isLoading: false, streamingStage: undefined, timestamp: new Date() }
+                    ? { ...m, content: result.answer, result, isLoading: false, streamingStage: undefined, intentSuggestion: undefined, timestamp: new Date() }
                     : m
                 )
               );
@@ -340,6 +375,35 @@ export function useChat({ username, role, initialSessionId }: UseChatOptions) {
     [isLoading, messages, username]
   );
 
+  // Called when the user clicks "Use cached answer" or "Run fresh" in the
+  // IntentSuggestionBanner. Clears the banner optimistically and unblocks the
+  // paused orchestrator via POST /api/cache/intent-decision.
+  const resolveIntentSuggestion = useCallback(
+    async (messageId: string, accepted: boolean) => {
+      const msg = messages.find((m) => m.id === messageId);
+      if (!msg?.intentSuggestion) return;
+      const entryId = msg.intentSuggestion.entryId;
+      // Optimistic UI update — clear banner, update stage label
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === messageId
+            ? {
+                ...m,
+                intentSuggestion: undefined,
+                streamingStage: accepted ? "Loading cached answer…" : "Running full pipeline…",
+              }
+            : m
+        )
+      );
+      try {
+        await resolveIntentDecision(entryId, accepted);
+      } catch {
+        // Network error — the orchestrator will timeout (60s) and treat as rejected
+      }
+    },
+    [messages]
+  );
+
   const clearChat = useCallback(() => {
     // "New Chat": drop the local transcript AND the session id so the next query
     // starts a fresh conversation server-side.
@@ -382,6 +446,7 @@ export function useChat({ username, role, initialSessionId }: UseChatOptions) {
     messages,
     sendMessage,
     refreshAnswer,
+    resolveIntentSuggestion,
     stopGeneration,
     clearChat,
     handleFeedback,

@@ -103,6 +103,10 @@ export interface MeshResult {
   cache_judge_invoked?: boolean;
   cache_judge_decision?: string;   // "HIT" | "MISS" | ""
   cache_judge_reason?: string;     // one-line reason from LLM judge
+  // Intent-match provenance — set when the user accepted an intent suggestion
+  intent_match_accepted?: boolean;
+  intent_match_root_query?: string;
+  intent_match_similarity?: number;
 }
 
 export interface FeedbackRequest {
@@ -123,6 +127,17 @@ export interface FeedbackResponse {
   feedback_id: string;
 }
 
+export interface IntentSuggestion {
+  rootQuery: string;
+  entryId: string;
+  similarity: number;
+  ageHours: number;
+  answerPreview: string;
+  confidence: "high" | "pending_judge";
+  judgeVerdict?: "YES" | "NO" | null;
+  judgeReason?: string | null;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
@@ -135,6 +150,9 @@ export interface ChatMessage {
   streamingStage?: string;
   streamingEvents?: ExecutionEvent[];
   streamingReasoning?: LLMReasoningEntry[];
+  // Set when CacheCheckExecutor fires an intent_suggestion event — shows the
+  // purple decision banner while the SSE stream is paused awaiting user input.
+  intentSuggestion?: IntentSuggestion;
 }
 
 export interface HitlDetails {
@@ -151,6 +169,23 @@ export type StreamEvent =
   | { type: "result"; result: MeshResult }
   | { type: "reasoning"; entries: LLMReasoningEntry[] }
   | { type: "hitl"; approval_id: string; details: HitlDetails }
+  | {
+      type: "intent_suggestion";
+      root_query: string;
+      entry_id: string;
+      similarity: number;
+      age_hours: number;
+      answer_preview: string;
+      confidence: "high" | "pending_judge";
+      judge_verdict: "YES" | "NO" | null;
+      judge_reason: string | null;
+    }
+  | {
+      type: "intent_suggestion_judge";
+      entry_id: string;
+      judge_verdict: "YES" | "NO";
+      judge_reason: string;
+    }
   | { type: "done" }
   | { type: "error"; message: string };
 

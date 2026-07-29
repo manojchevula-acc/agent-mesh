@@ -38,7 +38,7 @@ from src.utils.console_logger import AgentLogger
 from src.observability import get_logger, CAT_SYSTEM
 from src.observability.baggage import set_request_baggage, detach_baggage
 from src.observability.metrics import record_mesh_request
-from src.mesh.workflow import MeshState, build_mesh_workflow, build_hitl_resume_workflow, _stream_queue, _emit_stream_event
+from src.mesh.workflow import MeshState, build_mesh_workflow, build_hitl_resume_workflow, build_intent_resume_workflow, _stream_queue, _emit_stream_event
 from src.tracing.execution_trace import get_active_tracer
 from src.tracing.llm_reasoning import strip_reasoning_markers
 from src.memory import ConversationStore
@@ -62,6 +62,10 @@ class MeshResult:
     cache_judge_invoked: bool = False
     cache_judge_decision: str = ""   # "HIT" | "MISS" | ""
     cache_judge_reason: str = ""     # one-line reason from LLM judge
+    # Intent-match suggestion provenance — set when the user accepted an intent suggestion
+    intent_match_accepted: bool = False
+    intent_match_root_query: str = ""
+    intent_match_similarity: float = 0.0
 
 
 async def handle_request(user: User, query: str, session_id: str | None = None, request_id: str | None = None, bypass_cache: bool = False) -> MeshResult:
@@ -193,6 +197,54 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
             final.trail.append("hitl_rejected")
     # ── end HITL interception ────────────────────────────────────────────────────
 
+    # ── Intent-match suggestion interception ────────────────────────────────────
+    if getattr(final, "intent_match_pending", False):
+        from src.cache.intent_decision_store import intent_decision_store
+        entry_id = final.intent_match_entry_id
+        _log.info(
+            "Intent suggestion: awaiting user decision entry_id=%s user=%s",
+            entry_id, user.username,
+            extra={"user": user.username, "status": "INTENT_WAIT"},
+        )
+        final.intent_match_pending = False
+        # Register before waiting so resolve() from the API endpoint always finds it
+        intent_decision_store.create_pending(entry_id)
+        accepted = await intent_decision_store.wait_for_decision(entry_id, timeout=60.0)
+
+        if accepted:
+            _log.info(
+                "Intent suggestion: accepted entry_id=%s — serving cached answer",
+                entry_id, extra={"user": user.username, "status": "INTENT_ACCEPTED"},
+            )
+            final.answer = final.intent_match_answer
+            final.cache_hit = True
+            final.cache_similarity = final.intent_match_similarity
+            final.cache_age_hours = final.intent_match_age_hours
+            final.skip_cache_store = True
+            final.trail.append(f"intent_match_accepted:sim={final.intent_match_similarity:.3f}")
+            # Increment variant_count on the root entry (fire-and-forget)
+            try:
+                from src.cache import get_cache_store
+                asyncio.create_task(
+                    asyncio.to_thread(get_cache_store().increment_variant_count, entry_id)
+                )
+            except Exception as _exc:
+                _log.warning("intent_match: increment_variant_count task failed: %s", _exc)
+        else:
+            _log.info(
+                "Intent suggestion: rejected or timed out entry_id=%s — running full pipeline",
+                entry_id, extra={"user": user.username, "status": "INTENT_REJECTED"},
+            )
+            final.skip_cache_store = True
+            final.trail.append("intent_match_rejected")
+            resume_wf = build_intent_resume_workflow(ask=ask_remote)
+            resume_events = await resume_wf.run(final)
+            resumed = _final_state(resume_events)
+            if resumed is not None:
+                final = resumed
+                final.skip_cache_store = True   # preserve the flag through resume
+    # ── end intent-match interception ───────────────────────────────────────────
+
     # Safety-net: strip any <llm_reasoning> blocks that slipped through the
     # DomainExecutor extraction pass (e.g. on a retry path or when the LLM
     # placed the synthesis block after the answer text rather than before it).
@@ -200,13 +252,16 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
         final.answer = strip_reasoning_markers(final.answer)
 
     # ── Populate semantic cache (post-redaction, final answer only) ─────────────
-    # Only store when: cache is enabled, answer is non-empty, request was not
-    # blocked, and the answer was NOT itself a cache hit (avoid re-caching stale data).
+    # Only store when: cache is enabled, inline store is enabled, answer is non-empty,
+    # request was not blocked, the answer was NOT itself a cache hit (avoid re-caching
+    # stale data), and skip_cache_store is not set (intent-match variants never stored).
     if (
         Config.ENABLE_RESPONSE_CACHE
+        and Config.CACHE_INLINE_STORE_ENABLED
         and final.answer
         and not final.blocked
         and not getattr(final, "cache_hit", False)
+        and not getattr(final, "skip_cache_store", False)
     ):
         try:
             from src.cache import get_cache_store
@@ -276,6 +331,9 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
         except Exception as exc:  # never let memory I/O break a request
             _log.warning("conversation history save failed session=%s: %s", session_id, exc)
 
+    _intent_accepted = (
+        "intent_match_accepted" in " ".join(getattr(final, "trail", []))
+    )
     return MeshResult(
         answer=final.answer,
         blocked=final.blocked,
@@ -291,6 +349,9 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
         cache_judge_invoked=getattr(final, "cache_judge_invoked", False),
         cache_judge_decision=getattr(final, "cache_judge_decision", ""),
         cache_judge_reason=getattr(final, "cache_judge_reason", ""),
+        intent_match_accepted=_intent_accepted,
+        intent_match_root_query=getattr(final, "intent_match_root_query", ""),
+        intent_match_similarity=getattr(final, "intent_match_similarity", 0.0),
     )
 
 

@@ -826,6 +826,10 @@ async def post_query_stream(request: Request) -> StreamingResponse:
                     yield f"event: reasoning\ndata: {json.dumps({'entries': item['entries']})}\n\n"
                 elif event_type == "hitl":
                     yield f"event: hitl\ndata: {json.dumps({'approval_id': item['approval_id'], 'details': item['details']})}\n\n"
+                elif event_type == "intent_suggestion":
+                    yield f"event: intent_suggestion\ndata: {json.dumps(item)}\n\n"
+                elif event_type == "intent_suggestion_judge":
+                    yield f"event: intent_suggestion_judge\ndata: {json.dumps(item)}\n\n"
                 else:
                     yield f"event: stage\ndata: {json.dumps(item)}\n\n"
         finally:
@@ -874,6 +878,78 @@ async def post_reject(request: Request) -> JSONResponse:
     return JSONResponse({"success": True, "approval_id": aid, "decision": "rejected"})
 
 
+async def post_cache_ingest(request: Request) -> JSONResponse:
+    """Trigger a background ingest job. POST /api/cache/ingest
+
+    Body (all optional): {"source_dir"?: str, "dry_run"?: bool, "overwrite"?: bool, "role"?: str}
+    Returns: {"job_id": str, "status": "running"}
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    source_dir = (body.get("source_dir") or "").strip()
+    dry_run = bool(body.get("dry_run", False))
+    overwrite = bool(body.get("overwrite", False))
+    role_filter = (body.get("role") or "").strip() or None
+
+    from src.cache.ingest_pipeline import IngestJob, run_ingest_job, _jobs
+    job_id = uuid.uuid4().hex[:12].upper()
+    _jobs[job_id] = IngestJob(job_id=job_id)
+
+    asyncio.create_task(run_ingest_job(
+        job_id,
+        source_dir=source_dir,
+        dry_run=dry_run,
+        overwrite=overwrite,
+        role_filter=role_filter,
+    ))
+    _log.info("cache ingest job started job_id=%s dry_run=%s", job_id, dry_run)
+    return JSONResponse({"job_id": job_id, "status": "running"})
+
+
+async def get_cache_ingest_job(request: Request) -> JSONResponse:
+    """Poll ingest job status. GET /api/cache/ingest/{job_id}"""
+    from src.cache.ingest_pipeline import get_job
+    job_id = request.path_params.get("job_id", "").strip().upper()
+    job = get_job(job_id)
+    if job is None:
+        return JSONResponse({"error": f"Job '{job_id}' not found."}, status_code=404)
+    payload: dict = {"job_id": job.job_id, "status": job.status}
+    if job.report is not None:
+        payload["report"] = job.report.as_dict()
+    if job.error:
+        payload["error"] = job.error
+    if job.finished_at:
+        payload["elapsed_s"] = round(job.finished_at - job.started_at, 1)
+    return JSONResponse(payload)
+
+
+async def post_intent_decision(request: Request) -> JSONResponse:
+    """Resolve a pending intent-match suggestion. POST /api/cache/intent-decision
+
+    Body: {"entry_id": str, "accepted": bool}
+    Called by the frontend when the user clicks "Use cached answer" or "Run fresh".
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body."}, status_code=400)
+    entry_id = (body.get("entry_id") or "").strip()
+    accepted = bool(body.get("accepted", False))
+    if not entry_id:
+        return JSONResponse({"error": "entry_id is required."}, status_code=400)
+    from src.cache.intent_decision_store import intent_decision_store
+    ok = intent_decision_store.resolve(entry_id, accepted)
+    decision_label = "accepted" if accepted else "rejected"
+    _log.info(
+        "Intent decision entry_id=%s decision=%s found=%s",
+        entry_id, decision_label, ok,
+        extra={"status": "INTENT_DECISION"},
+    )
+    return JSONResponse({"ok": True, "entry_id": entry_id, "accepted": accepted})
+
+
 app = Starlette(
     lifespan=_lifespan,
     middleware=[
@@ -904,7 +980,10 @@ app = Starlette(
         Route("/api/approvals/{id}",             get_approval,     methods=["GET"]),
         Route("/api/approvals/{id}/approve",     post_approve,     methods=["POST"]),
         Route("/api/approvals/{id}/reject",      post_reject,      methods=["POST"]),
-        Route("/api/cache/stats",                get_cache_stats,  methods=["GET"]),
+        Route("/api/cache/stats",                get_cache_stats,       methods=["GET"]),
+        Route("/api/cache/intent-decision",      post_intent_decision,  methods=["POST"]),
+        Route("/api/cache/ingest",               post_cache_ingest,     methods=["POST"]),
+        Route("/api/cache/ingest/{job_id}",      get_cache_ingest_job,  methods=["GET"]),
     ],
 )
 

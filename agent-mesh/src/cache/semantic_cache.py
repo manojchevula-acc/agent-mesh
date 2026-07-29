@@ -40,7 +40,7 @@ _log = logging.getLogger("agent_mesh.cache")
 
 @dataclass
 class CacheEntry:
-    """A matched cache entry returned by SemanticCacheStore.lookup()."""
+    """A matched cache entry returned by SemanticCacheStore.lookup_with_id()."""
     query_original: str    # The stored query that matched (for tracing/debug)
     answer: str            # The stored redacted answer
     role: str              # Role the answer was produced for
@@ -52,9 +52,14 @@ class CacheEntry:
     age_hours: float       # Age of the entry in hours at lookup time
     reasoning: List[dict]  # LLM reasoning entries from the original pipeline run
     # "high"          → similarity ≥ CACHE_SIMILARITY_THRESHOLD (definitive HIT, no judge needed)
-    # "pending_judge" → similarity in gray zone; CacheCheckExecutor will call llm_cache_judge
+    # "pending_judge" → similarity in gray zone (MISS_THRESHOLD ≤ sim < INTENT_MATCH_THRESHOLD);
+    #                   CacheCheckExecutor will call llm_cache_judge
+    # "intent_match"  → similarity in high-confidence suggestion zone (INTENT_MATCH_THRESHOLD ≤ sim < HIT_THRESHOLD);
+    #                   CacheCheckExecutor surfaces root question to user (no judge needed)
     # "judge_hit"     → set by CacheCheckExecutor after judge returns YES
     confidence: str = "high"
+    # ChromaDB document ID — populated by lookup_with_id(); used for accept/reject intent decisions
+    entry_id: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -108,8 +113,23 @@ class SemanticCacheStore:
     def lookup(self, query: str, role: str) -> Optional[CacheEntry]:
         """Return a cached CacheEntry if a recent, role-matched, similar answer exists.
 
+        Delegates to lookup_with_id(); entry_id is populated but callers may ignore it.
         Returns None on MISS or if the cache is disabled / unavailable.
-        All exceptions are caught — the caller always gets a graceful None.
+        """
+        return self.lookup_with_id(query, role)
+
+    def lookup_with_id(self, query: str, role: str) -> Optional[CacheEntry]:
+        """Same as lookup() but always populates entry.entry_id from the ChromaDB document ID.
+
+        Four-zone decision (when CACHE_INTENT_MATCH_ENABLED=true):
+          similarity < CACHE_MISS_THRESHOLD                           → None (MISS)
+          CACHE_MISS_THRESHOLD ≤ sim < CACHE_INTENT_MATCH_THRESHOLD   → "pending_judge" (gray zone)
+          CACHE_INTENT_MATCH_THRESHOLD ≤ sim < CACHE_SIMILARITY_THRESHOLD → "intent_match"
+          sim ≥ CACHE_SIMILARITY_THRESHOLD                             → "high" (definitive HIT)
+
+        When CACHE_INTENT_MATCH_ENABLED=false the original three-zone behavior is preserved:
+          miss_threshold ≤ sim < threshold → "pending_judge"
+          sim ≥ threshold                  → "high"
         """
         if not self._enabled:
             return None
@@ -131,19 +151,18 @@ class SemanticCacheStore:
             if not ids:
                 return None
 
+            doc_id = ids[0]  # ChromaDB document ID for this entry
             distance = results["distances"][0][0]
             # ChromaDB cosine space: distance = 1 - cosine_similarity
             similarity = 1.0 - distance
             miss_threshold = Config.CACHE_MISS_THRESHOLD
+            intent_threshold = Config.CACHE_INTENT_MATCH_THRESHOLD
+            intent_enabled = Config.CACHE_INTENT_MATCH_ENABLED
             _log.info(
-                "cache lookup: best similarity=%.4f miss_threshold=%.4f hit_threshold=%.4f",
-                similarity, miss_threshold, self._threshold,
+                "cache lookup: best similarity=%.4f miss_threshold=%.4f intent_threshold=%.4f hit_threshold=%.4f",
+                similarity, miss_threshold, intent_threshold, self._threshold,
             )
 
-            # Three-zone decision:
-            #   similarity < miss_threshold          → definitive MISS (too dissimilar)
-            #   miss_threshold ≤ similarity < threshold → gray zone (LLM judge needed)
-            #   similarity ≥ threshold               → definitive HIT
             if similarity < miss_threshold:
                 return None
 
@@ -161,8 +180,15 @@ class SemanticCacheStore:
             except (json.JSONDecodeError, TypeError):
                 reasoning = []
 
-            confidence = "high" if similarity >= self._threshold else "pending_judge"
-            _log.info("cache lookup: confidence=%s similarity=%.4f", confidence, similarity)
+            # Four-zone confidence assignment
+            if similarity >= self._threshold:
+                confidence = "high"
+            elif intent_enabled and similarity >= intent_threshold:
+                confidence = "intent_match"
+            else:
+                confidence = "pending_judge"
+
+            _log.info("cache lookup: confidence=%s similarity=%.4f entry_id=%s", confidence, similarity, doc_id)
             return CacheEntry(
                 query_original=doc,
                 answer=meta.get("answer", ""),
@@ -175,6 +201,7 @@ class SemanticCacheStore:
                 age_hours=age_hours,
                 reasoning=reasoning,
                 confidence=confidence,
+                entry_id=doc_id,
             )
         except Exception as exc:
             _log.warning("cache lookup error (traceback follows): %s", exc, exc_info=True)
@@ -235,6 +262,8 @@ class SemanticCacheStore:
                         "ts_iso": ts_now.isoformat(),
                         "ts_unix": float(ts_now.timestamp()),
                         "reasoning": reasoning_json,
+                        "variant_count": 0,
+                        "last_variant_ts": 0.0,
                     }],
                 )
                 _log.info("cache store: upsert OK id=%s role=%s total=%d",
@@ -242,12 +271,47 @@ class SemanticCacheStore:
         except Exception as exc:
             _log.warning("cache store error (traceback follows): %s", exc, exc_info=True)
 
+    def increment_variant_count(self, entry_id: str) -> None:
+        """Atomically increment variant_count and update last_variant_ts on a root entry.
+
+        Called fire-and-forget (via asyncio.create_task + asyncio.to_thread) when
+        a user accepts an intent suggestion — tracks how many times this root was reused.
+        """
+        if not self._enabled or not entry_id:
+            return
+        try:
+            with self._write_lock:
+                self._ensure_initialized()
+                results = self._collection.get(
+                    ids=[entry_id],
+                    include=["metadatas", "documents", "embeddings"],
+                )
+                if not results or not results.get("ids"):
+                    return
+                meta = results["metadatas"][0].copy()
+                meta["variant_count"] = int(meta.get("variant_count") or 0) + 1
+                meta["last_variant_ts"] = float(time.time())
+                # Update only the metadata — keep embedding + document unchanged
+                self._collection.update(
+                    ids=[entry_id],
+                    metadatas=[meta],
+                )
+                _log.info(
+                    "cache: incremented variant_count=%d for entry_id=%s",
+                    meta["variant_count"], entry_id,
+                )
+        except Exception as exc:
+            _log.warning("cache increment_variant_count error: %s", exc)
+
     def stats(self) -> dict:
         """Return lightweight cache statistics for the /api/cache/stats endpoint."""
         base = {
             "enabled": self._enabled,
             "similarity_threshold": self._threshold,
             "miss_threshold": Config.CACHE_MISS_THRESHOLD,
+            "intent_match_enabled": Config.CACHE_INTENT_MATCH_ENABLED,
+            "intent_match_threshold": Config.CACHE_INTENT_MATCH_THRESHOLD,
+            "inline_store_enabled": Config.CACHE_INLINE_STORE_ENABLED,
             "judge_enabled": Config.CACHE_JUDGE_ENABLED,
             "judge_model": Config.CACHE_JUDGE_MODEL,
             "max_age_hours": self._max_age_hours,

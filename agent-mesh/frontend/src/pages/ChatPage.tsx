@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Send, SquarePen, Bot, Square } from "lucide-react";
 import { useParams } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
-import { ChatContext } from "@/contexts/ChatContext";
+import { useChatContext } from "@/contexts/ChatContext";
 import { useChat } from "@/hooks/useChat";
 import MessageBubble from "@/components/chat/MessageBubble";
 import { Button } from "@/components/ui/Button";
@@ -14,11 +14,14 @@ export default function ChatPage() {
   const username = user?.username ?? "bob";
   const { sessionId } = useParams<{ sessionId?: string }>();
 
-  const { messages, sendMessage, refreshAnswer, stopGeneration, clearChat, handleFeedback, isLoading } = useChat({
+  const { messages, sendMessage, refreshAnswer, resolveIntentSuggestion, stopGeneration, clearChat, handleFeedback, isLoading } = useChat({
     username,
     role: user?.role ?? "customer",
     initialSessionId: sessionId,
   });
+
+  const { registerClearChat } = useChatContext();
+  useEffect(() => { registerClearChat(clearChat); }, [clearChat, registerClearChat]);
 
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -53,7 +56,6 @@ export default function ChatPage() {
   }, []);
 
   return (
-    <ChatContext.Provider value={{ clearChat }}>
     <div className="flex flex-col h-full max-h-[calc(100vh-64px)]">
       {/* Header bar */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-line bg-surface/50 backdrop-blur-sm shrink-0">
@@ -89,7 +91,7 @@ export default function ChatPage() {
           <EmptyState onSampleClick={handleSampleClick} />
         ) : (
           messages.map((msg) => (
-            <MessageBubble key={msg.id} message={msg} onFeedback={handleFeedback} onRefresh={refreshAnswer} />
+            <MessageBubble key={msg.id} message={msg} onFeedback={handleFeedback} onRefresh={refreshAnswer} onResolveIntent={resolveIntentSuggestion} />
           ))
         )}
         <div ref={bottomRef} />
@@ -142,7 +144,6 @@ export default function ChatPage() {
       </div>
     </div>
 
-    </ChatContext.Provider>
   );
 }
 

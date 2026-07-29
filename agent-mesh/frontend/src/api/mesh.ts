@@ -101,6 +101,25 @@ export async function* queryMeshStream(
             yield { type: "reasoning", entries: data.entries as LLMReasoningEntry[] };
           } else if (eventType === "hitl") {
             yield { type: "hitl", approval_id: data.approval_id as string, details: data.details as HitlDetails };
+          } else if (eventType === "intent_suggestion") {
+            yield {
+              type: "intent_suggestion",
+              root_query: data.root_query as string,
+              entry_id: data.entry_id as string,
+              similarity: data.similarity as number,
+              age_hours: data.age_hours as number,
+              answer_preview: data.answer_preview as string,
+              confidence: data.confidence as "high" | "pending_judge",
+              judge_verdict: data.judge_verdict as "YES" | "NO" | null,
+              judge_reason: data.judge_reason as string | null,
+            };
+          } else if (eventType === "intent_suggestion_judge") {
+            yield {
+              type: "intent_suggestion_judge",
+              entry_id: data.entry_id as string,
+              judge_verdict: data.judge_verdict as "YES" | "NO",
+              judge_reason: data.judge_reason as string,
+            };
           } else if (eventType === "result") {
             yield { type: "result", result: data as MeshResult };
           } else if (eventType === "done") {
@@ -187,4 +206,8 @@ export async function approveRequest(approvalId: string): Promise<void> {
 
 export async function rejectRequest(approvalId: string): Promise<void> {
   await apiClient.post(`/api/approvals/${encodeURIComponent(approvalId)}/reject`);
+}
+
+export async function resolveIntentDecision(entryId: string, accepted: boolean): Promise<void> {
+  await apiClient.post("/api/cache/intent-decision", { entry_id: entryId, accepted });
 }

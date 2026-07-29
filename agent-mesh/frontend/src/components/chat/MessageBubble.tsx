@@ -1,11 +1,11 @@
 import { memo, useMemo, useEffect, useRef, useState } from "react";
-import { ThumbsUp, ThumbsDown, Zap, RefreshCw } from "lucide-react";
+import { ThumbsUp, ThumbsDown, Zap, RefreshCw, Layers } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Markdown } from "@/components/ui/Markdown";
 import PipelineTrail from "./PipelineTrail";
 import SecurityBadge from "./SecurityBadge";
 import ExecutionPanel from "./ExecutionPanel";
-import type { ChatMessage } from "@/types/mesh";
+import type { ChatMessage, IntentSuggestion } from "@/types/mesh";
 
 const FALLBACK_STAGE = "Processing…";
 
@@ -42,6 +42,110 @@ function ThinkingIndicator({ currentStage }: { currentStage?: string }) {
       >
         {currentStage ?? FALLBACK_STAGE}
       </span>
+    </div>
+  );
+}
+
+// ── Intent Suggestion Banner ─────────────────────────────────────────────────
+
+interface IntentSuggestionBannerProps {
+  suggestion: IntentSuggestion;
+  onAccept: () => void;
+  onReject: () => void;
+}
+
+function IntentSuggestionBanner({ suggestion, onAccept, onReject }: IntentSuggestionBannerProps) {
+  const [deciding, setDeciding] = useState(false);
+
+  async function handleAccept() {
+    if (deciding) return;
+    setDeciding(true);
+    onAccept();
+  }
+
+  async function handleReject() {
+    if (deciding) return;
+    setDeciding(true);
+    onReject();
+  }
+
+  const similarityPct = Math.round(suggestion.similarity * 100);
+  const isGrayZone = suggestion.confidence === "pending_judge";
+  const ageLabel =
+    suggestion.ageHours < 1
+      ? `${Math.round(suggestion.ageHours * 60)}m ago`
+      : `${suggestion.ageHours.toFixed(1)}h ago`;
+
+  return (
+    <div className="mb-3 px-3 py-2.5 rounded-lg bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800/50">
+      {/* Row 1: icon + label + meta */}
+      <div className="flex items-center gap-2">
+        <Layers className="h-3.5 w-3.5 text-violet-500 shrink-0" />
+        <span className="text-xs font-medium text-violet-700 dark:text-violet-300">
+          Similar question already answered
+        </span>
+        <span className="text-xs text-violet-500 dark:text-violet-400">· {ageLabel}</span>
+        <span className="text-xs text-violet-500 dark:text-violet-500 ml-auto font-mono">
+          {similarityPct}% match
+        </span>
+      </div>
+
+      {/* Row 2: root question */}
+      <div className="mt-1.5 text-xs text-violet-700 dark:text-violet-300 bg-violet-100/60 dark:bg-violet-900/30 rounded px-2 py-1 italic">
+        &ldquo;{suggestion.rootQuery}&rdquo;
+      </div>
+
+      {/* Row 3: LLM judge confidence (gray zone only) */}
+      {isGrayZone && (
+        <div className="flex items-center gap-1.5 mt-1.5 pt-1.5 border-t border-violet-200/60 dark:border-violet-800/30">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-violet-500 dark:text-violet-400 shrink-0">
+            LLM Check
+          </span>
+          {suggestion.judgeVerdict == null ? (
+            <span className="text-[11px] text-violet-500 dark:text-violet-400 italic animate-pulse">
+              Checking semantic match…
+            </span>
+          ) : (
+            <span className={cn(
+              "text-[11px] italic",
+              suggestion.judgeVerdict === "YES"
+                ? "text-emerald-600 dark:text-emerald-400"
+                : "text-amber-600 dark:text-amber-400"
+            )}>
+              {suggestion.judgeVerdict === "YES" ? "✓ Likely a match" : "? Uncertain"}{" "}
+              {suggestion.judgeReason ? `— ${suggestion.judgeReason}` : ""}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Row 4: action buttons */}
+      <div className="flex items-center gap-2 mt-2 pt-1.5 border-t border-violet-200/60 dark:border-violet-800/30">
+        <button
+          onClick={handleAccept}
+          disabled={deciding}
+          className={cn(
+            "text-xs px-3 py-1 rounded-lg font-medium transition-colors",
+            "bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-60"
+          )}
+        >
+          Use cached answer
+        </button>
+        <button
+          onClick={handleReject}
+          disabled={deciding}
+          className={cn(
+            "text-xs px-3 py-1 rounded-lg font-medium transition-colors",
+            "border border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-300",
+            "hover:bg-violet-100 dark:hover:bg-violet-900/40 disabled:opacity-60"
+          )}
+        >
+          Run fresh
+        </button>
+        <span className="ml-auto text-[10px] text-violet-400 dark:text-violet-600">
+          60s timeout → auto run fresh
+        </span>
+      </div>
     </div>
   );
 }
@@ -166,6 +270,7 @@ interface MessageBubbleProps {
   message: ChatMessage;
   onFeedback?: (messageId: string, rating: "up" | "down", comment?: string) => Promise<void>;
   onRefresh?: (messageId: string) => void;
+  onResolveIntent?: (messageId: string, accepted: boolean) => void;
 }
 
 function formatTime(date: Date): string {
@@ -192,7 +297,7 @@ function RouteChip({ route }: { route: string }) {
 
 const LLM_REASONING_RE = /<llm_reasoning>[\s\S]*?<\/llm_reasoning>/g;
 
-const MessageBubble = memo(function MessageBubble({ message, onFeedback, onRefresh }: MessageBubbleProps) {
+const MessageBubble = memo(function MessageBubble({ message, onFeedback, onRefresh, onResolveIntent }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const timeLabel = useMemo(() => formatTime(message.timestamp), [message.timestamp]);
   const safeContent = useMemo(
@@ -240,6 +345,14 @@ const MessageBubble = memo(function MessageBubble({ message, onFeedback, onRefre
         >
           {message.isLoading ? (
             <>
+              {/* Intent suggestion banner — shown while stream is paused awaiting user decision */}
+              {message.intentSuggestion && onResolveIntent && (
+                <IntentSuggestionBanner
+                  suggestion={message.intentSuggestion}
+                  onAccept={() => onResolveIntent(message.id, true)}
+                  onReject={() => onResolveIntent(message.id, false)}
+                />
+              )}
               <ThinkingIndicator currentStage={message.streamingStage} />
               {/* Execution panel visible during streaming so stages + reasoning appear live */}
               {!!(message.streamingEvents?.length || message.streamingReasoning?.length) && (
