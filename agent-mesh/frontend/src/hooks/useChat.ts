@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getConversation, queryMeshStream, resolveIntentDecision, submitFeedback } from "@/api/mesh";
-import type { ChatMessage, ExecutionEvent, IntentSuggestion, LLMReasoningEntry, MeshResult, SessionMessage } from "@/types/mesh";
+import type { CandidateItem, ChatMessage, ExecutionEvent, LLMReasoningEntry, MeshResult, SessionMessage } from "@/types/mesh";
 
 const SESSION_ID_KEY = "agent-mesh-session-id";
 
@@ -174,38 +174,59 @@ export function useChat({ username, role, initialSessionId }: UseChatOptions) {
                 )
               );
             } else if (event.type === "intent_suggestion") {
-              // Pause indicator: keep isLoading=true, show the suggestion banner
-              const suggestion: IntentSuggestion = {
-                rootQuery: event.root_query,
-                entryId: event.entry_id,
-                similarity: event.similarity,
-                ageHours: event.age_hours,
-                answerPreview: event.answer_preview,
-                confidence: event.confidence,
-                judgeVerdict: event.judge_verdict,
-                judgeReason: event.judge_reason,
-              };
+              // Build multi-candidate list; fall back to wrapping top-1 for backward compat
+              const rawCandidates = event.candidates?.length
+                ? event.candidates
+                : [{ entry_id: event.entry_id, root_query: event.root_query,
+                     similarity: event.similarity, age_hours: event.age_hours,
+                     answer_preview: event.answer_preview, confidence: event.confidence }];
+              const candidates: CandidateItem[] = rawCandidates.map((c) => ({
+                entryId: c.entry_id,
+                rootQuery: c.root_query,
+                similarity: c.similarity,
+                ageHours: c.age_hours,
+                answerPreview: c.answer_preview,
+                confidence: c.confidence,
+                judgeVerdict: null,
+                judgeReason: null,
+              }));
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === assistantId
-                    ? { ...m, intentSuggestion: suggestion, streamingStage: "Waiting for your confirmation…" }
+                    ? {
+                        ...m,
+                        intentSuggestion: { primaryEntryId: event.entry_id, candidates },
+                        streamingStage: "Waiting for your confirmation…",
+                      }
                     : m
                 )
               );
             } else if (event.type === "intent_suggestion_judge") {
-              // LLM judge result arrived — update the banner confidence badge in place
+              // LLM judge result — update the matching candidate row in-place
+              setMessages((prev) =>
+                prev.map((m) => {
+                  if (m.id !== assistantId || !m.intentSuggestion) return m;
+                  const updatedCandidates = m.intentSuggestion.candidates.map((c) =>
+                    c.entryId === event.entry_id
+                      ? { ...c, judgeVerdict: event.judge_verdict, judgeReason: event.judge_reason }
+                      : c
+                  );
+                  return { ...m, intentSuggestion: { ...m.intentSuggestion, candidates: updatedCandidates } };
+                })
+              );
+            } else if (event.type === "cache_context") {
+              // HIT zone: informational strip shown below the final answer
+              const candidates: CandidateItem[] = event.candidates.map((c) => ({
+                entryId: c.entry_id,
+                rootQuery: c.root_query,
+                similarity: c.similarity,
+                ageHours: c.age_hours,
+                answerPreview: c.answer_preview,
+                confidence: c.confidence,
+              }));
               setMessages((prev) =>
                 prev.map((m) =>
-                  m.id === assistantId && m.intentSuggestion?.entryId === event.entry_id
-                    ? {
-                        ...m,
-                        intentSuggestion: {
-                          ...m.intentSuggestion!,
-                          judgeVerdict: event.judge_verdict,
-                          judgeReason: event.judge_reason,
-                        },
-                      }
-                    : m
+                  m.id === assistantId ? { ...m, cacheContext: candidates } : m
                 )
               );
             } else if (event.type === "result") {
@@ -378,11 +399,13 @@ export function useChat({ username, role, initialSessionId }: UseChatOptions) {
   // Called when the user clicks "Use cached answer" or "Run fresh" in the
   // IntentSuggestionBanner. Clears the banner optimistically and unblocks the
   // paused orchestrator via POST /api/cache/intent-decision.
+  // Called when the user clicks "Use this answer" (accepted=true, chosenEntryId=candidate)
+  // or "Run fresh" (accepted=false, chosenEntryId=primaryEntryId).
   const resolveIntentSuggestion = useCallback(
-    async (messageId: string, accepted: boolean) => {
+    async (messageId: string, chosenEntryId: string, accepted: boolean) => {
       const msg = messages.find((m) => m.id === messageId);
       if (!msg?.intentSuggestion) return;
-      const entryId = msg.intentSuggestion.entryId;
+      const primaryEntryId = msg.intentSuggestion.primaryEntryId;
       // Optimistic UI update — clear banner, update stage label
       setMessages((prev) =>
         prev.map((m) =>
@@ -396,7 +419,7 @@ export function useChat({ username, role, initialSessionId }: UseChatOptions) {
         )
       );
       try {
-        await resolveIntentDecision(entryId, accepted);
+        await resolveIntentDecision(primaryEntryId, chosenEntryId, accepted);
       } catch {
         // Network error — the orchestrator will timeout (60s) and treat as rejected
       }

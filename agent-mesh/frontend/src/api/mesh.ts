@@ -109,9 +109,14 @@ export async function* queryMeshStream(
               similarity: data.similarity as number,
               age_hours: data.age_hours as number,
               answer_preview: data.answer_preview as string,
-              confidence: data.confidence as "high" | "pending_judge",
+              confidence: data.confidence as "high" | "intent_match" | "pending_judge",
               judge_verdict: data.judge_verdict as "YES" | "NO" | null,
               judge_reason: data.judge_reason as string | null,
+              candidates: (data.candidates ?? []) as Array<{
+                entry_id: string; root_query: string; similarity: number;
+                age_hours: number; answer_preview: string;
+                confidence: "high" | "intent_match" | "pending_judge";
+              }>,
             };
           } else if (eventType === "intent_suggestion_judge") {
             yield {
@@ -119,6 +124,16 @@ export async function* queryMeshStream(
               entry_id: data.entry_id as string,
               judge_verdict: data.judge_verdict as "YES" | "NO",
               judge_reason: data.judge_reason as string,
+            };
+          } else if (eventType === "cache_context") {
+            yield {
+              type: "cache_context",
+              context: "hit" as const,
+              candidates: (data.candidates ?? []) as Array<{
+                entry_id: string; root_query: string; similarity: number;
+                age_hours: number; answer_preview: string;
+                confidence: "high" | "intent_match" | "pending_judge";
+              }>,
             };
           } else if (eventType === "result") {
             yield { type: "result", result: data as MeshResult };
@@ -208,6 +223,14 @@ export async function rejectRequest(approvalId: string): Promise<void> {
   await apiClient.post(`/api/approvals/${encodeURIComponent(approvalId)}/reject`);
 }
 
-export async function resolveIntentDecision(entryId: string, accepted: boolean): Promise<void> {
-  await apiClient.post("/api/cache/intent-decision", { entry_id: entryId, accepted });
+export async function resolveIntentDecision(
+  primaryEntryId: string,
+  chosenEntryId: string,
+  accepted: boolean,
+): Promise<void> {
+  await apiClient.post("/api/cache/intent-decision", {
+    entry_id: primaryEntryId,
+    chosen_entry_id: chosenEntryId,
+    accepted,
+  });
 }

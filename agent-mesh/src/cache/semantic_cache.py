@@ -119,93 +119,98 @@ class SemanticCacheStore:
         return self.lookup_with_id(query, role)
 
     def lookup_with_id(self, query: str, role: str) -> Optional[CacheEntry]:
-        """Same as lookup() but always populates entry.entry_id from the ChromaDB document ID.
+        """Return the single best-matching CacheEntry (delegates to lookup_top_n)."""
+        results = self.lookup_top_n(query, role, n=1)
+        return results[0] if results else None
 
-        Four-zone decision (when CACHE_INTENT_MATCH_ENABLED=true):
-          similarity < CACHE_MISS_THRESHOLD                           → None (MISS)
-          CACHE_MISS_THRESHOLD ≤ sim < CACHE_INTENT_MATCH_THRESHOLD   → "pending_judge" (gray zone)
+    def lookup_top_n(self, query: str, role: str, n: int = 3) -> List[CacheEntry]:
+        """Return up to n best-matching CacheEntries for query, sorted by similarity desc.
+
+        Four-zone confidence per entry (when CACHE_INTENT_MATCH_ENABLED=true):
+          similarity < CACHE_MISS_THRESHOLD                           → excluded (MISS)
+          CACHE_MISS_THRESHOLD ≤ sim < CACHE_INTENT_MATCH_THRESHOLD   → "pending_judge"
           CACHE_INTENT_MATCH_THRESHOLD ≤ sim < CACHE_SIMILARITY_THRESHOLD → "intent_match"
-          sim ≥ CACHE_SIMILARITY_THRESHOLD                             → "high" (definitive HIT)
+          sim ≥ CACHE_SIMILARITY_THRESHOLD                             → "high"
 
-        When CACHE_INTENT_MATCH_ENABLED=false the original three-zone behavior is preserved:
-          miss_threshold ≤ sim < threshold → "pending_judge"
-          sim ≥ threshold                  → "high"
+        Stale entries (age > max_age_hours) and entries below CACHE_MISS_THRESHOLD are filtered out.
+        Returns an empty list on MISS, disabled cache, or any exception.
         """
         if not self._enabled:
-            return None
+            return []
         try:
             self._ensure_initialized()
             count = self._collection.count()
-            _log.info("cache lookup: collection has %d entries, role=%s", count, role)
+            _log.info("cache lookup_top_n: collection has %d entries, role=%s, n=%d", count, role, n)
             if count == 0:
-                return None
+                return []
             vec = self._embed(query)
             results = self._collection.query(
                 query_embeddings=[vec],
-                n_results=min(1, count),
+                n_results=min(n, count),
                 where={"role": {"$eq": role}},
                 include=["metadatas", "distances", "documents"],
             )
             ids = results.get("ids", [[]])[0]
-            _log.info("cache lookup: query returned %d result(s)", len(ids))
+            _log.info("cache lookup_top_n: query returned %d result(s)", len(ids))
             if not ids:
-                return None
+                return []
 
-            doc_id = ids[0]  # ChromaDB document ID for this entry
-            distance = results["distances"][0][0]
-            # ChromaDB cosine space: distance = 1 - cosine_similarity
-            similarity = 1.0 - distance
             miss_threshold = Config.CACHE_MISS_THRESHOLD
             intent_threshold = Config.CACHE_INTENT_MATCH_THRESHOLD
             intent_enabled = Config.CACHE_INTENT_MATCH_ENABLED
-            _log.info(
-                "cache lookup: best similarity=%.4f miss_threshold=%.4f intent_threshold=%.4f hit_threshold=%.4f",
-                similarity, miss_threshold, intent_threshold, self._threshold,
-            )
 
-            if similarity < miss_threshold:
-                return None
+            entries: List[CacheEntry] = []
+            for i, doc_id in enumerate(ids):
+                distance = results["distances"][0][i]
+                similarity = 1.0 - distance  # ChromaDB cosine space
 
-            meta = results["metadatas"][0][0]
-            age_hours = (time.time() - float(meta["ts_unix"])) / 3600.0
-            _log.info("cache lookup: age_hours=%.2f max_age=%.1f", age_hours, self._max_age_hours)
-            if age_hours > self._max_age_hours:
-                return None
+                if similarity < miss_threshold:
+                    continue  # below miss threshold — skip
 
-            doc = results["documents"][0][0] if results.get("documents") else ""
-            try:
-                reasoning = json.loads(meta.get("reasoning", "[]") or "[]")
-                if not isinstance(reasoning, list):
+                meta = results["metadatas"][0][i]
+                age_hours = (time.time() - float(meta["ts_unix"])) / 3600.0
+                if age_hours > self._max_age_hours:
+                    continue  # stale
+
+                doc = results["documents"][0][i] if results.get("documents") else ""
+                try:
+                    reasoning = json.loads(meta.get("reasoning", "[]") or "[]")
+                    if not isinstance(reasoning, list):
+                        reasoning = []
+                except (json.JSONDecodeError, TypeError):
                     reasoning = []
-            except (json.JSONDecodeError, TypeError):
-                reasoning = []
 
-            # Four-zone confidence assignment
-            if similarity >= self._threshold:
-                confidence = "high"
-            elif intent_enabled and similarity >= intent_threshold:
-                confidence = "intent_match"
-            else:
-                confidence = "pending_judge"
+                if similarity >= self._threshold:
+                    confidence = "high"
+                elif intent_enabled and similarity >= intent_threshold:
+                    confidence = "intent_match"
+                else:
+                    confidence = "pending_judge"
 
-            _log.info("cache lookup: confidence=%s similarity=%.4f entry_id=%s", confidence, similarity, doc_id)
-            return CacheEntry(
-                query_original=doc,
-                answer=meta.get("answer", ""),
-                role=meta.get("role", role),
-                route=meta.get("route", "unknown"),
-                session_id=meta.get("session_id", ""),
-                request_id=meta.get("request_id", ""),
-                ts_iso=meta.get("ts_iso", ""),
-                similarity=similarity,
-                age_hours=age_hours,
-                reasoning=reasoning,
-                confidence=confidence,
-                entry_id=doc_id,
-            )
+                entries.append(CacheEntry(
+                    query_original=doc,
+                    answer=meta.get("answer", ""),
+                    role=meta.get("role", role),
+                    route=meta.get("route", "unknown"),
+                    session_id=meta.get("session_id", ""),
+                    request_id=meta.get("request_id", ""),
+                    ts_iso=meta.get("ts_iso", ""),
+                    similarity=similarity,
+                    age_hours=age_hours,
+                    reasoning=reasoning,
+                    confidence=confidence,
+                    entry_id=doc_id,
+                ))
+
+            if entries:
+                _log.info(
+                    "cache lookup_top_n: returning %d entries, best sim=%.4f confidence=%s",
+                    len(entries), entries[0].similarity, entries[0].confidence,
+                )
+            return entries  # already sorted by similarity desc (ChromaDB returns asc distance)
         except Exception as exc:
-            _log.warning("cache lookup error (traceback follows): %s", exc, exc_info=True)
-            return None
+            _log.warning("cache lookup_top_n error: %s", exc, exc_info=True)
+            return []
 
     def store(
         self,

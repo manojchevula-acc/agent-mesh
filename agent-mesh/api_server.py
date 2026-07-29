@@ -830,6 +830,8 @@ async def post_query_stream(request: Request) -> StreamingResponse:
                     yield f"event: intent_suggestion\ndata: {json.dumps(item)}\n\n"
                 elif event_type == "intent_suggestion_judge":
                     yield f"event: intent_suggestion_judge\ndata: {json.dumps(item)}\n\n"
+                elif event_type == "cache_context":
+                    yield f"event: cache_context\ndata: {json.dumps(item)}\n\n"
                 else:
                     yield f"event: stage\ndata: {json.dumps(item)}\n\n"
         finally:
@@ -928,8 +930,10 @@ async def get_cache_ingest_job(request: Request) -> JSONResponse:
 async def post_intent_decision(request: Request) -> JSONResponse:
     """Resolve a pending intent-match suggestion. POST /api/cache/intent-decision
 
-    Body: {"entry_id": str, "accepted": bool}
-    Called by the frontend when the user clicks "Use cached answer" or "Run fresh".
+    Body: {"entry_id": str, "accepted": bool, "chosen_entry_id": str (optional)}
+    entry_id is the primary (top-1) candidate that keys the decision store.
+    chosen_entry_id is which specific candidate the user clicked (may differ from entry_id).
+    Called by the frontend when the user clicks "Use this answer" or "Run fresh".
     """
     try:
         body = await request.json()
@@ -937,17 +941,18 @@ async def post_intent_decision(request: Request) -> JSONResponse:
         return JSONResponse({"error": "Invalid JSON body."}, status_code=400)
     entry_id = (body.get("entry_id") or "").strip()
     accepted = bool(body.get("accepted", False))
+    chosen_entry_id = (body.get("chosen_entry_id") or entry_id).strip() or entry_id
     if not entry_id:
         return JSONResponse({"error": "entry_id is required."}, status_code=400)
     from src.cache.intent_decision_store import intent_decision_store
-    ok = intent_decision_store.resolve(entry_id, accepted)
+    ok = intent_decision_store.resolve(entry_id, accepted, chosen_entry_id)
     decision_label = "accepted" if accepted else "rejected"
     _log.info(
-        "Intent decision entry_id=%s decision=%s found=%s",
-        entry_id, decision_label, ok,
+        "Intent decision entry_id=%s chosen=%s decision=%s found=%s",
+        entry_id, chosen_entry_id, decision_label, ok,
         extra={"status": "INTENT_DECISION"},
     )
-    return JSONResponse({"ok": True, "entry_id": entry_id, "accepted": accepted})
+    return JSONResponse({"ok": True, "entry_id": entry_id, "chosen_entry_id": chosen_entry_id, "accepted": accepted})
 
 
 app = Starlette(

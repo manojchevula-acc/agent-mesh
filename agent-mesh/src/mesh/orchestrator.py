@@ -209,24 +209,33 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
         final.intent_match_pending = False
         # Register before waiting so resolve() from the API endpoint always finds it
         intent_decision_store.create_pending(entry_id)
-        accepted = await intent_decision_store.wait_for_decision(entry_id, timeout=60.0)
+        accepted, chosen_id = await intent_decision_store.wait_for_decision(entry_id, timeout=60.0)
 
         if accepted:
+            # Find the specific candidate the user chose (may differ from top-1)
+            chosen_id = chosen_id or entry_id
+            candidates = getattr(final, "intent_match_candidates", [])
+            chosen = next((c for c in candidates if c.get("entry_id") == chosen_id), None)
+            chosen_answer = chosen["answer"] if chosen else final.intent_match_answer
+            chosen_similarity = chosen["similarity"] if chosen else final.intent_match_similarity
+            chosen_age = chosen["age_hours"] if chosen else final.intent_match_age_hours
             _log.info(
-                "Intent suggestion: accepted entry_id=%s — serving cached answer",
-                entry_id, extra={"user": user.username, "status": "INTENT_ACCEPTED"},
+                "Intent suggestion: accepted chosen_id=%s sim=%.3f user=%s",
+                chosen_id, chosen_similarity, user.username,
+                extra={"user": user.username, "status": "INTENT_ACCEPTED"},
             )
-            final.answer = final.intent_match_answer
+            final.answer = chosen_answer
             final.cache_hit = True
-            final.cache_similarity = final.intent_match_similarity
-            final.cache_age_hours = final.intent_match_age_hours
+            final.cache_similarity = chosen_similarity
+            final.cache_age_hours = chosen_age
             final.skip_cache_store = True
-            final.trail.append(f"intent_match_accepted:sim={final.intent_match_similarity:.3f}")
-            # Increment variant_count on the root entry (fire-and-forget)
+            trail_tag = "cache_hit_selected" if chosen_similarity >= 0.92 else "intent_match_accepted"
+            final.trail.append(f"{trail_tag}:chosen={chosen_id}:sim={chosen_similarity:.3f}")
+            # Increment variant_count on the chosen entry (fire-and-forget)
             try:
                 from src.cache import get_cache_store
                 asyncio.create_task(
-                    asyncio.to_thread(get_cache_store().increment_variant_count, entry_id)
+                    asyncio.to_thread(get_cache_store().increment_variant_count, chosen_id)
                 )
             except Exception as _exc:
                 _log.warning("intent_match: increment_variant_count task failed: %s", _exc)

@@ -207,12 +207,16 @@ class MeshState:
     # or "pending_judge" and CACHE_INTENT_MATCH_ENABLED=true.
     # The orchestrator pauses and waits for user decision via IntentDecisionStore.
     intent_match_pending: bool = False
-    intent_match_root_query: str = ""      # the root question text shown to the user
-    intent_match_entry_id: str = ""        # ChromaDB doc ID for accept/reject decision
+    intent_match_root_query: str = ""      # top-1 root question (backward compat)
+    intent_match_entry_id: str = ""        # top-1 ChromaDB doc ID (keys IntentDecisionStore)
     intent_match_similarity: float = 0.0
-    intent_match_answer: str = ""          # cached answer (served if user accepts)
+    intent_match_answer: str = ""          # top-1 cached answer
     intent_match_age_hours: float = 0.0
-    intent_match_confidence: str = ""      # "high" | "pending_judge"
+    intent_match_confidence: str = ""      # "high" | "intent_match" | "pending_judge"
+    # Full ranked candidate list — each dict: {entry_id, root_query, similarity,
+    # age_hours, answer_preview, answer, confidence}. Orchestrator uses this to
+    # serve the specific candidate the user picked (chosen_entry_id).
+    intent_match_candidates: List[dict] = field(default_factory=list)
     # When True, the orchestrator skips writing this answer to the cache store.
     # Set for intent-match accept (variant never stored) and intent-match reject
     # (fresh run result not stored either — avoids polluting DB with variants).
@@ -469,20 +473,38 @@ class CacheCheckExecutor(Executor):
             try:
                 from src.cache import get_cache_store, llm_cache_judge
                 cache = get_cache_store()
-                # lookup_with_id() is CPU-bound (embedding) — run in thread pool
-                entry = await asyncio.to_thread(cache.lookup_with_id, state.query, state.role)
+                # lookup_top_n() is CPU-bound (embedding) — run in thread pool.
+                # Fetches up to 3 candidates; primary zone decision is based on top-1.
+                all_candidates = await asyncio.to_thread(cache.lookup_top_n, state.query, state.role, 3)
+                entry = all_candidates[0] if all_candidates else None
+
+                # Build the shared candidates payload (used in BRANCH A and BRANCH C)
+                def _build_candidates_payload(entries):
+                    return [
+                        {
+                            "entry_id": e.entry_id,
+                            "root_query": e.query_original,
+                            "similarity": e.similarity,
+                            "age_hours": e.age_hours,
+                            "answer_preview": e.answer[:200],
+                            "answer": e.answer,
+                            "confidence": e.confidence,
+                        }
+                        for e in entries
+                    ]
 
                 elapsed = (time.perf_counter() - t0) * 1000
 
                 # ── BRANCH A: Intent-match suggestion (CACHE_INTENT_MATCH_ENABLED=true) ──
                 # Covers both "intent_match" (0.85–0.92) and "pending_judge" (0.75–0.85)
-                # when the feature flag is on. User decides; LLM judge runs concurrently
-                # for the gray zone to provide an advisory confidence signal.
+                # when the feature flag is on. Up to 3 candidates shown; user picks one.
+                # LLM judge runs concurrently per gray-zone candidate for advisory signal.
                 if (
                     entry is not None
                     and Config.CACHE_INTENT_MATCH_ENABLED
                     and entry.confidence in ("intent_match", "pending_judge")
                 ):
+                    candidates_payload = _build_candidates_payload(all_candidates)
                     state.intent_match_pending = True
                     state.intent_match_root_query = entry.query_original
                     state.intent_match_entry_id = entry.entry_id
@@ -490,18 +512,21 @@ class CacheCheckExecutor(Executor):
                     state.intent_match_answer = entry.answer
                     state.intent_match_age_hours = entry.age_hours
                     state.intent_match_confidence = entry.confidence
+                    state.intent_match_candidates = candidates_payload
                     state.trail.append(
                         f"intent_suggestion:{entry.confidence}:sim={entry.similarity:.3f}"
+                        f":n={len(candidates_payload)}"
                     )
 
                     _set_attr(span, "cache.result", "INTENT_SUGGESTION")
                     _set_attr(span, "cache.similarity", entry.similarity)
                     _set_attr(span, "cache.confidence", entry.confidence)
+                    _set_attr(span, "cache.candidates_count", len(candidates_payload))
                     _set_ok(span)
 
                     _log.info(
-                        "Cache intent suggestion role=%s sim=%.3f confidence=%s",
-                        state.role, entry.similarity, entry.confidence,
+                        "Cache intent suggestion role=%s sim=%.3f confidence=%s candidates=%d",
+                        state.role, entry.similarity, entry.confidence, len(candidates_payload),
                         extra={"user": state.user_name, "status": "INTENT_SUGGESTION"},
                     )
                     if tracer:
@@ -509,14 +534,16 @@ class CacheCheckExecutor(Executor):
                             "cache_check", "intent_suggestion",
                             result="INTENT_SUGGESTION",
                             message=(
-                                f"Similar cached question found (similarity {entry.similarity:.0%})"
+                                f"{len(candidates_payload)} similar cached question(s) found "
+                                f"(best: {entry.similarity:.0%})"
                             ),
                         )
                     record_cache("INTENT_SUGGESTION", state.role, elapsed)
 
-                    # Emit intent_suggestion SSE so the frontend shows the banner immediately
+                    # Emit intent_suggestion SSE with full candidate list
                     _emit_stream_event({
                         "event_type": "intent_suggestion",
+                        # Top-level fields kept for backward compat (reflect top-1)
                         "root_query": entry.query_original,
                         "entry_id": entry.entry_id,
                         "similarity": entry.similarity,
@@ -525,40 +552,51 @@ class CacheCheckExecutor(Executor):
                         "confidence": entry.confidence,
                         "judge_verdict": None,
                         "judge_reason": None,
+                        # New: full ranked candidate list
+                        "candidates": [
+                            {k: v for k, v in c.items() if k != "answer"}  # omit full answer from SSE
+                            for c in candidates_payload
+                        ],
                     })
 
-                    # For gray-zone entries: fire LLM judge concurrently as advisory signal.
-                    # The judge result streams back via a second SSE event.
-                    if entry.confidence == "pending_judge" and Config.CACHE_JUDGE_ENABLED:
-                        _entry_id_captured = entry.entry_id
-                        _cached_query_captured = entry.query_original
-                        _cached_answer_captured = entry.answer
-                        _role_captured = state.role
+                    # For each gray-zone candidate: fire LLM judge concurrently as advisory signal.
+                    if Config.CACHE_JUDGE_ENABLED:
+                        for _cand in all_candidates:
+                            if _cand.confidence != "pending_judge":
+                                continue
+                            _cand_entry_id = _cand.entry_id
+                            _cand_query = _cand.query_original
+                            _cand_answer = _cand.answer
+                            _new_query = state.query
+                            _role_captured = state.role
 
-                        async def _run_judge_and_emit() -> None:
-                            try:
-                                cache._judge_invocations += 1
-                                is_valid, reason = await llm_cache_judge(
-                                    new_query=state.query,
-                                    cached_query=_cached_query_captured,
-                                    cached_answer=_cached_answer_captured,
-                                    role=_role_captured,
-                                )
-                                verdict = "YES" if is_valid else "NO"
-                                if is_valid:
-                                    cache._judge_hits += 1
-                                else:
-                                    cache._judge_misses += 1
-                                _emit_stream_event({
-                                    "event_type": "intent_suggestion_judge",
-                                    "entry_id": _entry_id_captured,
-                                    "judge_verdict": verdict,
-                                    "judge_reason": reason,
-                                })
-                            except Exception as _exc:
-                                _log.warning("intent suggestion judge error: %s", _exc)
+                            async def _run_judge_and_emit(
+                                eid=_cand_entry_id, cq=_cand_query, ca=_cand_answer,
+                                nq=_new_query, role=_role_captured,
+                            ) -> None:
+                                try:
+                                    cache._judge_invocations += 1
+                                    is_valid, reason = await llm_cache_judge(
+                                        new_query=nq,
+                                        cached_query=cq,
+                                        cached_answer=ca,
+                                        role=role,
+                                    )
+                                    verdict = "YES" if is_valid else "NO"
+                                    if is_valid:
+                                        cache._judge_hits += 1
+                                    else:
+                                        cache._judge_misses += 1
+                                    _emit_stream_event({
+                                        "event_type": "intent_suggestion_judge",
+                                        "entry_id": eid,
+                                        "judge_verdict": verdict,
+                                        "judge_reason": reason,
+                                    })
+                                except Exception as _exc:
+                                    _log.warning("intent suggestion judge error: %s", _exc)
 
-                        asyncio.create_task(_run_judge_and_emit())
+                            asyncio.create_task(_run_judge_and_emit())
 
                     log_state_handoff("cache_check", "PAUSED", state, note="intent_match_pending -> yield")
                     await ctx.yield_output(state)
@@ -595,7 +633,7 @@ class CacheCheckExecutor(Executor):
                 elapsed = (time.perf_counter() - t0) * 1000
 
                 if entry is not None:
-                    # ── BRANCH C: CACHE HIT (high confidence or judge-validated) ──────────
+                    # ── BRANCH C: CACHE HIT — pause and let user pick a candidate ──────────
                     hit_label = "HIT" if not judge_invoked else "HIT (judge)"
                     _set_attr(span, "cache.result", "HIT")
                     _set_attr(span, "cache.similarity", entry.similarity)
@@ -604,64 +642,53 @@ class CacheCheckExecutor(Executor):
                     _set_attr(span, "cache.judge_invoked", judge_invoked)
                     _set_ok(span)
 
-                    state.cache_hit = True
-                    state.cache_answer = entry.answer
-                    state.cache_age_hours = entry.age_hours
-                    state.cache_similarity = entry.similarity
-                    state.cache_reasoning = entry.reasoning
-                    state.cache_judge_invoked = judge_invoked
-                    state.cache_judge_decision = judge_decision or ""
-                    state.cache_judge_reason = judge_reason
-                    state.answer = entry.answer
-                    state.trail.append(
-                        f"cache_hit:age={entry.age_hours:.1f}h:sim={entry.similarity:.3f}"
-                        + (":judge" if judge_invoked else "")
-                    )
+                    candidates_payload = _build_candidates_payload(all_candidates)
+                    state.intent_match_entry_id = entry.entry_id
+                    state.intent_match_answer = entry.answer
+                    state.intent_match_similarity = entry.similarity
+                    state.intent_match_candidates = candidates_payload
+
                     _log.info(
-                        "Cache %s role=%s sim=%.3f age=%.1fh reasoning_entries=%d",
-                        hit_label, state.role, entry.similarity, entry.age_hours, len(entry.reasoning),
-                        extra={"user": state.user_name, "status": "HIT"},
-                    )
-                    threshold_check = (
-                        f"LLM judge: YES — {judge_reason}" if (judge_invoked and judge_reason)
-                        else "LLM judge: YES" if judge_invoked
-                        else f"Similarity {entry.similarity:.3f} ≥ threshold {Config.CACHE_SIMILARITY_THRESHOLD}"
+                        "Cache %s role=%s sim=%.3f age=%.1fh — showing %d candidate(s) for selection",
+                        hit_label, state.role, entry.similarity, entry.age_hours, len(candidates_payload),
+                        extra={"user": state.user_name, "status": "HIT_PENDING"},
                     )
                     if tracer:
                         tracer.emit_stage(
-                            "cache_check", "completed",
-                            result="HIT",
+                            "cache_check", "intent_suggestion",
+                            result="HIT_SUGGESTION",
                             message=(
-                                f"Cached answer found "
-                                f"(age {entry.age_hours:.1f}h, similarity {entry.similarity:.3f}"
-                                + (", LLM judge: YES)" if judge_invoked else ")")
+                                f"{len(candidates_payload)} cached answer(s) found "
+                                f"(best: {entry.similarity:.0%}) — awaiting selection"
                             ),
-                            checks=[
-                                f"Role-matched ({state.role})",
-                                threshold_check,
-                                f"Age {entry.age_hours:.1f}h ≤ max {Config.CACHE_MAX_AGE_HOURS}h",
-                            ],
                         )
-                        if entry.reasoning:
-                            tracer.add_llm_reasoning(entry.reasoning)
                     record_cache("HIT", state.role, elapsed)
                     _emit_stream_event({
-                        "stage": "cache_check", "status": "completed",
-                        "message": (
-                            f"Cache hit — serving cached answer (age {entry.age_hours:.1f}h)"
-                            + (" [LLM judge: YES]" if judge_invoked else "")
-                        ),
+                        "stage": "cache_check", "status": "pending",
+                        "message": f"Cache hit ({entry.similarity:.0%} match) — select an answer or run fresh",
                         "judge_invoked": judge_invoked,
                         "judge_decision": judge_decision,
                         "judge_reason": judge_reason,
                     })
-                    if entry.reasoning:
-                        _emit_stream_event({
-                            "event_type": "reasoning",
-                            "entries": entry.reasoning,
-                            "replayed_from_cache": True,
-                        })
-                    log_state_handoff("cache_check", "END", state, note="cache_hit -> early yield")
+
+                    state.intent_match_pending = True
+                    _emit_stream_event({
+                        "event_type": "intent_suggestion",
+                        "root_query": entry.query_original,
+                        "entry_id": entry.entry_id,
+                        "similarity": entry.similarity,
+                        "age_hours": entry.age_hours,
+                        "answer_preview": entry.answer[:200],
+                        "confidence": entry.confidence,
+                        "judge_verdict": None,
+                        "judge_reason": None,
+                        "candidates": [
+                            {k: v for k, v in c.items() if k != "answer"}
+                            for c in candidates_payload
+                        ],
+                    })
+
+                    log_state_handoff("cache_check", "PAUSED", state, note="cache_hit_pending_selection -> yield")
                     await ctx.yield_output(state)
                     return
 

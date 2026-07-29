@@ -127,15 +127,24 @@ export interface FeedbackResponse {
   feedback_id: string;
 }
 
-export interface IntentSuggestion {
-  rootQuery: string;
+/** A single ranked candidate returned by the cache for an intent suggestion. */
+export interface CandidateItem {
   entryId: string;
+  rootQuery: string;
   similarity: number;
   ageHours: number;
   answerPreview: string;
-  confidence: "high" | "pending_judge";
+  confidence: "high" | "intent_match" | "pending_judge";
+  /** Advisory LLM judge verdict — populated async for pending_judge candidates. */
   judgeVerdict?: "YES" | "NO" | null;
   judgeReason?: string | null;
+}
+
+export interface IntentSuggestion {
+  /** Top-1 entry_id — keys the IntentDecisionStore on the backend. */
+  primaryEntryId: string;
+  /** Up to 3 ranked candidates the user can pick from. */
+  candidates: CandidateItem[];
 }
 
 export interface ChatMessage {
@@ -153,6 +162,9 @@ export interface ChatMessage {
   // Set when CacheCheckExecutor fires an intent_suggestion event — shows the
   // purple decision banner while the SSE stream is paused awaiting user input.
   intentSuggestion?: IntentSuggestion;
+  // Set when a definitive cache HIT fires cache_context — shows a read-only
+  // "Also matched in cache" strip below the answer.
+  cacheContext?: CandidateItem[];
 }
 
 export interface HitlDetails {
@@ -171,20 +183,42 @@ export type StreamEvent =
   | { type: "hitl"; approval_id: string; details: HitlDetails }
   | {
       type: "intent_suggestion";
+      // top-level fields (backward compat, reflect top-1)
       root_query: string;
       entry_id: string;
       similarity: number;
       age_hours: number;
       answer_preview: string;
-      confidence: "high" | "pending_judge";
+      confidence: "high" | "intent_match" | "pending_judge";
       judge_verdict: "YES" | "NO" | null;
       judge_reason: string | null;
+      // Multi-candidate list (new)
+      candidates: Array<{
+        entry_id: string;
+        root_query: string;
+        similarity: number;
+        age_hours: number;
+        answer_preview: string;
+        confidence: "high" | "intent_match" | "pending_judge";
+      }>;
     }
   | {
       type: "intent_suggestion_judge";
       entry_id: string;
       judge_verdict: "YES" | "NO";
       judge_reason: string;
+    }
+  | {
+      type: "cache_context";
+      context: "hit";
+      candidates: Array<{
+        entry_id: string;
+        root_query: string;
+        similarity: number;
+        age_hours: number;
+        answer_preview: string;
+        confidence: "high" | "intent_match" | "pending_judge";
+      }>;
     }
   | { type: "done" }
   | { type: "error"; message: string };
