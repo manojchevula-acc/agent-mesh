@@ -15,7 +15,10 @@ def get_enricher(config: EnrichmentConfig, llm_config: LLMConfig) -> BaseEnriche
     """
     if config.provider == "anthropic":
         api_key = llm_config.anthropic_api_key
-    elif config.provider == "openai":
+    elif config.provider in ("openai", "openai_compat"):
+        # 'openai_compat' reuses the same generic key field — point config.base_url
+        # at a free-tier vision endpoint (e.g. Gemini) to use a different key/host
+        # than the primary answer LLM.
         api_key = llm_config.openai_api_key
     else:
         raise ValueError(f"Unsupported enrichment provider: {config.provider}")

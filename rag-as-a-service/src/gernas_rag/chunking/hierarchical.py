@@ -131,6 +131,7 @@ class HierarchicalChunker(BaseChunker):
                     "source_page": page,
                     "modality": Modality(modality),
                     "artifact_ref": ref,
+                    "bbox": el.bbox,
                     "enrichment_model": el.metadata.get("enrichment_model"),
                 }
             )

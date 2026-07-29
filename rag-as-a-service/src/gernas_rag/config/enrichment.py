@@ -12,9 +12,18 @@ from pydantic import BaseModel
 
 class EnrichmentConfig(BaseModel):
     enabled: bool = False  # Safe default — existing ingestion behaviour is unchanged until opted in.
-    provider: str = "anthropic"  # 'anthropic' | 'openai'
+    provider: str = "anthropic"  # 'anthropic' | 'openai' | 'openai_compat'
     vlm_model_name: str = "claude-haiku-4-5-20251001"
-    max_tokens: int = 1024
+    # Only used when provider='openai_compat' — points the OpenAI SDK at a free-tier
+    # vision endpoint (e.g. Gemini's OpenAI-compatible API) instead of api.openai.com.
+    # Independent of llm.openai_base_url so this can differ from the primary answer LLM.
+    base_url: str | None = None
+    # Dense multi-series charts need real headroom for an exhaustive transcription
+    # (every axis, tick, legend entry, row) — 1024 clipped mid-list on ~40% of the
+    # POC corpus. 4096 is comfortably under embedding.max_length in raw token terms
+    # for typical figures; row-group splitting (max_media_chunk_tokens) exists for
+    # the rare table that's still bigger than this.
+    max_tokens: int = 4096
     timeout_seconds: int = 20
     min_image_bytes: int = 2048  # Skip decorative logos/rules/icons below this size.
     table_confidence_threshold: float = 0.7  # Docling table-structure confidence below which a VLM pass is used.

@@ -28,6 +28,7 @@ def test_enriched_figure_becomes_one_atomic_chunk():
         element_type=ElementType.FIGURE,
         text=long_caption,
         page_number=3,
+        bbox=(10.0, 20.0, 300.0, 400.0),
         metadata={
             "nearest_heading": "3.1 Pricing Grid",
             "artifact_ref": "sha256:deadbeef.png",
@@ -44,6 +45,19 @@ def test_enriched_figure_becomes_one_atomic_chunk():
     assert mc.metadata.enrichment_model == "claude-haiku-4-5-20251001"
     assert mc.metadata.source_page == 3
     assert mc.metadata.section_heading == "3.1 Pricing Grid"
+    assert mc.metadata.bbox == (10.0, 20.0, 300.0, 400.0)  # carried through for citation/re-cropping
+
+
+def test_media_chunk_without_bbox_defaults_to_none():
+    chunker = HierarchicalChunker(ChunkingConfig())
+    fig = ExtractedElement(
+        element_type=ElementType.FIGURE,
+        text="A chart",
+        metadata={"artifact_ref": "sha256:abc.png"},
+    )
+    chunks = chunker.chunk(_extraction([fig]), _base_meta())
+    media = [c for c in chunks if c.metadata.modality == Modality.FIGURE][0]
+    assert media.metadata.bbox is None
 
 
 def test_media_chunk_id_is_deterministic():

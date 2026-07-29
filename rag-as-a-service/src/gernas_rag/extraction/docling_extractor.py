@@ -15,7 +15,7 @@ logger = get_logger(__name__)
 SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".pptx", ".html", ".md"}
 
 _LABEL_MAP = {
-    "section_heading": ElementType.HEADING,
+    "section_header": ElementType.HEADING,
     "title": ElementType.HEADING,
     "paragraph": ElementType.PARAGRAPH,
     "text": ElementType.PARAGRAPH,
@@ -196,7 +196,18 @@ class DoclingExtractor(BaseExtractor):
             elements.append(
                 ExtractedElement(
                     element_type=el_type,
-                    text=item.text if hasattr(item, "text") else str(item),
+                    # FIGURE/TABLE text must only ever come from the VLM caption
+                    # written back during enrichment. Some Docling item types
+                    # expose a `.text` attribute that isn't a caption at all but a
+                    # diagnostic repr of the item (incl. embedded image bytes) —
+                    # trusting it here would let that leak into the index as a
+                    # "chunk" if the VLM call later fails and the fail-soft path
+                    # reuses whatever text was already on the element.
+                    text=(
+                        ""
+                        if el_type in (ElementType.FIGURE, ElementType.TABLE)
+                        else (item.text if hasattr(item, "text") else "")
+                    ),
                     level=level,
                     page_number=self._page_of(item),
                     metadata=metadata,

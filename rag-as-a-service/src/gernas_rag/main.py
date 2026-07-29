@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api.middleware import RequestIDMiddleware, StructuredLoggingMiddleware
-from .api.routers import admin, evaluate, health, ingest, retrieve
+from .api.routers import admin, evaluate, health, ingest, retrieve, search_history
 from .cache.redis_cache import RAGCache
 from .config.settings import get_settings
 from .embeddings.factory import get_embedder
@@ -14,6 +14,7 @@ from .generation.generator import ResponseGenerator
 from .ingestion.pipeline import IngestionPipeline
 from .llm.factory import get_llm
 from .retrieval.pipeline import RetrievalPipeline
+from .storage.search_history_store import get_search_history_store
 from .utils.logging import configure_logging, get_logger
 from .utils.telemetry import configure_telemetry, instrument_fastapi
 from .vectordb.factory import get_vectordb
@@ -67,6 +68,7 @@ async def lifespan(app: FastAPI):
     app.state.generator = ResponseGenerator(
         settings, llm, artifact_store=artifact_store, vision_llm=vision_llm
     )
+    app.state.search_history_store = get_search_history_store(settings.search_history)
 
     yield
 
@@ -99,6 +101,7 @@ def create_app() -> FastAPI:
     app.include_router(ingest.router, prefix="/api/v1", tags=["ingestion"])
     app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
     app.include_router(evaluate.router, prefix="/api/v1", tags=["evaluation"])
+    app.include_router(search_history.router, prefix="/api/v1", tags=["search-history"])
 
     instrument_fastapi(app)
     return app

@@ -31,6 +31,7 @@ from .hydration import HydrationConfig
 from .ingestion import IngestionConfig
 from .llm import LLMConfig
 from .retrieval import RetrievalConfig
+from .search_history import SearchHistoryConfig
 from .vectordb import VectorDBConfig
 
 _CONFIG_DIR = Path(__file__).resolve().parents[3] / "config"
@@ -97,6 +98,7 @@ class Settings(BaseSettings):
     enrichment: EnrichmentConfig = Field(default_factory=EnrichmentConfig)
     hydration: HydrationConfig = Field(default_factory=HydrationConfig)
     artifact_store: ArtifactStoreConfig = Field(default_factory=ArtifactStoreConfig)
+    search_history: SearchHistoryConfig = Field(default_factory=SearchHistoryConfig)
 
 
 def _load_yaml_overrides() -> dict[str, Any]:

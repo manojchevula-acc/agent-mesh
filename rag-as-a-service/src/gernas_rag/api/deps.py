@@ -7,6 +7,7 @@ from ..config.settings import Settings
 from ..generation.generator import ResponseGenerator
 from ..ingestion.pipeline import IngestionPipeline
 from ..retrieval.pipeline import RetrievalPipeline
+from ..storage.search_history_store import BaseSearchHistoryStore
 from ..vectordb.base import BaseVectorDB
 from .auth import verify_auth
 
@@ -17,6 +18,7 @@ __all__ = [
     "get_generator",
     "get_cache",
     "get_vectordb",
+    "get_search_history_store",
     "verify_auth",
 ]
 
@@ -43,3 +45,7 @@ def get_cache(request: Request) -> RAGCache:
 
 def get_vectordb(request: Request) -> BaseVectorDB:
     return request.app.state.vectordb
+
+
+def get_search_history_store(request: Request) -> BaseSearchHistoryStore:
+    return request.app.state.search_history_store

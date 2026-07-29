@@ -47,3 +47,6 @@ class RetrieveResponse(BaseModel):
     freshness_warning_global: bool
     answer: str | None = None  # Only populated if generate_answer=True
     cache_hit: bool = False
+    # Set fresh per-request by the router, never derived from the cached blob
+    # (a cached response's stale search_id must never leak to a new caller).
+    search_id: str | None = None

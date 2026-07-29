@@ -89,9 +89,19 @@ ingestion:
 # ── Multimodal image-as-text extension (all additive, disabled by default) ──
 enrichment:
   enabled: false                       # ingest-time figure/table captioning
-  provider: anthropic                  # 'anthropic' | 'openai'
+  provider: anthropic                  # 'anthropic' | 'openai' | 'openai_compat'
   vlm_model_name: claude-haiku-4-5-20251001
-  max_tokens: 1024
+  # Free-tier alternative for GPU-less laptops — no local model, just a remote call:
+  #   provider: openai_compat
+  #   vlm_model_name: gemini-flash-latest    # alias -> current stable Flash; pinned versions get deprecated
+  #   base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+  #   (set RAG__LLM__OPENAI_API_KEY to your Gemini API key — reused as the enrichment key)
+  base_url:                            # only used when provider: openai_compat
+  # Gemini "thinking" models spend part of this budget on hidden reasoning tokens
+  # before writing any visible output (see thinking_budget:0 in vision_llm_enricher.py,
+  # which disables that for Gemini specifically) — kept generous as a safety margin
+  # for whatever budget the provider doesn't let us zero out.
+  max_tokens: 4096
   timeout_seconds: 20
   min_image_bytes: 2048                # skip decorative logos/rules/icons
   table_confidence_threshold: 0.7

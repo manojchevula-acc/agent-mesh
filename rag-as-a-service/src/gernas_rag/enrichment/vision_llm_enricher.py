@@ -33,10 +33,12 @@ class VisionLLMEnricher(BaseEnricher):
     def _load(self) -> None:
         if self._client is not None:
             return
-        if self._config.provider == "openai":
+        if self._config.provider in ("openai", "openai_compat"):
             from openai import AsyncOpenAI
 
-            self._client = AsyncOpenAI(api_key=self._api_key)
+            # base_url is None for real OpenAI; set it to target a free-tier
+            # vision endpoint instead (e.g. Gemini's OpenAI-compatible API).
+            self._client = AsyncOpenAI(api_key=self._api_key, base_url=self._config.base_url)
         else:  # anthropic (default)
             import anthropic
 
@@ -49,10 +51,21 @@ class VisionLLMEnricher(BaseEnricher):
         try:
             self._load()
             b64 = base64.b64encode(item.image_bytes).decode("ascii")
-            if self._config.provider == "openai":
-                text = await self._call_openai(b64, item.mime_type, prompt)
+            if self._config.provider in ("openai", "openai_compat"):
+                text, truncated = await self._call_openai(b64, item.mime_type, prompt)
             else:
-                text = await self._call_anthropic(b64, item.mime_type, prompt)
+                text, truncated = await self._call_anthropic(b64, item.mime_type, prompt)
+            if truncated:
+                # Fail-soft keeps the partial caption (better than nothing) but this
+                # must be loud: a silently clipped transcription reads as complete
+                # and nobody would think to check it against the source image.
+                logger.warning(
+                    "VLM caption hit max_tokens and was truncated mid-transcription; "
+                    "raise enrichment.max_tokens if this recurs",
+                    model=self._config.vlm_model_name,
+                    max_tokens=self._config.max_tokens,
+                    caption_chars=len(text),
+                )
             return EnrichmentOutput(
                 caption_text=text.strip(),
                 model_name=self._config.vlm_model_name,
@@ -66,7 +79,7 @@ class VisionLLMEnricher(BaseEnricher):
             )
             return EnrichmentOutput(caption_text="", model_name=None, ok=False)
 
-    async def _call_anthropic(self, b64: str, mime_type: str, prompt: str) -> str:
+    async def _call_anthropic(self, b64: str, mime_type: str, prompt: str) -> tuple[str, bool]:
         response = await self._client.messages.create(
             model=self._config.vlm_model_name,
             max_tokens=self._config.max_tokens,
@@ -84,9 +97,20 @@ class VisionLLMEnricher(BaseEnricher):
                 }
             ],
         )
-        return "".join(b.text for b in response.content if getattr(b, "type", "") == "text")
+        text = "".join(b.text for b in response.content if getattr(b, "type", "") == "text")
+        return text, response.stop_reason == "max_tokens"
 
-    async def _call_openai(self, b64: str, mime_type: str, prompt: str) -> str:
+    async def _call_openai(self, b64: str, mime_type: str, prompt: str) -> tuple[str, bool]:
+        kwargs: dict[str, Any] = {}
+        if self._is_gemini():
+            # Gemini "thinking" models spend part of max_tokens on hidden reasoning
+            # tokens before writing any visible output — observed eating ~960 of a
+            # 1024-token budget on a single transcription call, leaving only a few
+            # dozen tokens for the actual answer, even though finish_reason correctly
+            # reports "length". This is a pure transcription task with nothing to
+            # reason about, so turn thinking down as far as this endpoint allows
+            # ("none" is rejected here; "low" is the minimum it accepts).
+            kwargs["reasoning_effort"] = "low"
         response = await self._client.chat.completions.create(
             model=self._config.vlm_model_name,
             max_tokens=self._config.max_tokens,
@@ -103,5 +127,10 @@ class VisionLLMEnricher(BaseEnricher):
                     ],
                 }
             ],
+            **kwargs,
         )
-        return response.choices[0].message.content or ""
+        choice = response.choices[0]
+        return choice.message.content or "", choice.finish_reason == "length"
+
+    def _is_gemini(self) -> bool:
+        return "generativelanguage.googleapis.com" in (self._config.base_url or "")
