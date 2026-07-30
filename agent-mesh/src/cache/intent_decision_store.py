@@ -55,6 +55,27 @@ class IntentDecisionStore:
         finally:
             self._pending.pop(entry_id, None)
 
+    async def wait_for_decision_ex(self, entry_id: str, timeout: float = 60.0) -> tuple[str, Optional[str]]:
+        """Like wait_for_decision but distinguishes the outcome for observability.
+
+        Returns (outcome, chosen_entry_id) where outcome is one of
+        ``"accepted"`` / ``"rejected"`` (explicit) / ``"timeout"``. Both
+        "rejected" and "timeout" mean "run fresh"; separating them lets the
+        reject-feedback loop treat an explicit reject as a false-positive signal
+        without counting silent timeouts.
+        """
+        dec = self._pending.get(entry_id)
+        if dec is None:
+            dec = IntentDecision(entry_id=entry_id)
+            self._pending[entry_id] = dec
+        try:
+            await asyncio.wait_for(dec.event.wait(), timeout=timeout)
+            return ("accepted" if dec.accepted is True else "rejected", dec.chosen_entry_id)
+        except asyncio.TimeoutError:
+            return ("timeout", None)
+        finally:
+            self._pending.pop(entry_id, None)
+
     def resolve(self, entry_id: str, accepted: bool, chosen_entry_id: Optional[str] = None) -> bool:
         """Signal a user decision. chosen_entry_id is which candidate was selected.
 

@@ -200,6 +200,11 @@ class MeshState:
     cache_judge_invoked: bool = False
     cache_judge_decision: str = ""
     cache_judge_reason: str = ""
+    # Entity signature of THIS query (serialized). Extracted once by the entity gate
+    # in CacheCheckExecutor and reused by the orchestrator when storing a fresh answer
+    # (avoids a second extraction call). "" means not yet extracted.
+    query_entities: str = ""
+    query_entities_extracted: bool = False
     # When True, CacheCheckExecutor skips the lookup and runs the full pipeline.
     # The fresh answer is still stored back into the cache, replacing the stale entry.
     bypass_cache: bool = False
@@ -471,12 +476,85 @@ class CacheCheckExecutor(Executor):
             _set_attr(span, "cache.role", state.role)
             _set_attr(span, "cache.query_length", len(state.query))
             try:
-                from src.cache import get_cache_store, llm_cache_judge
+                from src.cache import (
+                    get_cache_store, llm_cache_judge,
+                    extract_entities, signatures_match, signature_to_str, signature_from_str,
+                )
                 cache = get_cache_store()
                 # lookup_top_n() is CPU-bound (embedding) — run in thread pool.
                 # Fetches up to 3 candidates; primary zone decision is based on top-1.
                 all_candidates = await asyncio.to_thread(cache.lookup_top_n, state.query, state.role, 3)
                 entry = all_candidates[0] if all_candidates else None
+
+                # ── ENTITY GATE ────────────────────────────────────────────────
+                # Intent similarity alone can't tell "profile for CUST001" from
+                # "profile for CUST002" (same template, one differing token → sim ≥ 0.92).
+                # Extract the entities of the incoming query and require each candidate's
+                # entity signature to match exactly. Only runs when a candidate exists
+                # (a definitive MISS pays zero extraction cost).
+                if Config.CACHE_ENTITY_GATING_ENABLED and all_candidates:
+                    new_sig = await extract_entities(state.query, state.role)
+                    # Cache the signature on state so the orchestrator can reuse it when
+                    # storing a fresh answer (avoids a second extraction call).
+                    state.query_entities = signature_to_str(new_sig)
+                    state.query_entities_extracted = True
+
+                    _hard = Config.CACHE_ENTITY_GATE_MODE != "soft"
+                    kept: list = []
+                    dropped = 0
+                    for c in all_candidates:
+                        if c.entities_indexed:
+                            cand_sig = signature_from_str(c.entities)
+                        else:
+                            # Pre-gating entry — extract from its stored query text (memoized).
+                            cand_sig = await extract_entities(c.query_original, state.role)
+                        if signatures_match(new_sig, cand_sig):
+                            kept.append(c)
+                            continue
+                        # Mismatch: hard → drop; soft → demote to gray zone for the judge.
+                        dropped += 1
+                        state.trail.append(
+                            f"entity_gate:{'drop' if _hard else 'demote'}:{c.entry_id}"
+                            f":{signature_to_str(new_sig)}!={signature_to_str(cand_sig)}"
+                        )
+                        if not _hard:
+                            c.confidence = "pending_judge"
+                            kept.append(c)
+
+                    if dropped:
+                        cache._entity_gate_drops += dropped
+                        _set_attr(span, "cache.entity_gate_dropped", dropped)
+                        _set_attr(span, "cache.entity_gate_mode", "hard" if _hard else "soft")
+                        if tracer:
+                            tracer.emit_stage(
+                                "cache_check", "entity_gate",
+                                message=(
+                                    f"Entity gate {'dropped' if _hard else 'demoted'} "
+                                    f"{dropped} candidate(s) — different entity than the query"
+                                ),
+                            )
+                    all_candidates = kept
+                    entry = all_candidates[0] if all_candidates else None
+
+                # ── CROSS-ENCODER RERANK (augment) ─────────────────────────────
+                # Re-order the surviving candidates by a local cross-encoder and drop
+                # low-relevance ones before the LLM judge. The judge still decides the
+                # gray zone on the reordered set (augment mode). Fully local — no API.
+                if Config.CACHE_RERANKER_ENABLED and all_candidates:
+                    from src.cache import reranker as _reranker
+                    reranked, _top_score = await asyncio.to_thread(
+                        _reranker.rerank_entries, state.query, all_candidates
+                    )
+                    if _top_score is not None:
+                        cache._reranker_invocations += 1
+                        dropped_rr = len(all_candidates) - len(reranked)
+                        all_candidates = reranked
+                        entry = all_candidates[0] if all_candidates else None
+                        _set_attr(span, "cache.rerank_top_score", float(_top_score))
+                        _set_attr(span, "cache.rerank_dropped", dropped_rr)
+                        state.trail.append(
+                            f"rerank:top={_top_score:.3f}:kept={len(all_candidates)}:dropped={dropped_rr}"
+                        )
 
                 # Build the shared candidates payload (used in BRANCH A and BRANCH C)
                 def _build_candidates_payload(entries):

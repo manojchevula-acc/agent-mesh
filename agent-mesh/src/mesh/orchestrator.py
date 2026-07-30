@@ -37,13 +37,52 @@ from src.a2a.clients import ask_remote
 from src.utils.console_logger import AgentLogger
 from src.observability import get_logger, CAT_SYSTEM
 from src.observability.baggage import set_request_baggage, detach_baggage
-from src.observability.metrics import record_mesh_request
+from src.observability.metrics import record_mesh_request, record_cache
 from src.mesh.workflow import MeshState, build_mesh_workflow, build_hitl_resume_workflow, build_intent_resume_workflow, _stream_queue, _emit_stream_event
 from src.tracing.execution_trace import get_active_tracer
 from src.tracing.llm_reasoning import strip_reasoning_markers
 from src.memory import ConversationStore
 
 _log = get_logger(CAT_SYSTEM)
+
+
+def _record_cache_rejection(role: str, query: str, chosen_entry_id: str,
+                            similarity: float, confidence: str) -> None:
+    """Capture an explicit cache-HIT rejection as a false-positive signal.
+
+    Bumps the in-memory reject counter, emits a metric, and appends a durable
+    line to CACHE_REJECTIONS_LOG for later threshold tuning / a demote list.
+    Best-effort — never raises into the request path.
+    """
+    try:
+        is_hit = similarity >= 0.92
+        from src.cache import get_cache_store
+        _store = get_cache_store()
+        if is_hit:
+            _store._hit_rejected += 1
+        else:
+            _store._intent_rejected += 1
+        record_cache("HIT_REJECTED" if is_hit else "INTENT_REJECTED",
+                     role, 0.0, confidence=confidence)
+    except Exception as exc:
+        _log.warning("cache reject metric failed: %s", exc)
+    try:
+        import json as _json
+        from datetime import datetime, timezone
+        rec = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "role": role,
+            "query": query,
+            "chosen_entry_id": chosen_entry_id,
+            "similarity": round(float(similarity), 4),
+            "confidence": confidence,
+        }
+        path = pathlib.Path(Config.CACHE_REJECTIONS_LOG)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(_json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        _log.warning("cache reject log write failed: %s", exc)
 
 
 @dataclass
@@ -209,7 +248,10 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
         final.intent_match_pending = False
         # Register before waiting so resolve() from the API endpoint always finds it
         intent_decision_store.create_pending(entry_id)
-        accepted, chosen_id = await intent_decision_store.wait_for_decision(entry_id, timeout=60.0)
+        outcome, chosen_id = await intent_decision_store.wait_for_decision_ex(entry_id, timeout=60.0)
+        accepted = outcome == "accepted"
+        primary_sim = getattr(final, "intent_match_similarity", 0.0)
+        primary_conf = getattr(final, "intent_match_confidence", "")
 
         if accepted:
             # Find the specific candidate the user chose (may differ from top-1)
@@ -229,23 +271,38 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
             final.cache_similarity = chosen_similarity
             final.cache_age_hours = chosen_age
             final.skip_cache_store = True
-            trail_tag = "cache_hit_selected" if chosen_similarity >= 0.92 else "intent_match_accepted"
+            is_hit = chosen_similarity >= 0.92
+            trail_tag = "cache_hit_selected" if is_hit else "intent_match_accepted"
             final.trail.append(f"{trail_tag}:chosen={chosen_id}:sim={chosen_similarity:.3f}")
-            # Increment variant_count on the chosen entry (fire-and-forget)
+            # Increment variant_count on the chosen entry (fire-and-forget) + record accept metrics
             try:
                 from src.cache import get_cache_store
+                _store = get_cache_store()
                 asyncio.create_task(
-                    asyncio.to_thread(get_cache_store().increment_variant_count, chosen_id)
+                    asyncio.to_thread(_store.increment_variant_count, chosen_id)
                 )
+                if is_hit:
+                    _store._hit_accepted += 1
+                    record_cache("HIT_ACCEPTED", user.role.value, 0.0, confidence="high")
+                else:
+                    _store._intent_accepted += 1
+                    record_cache("INTENT_ACCEPTED", user.role.value, 0.0, confidence=primary_conf)
             except Exception as _exc:
-                _log.warning("intent_match: increment_variant_count task failed: %s", _exc)
+                _log.warning("intent_match: accept bookkeeping failed: %s", _exc)
         else:
             _log.info(
-                "Intent suggestion: rejected or timed out entry_id=%s — running full pipeline",
-                entry_id, extra={"user": user.username, "status": "INTENT_REJECTED"},
+                "Intent suggestion: %s entry_id=%s — running full pipeline",
+                outcome, entry_id, extra={"user": user.username, "status": "INTENT_REJECTED"},
             )
             final.skip_cache_store = True
-            final.trail.append("intent_match_rejected")
+            final.trail.append(f"intent_match_rejected:{outcome}")
+            # Explicit reject (not a silent timeout) is a false-positive signal: the
+            # candidate looked similar but the user said it's wrong. Record it for tuning.
+            if outcome == "rejected":
+                _record_cache_rejection(
+                    role=user.role.value, query=query, chosen_entry_id=chosen_id or entry_id,
+                    similarity=primary_sim, confidence=primary_conf,
+                )
             resume_wf = build_intent_resume_workflow(ask=ask_remote)
             resume_events = await resume_wf.run(final)
             resumed = _final_state(resume_events)
@@ -264,6 +321,15 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
     # Only store when: cache is enabled, inline store is enabled, answer is non-empty,
     # request was not blocked, the answer was NOT itself a cache hit (avoid re-caching
     # stale data), and skip_cache_store is not set (intent-match variants never stored).
+    # Negative-answer guard (Phase 7a): don't cache "no data found"/"unable to
+    # retrieve" — a future identical query that now succeeds would get the stale miss.
+    _is_negative = False
+    if Config.CACHE_SKIP_NEGATIVE and final.answer:
+        from src.cache.negative_filter import is_negative_answer
+        _is_negative = is_negative_answer(final.answer)
+        if _is_negative:
+            final.trail.append("cache_store_skipped:negative_answer")
+
     if (
         Config.ENABLE_RESPONSE_CACHE
         and Config.CACHE_INLINE_STORE_ENABLED
@@ -271,6 +337,7 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
         and not final.blocked
         and not getattr(final, "cache_hit", False)
         and not getattr(final, "skip_cache_store", False)
+        and not _is_negative
     ):
         try:
             from src.cache import get_cache_store
@@ -281,6 +348,16 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
                 _summ = _active_tracer.summary()
                 _route = _summ.route or "unknown"
                 _reasoning = _summ.llm_reasoning or []
+            # Entity signature for the gate. Reuse the value the CacheCheckExecutor
+            # already extracted for this query; otherwise (definitive MISS — the gate
+            # never ran) extract it now so future lookups can gate against this entry.
+            # None → gating disabled → the "entities" metadata key is omitted.
+            _entities = None
+            if getattr(final, "query_entities_extracted", False):
+                _entities = final.query_entities
+            elif Config.CACHE_ENTITY_GATING_ENABLED:
+                from src.cache import extract_entities, signature_to_str
+                _entities = signature_to_str(await extract_entities(query, user.role.value))
             get_cache_store().store(
                 query=query,
                 answer=final.answer,
@@ -289,6 +366,7 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
                 session_id=session_id,
                 request_id=request_id or "",
                 reasoning=_reasoning,
+                entities=_entities,
             )
         except Exception as exc:
             _log.warning("cache store failed: %s", exc)

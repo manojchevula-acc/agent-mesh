@@ -147,6 +147,43 @@ class Config:
     CACHE_INTENT_MATCH_ENABLED:   bool  = os.getenv("CACHE_INTENT_MATCH_ENABLED",   "false").lower() in ("1", "true", "yes")
     CACHE_INTENT_MATCH_THRESHOLD: float = float(os.getenv("CACHE_INTENT_MATCH_THRESHOLD", "0.85"))
 
+    # Entity-aware cache gating — extract the entities a query is about (customer/
+    # account/deal IDs, people, products, time scope, amounts, ...) and only allow a
+    # cached candidate to survive when its entity signature EXACTLY matches the incoming
+    # query's. Prevents serving CUST001's answer for a CUST002 query (same intent,
+    # different entity — a collision the dense embedding scores above the HIT threshold).
+    # LLM-based extraction (covers all entity kinds) with a deterministic regex fallback.
+    #   hard  → entity mismatch drops the candidate (treated as MISS)  [default]
+    #   soft  → entity mismatch demotes the candidate to the gray zone (LLM judge decides)
+    CACHE_ENTITY_GATING_ENABLED:  bool  = os.getenv("CACHE_ENTITY_GATING_ENABLED", "true").lower() in ("1", "true", "yes")
+    CACHE_ENTITY_MODEL:           str   = os.getenv("CACHE_ENTITY_MODEL", os.getenv("CACHE_JUDGE_MODEL", "openai/gpt-oss-20b"))
+    CACHE_ENTITY_GATE_MODE:       str   = os.getenv("CACHE_ENTITY_GATE_MODE", "hard").lower()
+    CACHE_ENTITY_EXTRACT_TIMEOUT: float = float(os.getenv("CACHE_ENTITY_EXTRACT_TIMEOUT", "5.0"))
+    # Bulk ingest: extract entities for many queries per LLM call (avoids rate limits),
+    # and retry transient failures (HTTP 429 / connection / SSL) with exponential backoff.
+    CACHE_ENTITY_BATCH_SIZE:      int   = int(os.getenv("CACHE_ENTITY_BATCH_SIZE", "15"))
+    CACHE_ENTITY_MAX_RETRIES:     int   = int(os.getenv("CACHE_ENTITY_MAX_RETRIES", "3"))
+
+    # Phase 4 — Cross-encoder reranker (augment). A local cross-encoder re-orders the
+    # retrieved candidates and drops low-relevance ones before the LLM judge runs.
+    # Fully local (sentence-transformers) — no network, immune to 429/proxy-SSL issues.
+    CACHE_RERANKER_ENABLED:   bool  = os.getenv("CACHE_RERANKER_ENABLED", "false").lower() in ("1", "true", "yes")
+    CACHE_RERANKER_MODEL:     str   = os.getenv("CACHE_RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
+    CACHE_RERANK_MIN_SCORE:   float = float(os.getenv("CACHE_RERANK_MIN_SCORE", "-5.0"))
+
+    # Phase 7a — skip caching negative / "no data found" answers (live store path).
+    CACHE_SKIP_NEGATIVE:      bool  = os.getenv("CACHE_SKIP_NEGATIVE", "true").lower() in ("1", "true", "yes")
+    # Phase 7b — durable log of rejected cache HITs (false-positive signal for tuning).
+    CACHE_REJECTIONS_LOG:     str   = os.getenv("CACHE_REJECTIONS_LOG", "data/cache_rejections.jsonl")
+
+    # Phase 2 — embed a canonical form (entities → placeholders) so paraphrases of the
+    # same intent cluster tightly. Changing this invalidates existing vectors → re-embed.
+    CACHE_CANONICALIZE_ENABLED: bool = os.getenv("CACHE_CANONICALIZE_ENABLED", "false").lower() in ("1", "true", "yes")
+
+    # Phase 3 — hybrid dense + sparse (BM25) retrieval fused via Reciprocal Rank Fusion.
+    CACHE_HYBRID_ENABLED:     bool  = os.getenv("CACHE_HYBRID_ENABLED", "false").lower() in ("1", "true", "yes")
+    CACHE_HYBRID_FETCH_K:     int   = int(os.getenv("CACHE_HYBRID_FETCH_K", "20"))
+
     # Inline store: when true, the orchestrator writes new Q/A pairs to ChromaDB immediately
     # after each pipeline run (original behavior). Set to false to disable inline writes and
     # use the ingest pipeline (src.cache.ingest_pipeline) for batch embedding instead.

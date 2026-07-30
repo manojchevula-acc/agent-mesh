@@ -60,6 +60,13 @@ class CacheEntry:
     confidence: str = "high"
     # ChromaDB document ID — populated by lookup_with_id(); used for accept/reject intent decisions
     entry_id: str = ""
+    # Serialized entity signature (see src/cache/entity_extractor.signature_to_str);
+    # "" when the entry predates entity gating (backfill or lookup-time extraction fills it).
+    entities: str = ""
+    # True when the "entities" metadata key was present on the stored entry (so entities=""
+    # means a genuinely entity-free query). False for pre-gating entries — the gate then
+    # extracts entities from query_original at lookup time.
+    entities_indexed: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +113,14 @@ class SemanticCacheStore:
         self._judge_hits: int = 0
         self._judge_misses: int = 0
 
+        # In-memory counters for entity gate / reranker / accept-reject (reset on restart)
+        self._entity_gate_drops: int = 0
+        self._reranker_invocations: int = 0
+        self._hit_accepted: int = 0
+        self._hit_rejected: int = 0
+        self._intent_accepted: int = 0
+        self._intent_rejected: int = 0
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -143,10 +158,12 @@ class SemanticCacheStore:
             _log.info("cache lookup_top_n: collection has %d entries, role=%s, n=%d", count, role, n)
             if count == 0:
                 return []
-            vec = self._embed(query)
+            vec = self._embed_query(query)
+            # Hybrid retrieval fetches a wider dense candidate pool to re-rank with BM25.
+            fetch_n = max(n, Config.CACHE_HYBRID_FETCH_K) if Config.CACHE_HYBRID_ENABLED else n
             results = self._collection.query(
                 query_embeddings=[vec],
-                n_results=min(n, count),
+                n_results=min(fetch_n, count),
                 where={"role": {"$eq": role}},
                 include=["metadatas", "distances", "documents"],
             )
@@ -200,14 +217,22 @@ class SemanticCacheStore:
                     reasoning=reasoning,
                     confidence=confidence,
                     entry_id=doc_id,
+                    entities=meta.get("entities", "") or "",
+                    entities_indexed="entities" in meta,
                 ))
 
+            # Hybrid dense+sparse: fuse the dense order with a BM25 lexical order
+            # (Reciprocal Rank Fusion) so rare discriminative tokens influence ranking.
+            if Config.CACHE_HYBRID_ENABLED and len(entries) > 1:
+                entries = self._hybrid_rerank(query, entries)
+
+            entries = entries[:n]
             if entries:
                 _log.info(
                     "cache lookup_top_n: returning %d entries, best sim=%.4f confidence=%s",
                     len(entries), entries[0].similarity, entries[0].confidence,
                 )
-            return entries  # already sorted by similarity desc (ChromaDB returns asc distance)
+            return entries  # sorted by similarity desc (dense) or fused rank (hybrid)
         except Exception as exc:
             _log.warning("cache lookup_top_n error: %s", exc, exc_info=True)
             return []
@@ -222,8 +247,16 @@ class SemanticCacheStore:
         request_id: str,
         ts: Optional[datetime] = None,
         reasoning: Optional[List[dict]] = None,
+        entities: Optional[str] = None,
     ) -> None:
-        """Persist a cache entry. No-op when disabled. Thread-safe via _write_lock."""
+        """Persist a cache entry. No-op when disabled. Thread-safe via _write_lock.
+
+        ``entities`` is a pre-computed, serialized entity signature (see
+        src/cache/entity_extractor.signature_to_str). Callers compute it — store()
+        stays synchronous and does no LLM work. Pass "" for a genuinely entity-free
+        query; pass None only if the signature is unknown (the "entities" metadata
+        key is then omitted and the lookup-time gate will extract on the fly).
+        """
         if not self._enabled:
             return
         if not query or not answer:
@@ -252,24 +285,29 @@ class SemanticCacheStore:
             with self._write_lock:
                 self._ensure_initialized()
                 doc_id = self._doc_id(role, query)
-                vec = self._embed(query)
+                vec = self._embed_query(query)
                 ts_now = ts or datetime.now(timezone.utc)
+                metadata = {
+                    "role": role,
+                    "answer": answer[:8192],  # cap to avoid SQLite blob size limits
+                    "route": route,
+                    "session_id": session_id,
+                    "request_id": request_id,
+                    "ts_iso": ts_now.isoformat(),
+                    "ts_unix": float(ts_now.timestamp()),
+                    "reasoning": reasoning_json,
+                    "variant_count": 0,
+                    "last_variant_ts": 0.0,
+                }
+                # Only write the entities key when a signature was provided, so a
+                # missing key reliably means "not yet extracted" (see entities_indexed).
+                if entities is not None:
+                    metadata["entities"] = entities
                 self._collection.upsert(
                     ids=[doc_id],
                     embeddings=[vec],
                     documents=[query],
-                    metadatas=[{
-                        "role": role,
-                        "answer": answer[:8192],  # cap to avoid SQLite blob size limits
-                        "route": route,
-                        "session_id": session_id,
-                        "request_id": request_id,
-                        "ts_iso": ts_now.isoformat(),
-                        "ts_unix": float(ts_now.timestamp()),
-                        "reasoning": reasoning_json,
-                        "variant_count": 0,
-                        "last_variant_ts": 0.0,
-                    }],
+                    metadatas=[metadata],
                 )
                 _log.info("cache store: upsert OK id=%s role=%s total=%d",
                           doc_id, role, self._collection.count())
@@ -326,6 +364,14 @@ class SemanticCacheStore:
             "judge_invocations": self._judge_invocations,
             "judge_hits": self._judge_hits,
             "judge_misses": self._judge_misses,
+            "entity_gate_drops": self._entity_gate_drops,
+            "reranker_invocations": self._reranker_invocations,
+            "hit_accepted": self._hit_accepted,
+            "hit_rejected": self._hit_rejected,
+            "intent_accepted": self._intent_accepted,
+            "intent_rejected": self._intent_rejected,
+            "reranker_enabled": Config.CACHE_RERANKER_ENABLED,
+            "entity_gating_enabled": Config.CACHE_ENTITY_GATING_ENABLED,
         }
         if not self._enabled:
             base["total_entries"] = 0
@@ -369,6 +415,54 @@ class SemanticCacheStore:
             "cache: ChromaDB collection '%s' opened at %s (%d entries)",
             self._collection_name, self._chroma_dir, self._collection.count(),
         )
+
+    def _hybrid_rerank(self, query: str, entries: List["CacheEntry"]) -> List["CacheEntry"]:
+        """Reorder dense candidates by fusing dense + BM25 rank (Reciprocal Rank Fusion).
+
+        Sparse (BM25) is computed over the candidate documents so a rare token in
+        the query (that the dense embedding under-weights) can lift the lexically
+        matching candidate. RRF score = Σ 1/(k + rank). On any error (e.g. rank_bm25
+        not installed) the original dense order is returned unchanged.
+        """
+        try:
+            from rank_bm25 import BM25Okapi
+        except Exception:
+            _log.warning("hybrid retrieval: rank_bm25 not installed — keeping dense order")
+            return entries
+        try:
+            docs = [(e.query_original or "").lower().split() for e in entries]
+            if not any(docs):
+                return entries
+            bm25 = BM25Okapi(docs)
+            sparse_scores = bm25.get_scores(query.lower().split())
+
+            # entries are already in dense-desc order → dense rank = position.
+            dense_rank = {id(e): r for r, e in enumerate(entries)}
+            sparse_order = sorted(range(len(entries)), key=lambda i: sparse_scores[i], reverse=True)
+            sparse_rank = {id(entries[i]): r for r, i in enumerate(sparse_order)}
+
+            k = 60  # standard RRF constant
+            def rrf(e):
+                return 1.0 / (k + dense_rank[id(e)]) + 1.0 / (k + sparse_rank[id(e)])
+
+            return sorted(entries, key=rrf, reverse=True)
+        except Exception as exc:
+            _log.warning("hybrid retrieval error (keeping dense order): %s", exc)
+            return entries
+
+    def _embed_query(self, query: str) -> list[float]:
+        """Embed a query, applying canonicalization (Phase 2) when enabled.
+
+        When CACHE_CANONICALIZE_ENABLED, structured-ID entities are replaced with
+        placeholders before embedding so paraphrases of the same intent cluster
+        tightly. The raw query is still what gets stored as the document and keys
+        the doc ID — canonicalization only affects the embedded vector.
+        """
+        text = query
+        if Config.CACHE_CANONICALIZE_ENABLED:
+            from src.cache.entity_extractor import canonicalize_query
+            text = canonicalize_query(query)
+        return self._embed(text)
 
     def _embed(self, text: str) -> list[float]:
         """Return a 384-dim embedding for text. Lazy-loads the model on first call.

@@ -539,5 +539,179 @@ class TestCachePackageExports(unittest.TestCase):
         self.assertEqual(entry.confidence, "pending_judge")
 
 
+# ---------------------------------------------------------------------------
+# Entity extractor + entity-aware gating tests
+# ---------------------------------------------------------------------------
+
+class TestEntityExtractor(unittest.TestCase):
+    """Unit tests for src.cache.entity_extractor (HTTP mocked where needed)."""
+
+    def setUp(self):
+        # Clear the in-process memoization between tests so mocked responses apply.
+        from src.cache import entity_extractor
+        entity_extractor._signature_cache.clear()
+
+    def test_e01_regex_extracts_customer_id(self):
+        # Regex must use the SAME bucket label + lowercase value as the LLM path,
+        # so regex-ingested entries match LLM lookups (plural "customer_ids", lowercase).
+        from src.cache.entity_extractor import extract_entities_regex
+        sig = extract_entities_regex("show customer profile for cust002")
+        self.assertEqual(sig, frozenset({"customer_ids:cust002"}))
+
+    def test_e02_regex_uppercases_and_handles_multiple(self):
+        from src.cache.entity_extractor import extract_entities_regex
+        sig = extract_entities_regex("compare CUST001 and acc50 for deal7")
+        self.assertEqual(sig, frozenset({"customer_ids:cust001", "accounts:acc50", "deals:deal7"}))
+
+    def test_e02b_regex_handles_underscore_id_form(self):
+        """FAB data uses both CUST001 and CUST_007 — both must be captured, distinctly."""
+        from src.cache.entity_extractor import extract_entities_regex, signatures_match
+        self.assertEqual(extract_entities_regex("margin for CUST_007"),
+                         frozenset({"customer_ids:cust_007"}))
+        # CUST_007 vs CUST_008 must NOT match (the core gate guarantee).
+        self.assertFalse(signatures_match(
+            extract_entities_regex("margin for CUST_007"),
+            extract_entities_regex("margin for CUST_008"),
+        ))
+
+    def test_e02c_regex_and_llm_signatures_are_aligned(self):
+        """Regression: regex and LLM-parsed signatures must be identical for the same ID
+        so a regex-ingested entry matches an LLM lookup (the entity-gate MISS bug)."""
+        from src.cache.entity_extractor import extract_entities_regex, _parse_extractor_response
+        regex_sig = extract_entities_regex("Show customer profile for CUST001")
+        llm_sig = _parse_extractor_response('{"customer_ids": ["CUST001"]}')
+        self.assertEqual(regex_sig, llm_sig)
+
+    def test_e03_signatures_match_equality(self):
+        from src.cache.entity_extractor import signatures_match
+        self.assertTrue(signatures_match(frozenset({"customer_id:cust001"}),
+                                         frozenset({"customer_id:cust001"})))
+        self.assertFalse(signatures_match(frozenset({"customer_id:cust001"}),
+                                          frozenset({"customer_id:cust002"})))
+        # Both-empty (entity-free queries) must match so they still cache normally.
+        self.assertTrue(signatures_match(frozenset(), frozenset()))
+        # Superset is NOT equal.
+        self.assertFalse(signatures_match(frozenset({"customer_id:cust001"}),
+                                          frozenset({"customer_id:cust001", "time_scope:2025"})))
+
+    def test_e04_signature_str_roundtrip(self):
+        from src.cache.entity_extractor import signature_to_str, signature_from_str
+        sig = frozenset({"customer_id:cust001", "time_scope:last quarter"})
+        self.assertEqual(signature_from_str(signature_to_str(sig)), sig)
+        self.assertEqual(signature_from_str(""), frozenset())
+        self.assertEqual(signature_from_str(None), frozenset())
+
+    def test_e05_parse_response_json(self):
+        from src.cache.entity_extractor import _parse_extractor_response
+        raw = '{"customer_ids": ["CUST002"], "accounts": [], "deals": [], "people": [], "products": [], "time_scope": "", "amounts": [], "other": []}'
+        self.assertEqual(_parse_extractor_response(raw), frozenset({"customer_ids:cust002"}))
+
+    def test_e06_parse_response_code_fence_and_prose(self):
+        from src.cache.entity_extractor import _parse_extractor_response
+        raw = 'Here you go:\n```json\n{"customer_ids": ["CUST001"], "time_scope": "last quarter"}\n```'
+        self.assertEqual(
+            _parse_extractor_response(raw),
+            frozenset({"customer_ids:cust001", "time_scope:last quarter"}),
+        )
+
+    def test_e07_parse_response_garbage_returns_empty(self):
+        from src.cache.entity_extractor import _parse_extractor_response, EMPTY_SIGNATURE
+        self.assertEqual(_parse_extractor_response("not json at all"), EMPTY_SIGNATURE)
+
+    def _patch_httpx_async(self, content: str, status_code: int = 200):
+        mock_resp = MagicMock()
+        mock_resp.status_code = status_code
+        mock_resp.json.return_value = {"choices": [{"message": {"content": content}}]}
+        mock_resp.raise_for_status = MagicMock()
+        if status_code >= 400:
+            mock_resp.raise_for_status.side_effect = Exception(f"HTTP {status_code}")
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        return patch("src.cache.entity_extractor.httpx.AsyncClient", return_value=mock_client)
+
+    def test_e08_extract_entities_async_uses_llm(self):
+        from src.cache.entity_extractor import extract_entities
+        with self._patch_httpx_async('{"customer_ids": ["CUST002"]}'):
+            sig = _run(extract_entities("show profile for cust002"))
+        self.assertEqual(sig, frozenset({"customer_ids:cust002"}))
+
+    def test_e09_extract_entities_falls_back_to_regex_on_error(self):
+        from src.cache.entity_extractor import extract_entities
+        with self._patch_httpx_async("", status_code=500):
+            sig = _run(extract_entities("show profile for cust002"))
+        # LLM failed → regex fallback still catches the structured ID (canonical format).
+        self.assertEqual(sig, frozenset({"customer_ids:cust002"}))
+
+    def test_e10_cust001_vs_cust002_do_not_match(self):
+        """The core bug: same intent, different entity must produce non-matching signatures."""
+        from src.cache.entity_extractor import extract_entities_regex, signatures_match
+        s1 = extract_entities_regex("show customer profile for cust001")
+        s2 = extract_entities_regex("show customer profile for cust002")
+        self.assertFalse(signatures_match(s1, s2),
+                         "cust001 and cust002 must NOT match — gate would (correctly) drop the candidate")
+
+    def test_e11_memoization(self):
+        from src.cache.entity_extractor import extract_entities, _signature_cache
+        with self._patch_httpx_async('{"customer_ids": ["CUST002"]}') as mock_cls:
+            _run(extract_entities("show profile for cust002"))
+            _run(extract_entities("show profile for cust002"))  # second call served from memo
+        # AsyncClient constructed at most once (second lookup hit the memo cache).
+        self.assertLessEqual(mock_cls.call_count, 1)
+
+
+class TestEntityMetadataRoundtrip(unittest.TestCase):
+    """store(entities=...) persists the signature; lookup returns it + entities_indexed."""
+
+    _tmp_dir: str = ""
+    _orig_chroma_dir: str = ""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp_dir = tempfile.mkdtemp(prefix="mesh_test_entities_")
+        from src.config import Config
+        cls._orig_chroma_dir = Config.CACHE_CHROMA_DIR
+        Config.CACHE_CHROMA_DIR = cls._tmp_dir
+        from src.cache.semantic_cache import SemanticCacheStore
+        cls.store = SemanticCacheStore()
+
+    @classmethod
+    def tearDownClass(cls):
+        from src.config import Config
+        Config.CACHE_CHROMA_DIR = cls._orig_chroma_dir
+        shutil.rmtree(cls._tmp_dir, ignore_errors=True)
+
+    def test_e12_store_persists_entities_and_lookup_returns_them(self):
+        self.store.store(
+            query="Show customer profile for CUST001",
+            answer="Customer: Al Noor Trading LLC",
+            role="platform_administrator",
+            route="Data Layer Service",
+            session_id="ent_session",
+            request_id="ENT001",
+            entities="customer_id:CUST001",
+        )
+        result = self.store.lookup("Show customer profile for CUST001", "platform_administrator")
+        self.assertIsNotNone(result)
+        self.assertEqual(result.entities, "customer_id:CUST001")
+        self.assertTrue(result.entities_indexed, "entities_indexed must be True when the key was stored")
+
+    def test_e13_entry_without_entities_key_is_not_indexed(self):
+        self.store.store(
+            query="What is the pricing floor for BB loans?",
+            answer="5.25%",
+            role="relationship_manager",
+            route="RAG",
+            session_id="ent_session2",
+            request_id="ENT002",
+            # entities omitted (None) → key not written
+        )
+        result = self.store.lookup("What is the pricing floor for BB loans?", "relationship_manager")
+        self.assertIsNotNone(result)
+        self.assertFalse(result.entities_indexed,
+                         "entities_indexed must be False when no signature was provided")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

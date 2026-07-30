@@ -376,20 +376,28 @@ def _cache_hist():
     return _cache_duration
 
 
-def record_cache(result: str, role: str, duration_ms: float) -> None:
-    """Record one semantic cache lookup.
+def record_cache(result: str, role: str, duration_ms: float, confidence: str = "") -> None:
+    """Record one semantic cache lookup / cache-lifecycle event.
 
     Args:
-        result:      ``"HIT"``, ``"MISS"``, ``"SKIP"`` (cache disabled), or ``"ERROR"``
+        result:      one of ``"HIT"``, ``"MISS"``, ``"SKIP"``, ``"ERROR"``,
+                     ``"INTENT_SUGGESTION"``, and the accept/reject outcomes
+                     ``"HIT_ACCEPTED"`` / ``"HIT_REJECTED"`` /
+                     ``"INTENT_ACCEPTED"`` / ``"INTENT_REJECTED"`` /
+                     ``"ENTITY_GATE_DROP"``.
         role:        the requesting user's role
-        duration_ms: lookup wall-clock time in milliseconds
+        duration_ms: lookup wall-clock time in milliseconds (0 for lifecycle events)
+        confidence:  optional zone label ("high"/"intent_match"/"pending_judge"/...)
     """
     if not Config.ENABLE_BUSINESS_METRICS:
         return
     try:
         attrs = {"result": result, "role": role}
+        if confidence:
+            attrs["confidence"] = confidence
         _cache_ctr().add(1, attrs)
-        _cache_hist().record(duration_ms, {"result": result})
+        # role added to the histogram so latency can be sliced per role
+        _cache_hist().record(duration_ms, {"result": result, "role": role})
     except Exception:
         pass
 

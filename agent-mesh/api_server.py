@@ -711,6 +711,15 @@ async def get_cache_stats(request: Request) -> JSONResponse:
             "embed_model": Config.CACHE_EMBED_MODEL,
             "chroma_dir": Config.CACHE_CHROMA_DIR,
             "collection_name": Config.CACHE_COLLECTION_NAME,
+            # Lifecycle counters (always present so dashboards don't break when disabled)
+            "entity_gate_drops": 0,
+            "reranker_invocations": 0,
+            "hit_accepted": 0,
+            "hit_rejected": 0,
+            "intent_accepted": 0,
+            "intent_rejected": 0,
+            "reranker_enabled": Config.CACHE_RERANKER_ENABLED,
+            "entity_gating_enabled": Config.CACHE_ENTITY_GATING_ENABLED,
         })
     try:
         from src.cache import get_cache_store
@@ -883,14 +892,22 @@ async def post_reject(request: Request) -> JSONResponse:
 async def post_cache_ingest(request: Request) -> JSONResponse:
     """Trigger a background ingest job. POST /api/cache/ingest
 
-    Body (all optional): {"source_dir"?: str, "dry_run"?: bool, "overwrite"?: bool, "role"?: str}
+    Body (all optional): {"source"?: "conversations"|"audit", "source_dir"?: str,
+        "audit_file"?: str, "dry_run"?: bool, "overwrite"?: bool, "role"?: str}
     Returns: {"job_id": str, "status": "running"}
     """
     try:
         body = await request.json()
     except Exception:
         body = {}
+    source = (body.get("source") or "conversations").strip().lower()
+    if source not in ("conversations", "audit"):
+        source = "conversations"
     source_dir = (body.get("source_dir") or "").strip()
+    audit_file = (body.get("audit_file") or "").strip()
+    entity_mode = (body.get("entity_mode") or "llm").strip().lower()
+    if entity_mode not in ("llm", "regex", "none"):
+        entity_mode = "llm"
     dry_run = bool(body.get("dry_run", False))
     overwrite = bool(body.get("overwrite", False))
     role_filter = (body.get("role") or "").strip() or None
@@ -901,12 +918,15 @@ async def post_cache_ingest(request: Request) -> JSONResponse:
 
     asyncio.create_task(run_ingest_job(
         job_id,
+        source=source,
         source_dir=source_dir,
+        audit_file=audit_file,
         dry_run=dry_run,
         overwrite=overwrite,
         role_filter=role_filter,
+        entity_mode=entity_mode,
     ))
-    _log.info("cache ingest job started job_id=%s dry_run=%s", job_id, dry_run)
+    _log.info("cache ingest job started job_id=%s source=%s dry_run=%s", job_id, source, dry_run)
     return JSONResponse({"job_id": job_id, "status": "running"})
 
 

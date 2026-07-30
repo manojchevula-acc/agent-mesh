@@ -37,6 +37,13 @@ def _warmup_sync() -> None:
 
     store = get_cache_store()
     store._warmup()
+    # Pre-load the cross-encoder reranker too (no-op when disabled) so the first
+    # real request pays no model-load cost.
+    try:
+        from src.cache import reranker
+        reranker.warmup()
+    except Exception as exc:
+        _log.warning("cache warmup: reranker warmup skipped (%s)", exc)
     try:
         count = store._collection.count() if store._collection else 0
         _log.info("cache warmup: ready — %d entries in collection", count)
