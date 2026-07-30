@@ -1,5 +1,5 @@
 import { memo, useState } from "react";
-import { ChevronDown, ChevronRight, Brain, ShieldCheck, GitBranch, Layers, Database, Search } from "lucide-react";
+import { ChevronDown, ChevronRight, Brain, ShieldCheck, GitBranch, Layers, Database, Search, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { LLMReasoningEntry, LLMReasoningData } from "@/types/mesh";
 
@@ -12,6 +12,7 @@ const AGENT_LABELS: Record<string, string> = {
   data_agent:   "Data Agent",
   rag:          "RAG Agent",
   rag_agent:    "RAG Agent",
+  cache:        "Semantic Cache",
 };
 
 const PHASE_LABELS: Record<string, string> = {
@@ -21,6 +22,7 @@ const PHASE_LABELS: Record<string, string> = {
   tool_selection: "Tool Selection",
   data_synthesis: "Data Synthesis",
   rag_synthesis:  "RAG Synthesis",
+  cache_decision: "Cache Decision",
   unknown:        "Reasoning",
 };
 
@@ -32,6 +34,7 @@ const AGENT_COLOURS: Record<string, { badge: string; border: string; icon: strin
   data_agent:   { badge: "bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300",        border: "border-teal-200 dark:border-teal-700",    icon: "text-teal-500" },
   rag:          { badge: "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300", border: "border-violet-200 dark:border-violet-700", icon: "text-violet-500" },
   rag_agent:    { badge: "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300", border: "border-violet-200 dark:border-violet-700", icon: "text-violet-500" },
+  cache:        { badge: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-300", border: "border-indigo-200 dark:border-indigo-700", icon: "text-indigo-500" },
 };
 
 const PHASE_ICONS: Record<string, React.ReactNode> = {
@@ -41,6 +44,7 @@ const PHASE_ICONS: Record<string, React.ReactNode> = {
   tool_selection: <Brain       className="h-3.5 w-3.5" />,
   data_synthesis: <Database    className="h-3.5 w-3.5" />,
   rag_synthesis:  <Search      className="h-3.5 w-3.5" />,
+  cache_decision: <Zap         className="h-3.5 w-3.5" />,
 };
 
 function agentColours(agent: string) {
@@ -421,8 +425,26 @@ const ReasoningCard = memo(function ReasoningCard({
             </>
           )}
 
+          {/* ── CACHE DECISION (semantic cache pipeline) ─── */}
+          {entry.phase === "cache_decision" && (
+            <>
+              {data.rationale && (
+                <blockquote className="mt-2 border-l-2 border-indigo-300 dark:border-indigo-700 pl-2 text-muted italic">
+                  {data.rationale}
+                </blockquote>
+              )}
+              {typeof data.confidence === "number" && (
+                <div className="mt-1.5">
+                  <p className="text-[10px] uppercase tracking-wider text-muted mb-0.5">Similarity</p>
+                  <ConfidenceBar value={data.confidence} />
+                </div>
+              )}
+              <StepsChain steps={(data.steps as string[]) ?? []} />
+            </>
+          )}
+
           {/* ── FALLBACK (raw / unknown phase) ───────────── */}
-          {entry.phase !== "intent_routing" && entry.phase !== "synthesis" && entry.phase !== "safety_review" && entry.phase !== "tool_selection" && entry.phase !== "data_synthesis" && entry.phase !== "rag_synthesis" && (
+          {entry.phase !== "intent_routing" && entry.phase !== "synthesis" && entry.phase !== "safety_review" && entry.phase !== "tool_selection" && entry.phase !== "data_synthesis" && entry.phase !== "rag_synthesis" && entry.phase !== "cache_decision" && (
             <div className="mt-2">
               {data.rationale && (
                 <blockquote className="border-l-2 border-line pl-2 text-muted italic">{data.rationale}</blockquote>

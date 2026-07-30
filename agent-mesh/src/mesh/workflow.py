@@ -486,6 +486,59 @@ class CacheCheckExecutor(Executor):
                 all_candidates = await asyncio.to_thread(cache.lookup_top_n, state.query, state.role, 3)
                 entry = all_candidates[0] if all_candidates else None
 
+                # Trackers for the human-readable cache reasoning surfaced in the UI
+                # (Execution Steps "checks" + AI Reasoning "Cache Decision" card).
+                _n_retrieved = len(all_candidates)
+                _top_similarity = all_candidates[0].similarity if all_candidates else 0.0
+                _entity_dropped = 0
+                _entity_sig = ""
+                _rr_top = None
+                _rr_dropped = 0
+
+                def _build_cache_steps(judge_invoked=False, judge_decision=None, judge_reason=""):
+                    """Compose the ordered cache decision sub-steps for the UI."""
+                    steps: list[str] = []
+                    retr = "Hybrid dense+sparse retrieval" if Config.CACHE_HYBRID_ENABLED else "Dense semantic retrieval"
+                    if _n_retrieved:
+                        steps.append(f"{retr}: {_n_retrieved} candidate(s), top similarity {_top_similarity:.0%}")
+                    else:
+                        steps.append(f"{retr}: no candidate above the {Config.CACHE_MISS_THRESHOLD:.0%} floor")
+                    if Config.CACHE_ENTITY_GATING_ENABLED and _n_retrieved:
+                        if _entity_dropped:
+                            steps.append(
+                                f"Entity gate: dropped {_entity_dropped} candidate(s) with a different entity"
+                                + (f" (query entities: {_entity_sig})" if _entity_sig else "")
+                            )
+                        else:
+                            steps.append(f"Entity gate: entity match confirmed ({_entity_sig or 'no entities in query'})")
+                    if _rr_top is not None:
+                        steps.append(
+                            f"Cross-encoder rerank: top score {_rr_top:.2f}"
+                            + (f", dropped {_rr_dropped} low-relevance candidate(s)" if _rr_dropped else "")
+                        )
+                    if judge_invoked:
+                        steps.append(f"LLM judge: {judge_decision or '—'} — {judge_reason or 'no reason given'}")
+                    return steps
+
+                def _emit_cache_reasoning(result_label, headline, similarity, steps):
+                    """Add a 'Cache Decision' entry to the AI Reasoning tab (best-effort)."""
+                    if not tracer:
+                        return
+                    try:
+                        from src.tracing.llm_reasoning import LLMReasoningEntry
+                        tracer.add_llm_reasoning([LLMReasoningEntry(
+                            agent="cache",
+                            phase="cache_decision",
+                            data={
+                                "result": result_label,
+                                "rationale": headline,
+                                "confidence": float(similarity or 0.0),
+                                "steps": steps,
+                            },
+                        ).to_dict()])
+                    except Exception:
+                        pass
+
                 # ── ENTITY GATE ────────────────────────────────────────────────
                 # Intent similarity alone can't tell "profile for CUST001" from
                 # "profile for CUST002" (same template, one differing token → sim ≥ 0.92).
@@ -521,6 +574,8 @@ class CacheCheckExecutor(Executor):
                             c.confidence = "pending_judge"
                             kept.append(c)
 
+                    _entity_dropped = dropped
+                    _entity_sig = signature_to_str(new_sig)
                     if dropped:
                         cache._entity_gate_drops += dropped
                         _set_attr(span, "cache.entity_gate_dropped", dropped)
@@ -550,6 +605,8 @@ class CacheCheckExecutor(Executor):
                         dropped_rr = len(all_candidates) - len(reranked)
                         all_candidates = reranked
                         entry = all_candidates[0] if all_candidates else None
+                        _rr_top = _top_score
+                        _rr_dropped = dropped_rr
                         _set_attr(span, "cache.rerank_top_score", float(_top_score))
                         _set_attr(span, "cache.rerank_dropped", dropped_rr)
                         state.trail.append(
@@ -607,6 +664,7 @@ class CacheCheckExecutor(Executor):
                         state.role, entry.similarity, entry.confidence, len(candidates_payload),
                         extra={"user": state.user_name, "status": "INTENT_SUGGESTION"},
                     )
+                    _steps_a = _build_cache_steps()
                     if tracer:
                         tracer.emit_stage(
                             "cache_check", "intent_suggestion",
@@ -615,8 +673,15 @@ class CacheCheckExecutor(Executor):
                                 f"{len(candidates_payload)} similar cached question(s) found "
                                 f"(best: {entry.similarity:.0%})"
                             ),
+                            checks=_steps_a,
                         )
-                    record_cache("INTENT_SUGGESTION", state.role, elapsed)
+                    _emit_cache_reasoning(
+                        "INTENT_SUGGESTION",
+                        f"{len(candidates_payload)} semantically similar cached question(s) found "
+                        f"(best {entry.similarity:.0%}, confidence '{entry.confidence}') — surfacing them for the user to confirm rather than auto-serving.",
+                        entry.similarity, _steps_a,
+                    )
+                    record_cache("INTENT_SUGGESTION", state.role, elapsed, confidence=entry.confidence)
 
                     # Emit intent_suggestion SSE with full candidate list
                     _emit_stream_event({
@@ -731,6 +796,7 @@ class CacheCheckExecutor(Executor):
                         hit_label, state.role, entry.similarity, entry.age_hours, len(candidates_payload),
                         extra={"user": state.user_name, "status": "HIT_PENDING"},
                     )
+                    _steps_c = _build_cache_steps(judge_invoked, judge_decision, judge_reason)
                     if tracer:
                         tracer.emit_stage(
                             "cache_check", "intent_suggestion",
@@ -739,8 +805,16 @@ class CacheCheckExecutor(Executor):
                                 f"{len(candidates_payload)} cached answer(s) found "
                                 f"(best: {entry.similarity:.0%}) — awaiting selection"
                             ),
+                            checks=_steps_c,
                         )
-                    record_cache("HIT", state.role, elapsed)
+                    _emit_cache_reasoning(
+                        "HIT",
+                        f"Semantic cache hit at {entry.similarity:.0%} similarity"
+                        + (" (LLM judge confirmed the gray-zone match)" if judge_invoked else "")
+                        + " — offering the cached answer(s) for selection.",
+                        entry.similarity, _steps_c,
+                    )
+                    record_cache("HIT", state.role, elapsed, confidence=entry.confidence)
                     _emit_stream_event({
                         "stage": "cache_check", "status": "pending",
                         "message": f"Cache hit ({entry.similarity:.0%} match) — select an answer or run fresh",
@@ -789,12 +863,15 @@ class CacheCheckExecutor(Executor):
                     else "LLM judge rejected gray-zone candidate — running full pipeline" if judge_invoked
                     else "No cached answer found — running full pipeline"
                 )
+                _steps_d = _build_cache_steps(judge_invoked, "MISS" if judge_invoked else None, judge_reason)
                 if tracer:
                     tracer.emit_stage(
                         "cache_check", "completed",
                         result="MISS",
                         message=miss_message,
+                        checks=_steps_d,
                     )
+                _emit_cache_reasoning("MISS", miss_message, _top_similarity, _steps_d)
                 record_cache("MISS", state.role, elapsed)
 
             except Exception as exc:

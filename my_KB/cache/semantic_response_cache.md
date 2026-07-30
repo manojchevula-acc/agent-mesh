@@ -191,6 +191,18 @@ show up in `GET /api/cache/stats`. The **HIT→reject rate** is a direct false-p
 signal — if it climbs, the thresholds are too loose. Code: `record_cache`
 (`src/observability/metrics.py`), counters in `SemanticCacheStore.stats()`.
 
+**Cache decisions surfaced in the UI.** `CacheCheckExecutor` now explains each cache
+decision in both trace panels (no raw-trail digging needed):
+- **Execution Trace → "Cache Check" step**: shows the ordered sub-steps as `checks`
+  bullets — *dense/hybrid retrieval → entity gate → cross-encoder rerank → LLM judge* —
+  with per-step outcomes (the judge line renders with a Brain icon).
+- **AI Reasoning tab → "Cache Decision" card** (`agent="cache"`, `phase="cache_decision"`,
+  added via `tracer.add_llm_reasoning`): a plain-language rationale, a similarity bar, and
+  the same step chain. Emitted for HIT, intent-suggestion, and MISS outcomes.
+Backend: `_build_cache_steps` / `_emit_cache_reasoning` in `CacheCheckExecutor.run`.
+Frontend: `LLMReasoningPanel.tsx` (`cache` agent + `cache_decision` phase); the Execution
+Steps panel needed no change (`checks` rendering was reused).
+
 ### Phase 7 — Negative-answer guard + reject-feedback loop
 **Problem (7a).** If the system answers "No data found for CUST099" and that gets
 cached, a *later* identical question — after the data exists — would be served the
