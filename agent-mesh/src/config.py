@@ -37,6 +37,10 @@ class Config:
     AUDIT_LOG_FILE: str = os.getenv("AUDIT_LOG_FILE", "data/audit_trail.jsonl")
     TRACE_LOG_FILE: str = os.getenv("TRACE_LOG_FILE", "data/trace_log.jsonl")  # structured trace events for all mesh layers
     CONVERSATION_STORE_DIR: str = os.getenv("CONVERSATION_STORE_DIR", "data/conversations")
+    # Source directory used by the batch ingest pipeline (src.cache.ingest_pipeline).
+    # Defaults to the cleaned_conversations subfolder — separate from CONVERSATION_STORE_DIR
+    # so the memory system and ingest pipeline can point to different directories.
+    CACHE_INGEST_SOURCE_DIR: str = os.getenv("CACHE_INGEST_SOURCE_DIR", "data/conversations/cleaned_conversations")
 
     # ----------------------------------------------------------------------
     # Conversational memory (Option B — MAF thread memory + JSONL persistence)
@@ -188,6 +192,17 @@ class Config:
     # after each pipeline run (original behavior). Set to false to disable inline writes and
     # use the ingest pipeline (src.cache.ingest_pipeline) for batch embedding instead.
     CACHE_INLINE_STORE_ENABLED: bool = os.getenv("CACHE_INLINE_STORE_ENABLED", "true").lower() in ("1", "true", "yes")
+
+    # Paraphrase augmentation — ingest-time only. When enabled, each ingested Q/A pair
+    # generates N additional paraphrase variants (via LLM) stored as separate ChromaDB
+    # entries pointing to the same answer. Widens the cache hit radius without affecting
+    # query-time latency. Disabled by default; enable for bulk ingest runs.
+    CACHE_PARAPHRASE_ENABLED: bool = os.getenv("CACHE_PARAPHRASE_ENABLED", "false").lower() in ("1", "true", "yes")
+    CACHE_PARAPHRASE_N: int = int(os.getenv("CACHE_PARAPHRASE_N", "3"))
+    # Seconds to sleep between paraphrase LLM calls to respect provider RPM limits.
+    # Entity extraction also calls the LLM, so effective call rate is 2× per Q/A pair.
+    # At 5 s the combined rate stays ~12 RPM — well within Cerebras free-tier limits.
+    CACHE_PARAPHRASE_DELAY_S: float = float(os.getenv("CACHE_PARAPHRASE_DELAY_S", "5.0"))
 
     # ----------------------------------------------------------------------
     # User feedback — thumbs up/down + comment stored for future fine-tuning.

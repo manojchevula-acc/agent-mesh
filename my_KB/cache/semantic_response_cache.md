@@ -1,1155 +1,1075 @@
-# Semantic Response Cache — Complete Implementation Reference
+# Semantic Response Cache — Complete Guide (Plain English)
 
-AgentMesh uses a **semantic vector cache** backed by ChromaDB to short-circuit the expensive LLM pipeline when a semantically similar question has already been answered for the same role. A full pipeline run costs 2–4 A2A LLM round-trips (~5–70 s). A cache hit costs one embedding call (~50 ms).
+> **Who this is for:** Anyone who wants to understand how the AgentMesh cache works — no prior knowledge of AI, embeddings, or databases required. Every technical term is explained the first time it appears, and every step uses real examples.
 
 ---
 
-## Architecture
+## 1. What Problem Does This Solve?
 
-### High-Level Position in the Pipeline
+Imagine you work at a bank call center. Every time a customer calls and asks *"What is CUST001's credit limit?"*, your colleague has to spend 30 seconds looking it up, running calculations, and drafting an answer.
 
-```mermaid
-flowchart LR
-    U([User Query]) --> G[InputGuardrail]
-    G --> R[RBACValidation]
-    R --> C{CacheCheckExecutor}
+Now imagine a **smart notepad** that remembers every question and answer. The next time someone asks nearly the same thing, it just reads from the notepad instead of doing the full 30-second lookup. That is exactly what this cache does.
 
-    C -->|MISS sim < 0.75| P[ComplianceExecutor]
-    C -->|INTENT SUGGESTION\npending_judge or intent_match\nCAIN flag on| IS[Intent Suggestion Banner\nup to 3 candidates]
-    C -->|HIT sim ≥ 0.92\nor judge_hit| HS[HIT Suggestion Banner\nup to 3 candidates]
+| Without cache | With cache |
+|---|---|
+| Every question → full AI pipeline → 5–70 seconds | Similar question seen before → serve saved answer → ~50 ms |
+| 2–4 AI model calls per question | 0 AI model calls on a cache hit |
+| High cost, slow response | Near-instant, free |
 
-    IS -->|Accept candidate| Ans([Serve chosen cached answer\nincrement_variant_count])
-    IS -->|Reject or 60s timeout| P
-    HS -->|Accept candidate| Ans
-    HS -->|Reject or 60s timeout| P
+---
 
-    P --> D[Domain Agent LLM]
-    D --> Red[Redact]
-    Red --> Store[(ChromaDB\ninline store OR ingest_pipeline)]
-    Red --> Ans2([Return fresh answer])
+## 2. The Big Picture — How It Fits In
+
+Before the system runs the expensive AI pipeline, it first checks: *"Have we answered something like this before?"*
+
+```
+User asks a question
+        ↓
+  Who are you? (RBAC)         ← checks your role: relationship_manager, credit_officer, etc.
+        ↓
+  Cache Check                 ← "Did we answer something like this before?"
+        ↓               ↓
+   YES (hit)          NO (miss)
+        ↓               ↓
+ Show saved answer   Run full AI pipeline → save the new answer
 ```
 
-> `CacheCheckExecutor` sits **after RBAC, before Compliance**.
-> RBAC resolves first so the `role` is known — cache is role-scoped.
-> Compliance and Domain are skipped on accepted cache hit — all LLM cost is saved.
-> HITL resume workflows are excluded from caching — approved requests always run fresh.
+The cache sits **after** the identity check (so it knows your role) and **before** the expensive AI steps (so it can skip them entirely on a hit).
 
 ---
 
-## Similarity Zones
+## 3. Core Concept: How Does the Cache "Understand" Questions?
+
+### 3.1 Turning words into numbers (Embeddings)
+
+A computer cannot directly compare two sentences for meaning. So we use a technique called **embedding** — converting a sentence into a list of 384 numbers (called a **vector**) that represents its *meaning*.
+
+**Real example:**
+
+| Sentence | What it becomes (simplified) |
+|---|---|
+| "What is CUST001's credit limit?" | `[0.23, -0.41, 0.87, 0.12, ...]` — 384 numbers |
+| "Tell me the credit ceiling for CUST001" | `[0.25, -0.39, 0.85, 0.11, ...]` — very similar numbers |
+| "What is today's weather?" | `[0.91, 0.02, -0.33, 0.77, ...]` — very different numbers |
+
+Two sentences that *mean the same thing* produce vectors that are **close together** in space. Two sentences about totally different topics produce vectors that are **far apart**.
+
+> **No LLM used here.** The embedding model (`all-MiniLM-L6-v2`) is a small, fast, local model — not a large language model. It runs in ~50 ms with no API call and no network dependency.
+
+### 3.2 Measuring closeness (Cosine Similarity)
+
+Once we have two vectors, we measure how similar they are using a score called **cosine similarity**:
+
+```
+0.0 = completely different (like comparing apples to astronomy)
+0.5 = somewhat related
+0.75 = quite similar
+0.92 = nearly identical meaning
+1.0 = exact same sentence
+```
+
+Think of it like measuring the angle between two arrows pointing in a room:
+- Arrows pointing in the same direction → angle = 0° → similarity = 1.0
+- Arrows pointing opposite directions → angle = 180° → similarity = 0.0
+
+> **No LLM used here either.** This is pure math — a formula applied to the two number lists. It takes microseconds.
+
+### 3.3 Where answers are stored (ChromaDB)
+
+**ChromaDB** is a special database designed to store vectors (those lists of numbers) and search through them by meaning — not by exact keyword match.
+
+Think of it like a library where books are arranged not alphabetically, but by *topic similarity*. You walk in and say "I want something about credit limits" and it leads you to the nearest shelf — even if no book title contains those exact words.
+
+Every saved answer in ChromaDB contains:
+- The original question (as text + as a vector)
+- The answer
+- Your role (so answers never leak between roles)
+- When it was saved
+- Which customer/entity it was about
+- Other metadata for filtering
+
+---
+
+## 4. Complete Journey of a Real Query — Step by Step
+
+Let's trace **one real query** through every single step.
+
+**Scenario:** Sarah is a Relationship Manager. She types:
+> *"What pricing should I recommend for customer CUST001?"*
+
+Previously, someone else asked:
+> *"Show me recommended pricing for CUST001"*  ← already in the cache
+
+---
+
+### Step 1: Query arrives, role is confirmed
+
+Sarah logs in. The system knows she is a `relationship_manager`. The cache will only look at answers saved for that role — a credit officer's answers are in a completely separate space.
+
+```
+Sarah's query: "What pricing should I recommend for customer CUST001?"
+Role confirmed: relationship_manager
+```
+
+> **No LLM used.** Role comes from the authentication/RBAC system.
+
+---
+
+### Step 2: Query Templating — Replace IDs with placeholders before embedding
+
+This step is also called **canonicalization** in the code. Before the query is turned into a vector, specific identifiers are replaced with generic placeholder slots — turning the query into a **template**.
+
+```
+Raw query:       "What pricing should I recommend for customer CUST001?"
+After templating: "What pricing should I recommend for customer <CUSTOMER_ID>?"
+```
+
+The three placeholder types (from the code in `entity_extractor.py`):
+
+| Pattern matched | Replaced with | Example |
+|---|---|---|
+| `CUST001`, `CUST_007`, `cust-42` | `<CUSTOMER_ID>` | "profile for CUST001" → "profile for <CUSTOMER_ID>" |
+| `ACC001`, `ACC-4421` | `<ACCOUNT>` | "balance for ACC-4421" → "balance for <ACCOUNT>" |
+| `DEAL99`, `DEAL-007` | `<DEAL>` | "status of DEAL-007" → "status of <DEAL>" |
+
+**The crucial split — what gets embedded vs what gets stored:**
+
+```
+User types:  "What pricing should I recommend for customer CUST001?"
+                                │
+                    ┌───────────┴────────────┐
+                    │                        │
+          EMBED THIS (the template):    STORE THIS (the raw text):
+          "What pricing should I        "What pricing should I
+           recommend for                 recommend for
+           <CUSTOMER_ID>?"               customer CUST001?"
+                    │                        │
+           Used for matching            Shown to user in banner
+           against other queries        Keyed in ChromaDB
+```
+
+This split is intentional:
+- The **template** (with placeholder) gets a vector that matches other phrasings of the same intent, regardless of which customer ID was asked about
+- The **raw query** is what gets saved and shown to the user — so the banner shows the original question, not the placeholder version
+
+**Why this matters — with and without templating:**
+
+```
+Without templating (CACHE_CANONICALIZE_ENABLED=false):
+  "CUST001 margin?"                    → vector A
+  "what is the margin for CUST001?"    → vector B
+  Similarity A↔B: 0.82 → gray zone → LLM judge needed
+
+With templating (CACHE_CANONICALIZE_ENABLED=true):
+  "<CUSTOMER_ID> margin?"              → vector A'
+  "what is the margin for <CUSTOMER_ID>?" → vector B'
+  Similarity A'↔B': 0.96 → HIT zone → no judge needed
+```
+
+The template strips out the "noise" of different phrasings and leaves only the pure intent in the vector.
+
+> **No LLM used here at all.** Query templating is purely regex-based — the same patterns that detect `CUST001`, `ACC001`, `DEAL001` are used to replace them with placeholders. This runs in under 1ms with zero API calls. It's completely deterministic.
+
+> **Important:** Both the lookup query AND stored queries must be templated the same way. If you turn this on after entries are already stored (with raw-text vectors), the old vectors will no longer match — the similarity scores will drop and everything will appear as a MISS. You must re-embed everything with `python -m src.cache.ingest_pipeline --overwrite` before turning this on.
+
+---
+
+### Step 3: Embedding — Turn the canonical query into a vector
+
+The canonical query is fed into the embedding model:
+
+```
+Input:  "What pricing should I recommend for customer <CUSTOMER_ID>?"
+Output: [0.31, -0.44, 0.72, 0.18, 0.09, ...] — 384 numbers
+```
+
+This vector is what gets searched against ChromaDB.
+
+> **No LLM used.** The embedding model (`all-MiniLM-L6-v2`) is a small, local model bundled with ChromaDB. No API call, no network.
+
+---
+
+### Step 4: ChromaDB Search — Find the closest stored questions
+
+ChromaDB searches through all stored questions (for `relationship_manager` role only) and returns the top 3 most similar ones, ranked by cosine similarity.
+
+```
+Results returned:
+  #1  "Show me recommended pricing for CUST001"        similarity: 0.96
+  #2  "Pricing recommendation for CUST001 please"      similarity: 0.83
+  #3  "Give me CUST001 deal pricing"                   similarity: 0.78
+```
+
+> **No LLM used.** This is a vector database search — pure math (cosine similarity between vectors). ChromaDB handles it entirely.
+
+---
+
+### Step 5: Entity Gate — Check if it's really the same customer
+
+The similarity score of 0.96 looks great. But wait — what if Sarah was asking about CUST002 and the stored question was about CUST001? The vectors would still be very similar (same intent, almost same wording) but the answer would be **wrong**.
+
+The entity gate prevents this by extracting the specific IDs from both questions and comparing them:
+
+```
+Sarah's query entity:   {CUST001}
+Stored query entity:    {CUST001}
+Match? ✓ YES → proceed
+```
+
+Now imagine a different user asked about CUST002:
+
+```
+User's query entity:    {CUST002}
+Stored query entity:    {CUST001}
+Match? ✗ NO → MISS (run full pipeline fresh)
+```
+
+The entity gate has two modes:
+- **Hard mode** (default): mismatch → immediate MISS, no further checks
+- **Soft mode**: mismatch → demote to "gray zone", ask the LLM judge
+
+> **LLM used? Sometimes.** Normally yes — an LLM extracts entities like customer IDs, account numbers, people's names, time periods, and amounts from the query. But if the LLM is slow or unavailable, a **regex fallback** catches structured IDs like `CUST001`, `ACC-4421`, `DEAL-99` instantly with no API call. For the most common collision case (one ID vs another), regex is sufficient.
+
+---
+
+### Step 6: Similarity Zone Decision
+
+Now that entities match, the similarity score (0.96) determines what happens next:
 
 ```
 0.0           0.75              0.85              0.92            1.0
  |─────────────|──────────────────|──────────────────|──────────────|
       MISS         Gray Zone           Intent Match        HIT
-                 (pending_judge)      (intent_match)      (high)
-               LLM judge concurrent   Banner only      Banner only
-               (advisory signal)
-      ↑                    ↑                   ↑
-CACHE_MISS_THRESHOLD  CACHE_INTENT_      CACHE_SIMILARITY_
-   (default 0.75)   MATCH_THRESHOLD      THRESHOLD
-                    (default 0.85)       (default 0.92)
+   Run fresh    Uncertain —         Probably the        Very likely
+                Ask the judge       same thing          the same
 ```
 
-```mermaid
-graph LR
-    A["MISS\nsim < 0.75\nFull pipeline runs\nResult stored in ChromaDB"]
-    B["Gray Zone\n0.75 – 0.85\nconfidence = pending_judge\nBanner shown + LLM judge concurrently"]
-    C["Intent Match\n0.85 – 0.92\nconfidence = intent_match\nBanner shown — no judge needed"]
-    D["HIT\nsim ≥ 0.92\nconfidence = high\nBanner shown — no judge needed"]
-    A --> B --> C --> D
+Sarah's query scored **0.96** → falls in the **HIT** zone.
+
+```
+Score 0.96 → HIT zone (≥ 0.92)
+Action: Show Sarah the cached answer with a confirmation banner
 ```
 
-| Zone | Similarity Range | Confidence Value | Action |
+The four zones in plain English:
+
+| Zone | Score | What it means | What happens |
 |---|---|---|---|
-| **MISS** | `sim < 0.75` | — | Full pipeline; store result |
-| **Gray Zone** | `0.75 ≤ sim < 0.85` | `pending_judge` | Banner + LLM judge fires concurrently (advisory) |
-| **Intent Match** | `0.85 ≤ sim < 0.92` | `intent_match` | Banner shown (no judge) |
-| **HIT** | `sim ≥ 0.92` | `high` | Banner shown (no judge) |
+| **MISS** | below 0.75 | Too different — fresh answer needed | Run full AI pipeline |
+| **Gray Zone** | 0.75 – 0.85 | Might be the same, might not — unclear | Show banner + ask LLM judge in background |
+| **Intent Match** | 0.85 – 0.92 | Probably the same intent | Show suggestion banner |
+| **HIT** | 0.92 and above | Very likely the same question | Show suggestion banner |
 
-> Gray zone and intent match banners are only active when `CACHE_INTENT_MATCH_ENABLED=true`.
-> When disabled, gray zone runs the LLM judge silently (Branch B) — no UI interaction.
-
----
-
-## Entity-Aware Gating
-
-Dense embeddings capture **intent**, not discrete identifiers. `"show customer profile for CUST001"` and `"...CUST002"` are ~90 % lexically identical, so cosine similarity lands **≥ 0.92 (HIT zone)** — bypassing the LLM judge (gray-zone only) and serving CUST001's answer for a CUST002 query. The **entity gate** fixes this by matching on entities *in addition to* intent.
-
-```mermaid
-flowchart LR
-    Q([Query]) --> L[lookup_top_n\ndense cosine]
-    L -->|candidate exists| E{Entity gate\nCACHE_ENTITY_GATING_ENABLED}
-    L -->|no candidate — MISS| P[Full pipeline]
-    E -->|signatures match| Zone[Zone logic\nHIT / suggestion / judge]
-    E -->|mismatch — hard| Drop[Drop candidate → MISS]
-    E -->|mismatch — soft| Demote[Demote to gray zone → LLM judge]
-```
-
-**How it works** (`src/cache/entity_extractor.py`, gate in `CacheCheckExecutor.run`):
-1. Runs **only when `lookup_top_n` already returned a candidate** — a definitive MISS pays zero extraction cost.
-2. An LLM extracts the incoming query's entities (customer/account/deal IDs, people, products, time scope, amounts, other) into a normalized, order-independent **signature** (`frozenset` of `bucket:value` tokens). One call per query, **memoized** by normalized query text.
-3. Each candidate's signature comes from its `entities` ChromaDB metadata (computed at store/ingest time). Pre-gating entries without that metadata are extracted from their stored query text on the fly.
-4. `signatures_match` is **exact set equality** (both-empty ⇒ match, so entity-free queries still cache). Mismatch → **hard**: candidate dropped (MISS); **soft**: demoted to `pending_judge` for the LLM judge.
-
-**Resilience:** on extractor timeout/error it falls back to a deterministic regex extractor for structured IDs (`CUST\d+`, `ACC\d+`, `DEAL\d+`) — so the CUST001/CUST002 case is caught even when the LLM is down. Trace tag `entity_gate:drop|demote:<id>:<sig>!=<sig>` + OTel attr `cache.entity_gate_dropped`.
-
-**Backfill existing entries** (no re-embed): `python -m src.cache.ingest_pipeline --backfill-entities [--dry-run]`.
+> **No LLM used for zone decision.** This is just comparing the similarity number to three threshold values. Pure conditional logic.
 
 ---
 
-## Roadmap Phases — What Each One Is and Does
+### Step 7: Suggestion Banner — Sarah Decides
 
-The cache was built in phases. Each phase solves one specific weakness of "plain
-semantic caching" (embed the question, return the nearest stored answer). This
-section explains each one in plain language: the problem it fixes, how it works,
-and an example.
-
-| Phase | In one line | Default | Status |
-|---|---|---|---|
-| **1 — Entity gate** | Don't reuse CUST001's answer for a CUST002 question | **on** | shipped |
-| **2 — Canonicalization** | Make paraphrases of the same question look identical to the cache | **on** | shipped |
-| **3 — Hybrid retrieval** | Also match on exact keywords, not just meaning | **on** | shipped (experimental) |
-| **4 — Reranker** | A smarter, local model re-checks which stored question truly fits | **on** | shipped |
-| **6 — Observability** | Count hits/misses/accepts/rejects so thresholds can be tuned from data | always | shipped |
-| **7 — Negative guard + feedback** | Never cache "no data found"; learn from rejected suggestions | **on** | shipped |
-| **5 — Invalidation** | Auto-expire a cached answer when its underlying data changes | — | deferred |
-
-> The pipeline order inside `CacheCheckExecutor` is: dense retrieval → **(3)** hybrid
-> fuse → **(1)** entity gate → **(4)** rerank → LLM judge → suggestion banner.
-> **(2)** happens at embedding time; **(6)/(7)** wrap the accept/reject/store steps.
-
----
-
-### Phase 1 — Entity-aware gate  *(the original fix)*
-**Problem.** Embeddings capture *meaning*, not exact identifiers. "show profile for
-CUST001" and "show profile for CUST002" are ~95% identical text, so their vectors
-are nearly the same — the cache would happily serve **CUST001's** answer to a
-**CUST002** question.
-**What it does.** Extracts the *entities* each question is about (customer/account/deal
-IDs, people, time periods, amounts) into a normalized signature, and only lets a
-cached answer through if its entities **exactly match** the new question's. Different
-entity → forced MISS.
-**Example.** Cached: "profile for CUST001". New: "profile for CUST002" → entities
-`{CUST002} ≠ {CUST001}` → **not served** (runs fresh). New: "get me CUST001's profile"
-→ same entity + same intent → **served**.
-*(Full detail in the [Entity-Aware Gating](#entity-aware-gating) section above.)*
-Config: `CACHE_ENTITY_GATING_ENABLED`, `CACHE_ENTITY_GATE_MODE` (`hard`/`soft`).
-
-### Phase 2 — Query canonicalization / templating
-**Problem.** The same request phrased slightly differently ("pricing for CUST001" vs
-"what pricing should I recommend for CUST001") produces different vectors, so a valid
-cached answer can be *missed*.
-**What it does.** Before embedding, it replaces the entities with placeholders — both
-become **"pricing for `<CUSTOMER_ID>`"** — so paraphrases of the same intent collapse
-onto (nearly) the same vector and match reliably. The *raw* question is still stored
-and still keys the record, and Phase 1 still keeps different IDs apart, so nothing
-gets over-merged.
-**Example.** "CUST001 margin?" and "what is the margin for CUST001" both embed as
-"margin for `<CUSTOMER_ID>`" → high similarity → the second reuses the first's answer.
-⚠️ It changes what gets embedded, so **turning it on requires re-embedding** the
-collection (`--overwrite` ingest) — otherwise old raw-embedded entries stop matching.
-Config: `CACHE_CANONICALIZE_ENABLED`. Code: `entity_extractor.canonicalize_query`.
-
-### Phase 3 — Hybrid dense + sparse retrieval
-**Problem.** Pure "meaning" search can rank the right answer too low when a rare but
-important keyword (a product name, a policy code) barely nudges the vector.
-**What it does.** Runs the normal meaning-based (dense) search **and** a classic
-keyword search (**BM25**, "sparse"), then blends the two rankings with Reciprocal Rank
-Fusion. An entry that's a strong keyword match gets lifted even if its vector rank was
-middling.
-**Example.** Query "FAB-CRP-CONC-2024 limits" — the policy code is a weak signal to the
-embedder but an exact keyword hit for BM25, so hybrid surfaces the right cached answer.
-Needs the `rank-bm25` package. Marked **experimental** because Phase 1 already handles
-the most common precision problem (IDs). Config: `CACHE_HYBRID_ENABLED`,
-`CACHE_HYBRID_FETCH_K`. Code: `SemanticCacheStore._hybrid_rerank`.
-
-### Phase 4 — Cross-encoder reranker
-**Problem.** The fast embedding model scores the question and each stored question
-*separately* (a "bi-encoder") — good enough to shortlist, but it can mis-order close
-candidates. Deciding the tricky middle ground ("gray zone") was offloaded to a
-**remote LLM judge**, which is slow and fails on rate limits / proxy SSL.
-**What it does.** A **cross-encoder** reads the new question and a candidate *together*
-and scores how well they match — far more accurate at ordering. It re-sorts the
-shortlist and drops obviously-irrelevant candidates **before** the LLM judge runs.
-Runs **locally** (no network → no 429/SSL failures) and, in *augment* mode, the LLM
-judge still makes the final call on what's left.
-**Example.** Two candidates look equally close by embedding; the cross-encoder
-recognizes only one actually answers the question and ranks it first, so the user sees
-the right suggestion at the top. Config: `CACHE_RERANKER_ENABLED`, `CACHE_RERANKER_MODEL`,
-`CACHE_RERANK_MIN_SCORE`. Code: `src/cache/reranker.py`. Needs the model downloaded once
-(HuggingFace) — falls back to plain dense order if unavailable.
-
-### Phase 6 — Observability & tuning
-**Problem.** You can't tune thresholds (0.75 / 0.85 / 0.92) or trust the cache without
-knowing how often it hits, misses, and — crucially — how often a "hit" was actually
-*wrong*.
-**What it does.** Records every cache outcome as metrics (`HIT`, `MISS`,
-`HIT_ACCEPTED`, `HIT_REJECTED`, `ENTITY_GATE_DROP`, …) and keeps running counters
-(`entity_gate_drops`, `hit_accepted`, `hit_rejected`, `reranker_invocations`, …) that
-show up in `GET /api/cache/stats`. The **HIT→reject rate** is a direct false-positive
-signal — if it climbs, the thresholds are too loose. Code: `record_cache`
-(`src/observability/metrics.py`), counters in `SemanticCacheStore.stats()`.
-
-**Cache decisions surfaced in the UI.** `CacheCheckExecutor` now explains each cache
-decision in both trace panels (no raw-trail digging needed):
-- **Execution Trace → "Cache Check" step**: shows the ordered sub-steps as `checks`
-  bullets — *dense/hybrid retrieval → entity gate → cross-encoder rerank → LLM judge* —
-  with per-step outcomes (the judge line renders with a Brain icon).
-- **AI Reasoning tab → "Cache Decision" card** (`agent="cache"`, `phase="cache_decision"`,
-  added via `tracer.add_llm_reasoning`): a plain-language rationale, a similarity bar, and
-  the same step chain. Emitted for HIT, intent-suggestion, and MISS outcomes.
-Backend: `_build_cache_steps` / `_emit_cache_reasoning` in `CacheCheckExecutor.run`.
-Frontend: `LLMReasoningPanel.tsx` (`cache` agent + `cache_decision` phase); the Execution
-Steps panel needed no change (`checks` rendering was reused).
-
-### Phase 7 — Negative-answer guard + reject-feedback loop
-**Problem (7a).** If the system answers "No data found for CUST099" and that gets
-cached, a *later* identical question — after the data exists — would be served the
-stale "not found".
-**What it does (7a).** Detects non-answers ("no … data found", "unable to retrieve")
-and **refuses to cache them** on the live path. Config: `CACHE_SKIP_NEGATIVE` (on).
-**Problem (7b).** When a user is shown a cached suggestion and clicks "run fresh"
-instead, that rejection is a strong hint the match was wrong — but it was being thrown
-away (and couldn't even be told apart from a 60-second timeout).
-**What it does (7b).** Distinguishes an **explicit reject** from a silent **timeout**,
-and logs explicit rejects of high-confidence hits to `data/cache_rejections.jsonl`
-(`{ts, role, query, chosen_entry_id, similarity, confidence}`) as a durable
-false-positive record for tuning / a future "demote" list. Code:
-`intent_decision_store.wait_for_decision_ex`, `orchestrator._record_cache_rejection`.
-
-### Phase 5 — Event-driven invalidation  *(deferred, not built)*
-**Idea.** When the underlying data for an entity changes (e.g. CUST001's credit rating
-updates), automatically delete every cached answer about CUST001 so no one is served a
-stale figure — instead of relying only on the time-based `CACHE_MAX_AGE_HOURS` expiry.
-**Why deferred.** The data lives in an external, static mock service
-(`DATALAYER_MCP_URL`) with no "data changed" event to listen for, and the cache has no
-delete-by-entity method yet. The Phase-1 `entities` metadata already makes this
-feasible to add later — it just needs an event source + a `delete_by_entity` method.
-
----
-
-## Storage: ChromaDB
-
-| Property | Value |
-|---|---|
-| Backend | ChromaDB `PersistentClient` (SQLite on-disk) |
-| Location | `data/cache/chroma/` (`CACHE_CHROMA_DIR`) |
-| Collection | `mesh_response_cache` (`CACHE_COLLECTION_NAME`) |
-| Distance metric | Cosine (`hnsw:space=cosine`) — `similarity = 1 - distance` |
-| Embedding model | `all-MiniLM-L6-v2` via ChromaDB `DefaultEmbeddingFunction` (onnxruntime, no HuggingFace download) |
-| Vector dimensions | 384 |
-| Document ID | `uuid5(sha256(role + "::" + query))` — deterministic, idempotent upserts |
-| Thread safety | `threading.Lock` serialises all writes; reads are concurrent |
-
-### Per-Document Metadata Schema
-
-| Field | Type | Purpose |
-|---|---|---|
-| `role` | string | Role isolation — `where={"role": {"$eq": role}}` |
-| `answer` | string | Stored answer (capped at 8 192 chars) |
-| `route` | string | Domain route (Data Layer / RAG / Hybrid) |
-| `session_id` | string | Source session for audit trace-back |
-| `request_id` | string | Source request ID |
-| `ts_iso` | string | ISO timestamp when stored |
-| `ts_unix` | float | Unix timestamp (fast age expiry check) |
-| `reasoning` | string | JSON-serialized LLM reasoning entries (capped 8 192 chars) |
-| `variant_count` | int | Times a variant query was accepted pointing to this root |
-| `last_variant_ts` | float | Unix timestamp of last variant acceptance |
-| `entities` | string | Serialized entity signature for the gate (`bucket:value` tokens, `\|`-joined). Absent on pre-gating entries. |
-
----
-
-## Core Classes & Methods
-
-### `@dataclass CacheEntry` (`src/cache/semantic_cache.py`)
-
-```python
-@dataclass
-class CacheEntry:
-    query_original: str    # stored query that matched
-    answer: str            # stored redacted answer
-    role: str              # role the answer was produced for
-    route: str             # domain route
-    session_id: str        # source session
-    request_id: str        # source request
-    ts_iso: str            # ISO timestamp
-    similarity: float      # cosine similarity [0, 1]
-    age_hours: float       # age at lookup time
-    reasoning: List[dict]  # LLM reasoning entries from original run
-    confidence: str = "high"
-    # "high"          → sim ≥ CACHE_SIMILARITY_THRESHOLD
-    # "intent_match"  → CACHE_INTENT_MATCH_THRESHOLD ≤ sim < CACHE_SIMILARITY_THRESHOLD
-    # "pending_judge" → CACHE_MISS_THRESHOLD ≤ sim < CACHE_INTENT_MATCH_THRESHOLD
-    # "judge_hit"     → set by CacheCheckExecutor (Branch B) after judge returns YES
-    entry_id: str = ""     # ChromaDB document ID
-```
-
-### `class SemanticCacheStore` (`src/cache/semantic_cache.py`)
-
-| Method | Signature | Description |
-|---|---|---|
-| `lookup` | `(query, role) → Optional[CacheEntry]` | Delegates to `lookup_with_id` |
-| `lookup_with_id` | `(query, role) → Optional[CacheEntry]` | Calls `lookup_top_n(n=1)`, returns first or None |
-| `lookup_top_n` | `(query, role, n=3) → List[CacheEntry]` | Four-zone logic; filters stale; returns up to n sorted by similarity desc |
-| `store` | `(query, answer, role, route, session_id, request_id, ts=None, reasoning=None)` | Upserts via SHA256 doc ID; thread-safe |
-| `increment_variant_count` | `(entry_id)` | Atomically increments `variant_count` + sets `last_variant_ts` under write lock |
-| `stats` | `() → dict` | Returns stats dict for `/api/cache/stats` |
-| `_warmup` | `()` | Pre-loads embedding model + opens collection; called at startup |
-| `_doc_id` | `(role, query) → str` (static) | `uuid5(sha256(f"{role}::{query}"))` |
-
-**`lookup_top_n` four-zone logic (from source):**
-```python
-if similarity >= self._threshold:                           # ≥ 0.92
-    confidence = "high"
-elif intent_enabled and similarity >= intent_threshold:     # ≥ 0.85
-    confidence = "intent_match"
-else:
-    confidence = "pending_judge"                            # ≥ 0.75
-# Below CACHE_MISS_THRESHOLD → filtered out entirely (never returned)
-```
-
----
-
-## LLM Judge — Gray Zone Validation (`src/cache/cache_judge.py`)
-
-Pure cosine similarity has two failure modes:
-- **False negatives**: "What is Alice's credit limit?" vs "List Alice's credit limit" → 0.89 — same intent, threshold misses it.
-- **False positives**: "What is Alice's credit limit?" vs "Has Alice's credit limit changed recently?" → 0.88 — different intent.
-
-```mermaid
-flowchart LR
-    A["sim < 0.75 — MISS\nNo LLM call\n~50 ms"]
-    B["0.75 – 0.92 — Gray Zone\nLLM Judge called\n~300–600 ms\nBinary YES/NO + short reason"]
-    C["sim ≥ 0.92 — HIT\nNo LLM call\n~50 ms"]
-    A --- B --- C
-```
-
-### Judge Prompt (actual source)
-
-```
-You are a cache validation assistant for a financial services AI system.
-
-User role: {role}
-New query: "{new_query}"
-Original cached query: "{cached_query}"
-Cached answer (excerpt):
-"""
-{first 400 chars}
-"""
-
-Task: Decide whether the cached answer fully and accurately addresses the new query for this user role.
-Consider: same intent, same scope, same subject — minor rephrasing is fine.
-Reject if: different entity, different time scope, different intent, or the answer would not satisfy the new query.
-
-Reply in this exact format — decision first, then a colon, then one short reason (max 12 words):
-YES: <one short reason>
-or
-NO: <one short reason>
-
-Examples:
-YES: same customer and intent, only wording differs
-NO: asks about a different time period than cached answer
-```
-
-### Judge Implementation Details
-
-| Property | Value |
-|---|---|
-| Model | `CACHE_JUDGE_MODEL` (default: `openai/gpt-oss-20b`; active .env: `gemma-4-31b`) |
-| `max_tokens` | `60` |
-| `temperature` | `0` (deterministic) |
-| Timeout | `5.0 s` — on timeout or error → returns `(False, "")` (graceful MISS) |
-| Return type | `Tuple[bool, str]` — `(decision, reason)` |
-| HTTP client | `httpx.AsyncClient` |
-
-**Response parsing** (`_parse_judge_response`):
-- Splits on first `:` — prefix decides `YES`/`NO`, rest is `reason` (capped 120 chars)
-- Tolerates missing colon, extra whitespace, lowercase variants
-
-**Branch A** (`CACHE_INTENT_MATCH_ENABLED=true`): judge fires as a **concurrent async task** per `pending_judge` candidate. Result emitted as `intent_suggestion_judge` SSE — **advisory only**, user still decides.
-
-**Branch B** (`CACHE_INTENT_MATCH_ENABLED=false`): judge decides **synchronously** — `YES` → `entry.confidence = "judge_hit"` → Branch C. `NO` → `entry = None` → Branch D (MISS).
-
----
-
-## MeshState Cache Fields (`src/mesh/workflow.py`)
-
-```python
-# Cache hit fields
-cache_hit: bool = False
-cache_answer: str = ""
-cache_age_hours: float = 0.0
-cache_similarity: float = 0.0
-cache_reasoning: List[dict] = field(default_factory=list)
-cache_judge_invoked: bool = False
-cache_judge_decision: str = ""
-cache_judge_reason: str = ""
-bypass_cache: bool = False           # skips lookup; fresh answer still stored
-
-# Intent-match suggestion fields
-intent_match_pending: bool = False            # orchestrator pauses when True
-intent_match_root_query: str = ""             # top-1 root question text
-intent_match_entry_id: str = ""               # top-1 ChromaDB doc ID (keys IntentDecisionStore)
-intent_match_similarity: float = 0.0
-intent_match_answer: str = ""                 # top-1 cached answer
-intent_match_age_hours: float = 0.0
-intent_match_confidence: str = ""             # "high" | "intent_match" | "pending_judge"
-intent_match_candidates: List[dict] = field(default_factory=list)
-# each dict: {entry_id, root_query, similarity, age_hours, answer_preview, answer, confidence}
-
-skip_cache_store: bool = False                # prevents variant from being re-stored
-```
-
----
-
-## CacheCheckExecutor — Execution Branches
-
-`lookup_top_n(query, role, n=3)` is called first (in thread pool — CPU-bound embedding). `entry = all_candidates[0]` selects top-1 for zone decision.
-
-```mermaid
-flowchart TD
-    Start([CacheCheckExecutor.run]) --> Check{ENABLE_RESPONSE_CACHE\nor bypass_cache?}
-    Check -->|disabled or bypass| Skip[send_message → Compliance\nrecord_cache SKIP]
-
-    Check -->|enabled| L[lookup_top_n query role n=3\nasyncio.to_thread]
-    L --> Z{entry = top-1\nconfidence?}
-
-    Z -->|None — sim < 0.75| D[BRANCH D — Definitive MISS\ntrail: cache_miss\nrecord_cache MISS\nsend_message → Compliance]
-
-    Z -->|pending_judge AND\nCACHE_INTENT_MATCH_ENABLED=false| B[BRANCH B — Silent LLM Judge\nawait llm_cache_judge\nYES → confidence=judge_hit → Branch C\nNO → entry=None → Branch D]
-
-    Z -->|intent_match or pending_judge\nAND CACHE_INTENT_MATCH_ENABLED=true| A[BRANCH A — Intent Suggestion Banner\npopulate intent_match state\nemit SSE: intent_suggestion with candidates\nfor each pending_judge: create_task LLM judge\nrecord_cache INTENT_SUGGESTION\nyield_output intent_match_pending=True]
-
-    Z -->|high — sim ≥ 0.92\nor judge_hit from Branch B| C[BRANCH C — HIT Suggestion Banner\npopulate intent_match state\nemit SSE: intent_suggestion with candidates\nrecord_cache HIT\nyield_output intent_match_pending=True]
-```
-
-### `_build_candidates_payload(entries)` — inline helper in `CacheCheckExecutor.run`
-
-```python
-def _build_candidates_payload(entries):
-    return [
-        {
-            "entry_id": e.entry_id,
-            "root_query": e.query_original,
-            "similarity": e.similarity,
-            "age_hours": e.age_hours,
-            "answer_preview": e.answer[:200],
-            "answer": e.answer,          # full answer kept server-side; omitted from SSE
-            "confidence": e.confidence,
-        }
-        for e in entries
-    ]
-```
-
-### Branch A — Intent Suggestion (`CACHE_INTENT_MATCH_ENABLED=true`, gray zone + intent match)
-
-1. Populates all `intent_match_*` state fields; stores `candidates_payload`
-2. Records trail: `"intent_suggestion:{confidence}:sim={sim:.3f}:n={count}"`
-3. Records OTel metric: `record_cache("INTENT_SUGGESTION", role, elapsed_ms)`
-4. Emits `event_type="intent_suggestion"` SSE — `candidates[]` list (answer omitted from SSE payload)
-5. For each `pending_judge` candidate: `asyncio.create_task(_run_judge_and_emit())` — non-blocking; emits `intent_suggestion_judge` when ready
-6. Sets `state.intent_match_pending = True`
-7. Calls `ctx.yield_output(state)` — pauses; orchestrator awaits `IntentDecisionStore`
-
-### Branch B — Silent LLM Judge (`CACHE_INTENT_MATCH_ENABLED=false`, gray zone only)
-
-1. `(is_valid, judge_reason) = await llm_cache_judge(new_query, cached_query, cached_answer, role)`
-2. `YES` → `entry.confidence = "judge_hit"` → falls through to Branch C
-3. `NO` → `entry = None` → falls through to Branch D
-
-### Branch C — HIT Banner (all `high` entries, and `judge_hit` from Branch B)
-
-1. Populates `intent_match_entry_id/answer/similarity/candidates` on state
-2. Emits stage SSE: `"Cache hit ({sim:.0%} match) — select an answer or run fresh"` with `judge_invoked/judge_decision/judge_reason`
-3. Sets `state.intent_match_pending = True`
-4. Emits `event_type="intent_suggestion"` SSE with all candidates (same payload as Branch A)
-5. Calls `ctx.yield_output(state)` — pauses for user selection
-
-### Branch D — Cache MISS
-
-Records trail `"cache_miss"` (or `"cache_miss:judge_rejected"`) → `ctx.send_message(state)` continues to Compliance.
-
----
-
-## Intent Decision Flow
-
-### `IntentDecisionStore` (`src/cache/intent_decision_store.py`)
-
-```python
-@dataclass
-class IntentDecision:
-    entry_id: str
-    event: asyncio.Event = field(default_factory=asyncio.Event)
-    accepted: Optional[bool] = None
-    chosen_entry_id: Optional[str] = None  # which candidate user picked
-
-# Module-level singleton:
-intent_decision_store = IntentDecisionStore()
-```
-
-| Method | Description |
-|---|---|
-| `create_pending(entry_id)` | Register a pending decision |
-| `async wait_for_decision(entry_id, timeout=60.0) → tuple[bool, Optional[str]]` | Awaits `asyncio.Event`; returns `(accepted, chosen_entry_id)`; resolves `(False, None)` on timeout |
-| `resolve(entry_id, accepted, chosen_entry_id=None) → bool` | Sets `dec.chosen_entry_id`, fires `event.set()`; returns `True` if found |
-| `get_pending_ids() → list[str]` | Returns currently-pending entry IDs |
-
-- Uses `asyncio.Event` — zero-polling
-- 60 s timeout → `(False, None)` — pipeline never hangs permanently
-- Single-process only; replace with Redis-backed store for multi-worker
-
-### Orchestrator Interception (`src/mesh/orchestrator.py`)
-
-```python
-if getattr(final, "intent_match_pending", False):
-    entry_id = final.intent_match_entry_id
-    final.intent_match_pending = False
-    intent_decision_store.create_pending(entry_id)       # register BEFORE waiting
-    accepted, chosen_id = await intent_decision_store.wait_for_decision(entry_id, timeout=60.0)
-
-    if accepted:
-        chosen_id = chosen_id or entry_id
-        candidates = getattr(final, "intent_match_candidates", [])
-        chosen = next((c for c in candidates if c.get("entry_id") == chosen_id), None)
-        final.answer           = chosen["answer"]     if chosen else final.intent_match_answer
-        final.cache_hit        = True
-        final.cache_similarity = chosen["similarity"] if chosen else final.intent_match_similarity
-        final.cache_age_hours  = chosen["age_hours"]  if chosen else final.intent_match_age_hours
-        final.skip_cache_store = True
-        # Trail tag distinguishes HIT from intent-match zone
-        trail_tag = "cache_hit_selected" if chosen_similarity >= 0.92 else "intent_match_accepted"
-        final.trail.append(f"{trail_tag}:chosen={chosen_id}:sim={chosen_similarity:.3f}")
-        asyncio.create_task(
-            asyncio.to_thread(get_cache_store().increment_variant_count, chosen_id)
-        )
-    else:
-        # Rejected or timed out — run fresh pipeline
-        final.skip_cache_store = True
-        final.trail.append("intent_match_rejected")
-        resume_wf = build_intent_resume_workflow(ask=ask_remote)
-        resume_events = await resume_wf.run(final)
-        resumed = _final_state(resume_events)
-        if resumed is not None:
-            final = resumed
-            final.skip_cache_store = True   # preserve through resume
-```
-
----
-
-## Full Suggestion Flow — Sequence Diagram
-
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant FE as Frontend
-    participant API as API Server
-    participant Orch as Orchestrator
-    participant Cache as SemanticCacheStore
-    participant IDS as IntentDecisionStore
-    participant Judge as LLM Judge
-
-    U->>FE: Types query
-    FE->>API: POST /api/query/stream (SSE)
-    API->>Orch: run(ask)
-    Orch->>Cache: lookup_top_n(query, role, 3) in thread pool
-    Cache-->>Orch: CacheEntry list ranked by similarity desc
-
-    Orch->>API: SSE: intent_suggestion with candidates array
-    API->>FE: event: intent_suggestion
-    FE-->>U: Violet banner — ranked candidate list
-
-    Note over Orch,Judge: Gray zone candidates only (pending_judge)
-    Orch->>Judge: create_task per gray-zone candidate
-    Judge-->>Orch: is_valid, reason
-    Orch->>API: SSE: intent_suggestion_judge with verdict and reason
-    API->>FE: event: intent_suggestion_judge
-    FE-->>U: Banner row updates in-place
-
-    Orch->>IDS: create_pending(primary_entry_id)
-    Orch->>IDS: wait_for_decision(60s)
-
-    alt User clicks Use this answer on candidate 2
-        U->>FE: Click
-        FE->>API: POST /api/cache/intent-decision accepted true chosen_entry_id
-        API->>IDS: resolve(primary, true, chosen_id)
-        IDS-->>Orch: True chosen_id
-        Orch->>Cache: increment_variant_count(chosen_id) fire-and-forget
-        Orch-->>FE: SSE result with candidate 2 answer
-    else User clicks Run fresh
-        FE->>API: POST /api/cache/intent-decision accepted false
-        API->>IDS: resolve(primary, false)
-        IDS-->>Orch: False None
-        Orch->>Orch: build_intent_resume_workflow then Compliance Domain Redact
-        Orch-->>FE: SSE result with fresh answer skip_cache_store true
-    else 60s timeout
-        IDS-->>Orch: False None
-        Orch->>Orch: run fresh pipeline skip_cache_store true
-    end
-```
-
----
-
-## Storage Invariant
-
-```mermaid
-flowchart TD
-    Q[Query arrives] --> Z{Similarity zone?}
-    Z -->|sim < 0.75 — MISS| P[Run full pipeline]
-    P --> G{CACHE_INLINE_STORE_ENABLED?}
-    G -->|true| W[store in ChromaDB — new root entry]
-    G -->|false| Skip[skip inline write — use ingest_pipeline]
-
-    Z -->|0.75 to 0.92 — suggestion zone| Banner[Show intent suggestion banner]
-    Banner --> D{User decision}
-    D -->|Accept candidate| CA[Serve chosen cached answer]
-    CA --> VI[increment_variant_count on chosen entry]
-    CA --> NSA[skip_cache_store true — NO DB write]
-    D -->|Reject or timeout| Fresh[Run full pipeline]
-    Fresh --> NSR[skip_cache_store true — NO DB write]
-
-    Z -->|sim >= 0.92 — HIT| Hit[Show HIT suggestion banner]
-    Hit --> D
-```
-
-**Only true MISS queries (sim < 0.75) can become new root entries in ChromaDB.**
-
----
-
-## SSE Events
-
-| Event | Key Fields |
-|---|---|
-| `stage` | `stage`, `status`, `message`, `judge_invoked?`, `judge_decision?`, `judge_reason?` |
-| `intent_suggestion` | `event_type`, `root_query`, `entry_id`, `similarity`, `age_hours`, `answer_preview`, `confidence`, `judge_verdict`, `judge_reason`, `candidates[]` |
-| `intent_suggestion_judge` | `event_type`, `entry_id`, `judge_verdict` (`"YES"`/`"NO"`), `judge_reason` |
-| `reasoning` | `entries: [...]`, `replayed_from_cache?: true` |
-| `result` | Full `MeshResult` JSON |
-| `done` | `{}` |
-| `error` | `{message}` |
-
-### Example `intent_suggestion` payload
-
-```json
-{
-  "event_type": "intent_suggestion",
-  "root_query": "show details of cust001",
-  "entry_id": "abc123",
-  "similarity": 0.98,
-  "age_hours": 3.2,
-  "answer_preview": "Customer CUST001 is...",
-  "confidence": "high",
-  "judge_verdict": null,
-  "judge_reason": null,
-  "candidates": [
-    {"entry_id": "abc123", "root_query": "show details of cust001",
-     "similarity": 0.98, "age_hours": 3.2, "confidence": "high"},
-    {"entry_id": "def456", "root_query": "cust001 details",
-     "similarity": 0.80, "age_hours": 25.0, "confidence": "pending_judge"},
-    {"entry_id": "ghi789", "root_query": "profile for cust001",
-     "similarity": 0.76, "age_hours": 1.5, "confidence": "pending_judge"}
-  ]
-}
-```
-
-### Example `intent_suggestion_judge` payload
-
-```json
-{
-  "event_type": "intent_suggestion_judge",
-  "entry_id": "def456",
-  "judge_verdict": "YES",
-  "judge_reason": "same customer and intent, only wording differs"
-}
-```
-
----
-
-## API Endpoints
-
-| Endpoint | Method | Body | Purpose |
-|---|---|---|---|
-| `/api/cache/stats` | GET | — | Collection size, thresholds, judge counters |
-| `/api/cache/intent-decision` | POST | `{entry_id, accepted, chosen_entry_id?}` | Resolve user accept/reject |
-| `/api/cache/ingest` | POST | `{source?, source_dir?, audit_file?, entity_mode?, dry_run?, overwrite?, role?}` | Trigger background ingest job (conversations or audit) |
-| `/api/cache/ingest/{job_id}` | GET | — | Poll ingest job status |
-
-### `POST /api/cache/intent-decision`
-
-```json
-{
-  "entry_id": "abc123",            // primary top-1 — keys IntentDecisionStore
-  "chosen_entry_id": "def456",     // which candidate the user clicked
-  "accepted": true
-}
-```
-
----
-
-## Ingest Pipeline (`src/cache/ingest_pipeline.py`)
-
-Batch embedding pipeline — idempotent via SHA256 doc ID.
-
-```mermaid
-flowchart LR
-    subgraph Files["CONVERSATION_STORE_DIR/*.jsonl"]
-        F1[alice_abc123.jsonl]
-        F2[farida_def456.jsonl]
-    end
-
-    subgraph Ingest["src/cache/ingest_pipeline.py"]
-        R[Read user to assistant pairs]
-        R --> Filter[Skip: blocked / cache-hit / stale / empty / role-mismatch]
-        Filter --> Dedup[SHA256 doc ID — already in ChromaDB?]
-        Dedup -->|present| Skip[idempotent skip]
-        Dedup -->|absent| Embed[embed + upsert]
-    end
-
-    Files --> Ingest
-
-    subgraph Triggers
-        CLI["python -m src.cache.ingest_pipeline"]
-        API["POST /api/cache/ingest"]
-        Start["API server startup warmup"]
-    end
-    CLI --> Ingest
-    API --> Ingest
-```
-
-### Fields Read from Each JSONL Assistant Record
-
-| JSONL field | Maps to | Default if absent |
-|---|---|---|
-| `content` | `answer` | — (skip if empty) |
-| `role_at_time` | `role` | Inferred via `login(username_from_filename)` |
-| `route` | `route` | `"unknown"` |
-| `request_id` | `request_id` | `""` |
-| `ts` | timestamp | `datetime.now(timezone.utc)` |
-| `blocked` | skip guard | `False` |
-| `cache_hit` | skip guard | `False` |
-| `reasoning` | reasoning JSON | `[]` |
-
-### `IngestReport` Fields
-
-| Field | Meaning |
-|---|---|
-| `total_scanned` | User→assistant pairs examined |
-| `already_present` | SHA256 doc ID already in ChromaDB (idempotent skip) |
-| `newly_stored` | Embedded and written |
-| `skipped_stale` | Age exceeded `effective_max_age` |
-| `skipped_empty` | Empty query/answer, blocked, cache-hit, or role-filtered |
-| `skipped_cache_hit` | Assistant turn was itself a cache-hit replay |
-| `skipped_negative` | **(audit source)** `status=ERROR` or negative answer ("no … data found", "unable to retrieve") |
-| `skipped_role_invalid` | **(audit source)** extracted role not a valid `BankingRole` (e.g. junk `banker`/`administrator`) |
-| `errors` | Files/traces that failed to parse |
-| `elapsed_ms` | Total wall-clock time |
-
-### Entity signatures during ingest
-
-When `CACHE_ENTITY_GATING_ENABLED=true`, every stored entry also gets an **entity
-signature** (`entities` metadata) so the [entity gate](#entity-aware-gating) can match on
-entities at lookup. Ingest computes these via **batched** LLM extraction —
-`extract_entities_batch_sync` sends `CACHE_ENTITY_BATCH_SIZE` (default 15) queries per call,
-with retry/backoff on HTTP 429 / connection / SSL errors (`CACHE_ENTITY_MAX_RETRIES`,
-default 3), falling back to regex per query on failure. This avoids the provider rate limits
-that per-entry extraction would trip on a bulk run.
-
-The audit CLI exposes `--entity-mode`:
-
-| Mode | Behavior | When to use |
-|---|---|---|
-| `llm` (default) | Batched LLM extraction (few calls, high fidelity — IDs, names, time scope, amounts) | API healthy; richest gate |
-| `regex` | Deterministic regex only (`CUST[_-]?\d+`, `ACC…`, `DEAL…`) — instant, **no API** | Rate-limited/offline; covers structured-ID collisions (the cust001/cust002 case) |
-| `none` | No signatures written; lookup-time extraction fills them later | Fastest ingest; defers cost to first lookup |
-
-### CLI Usage
-
-All commands run from the `agent-mesh/` directory and require `ENABLE_RESPONSE_CACHE=true`
-(set it in `.env` or inline, e.g. `ENABLE_RESPONSE_CACHE=true python -m …`).
-
-**Full flag reference**
-
-| Flag | Applies to | Meaning |
-|---|---|---|
-| `--source {conversations,audit}` | both | Ingest source (default `conversations`) |
-| `--source-dir PATH` | conversations | JSONL directory (default `CONVERSATION_STORE_DIR`) |
-| `--audit-file PATH` | audit | Audit log path (default `AUDIT_LOG_FILE` = `data/audit_trail.jsonl`) |
-| `--entity-mode {llm,regex,none}` | audit | How to compute entity signatures (default `llm`; see table above) |
-| `--dry-run` | both | Log what would be stored; no writes, no LLM calls |
-| `--overwrite` | both | Re-embed/re-store existing entries (uniform refresh) |
-| `--role ROLE` | both | Only ingest turns for this role |
-| `--max-age-hours N` | both | Override `CACHE_MAX_AGE_HOURS` (e.g. `99999` = all history) |
-| `--backfill-entities` | — | Backfill `entities` metadata on existing entries, then exit |
-
-```bash
-# ── Conversation store (data/conversations/*.jsonl) ──────────────────
-
-# Preview without writing
-python -m src.cache.ingest_pipeline --dry-run
-
-# Full ingest (respects CACHE_MAX_AGE_HOURS from .env)
-python -m src.cache.ingest_pipeline
-
-# Ingest all history regardless of age
-python -m src.cache.ingest_pipeline --max-age-hours 99999
-
-# Re-embed existing entries (overwrite)
-python -m src.cache.ingest_pipeline --overwrite
-
-# Only ingest one role
-python -m src.cache.ingest_pipeline --role relationship_manager
-
-# Custom source directory
-python -m src.cache.ingest_pipeline --source-dir /path/to/conversations
-
-# ── Entity-signature backfill (existing entries missing the metadata) ─
-# No re-embed — extracts from each stored query and updates metadata in place.
-python -m src.cache.ingest_pipeline --backfill-entities --dry-run   # preview
-python -m src.cache.ingest_pipeline --backfill-entities             # apply
-```
-
-### Ingest from `audit_trail.jsonl` (`--source audit`)
-
-When `data/conversations/` is empty (e.g. rebuilding a fresh cache), the cache can be
-bootstrapped from the audit trail. The audit trail is a **per-agent-span** log, so an
-adapter (`run_ingest_audit_sync`) reconstructs one clean Q/A per request:
-
-- Groups spans by `trace_id`; picks the **last `PriceAssistAgent` span** (the synthesizer;
-  retries produce several — the last is the final answer).
-- Recovers `role` + bare query from the `[User: x | Role: y]` input prefix (top-level `role`
-  is unreliable — `"-"` ~46 % of the time). Roles not in `BankingRole` (junk `banker`/
-  `administrator`) are **dropped**.
-- **Re-strips `<llm_reasoning>`** and **re-runs full `redact_pii`** — the audit middleware
-  only redacts EMAIL/SSN, so this adds the CREDIT_CARD/PHONE redaction the cache requires.
-- Skips `status=ERROR` and negative answers ("no … data found", "unable to retrieve").
-- `route` is inferred from which peer agent ran (Data / RAG / Hybrid).
-
-```bash
-# Preview (no writes, no LLM calls)
-python -m src.cache.ingest_pipeline --source audit --dry-run --max-age-hours 99999
-
-# RECOMMENDED bootstrap — instant, no API (regex signatures cover structured-ID collisions).
-# --overwrite gives a clean, uniform collection even if a prior run was interrupted.
-python -m src.cache.ingest_pipeline --source audit --entity-mode regex --overwrite --max-age-hours 99999
-
-# Rich signatures (names, time scope, amounts) — batched LLM calls + 429 retry/backoff.
-# Run when the LLM endpoint is healthy.
-python -m src.cache.ingest_pipeline --source audit --entity-mode llm --overwrite --max-age-hours 99999
-
-# Custom audit file
-python -m src.cache.ingest_pipeline --source audit --audit-file /path/to/audit_trail.jsonl
-```
-
-> Note: audit records are older than the default `CACHE_MAX_AGE_HOURS` (144h), so a
-> bootstrap needs `--max-age-hours 99999` or everything is `skipped_stale`. Many records
-> share the same `(role, query)` → they upsert to the same doc ID, so the final collection
-> count is the number of **unique** role+query pairs (e.g. 200 traces → ~40 unique entries).
-
-Report adds `skipped_negative` and `skipped_role_invalid` counters. The API endpoint
-`POST /api/cache/ingest` accepts `{"source": "audit", "audit_file"?: str, "entity_mode"?: "llm"|"regex"|"none"}`.
-> ⚠️ Lower-fidelity than the conversation store (answers are reconstructed, route inferred).
-> Prefer `data/conversations/` when populated; use audit only to bootstrap.
-
-### Verifying a populated collection
-
-```bash
-python -c "
-import chromadb
-col = chromadb.PersistentClient('data/cache/chroma').get_collection('mesh_response_cache')
-res = col.get(include=['documents','metadatas'])
-print('entries:', col.count())
-print('reasoning leaks:', sum('<llm_reasoning>' in (m.get('answer') or '') for m in res['metadatas']))
-print('with entities:', sum('entities' in m for m in res['metadatas']))
-for d, m in list(zip(res['documents'], res['metadatas']))[:8]:
-    print(f\"[{m.get('role')}] ent={m.get('entities')!r} :: {d[:55]}\")
-"
-```
-
----
-
-## Conversation Migration Script (`scripts/migrate_conversations.py`)
-
-One-shot script to backfill enrichment fields on old JSONL files (older files only had bare `{role, content, ts}`).
-
-```bash
-python scripts/migrate_conversations.py --dry-run   # preview
-python scripts/migrate_conversations.py              # apply
-```
-
-**Fields backfilled on assistant turns that are missing them:**
-
-| Field | Value |
-|---|---|
-| `role_at_time` | Inferred from filename via `login(username)` |
-| `blocked` | `false` |
-| `cache_hit` | `false` |
-| `route` | `"unknown"` |
-| `request_id` | `""` |
-| `reasoning` | `[]` |
-
-Script is idempotent — only adds missing fields, never overwrites existing values. Uses content-based skip (not mtime-based) — safe to re-run anytime.
-
----
-
-## Frontend: Intent Suggestion Banner (`MessageBubble.tsx`)
-
-Violet-themed banner rendered above the thinking indicator. Shows **up to 3 ranked candidates**, each with similarity badge, age, and "Use this answer" button.
+The system shows Sarah a violet banner above the answer area:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  ◈ Similar questions already answered        60s → auto fresh │
-│                                                              │
-│  #1  "show details of cust001"          98%   3.2h ago       │
-│      [Use this answer]                                       │
-│                                                              │
-│  #2  "cust001 details"                  80%   25.0h ago      │
-│      LLM: ✓ Likely a match — same customer and intent        │
-│      [Use this answer]                                       │
-│                                                              │
-│  #3  "profile for cust001"              76%   1.5h ago       │
-│      LLM: ⟳ Checking match…                                  │
-│      [Use this answer]                                       │
-│                                                              │
-│                          [Run fresh — full pipeline]         │
+│                                                               │
+│  #1  "Show me recommended pricing for CUST001"   96%  2.1h   │
+│      [Use this answer]                                        │
+│                                                               │
+│  #2  "Pricing recommendation for CUST001 please" 83%  5.4h   │
+│      LLM: ✓ Same customer and intent, wording differs         │
+│      [Use this answer]                                        │
+│                                                               │
+│  #3  "Give me CUST001 deal pricing"              78%  0.8h   │
+│      LLM: ⟳ Checking match…                                   │
+│      [Use this answer]                                        │
+│                                                               │
+│                         [Run fresh — full pipeline]           │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-**Confidence badge colours** (`confidenceBadge` function):
-- `high` → **emerald** (`bg-emerald-100 text-emerald-700`)
-- `intent_match` → **violet** (`bg-violet-100 text-violet-700`)
-- `pending_judge` → **amber** (`bg-amber-100 text-amber-700`)
+Sarah clicks **"Use this answer"** on candidate #1.
 
-**LLM judge row** shown only for `pending_judge` candidates:
-- Spinner "Checking match…" while awaiting `intent_suggestion_judge` SSE
-- Updates in-place: `✓ Likely a match` (emerald) or `? Uncertain` (amber) + reason
-- Advisory only — "Use this answer" available regardless of verdict
-
-**`deciding` state flag** prevents double-submit on both Accept and Reject buttons.
-
-### TypeScript Interfaces
-
-```typescript
-interface CandidateItem {
-  entryId: string;
-  rootQuery: string;
-  similarity: number;
-  ageHours: number;
-  answerPreview: string;
-  confidence: "high" | "intent_match" | "pending_judge";
-  judgeVerdict: "YES" | "NO" | null;
-  judgeReason: string | null;
-}
-
-interface IntentSuggestion {
-  primaryEntryId: string;
-  candidates: CandidateItem[];
-}
+```
+Sarah accepts → Serve saved answer → Done in ~50ms
 ```
 
-### `useChat.ts` SSE Handlers
+If Sarah clicks **"Run fresh"** → the full AI pipeline runs and a new answer is generated.
 
-| Event | Action |
-|---|---|
-| `intent_suggestion` | Builds `CandidateItem[]` from `event.candidates` (backward-compat: wraps top-1 if no `candidates` array). Sets `message.intentSuggestion`, `streamingStage = "Waiting for your confirmation…"` |
-| `intent_suggestion_judge` | Patches matching candidate's `judgeVerdict`/`judgeReason` in-place by `entryId` |
-| `result` | Clears `intentSuggestion` from message |
-
-`resolveIntentSuggestion(messageId, chosenEntryId, accepted)` → optimistically clears banner, calls `POST /api/cache/intent-decision`.
+> **No LLM used to serve the cached answer.** The answer is read directly from ChromaDB. The LLM judge (shown on candidates #2 and #3 above) runs in the **background** for gray-zone candidates only — it does not block Sarah from seeing or using the cached results.
 
 ---
 
-## LLM Reasoning Replay
+### Step 8 (if MISS): Full pipeline runs and answer is stored
 
-When the cache was originally populated, reasoning entries were serialized (JSON) and stored in ChromaDB metadata.
+If the cache had no good match (score below 0.75), or Sarah rejected all suggestions:
 
-On a cache HIT:
-1. Reasoning deserialized from ChromaDB metadata
-2. Injected into active execution tracer → populates **AI Reasoning tab** in UI
-3. Emitted as SSE `reasoning` event with `replayed_from_cache: true`
-4. AI Reasoning tab shows italic **"replayed"** label
+```
+Full pipeline:
+  → Compliance check
+  → Domain Agent AI (the expensive 5–70 second LLM call)
+  → Redact sensitive data (PII removal)
+  → Store new answer in ChromaDB for future use
+```
 
-Old cache entries (before reasoning storage) return `reasoning=[]` — handled gracefully.
+> **LLM used here:** Yes, this is the normal AI pipeline — multiple model calls to answer the question properly.
 
 ---
 
-## Configuration Reference (`src/config.py` + `.env`)
+## 5. Full Flow Diagram With Real Query
+
+```
+Sarah types: "What pricing should I recommend for customer CUST001?"
+                              │
+                              ▼
+              ┌───────────────────────────┐
+              │  RBAC: role confirmed     │   No LLM — auth system
+              │  role = relationship_mgr  │
+              └───────────────┬───────────┘
+                              │
+                              ▼
+              ┌───────────────────────────┐
+              │  Canonicalization         │   LLM or regex
+              │  CUST001 → <CUSTOMER_ID>  │   "What pricing should I
+              │                           │    recommend for <CUSTOMER_ID>?"
+              └───────────────┬───────────┘
+                              │
+                              ▼
+              ┌───────────────────────────┐
+              │  Embedding                │   Small local model, no API
+              │  Sentence → 384 numbers   │   ~50ms
+              └───────────────┬───────────┘
+                              │
+                              ▼
+              ┌───────────────────────────┐
+              │  ChromaDB Search          │   No LLM — vector math
+              │  Top 3 similar entries    │   Role-filtered
+              │  for relationship_mgr     │
+              └───────────────┬───────────┘
+                              │
+                     ┌────────┴─────────┐
+                     │                  │
+               Candidates            No candidates
+               found (top-1          found
+               sim = 0.96)               │
+                     │                   ▼
+                     ▼            ┌─────────────┐
+        ┌────────────────────┐    │ MISS         │
+        │  Entity Gate        │    │ Run full     │
+        │  Query: {CUST001}  │    │ pipeline     │
+        │  Stored: {CUST001} │    └─────────────┘
+        │  Match: ✓ YES      │
+        └──────────┬──────────┘
+                   │
+         Entity mismatch?
+         (e.g. CUST002 ≠ CUST001)
+                   │ No mismatch
+                   ▼
+        ┌────────────────────┐
+        │  Zone Decision      │   No LLM — just compare
+        │  Score 0.96 ≥ 0.92 │   number to thresholds
+        │  → HIT zone        │
+        └──────────┬──────────┘
+                   │
+                   ▼
+        ┌────────────────────┐
+        │  Show Banner        │   No LLM — UI component
+        │  3 candidates shown │
+        │  Gray-zone ones get │   LLM judge in background
+        │  LLM judge in BG   │   (advisory, non-blocking)
+        └──────────┬──────────┘
+                   │
+          ┌────────┴──────────┐
+          │                   │
+      Sarah accepts        Sarah rejects
+          │                   │
+          ▼                   ▼
+   Serve cached answer    Run full pipeline
+   0 LLM calls           LLM calls run
+   ~50ms                 5–70 seconds
+   Save result
+```
+
+---
+
+## 6. What Happens With CUST002 — The Entity Gate in Action
+
+This is the most important safety feature. Without it, the cache would serve the wrong customer's data.
+
+```
+User asks: "What pricing should I recommend for customer CUST002?"
+
+Step 1 — Embed (canonical: "...for <CUSTOMER_ID>?")
+  → Vector almost identical to the CUST001 query vector
+  → Similarity score: 0.95 ← looks like a HIT!
+
+Step 2 — Entity Gate runs
+  Query entity:   {CUST002}
+  Stored entity:  {CUST001}
+  ✗ MISMATCH
+
+Step 3 — Hard mode: MISS
+  → Cached answer is dropped
+  → Full AI pipeline runs for CUST002
+  → Fresh, correct answer served
+  → New CUST002 entry saved in ChromaDB
+```
+
+**Without the entity gate:** CUST002 would silently receive CUST001's pricing — a serious data leakage bug.
+
+**With the entity gate:** The mismatch is caught in milliseconds. The entity gate adds no noticeable delay because regex extraction is instant.
+
+---
+
+## 7. The Gray Zone — When It's Unclear
+
+Sometimes a question scores between 0.75 and 0.85 — similar enough to be worth checking, but not obviously the same. These go to the **LLM Judge**.
+
+**Example:**
+
+| Question | Score | Situation |
+|---|---|---|
+| Stored: "What is Alice's credit limit?" | — | Already answered |
+| New: "Has Alice's credit limit changed recently?" | ~0.80 | Similar words but DIFFERENT question |
+| New: "List Alice's credit limit" | ~0.82 | Different wording but SAME question |
+
+A simple similarity score cannot tell these two apart. Both score ~0.80. The **LLM Judge** reads both questions together and decides:
+
+**LLM Judge prompt (simplified):**
+```
+Stored question: "What is Alice's credit limit?"
+New question:    "Has Alice's credit limit changed recently?"
+Cached answer:   "Alice's credit limit is $50,000..."
+
+Does the cached answer fully address the new question?
+Answer YES or NO with a short reason (max 12 words).
+```
+
+**LLM Judge response:**
+```
+NO: asks about recent changes, not the current value
+```
+→ Cache miss. Fresh pipeline runs.
+
+For the other case:
+```
+New question: "List Alice's credit limit"
+→ YES: same customer and intent, only wording differs
+```
+→ Cached answer served.
+
+> **LLM used here: YES.** This is the one place in the cache pipeline where a real language model (e.g., `gemma-4-31b`) makes a judgment call. It uses very few tokens (max 60 output tokens), set to temperature 0 (fully deterministic), and has a 5-second timeout. If it times out, the system falls back to a MISS safely — it never hangs.
+
+**Why not use an LLM for everything?** Because it takes 300–600ms and costs API tokens. For the HIT zone (≥0.92) and MISS zone (<0.75) the answer is obvious from the score alone — using an LLM there would be wasteful. The judge is reserved for the ~15% of queries that land in the genuinely uncertain middle.
+
+---
+
+## 8. The Phases — Problems Each One Solves
+
+The cache was built in stages. Each phase fixes one specific weakness.
+
+---
+
+### Phase 1 — Entity Gate (Default: ON)
+
+**Problem it fixes:** "show profile for CUST001" and "show profile for CUST002" produce nearly identical vectors. Without a check, CUST001's data would be served for CUST002.
+
+**How it works:**
+1. LLM (or regex) extracts identifiers from the incoming question: `{CUST001}`
+2. The stored entry already has its identifiers saved: `{CUST001}`
+3. Compare them — exact set match required
+4. Mismatch → MISS (hard mode) or demote to gray zone (soft mode)
+
+**Real example:**
+```
+Query A:  "show risk score for CUST001"  → {CUST001}
+Query B:  "show risk score for CUST002"  → {CUST002}
+
+Vector similarity: 0.97 (nearly identical text)
+Entity match:      {CUST001} ≠ {CUST002} → MISS
+Outcome: Query B runs fresh, gets CUST002's actual data
+```
+
+> **LLM used:** Yes for rich entity extraction (IDs + names + time periods + amounts). Regex fallback for structured IDs when LLM is unavailable.
+
+---
+
+### Phase 2 — Query Templating / Canonicalization (Default: OFF)
+
+Also called "query templating" — this is the technique of turning a specific question into a **template** by replacing the concrete IDs with generic placeholders before computing the vector.
+
+**Problem it fixes:** Two questions with different wording but identical intent produce different vectors, causing a valid cache hit to be missed.
+
+```
+"pricing for CUST001"                          → vector X
+"what pricing should I recommend for CUST001"  → vector Y
+
+Similarity(X, Y): 0.82 → falls in gray zone → LLM judge gets called → slower
+```
+
+Both questions clearly mean the same thing, but the embedding model sees different word patterns and produces slightly different vectors.
+
+**How it works — the template approach:**
+
+The function `canonicalize_query()` in `entity_extractor.py` uses regex to replace known ID patterns with typed placeholder slots:
+
+```python
+# These are the actual patterns from the code:
+"customer_ids" → CUST001, CUST_007, cust-42   →  <CUSTOMER_ID>
+"accounts"     → ACC001, ACC-4421              →  <ACCOUNT>
+"deals"        → DEAL99, DEAL-007              →  <DEAL>
+```
+
+This runs before the embedding step inside `_embed_query()` in `semantic_cache.py`:
+
+```python
+def _embed_query(self, query: str) -> list[float]:
+    text = query
+    if Config.CACHE_CANONICALIZE_ENABLED:
+        text = canonicalize_query(query)   # template it first
+    return self._embed(text)              # then embed the template
+```
+
+**What changes, what stays the same:**
+
+```
+Original query:   "What pricing should I recommend for customer CUST001?"
+                                          │
+                         ┌────────────────┴─────────────────┐
+                         │                                   │
+                 EMBEDDED as template:              STORED as raw text:
+                 "What pricing should I             "What pricing should I
+                  recommend for customer             recommend for customer
+                  <CUSTOMER_ID>?"                    CUST001?"
+                         │                                   │
+                  Makes similar paraphrases         Shown in the banner
+                  of same intent cluster            Saved in ChromaDB
+                  tightly in vector space           as the document
+```
+
+**Why this teamwork with Phase 1 (entity gate) is safe:**
+
+You might worry: "If both CUST001 and CUST002 questions now produce the same template, won't CUST002 get CUST001's answer?"
+
+No — because Phase 1 (entity gate) still extracts and compares the actual IDs separately. Even if templating makes the vectors nearly identical (high similarity score), the entity gate checks: are the raw customer IDs the same? Different IDs → MISS regardless of vector score.
+
+```
+CUST001 question  →  template "...for <CUSTOMER_ID>"  →  vector V
+CUST002 question  →  template "...for <CUSTOMER_ID>"  →  vector V (same!)
+                                                              │
+                                                    Similarity: 0.99 ← looks like HIT
+                                                              │
+                                                    Entity gate:
+                                                    {CUST001} ≠ {CUST002} → MISS ✓
+```
+
+Templating improves recall (finds more matches for the same customer); entity gate preserves precision (never serves wrong customer's data). They work as a team.
+
+**Full before-vs-after example:**
+
+```
+Three questions about CUST001, asked by the same user on different days:
+  A: "CUST001 margin?"
+  B: "what is the margin for CUST001?"
+  C: "tell me CUST001's margin percentage"
+
+Without templating:
+  Similarity(A, B): 0.82 → gray zone → judge runs
+  Similarity(A, C): 0.79 → gray zone → judge runs
+  Each paraphrase needs a judge call (~300ms each)
+
+With templating:
+  A template: "<CUSTOMER_ID> margin?"
+  B template: "what is the margin for <CUSTOMER_ID>?"
+  C template: "tell me <CUSTOMER_ID>'s margin percentage"
+  Similarity(A', B'): 0.96 → HIT zone → served instantly
+  Similarity(A', C'): 0.94 → HIT zone → served instantly
+  No judge calls needed — 0ms overhead
+```
+
+> **No LLM used at all.** Purely regex. The same patterns used by entity extraction are re-used here — but instead of pulling out the values, they're replaced with placeholder strings. Zero API calls, under 1ms, completely deterministic.
+
+> **Warning — re-embedding required:** If you turn this on after entries are already stored, those old entries were embedded using raw text (without placeholders). Their vectors will NOT match the new template-based vectors — everything looks like a MISS. You must re-embed and re-store everything: `python -m src.cache.ingest_pipeline --overwrite`. This re-reads all conversation files, re-applies templating, re-embeds, and overwrites the old vectors.
+
+---
+
+### Phase 2b — Ingest-Time Paraphrase Augmentation (Default: OFF)
+
+**Problem it fixes:** Even with canonicalization, a user phrasing a question in an unusual way ("give me the ceiling rate for CUST001") might not score high enough against a stored query ("pricing for CUST001") to land in the HIT zone. The similarity is good but not great — ending up in the gray zone and triggering an expensive LLM judge call.
+
+**How it works:** At **ingest time only**, for each Q/A pair that gets stored, the pipeline calls an LLM to generate N alternative phrasings of the same query. Each paraphrase is stored as a **separate ChromaDB entry pointing to the same answer**. The query-time path is completely unchanged — one incoming query, one vector lookup.
+
+```
+Ingest time (once, per Q/A pair):
+  Original:      "pricing for CUST001"            → stored → vector A
+  Paraphrase 1:  "what is the recommended price for CUST001" → stored → vector B
+  Paraphrase 2:  "show me pricing for CUST001"    → stored → vector C
+  Paraphrase 3:  "CUST001 pricing recommendation" → stored → vector D
+  All four point to the same answer text in ChromaDB.
+
+Query time (normal lookup — no change):
+  User asks: "give me the ceiling rate for CUST001"
+  → vector lands close to B or C → HIT zone → served in ~50ms
+  (without augmentation: gray zone → judge call → 300ms+)
+```
+
+**Safety properties:**
+- **Entity gate still fires** — all paraphrases carry the same `entities` signature (`customer_id:cust001`). A CUST002 query is still rejected regardless of how close the vector is.
+- **Role isolation preserved** — paraphrases are stored with the same `role` field; ChromaDB `where role=X` filter still applies.
+- **Canonicalization still applies** — `store()` calls `_embed_query()` which applies `canonicalize_query()` before vectorizing, so paraphrases also get `<CUSTOMER_ID>` substituted.
+- **Idempotent** — each paraphrase gets its own `_doc_id(role, para)` (SHA256 of `role::paraphrase_text`). Re-running ingest with `--overwrite` replaces them; without `--overwrite` they are skipped if already present.
+
+**Rate limiting:** The pipeline sleeps `CACHE_PARAPHRASE_DELAY_S` seconds after each paraphrase call. On HTTP 429 (rate limit), it retries up to 3 times with exponential backoff (10s → 20s → 40s). A failed paraphrase call never loses the original entry — it was already stored before paraphrases are attempted.
+
+**Real ingest run result (farida_fa786044.jsonl — 5 files, 15 Q/A pairs):**
+```
+total_scanned:     15
+newly_stored:      12   ← original entries
+paraphrases_stored: 60  ← 5 paraphrases × 12 entries
+skipped_cache_hit:  3   ← correctly skipped (cache_hit=true in JSONL)
+errors:            []
+Total ChromaDB entries after: 86
+```
+
+> **LLM used: YES — at ingest time only.** Uses the same OpenAI-compatible provider as the rest of the mesh (`LLM_BASE_URL` + `GROQ_API_KEY` + `GROQ_MODEL`). No separate API key required. Cost is paid once per entry at ingest, never at query time.
+
+---
+
+### Phase 3 — Hybrid Dense + Sparse Retrieval (Default: OFF, Experimental)
+
+**Problem it fixes:** Sometimes a rare, important keyword barely moves the vector. For example, a policy code like `FAB-CRP-CONC-2024` is a very unusual string — the embedding model has rarely seen it, so it has weak influence on the vector. The right cached answer might rank poorly.
+
+**How it works:** Two searches run in parallel and their results are blended:
+
+1. **Dense search** (meaning-based): Embedding similarity — what we've described above
+2. **Sparse search** (keyword-based, called BM25): Classic word-matching, like a search engine — finds entries containing the exact keyword
+
+The two ranked lists are then merged using **Reciprocal Rank Fusion (RRF)** — a formula that combines rankings from both methods. An entry that scored middling on meaning but is an exact keyword match gets lifted up.
+
+**Real example:**
+```
+Query: "FAB-CRP-CONC-2024 concentration limits"
+
+Dense search ranking:
+  #1  "credit concentration guidelines"       (0.83 — good meaning match)
+  #2  "FAB-CRP-CONC-2024 exposure limits"     (0.79 — exact match buried low)
+
+Sparse/BM25 search ranking:
+  #1  "FAB-CRP-CONC-2024 exposure limits"     (perfect keyword hit)
+  #2  "credit concentration guidelines"       (no keyword match)
+
+After RRF fusion:
+  #1  "FAB-CRP-CONC-2024 exposure limits"     ← lifted to top by keyword match
+  #2  "credit concentration guidelines"
+```
+
+> **No LLM used.** BM25 is a pure math formula over word frequencies. RRF is also pure math. No model calls.
+
+---
+
+### Phase 4 — Cross-Encoder Reranker (Default: ON)
+
+**Problem it fixes:** The embedding model scores each question *in isolation* — it embeds the new question once, embeds stored questions once each, then compares. This is fast but can misorder close candidates. When two candidates look equally similar, it can put the less relevant one first.
+
+Also, the LLM judge was slow (300–600ms remote call) and could fail on rate limits or network errors.
+
+**How it works:** After the initial similarity shortlist, a **cross-encoder** model reads the new question and one candidate *together* (as a pair) and outputs a relevance score. This is far more accurate because the model can compare them directly.
+
+```
+Bi-encoder (old way — fast but less precise):
+  Embed "what is CUST001's exposure limit?"     → vector X
+  Embed "CUST001 credit exposure ceiling"       → vector Y
+  Embed "CUST001 risk limit by policy"          → vector Z
+  Similarity(X, Y) = 0.88
+  Similarity(X, Z) = 0.86
+  → Y ranked above Z
+
+Cross-encoder (new way — slower but precise):
+  Input: ("what is CUST001's exposure limit?", "CUST001 credit exposure ceiling")
+  Output: 0.93 (very relevant)
+
+  Input: ("what is CUST001's exposure limit?", "CUST001 risk limit by policy")
+  Output: 0.41 (different framing — drops this candidate)
+  → Z dropped before the LLM judge even sees it
+```
+
+The cross-encoder runs **locally** — no API call, no network. So it never fails due to rate limits or proxy SSL errors.
+
+> **No LLM used** in the remote-API sense. The cross-encoder is a small local model (downloaded once from HuggingFace, e.g. `cross-encoder/ms-marco-MiniLM-L-6-v2`). It runs on-device. If unavailable, the system falls back to the original dense similarity ordering.
+
+---
+
+### Phase 6 — Observability (Always ON)
+
+**Problem it fixes:** Without data, you cannot know whether the cache thresholds (0.75 / 0.85 / 0.92) are well-tuned. A threshold that's too loose causes wrong answers to be served. A threshold that's too tight causes too many cache misses.
+
+**How it works:** Every cache outcome is recorded as a counter:
+
+```
+Cache HIT        → increment hit_count
+Cache MISS       → increment miss_count
+User accepted    → increment hit_accepted
+User rejected    → increment hit_rejected   ← this is your false-positive rate
+Entity gate drop → increment entity_gate_drops
+```
+
+If `hit_rejected` climbs high → thresholds are too loose → tighten them.
+If `miss_count` is very high → thresholds are too tight → loosen them.
+
+These are visible at `GET /api/cache/stats` and also shown in the UI's Execution Trace panel for each request.
+
+> **No LLM used.** Pure counters and timers.
+
+---
+
+### Phase 7 — Negative Answer Guard + Reject Feedback (Default: ON)
+
+**Problem 7a — What it fixes:** If the system answered *"No data found for CUST099"* and that gets cached, then when CUST099's data is later added, everyone asking about CUST099 would still get *"no data found"* — a stale, wrong answer.
+
+**Solution 7a:** Before storing any answer, it checks for phrases like `"no ... data found"`, `"unable to retrieve"`, `"not found"`. If the answer is a non-answer, it is **never stored**.
+
+```
+Answer: "Customer CUST099 profile is not available in our system."
+→ Detected as negative → skip cache store
+→ Next time someone asks about CUST099, the full pipeline runs fresh
+```
+
+**Problem 7b — What it fixes:** When a user clicks "Run fresh" instead of accepting a cache suggestion, that rejection is a strong signal the cache was wrong. This signal was being discarded.
+
+**Solution 7b:** An explicit user rejection is logged to `data/cache_rejections.jsonl`:
+```json
+{
+  "ts": "2026-07-30T10:22:00Z",
+  "role": "relationship_manager",
+  "query": "What pricing should I recommend for CUST001?",
+  "chosen_entry_id": "abc123",
+  "similarity": 0.93,
+  "confidence": "high"
+}
+```
+This file is a record of false positives — cache hits that were actually wrong. Reviewing it helps tune the thresholds or build a "demote list" for specific entries.
+
+The system also distinguishes between:
+- **Explicit reject**: user clicked "Run fresh" — logged
+- **60-second timeout**: user walked away — not logged (no signal to record)
+
+> **No LLM used.** Negative detection is a regex/keyword check. Logging is a simple file write.
+
+---
+
+### Phase 5 — Event-Driven Invalidation (Deferred — Not Built Yet)
+
+**The idea:** When CUST001's credit rating changes in the underlying database, automatically delete all cached answers about CUST001 so no one gets stale data.
+
+**Why not built yet:** The data source is a static mock service with no "data changed" event. The cache has no delete-by-entity method. The foundation is there (entity signatures are stored per entry), but the event source doesn't exist yet.
+
+For now, staleness is handled by `CACHE_MAX_AGE_HOURS` — answers older than this are never served (default: 144 hours / 6 days).
+
+---
+
+## 9. Complete Pipeline Order
+
+Here is the exact order of operations inside the cache check, with LLM usage called out at each step:
+
+```
+1. Dense embedding search (ChromaDB)
+   → No LLM. Small local embedding model. ~50ms.
+
+2. Hybrid BM25 fusion (Phase 3, if enabled)
+   → No LLM. Math formula. Lifts keyword-match candidates.
+
+3. Entity gate (Phase 1)
+   → LLM (or regex fallback). Extracts identifiers. ~100ms with LLM, <1ms with regex.
+   → Hard mismatch → MISS immediately. Soft mismatch → demote to gray zone.
+
+4. Cross-encoder rerank (Phase 4, if enabled)
+   → Local model, no API. Re-orders candidates by co-reading query+candidate pairs.
+   → Drops irrelevant candidates before the LLM judge sees them.
+
+5. LLM Judge (gray zone only, if CACHE_JUDGE_ENABLED=true)
+   → LLM (remote API). 300–600ms. Max 60 tokens. Temperature 0.
+   → Binary YES/NO decision. Timeout → MISS (safe fallback).
+
+6. Zone decision
+   → No LLM. Compare score to three threshold numbers.
+
+7. Show suggestion banner (or serve MISS)
+   → No LLM. UI component with user interaction.
+
+8. User accepts → serve cached answer
+   → No LLM. Read answer from ChromaDB. ~50ms total.
+
+9. User rejects OR MISS → run full pipeline
+   → LLM. The normal expensive 5–70s AI pipeline runs.
+
+10. Store result (on MISS path only)
+    → LLM for entity extraction (or regex). Then ChromaDB write.
+```
+
+---
+
+## 10. Sequence Diagram — Full Suggestion Flow
+
+This shows what happens across every system component for a query that hits the cache and the user accepts it:
+
+```
+Sarah          Frontend         API Server      Orchestrator    ChromaDB     LLM Judge
+  │                │                │               │              │             │
+  │ Types query    │                │               │              │             │
+  │──────────────>│                │               │              │             │
+  │                │ POST /stream   │               │              │             │
+  │                │───────────────>│               │              │             │
+  │                │                │ run(query)    │              │             │
+  │                │                │──────────────>│              │             │
+  │                │                │               │ lookup_top_n │             │
+  │                │                │               │─────────────>│             │
+  │                │                │               │ [3 results]  │             │
+  │                │                │               │<─────────────│             │
+  │                │                │               │              │             │
+  │                │                │               │ [gray-zone candidate]       │
+  │                │                │               │─────────────────────────>  │
+  │                │                │               │ (non-blocking background)  │
+  │                │                │               │              │             │
+  │                │ SSE: banner    │               │              │             │
+  │                │<───────────────│<──────────────│              │             │
+  │ Sees banner    │                │               │              │             │
+  │<──────────────│                │               │              │             │
+  │                │                │               │              │             │
+  │                │                │               │ [judge returns YES]         │
+  │                │                │               │<────────────────────────── │
+  │ #2 shows ✓     │                │               │              │             │
+  │<──────────────│                │               │              │             │
+  │                │                │               │              │             │
+  │ Clicks         │                │               │              │             │
+  │ "Use this"     │                │               │              │             │
+  │──────────────>│                │               │              │             │
+  │                │ POST /intent-decision          │              │             │
+  │                │───────────────>│               │              │             │
+  │                │                │ resolve(accept)│             │             │
+  │                │                │──────────────>│              │             │
+  │                │                │               │ increment    │             │
+  │                │                │               │ variant_count│             │
+  │                │                │               │─────────────>│             │
+  │                │                │               │              │             │
+  │                │ SSE: result    │               │              │             │
+  │                │<───────────────│<──────────────│              │             │
+  │ Sees answer    │                │               │              │             │
+  │<──────────────│                │               │              │             │
+```
+
+Total time: ~50–150ms (vs 5–70s for full pipeline)
+
+---
+
+## 11. Storage — What Gets Saved Per Answer
+
+Every cached answer stored in ChromaDB contains these fields:
+
+| Field | What it holds | Example |
+|---|---|---|
+| `role` | Who this answer is for | `relationship_manager` |
+| `answer` | The actual answer text | `"CUST001's recommended pricing is..."` |
+| `route` | Which AI path generated it | `"Data Layer"` |
+| `session_id` | Which chat session created it | `"sess_abc123"` |
+| `ts_iso` | When it was saved | `"2026-07-28T09:15:00Z"` |
+| `entities` | Entity signature for the gate | `"customer_id:cust001"` |
+| `variant_count` | Times a similar query reused this answer | `3` |
+| `reasoning` | The AI's reasoning from original run | `[{...}]` |
+
+The **document ID** is a fingerprint of `role + query` — so the same question asked twice by the same role always maps to the same storage slot (no duplicates).
+
+---
+
+## 12. Role Isolation — Why Answers Never Leak Between Users
+
+Every lookup filters by role first. A `relationship_manager` and a `credit_officer` asking the identical question get completely separate cache spaces:
+
+```
+"What is CUST001's exposure?"  asked by relationship_manager
+  → doc_id: uuid5("relationship_manager::What is CUST001's exposure?")
+  → stored with role = "relationship_manager"
+
+"What is CUST001's exposure?"  asked by credit_officer
+  → doc_id: uuid5("credit_officer::What is CUST001's exposure?")
+  → stored with role = "credit_officer"
+  → completely different entry, even if text is identical
+```
+
+When searching, ChromaDB filters: `where role = "relationship_manager"` — so a credit officer's more detailed answer never shows up for a relationship manager, and vice versa.
+
+---
+
+## 13. What Happens at Server Startup
+
+When the API server starts, it immediately:
+1. Opens the ChromaDB collection (or creates it if first time)
+2. Loads the embedding model into memory
+3. Runs any pending batch ingest
+
+This "warmup" ensures the first real user query doesn't experience a 1–3 second cold-start delay.
+
+---
+
+## 14. Populating the Cache From Historical Data (Ingest Pipeline)
+
+The cache doesn't start knowing anything. It needs to be populated. There are two ways:
+
+**Option A — Live mode:** As users ask questions and get answers, results are stored automatically (requires `CACHE_INLINE_STORE_ENABLED=true`).
+
+**Option B — Batch ingest:** A background process reads conversation files from `data/conversations/cleaned_conversations/` and loads them all at once. This is the recommended approach because it gives control over quality.
+
+**Data source:** Only `data/conversations/cleaned_conversations/` (controlled by `CACHE_INGEST_SOURCE_DIR`). The audit trail source (`data/audit_trail.jsonl`) has been removed — cleaned conversation files are the single source of truth.
+
+```
+cleaned_conversations/*.jsonl
+       ↓
+Read Q&A pairs (user + assistant turns only)
+  Rolling summary records are automatically skipped (no 'role' key)
+       ↓
+Skip bad entries:
+  - Blocked answers (blocked=true)
+  - Answers that were themselves cache hits (cache_hit=true)
+  - Answers older than max age
+       ↓
+Check if already stored (by fingerprint ID = SHA256 of role::query)
+  Already there? → Skip (idempotent)
+  New entry?     → Embed + store
+       ↓
+Paraphrase augmentation (if CACHE_PARAPHRASE_ENABLED=true)
+  → Generate N paraphrases via LLM
+  → Store each as a separate ChromaDB entry → same answer
+  → Sleep CACHE_PARAPHRASE_DELAY_S seconds (rate limit protection)
+  → On 429: retry up to 3× with exponential backoff (10s → 20s → 40s)
+```
+
+**CLI commands:**
 
 ```bash
-# Master switch
-ENABLE_RESPONSE_CACHE=true                 # default: false
+# Preview what would be stored (no actual writes)
+python -m src.cache.ingest_pipeline --dry-run --max-age-hours 99999
 
-# ChromaDB storage
-CACHE_CHROMA_DIR=data/cache/chroma
-CACHE_COLLECTION_NAME=mesh_response_cache
-CACHE_EMBED_MODEL=chromadb-default         # label only — always DefaultEmbeddingFunction
+# Store everything from cleaned_conversations
+python -m src.cache.ingest_pipeline --overwrite --max-age-hours 99999
 
-# Freshness
-CACHE_MAX_AGE_HOURS=144.0                  # default: 24.0
+# Store with paraphrase augmentation (generates 5 variants per entry)
+# Run from agent-mesh/ directory; CACHE_PARAPHRASE_ENABLED=true is already in .env
+python -m src.cache.ingest_pipeline --overwrite --max-age-hours 99999
+
+# Target a specific role only
+python -m src.cache.ingest_pipeline --role relationship_manager --max-age-hours 99999
+
+# Backfill entity signatures for entries stored without them
+python -m src.cache.ingest_pipeline --backfill-entities
+```
+
+**IngestReport fields:**
+
+| Field | Meaning |
+|---|---|
+| `total_scanned` | Q/A pairs read from JSONL files |
+| `newly_stored` | Original entries written to ChromaDB |
+| `paraphrases_stored` | Paraphrase variants written (0 when disabled) |
+| `already_present` | Skipped — fingerprint already in ChromaDB |
+| `skipped_cache_hit` | Skipped — assistant turn had `cache_hit=true` |
+| `skipped_stale` | Skipped — older than `CACHE_MAX_AGE_HOURS` |
+| `skipped_empty` | Skipped — missing query/answer/role or blocked |
+
+---
+
+## 15. Quick Reference — LLM Usage Summary
+
+| Step | LLM Used? | Why / Why Not |
+|---|---|---|
+| Embedding | No | Small local model — fast, free, no API |
+| ChromaDB search | No | Pure vector math |
+| Query Templating (Canonicalization) | No — pure regex | Replaces `CUST001` → `<CUSTOMER_ID>` etc. before embedding. Zero API calls. |
+| Entity extraction | Yes (LLM) + regex fallback | Structured IDs caught by regex; names/dates/amounts need LLM |
+| Zone decision (score vs thresholds) | No | Pure number comparison |
+| Cross-encoder rerank | No LLM (local model) | Runs on-device, no network |
+| LLM Judge (gray zone only) | Yes | Genuinely ambiguous — needs reading comprehension |
+| Serving cached answer | No | Direct ChromaDB read |
+| Full pipeline (cache miss) | Yes | Normal AI pipeline — unavoidable |
+| Negative answer detection | No | Regex/keyword pattern match |
+| Storing new entry | No (for write itself) | ChromaDB upsert |
+| **Paraphrase augmentation (ingest only)** | **Yes — at ingest time only** | Generates N phrasings per entry via project LLM provider. Cost paid once; zero query-time cost. |
+
+---
+
+## 16. Configuration Quick Reference
+
+```bash
+# Turn the whole cache on/off
+ENABLE_RESPONSE_CACHE=true
+
+# How long a cached answer stays valid
+CACHE_MAX_AGE_HOURS=150.0
 
 # Similarity thresholds
-CACHE_SIMILARITY_THRESHOLD=0.92            # sim >= this → HIT  (default: 0.92)
-CACHE_MISS_THRESHOLD=0.75                  # sim < this → MISS  (default: 0.75)
-CACHE_INTENT_MATCH_THRESHOLD=0.85          # gray/intent boundary (default: 0.85)
+CACHE_SIMILARITY_THRESHOLD=0.92    # above this = HIT (very confident)
+CACHE_INTENT_MATCH_THRESHOLD=0.85  # above this = Intent Match
+CACHE_MISS_THRESHOLD=0.75          # below this = MISS (always run fresh)
 
-# LLM Judge
-CACHE_JUDGE_ENABLED=true                   # default: true
-CACHE_JUDGE_MODEL=gemma-4-31b              # default: openai/gpt-oss-20b
-
-# Intent suggestion UX
-CACHE_INTENT_MATCH_ENABLED=true            # show banner for all zones (default: false)
-
-# Write mode
-CACHE_INLINE_STORE_ENABLED=false           # false = batch ingest only (default: true)
-
-# Entity-aware gating (prevents cross-entity false hits, e.g. CUST001 vs CUST002)
-CACHE_ENTITY_GATING_ENABLED=true           # master switch (default: true)
-CACHE_ENTITY_MODEL=gemma-4-31b             # extractor LLM (default: falls back to CACHE_JUDGE_MODEL)
-CACHE_ENTITY_GATE_MODE=hard                # hard = drop mismatch | soft = demote to judge (default: hard)
-CACHE_ENTITY_EXTRACT_TIMEOUT=5.0           # seconds; on timeout → regex fallback
-CACHE_ENTITY_BATCH_SIZE=15                 # bulk ingest: queries per LLM extraction call (default: 15)
-CACHE_ENTITY_MAX_RETRIES=3                 # retries on 429 / connection / SSL, exponential backoff (default: 3)
-
-# Phase 4 — cross-encoder reranker (augment mode; local, no API)
-CACHE_RERANKER_ENABLED=false               # default: false
-CACHE_RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
-CACHE_RERANK_MIN_SCORE=-5.0                # candidates below this are dropped before the judge
-
-# Phase 2 — canonicalize (entities → placeholders) before embedding. Requires re-embed.
-CACHE_CANONICALIZE_ENABLED=false           # default: false
-
-# Phase 3 — hybrid dense + sparse (BM25) retrieval, fused via RRF (needs rank-bm25)
-CACHE_HYBRID_ENABLED=false                 # default: false
-CACHE_HYBRID_FETCH_K=20                     # dense candidate pool size before fusion
-
-# Phase 7 — negative-answer guard (live store path) + rejected-HIT log
-CACHE_SKIP_NEGATIVE=true                    # don't cache "no data found"/"unable to retrieve" (default: true)
-CACHE_REJECTIONS_LOG=data/cache_rejections.jsonl
-```
-
-### Threshold Tuning Guide
-
-| Threshold | Behaviour |
-|---|---|
-| `0.99+` | Only exact / near-exact phrase matches hit |
-| `0.92` (default HIT) | Identical and very close paraphrases hit |
-| `0.85` (intent boundary) | Broader paraphrases show suggestion banner |
-| `0.75` (miss floor) | Below this → always fresh pipeline |
-| `< 0.75` | Not recommended — too many false positives for banking context |
-
----
-
-## Role Isolation
-
-Every lookup and store passes `role`. ChromaDB filter: `where={"role": {"$eq": role}}`.
-
-A `relationship_manager` will never receive a cached answer produced for a `credit_officer`. Each role has its own isolated cache space. The same query stored for 5 different roles = 5 separate ChromaDB entries with different SHA256 IDs.
-
----
-
-## Key Files
-
-| File | Role |
-|---|---|
-| `src/cache/semantic_cache.py` | `SemanticCacheStore` — lookup_top_n, store, embed, ChromaDB lifecycle |
-| `src/cache/cache_judge.py` | `llm_cache_judge()` — async `Tuple[bool, str]` judge |
-| `src/cache/entity_extractor.py` | LLM entity extraction → normalized signature; `signatures_match`; regex fallback; memoization; `canonicalize_query` (Phase 2) |
-| `src/cache/reranker.py` | Cross-encoder reranker (Phase 4) — `rerank_entries`, lazy model load, `warmup` |
-| `src/cache/negative_filter.py` | Shared `is_negative_answer` detector (Phase 7a) — used by live store path + audit ingest |
-| `src/cache/intent_decision_store.py` | `IntentDecisionStore` — asyncio.Event pause-resume; module singleton |
-| `src/cache/ingest_pipeline.py` | Batch embedding CLI + background API job; `--source conversations\|audit`, `--entity-mode`, `--backfill-entities`; audit-trail adapter (`run_ingest_audit_sync`) |
-| `src/cache/cache_indexer.py` | Startup warmup only (`store._warmup()`) |
-| `src/cache/__init__.py` | Package exports: `get_cache_store`, `CacheEntry`, `llm_cache_judge` |
-| `src/mesh/workflow.py` | `CacheCheckExecutor` — four branches, candidate building, async judge tasks |
-| `src/mesh/orchestrator.py` | Intent-match interception, candidate resolution, skip_cache_store guard |
-| `src/config.py` | All `CACHE_*` config vars with defaults |
-| `src/observability/metrics.py` | `record_cache(result, role, duration_ms)` — OTel counter + histogram |
-| `api_server.py` | Cache endpoints, SSE forwarding, startup indexer task |
-| `scripts/migrate_conversations.py` | One-shot backfill of enrichment fields on old JSONL files |
-
----
-
-## Operational Playbook
-
-### Enable cache with full suggestion UX
-
-```bash
-# .env
-ENABLE_RESPONSE_CACHE=true
+# Show the suggestion banner for all zones (not just HIT)
 CACHE_INTENT_MATCH_ENABLED=true
-CACHE_INLINE_STORE_ENABLED=false
+
+# LLM that judges gray-zone candidates
+CACHE_JUDGE_MODEL=gemma-4-31b
+
+# Prevent wrong customer answers
+CACHE_ENTITY_GATING_ENABLED=true
+CACHE_ENTITY_GATE_MODE=hard        # hard=drop  soft=ask judge
+
+# Don't cache "no data found" answers
+CACHE_SKIP_NEGATIVE=true
+
+# --- Ingest pipeline source -------------------------------------------------
+# Directory the batch ingest pipeline reads from (separate from CONVERSATION_STORE_DIR
+# which is used by the memory system).
+CACHE_INGEST_SOURCE_DIR=data/conversations/cleaned_conversations
+
+# --- Ingest-time paraphrase augmentation ------------------------------------
+# Generate N alternative phrasings per entry at ingest time using the project LLM.
+# Each paraphrase is stored as a separate ChromaDB entry pointing to the same answer.
+# Disabled by default — enable for bulk ingest runs.
+CACHE_PARAPHRASE_ENABLED=false    # set true to enable during ingest
+CACHE_PARAPHRASE_N=5              # paraphrases generated per Q/A pair
+CACHE_PARAPHRASE_DELAY_S=5.0     # sleep between LLM calls (rate limit protection)
+                                  # at 5s → ~12 RPM, safe for Cerebras free-tier
 ```
 
-### Populate cache from all historical conversations
+### Tuning the thresholds
 
-```bash
-# 1. Migrate old JSONL files (backfill missing fields)
-python scripts/migrate_conversations.py --dry-run
-python scripts/migrate_conversations.py
-
-# 2. Ingest all history into ChromaDB (ignore age limit)
-python -m src.cache.ingest_pipeline --max-age-hours 99999
-```
-
-### Check collection health
-
-```bash
-python -c "
-import chromadb
-c = chromadb.PersistentClient('data/cache/chroma')
-col = c.get_collection('mesh_response_cache')
-print('entries:', col.count())
-res = col.get(include=['documents','metadatas'])
-for doc, meta in zip(res['documents'], res['metadatas']):
-    print(f'[{meta[\"role\"]}] {doc[:80]}')
-"
-```
-
-### Delete specific noise entries
-
-```bash
-python -c "
-import chromadb
-c = chromadb.PersistentClient('data/cache/chroma')
-col = c.get_collection('mesh_response_cache')
-col.delete(ids=['id-1', 'id-2'])
-print('remaining:', col.count())
-"
-```
-
-### Reset the entire cache
-
-```bash
-rm -rf agent-mesh/data/cache/chroma
-# Restart API server — collection recreated empty on next request
-```
+| If you see this problem | Try this fix |
+|---|---|
+| Users often reject cache suggestions (false positives) | Raise `CACHE_SIMILARITY_THRESHOLD` (e.g. 0.95) |
+| Too many cache misses on similar questions | Lower `CACHE_SIMILARITY_THRESHOLD` (e.g. 0.88) |
+| Gray zone taking too long (judge timeouts) | Enable cross-encoder reranker to filter before judge |
+| Cache serving wrong customer data | Ensure `CACHE_ENTITY_GATING_ENABLED=true` and mode=`hard` |
+| 429 errors during paraphrase ingest | Raise `CACHE_PARAPHRASE_DELAY_S` (e.g. 10.0); pipeline already retries 3× with backoff |
+| Paraphrase ingest too slow | Lower `CACHE_PARAPHRASE_N` (e.g. 3) or `CACHE_PARAPHRASE_DELAY_S` if on paid plan |
 
 ---
 
-## Design Decisions & Trade-offs
+## 17. Known Limitations
 
-| Decision | Rationale |
+| Limitation | Plain English |
 |---|---|
-| User selects from candidates for ALL zones (including HIT) | Prevents false positives silently serving wrong answers |
-| `skip_cache_store=true` on reject path | User rejection means different scope/entity — storing would add near-duplicates |
-| `asyncio.Event` for pause-resume | Zero-polling; same pattern as HITL `approval_store.py` |
-| 60 s timeout → run fresh | Pipeline never hangs permanently |
-| SHA256 doc ID for dedup | Idempotent upserts — safe to re-run ingest pipeline anytime |
-| `CACHE_INLINE_STORE_ENABLED` defaults `true` | Zero regression for existing deployments |
-| `CACHE_INTENT_MATCH_ENABLED` defaults `false` | Feature flag — opt-in rollout |
-| LLM judge fires concurrently in Branch A | Advisory signal in UI without blocking user interaction |
-| Judge returns `(bool, str)` with reason | Reason surfaces in UI so users/auditors see why gray-zone was accepted/rejected |
-| `lookup_top_n(n=3)` | User picks most relevant answer, not just closest vector |
-| Role isolation per entry | Prevents cross-role data leakage in multi-role banking system |
+| Answers can go stale | Cached answer doesn't update when underlying data changes. Set `CACHE_MAX_AGE_HOURS` to control maximum age. |
+| Single server only | ChromaDB uses a local SQLite file. Cannot run on multiple servers at once. |
+| Decisions lost on restart | If the server restarts while a user is looking at a suggestion banner, the 60-second timeout kicks in and a fresh answer runs. |
+| Paraphrase ingest is slow | Paraphrase augmentation adds ~5s per entry (rate limit protection). For 100 entries × 5 paraphrases = ~8 minutes total. Run overnight for large datasets. |
+| Paraphrase quality depends on LLM | Low-quality paraphrases may miss intent or rephrase entities incorrectly. The entity gate still protects data isolation but a bad paraphrase may waste a ChromaDB slot. |
 
 ---
 
-## Known Limitations
+## 18. Key Files
 
-| Limitation | Detail |
+| File | What it does |
 |---|---|
-| Answer staleness | Cached answer does not reflect data changes. Use `CACHE_MAX_AGE_HOURS` to control freshness. |
-| Reasoning truncation | Reasoning JSON capped at 8 192 chars. Truncation removes whole entries (never cuts mid-JSON). |
-| Single-node only | ChromaDB `PersistentClient` uses SQLite — not safe for multi-process. Use `chromadb.HttpClient` for distributed deployments. |
-| Cold-start | Embedding model loads lazily (~1–3 s). `_warmup()` at startup eliminates this from real requests. |
-| In-memory decision store | `IntentDecisionStore` resets on server restart — pending decisions lost. In-flight suggestions auto-timeout on next 60 s check. |
-| `run_ingest` async wrapper | The async `run_ingest()` wrapper does not forward `max_age_hours` to `run_ingest_sync` — use the CLI (`--max-age-hours`) or call `run_ingest_sync` directly for age override. |
+| [src/cache/semantic_cache.py](../agent-mesh/src/cache/semantic_cache.py) | Core store: embedding, search, ChromaDB lifecycle |
+| [src/cache/entity_extractor.py](../agent-mesh/src/cache/entity_extractor.py) | Extract entities from queries; canonicalize; regex fallback |
+| [src/cache/intent_decision_store.py](../agent-mesh/src/cache/intent_decision_store.py) | Pause/resume while user decides (accept/reject) |
+| [src/cache/ingest_pipeline.py](../agent-mesh/src/cache/ingest_pipeline.py) | Batch ingest from `cleaned_conversations/`; paraphrase augmentation; entity backfill |
+| [src/mesh/workflow.py](../agent-mesh/src/mesh/workflow.py) | `CacheCheckExecutor` — the four decision branches |
+| [src/mesh/orchestrator.py](../agent-mesh/src/mesh/orchestrator.py) | Intercepts user's accept/reject and routes accordingly |
+| [src/config.py](../agent-mesh/src/config.py) | All `CACHE_*` configuration variables including ingest and paraphrase settings |
+| [data/conversations/cleaned_conversations/](../agent-mesh/data/conversations/cleaned_conversations/) | Curated JSONL files used as the ingest source |

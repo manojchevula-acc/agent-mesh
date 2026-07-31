@@ -889,25 +889,30 @@ async def post_reject(request: Request) -> JSONResponse:
     return JSONResponse({"success": True, "approval_id": aid, "decision": "rejected"})
 
 
+async def post_cache_reload(request: Request) -> JSONResponse:
+    """Reload ChromaDB in the running server after an external ingest. POST /api/cache/reload"""
+    from src.cache.semantic_cache import get_cache_store
+    try:
+        store = get_cache_store()
+        count = await asyncio.to_thread(store.reload)
+        _log.info("cache: reload triggered via API — %d entries now visible", count)
+        return JSONResponse({"status": "ok", "entries": count})
+    except Exception as exc:
+        _log.warning("cache reload error: %s", exc, exc_info=True)
+        return JSONResponse({"status": "error", "detail": str(exc)}, status_code=500)
+
+
 async def post_cache_ingest(request: Request) -> JSONResponse:
     """Trigger a background ingest job. POST /api/cache/ingest
 
-    Body (all optional): {"source"?: "conversations"|"audit", "source_dir"?: str,
-        "audit_file"?: str, "dry_run"?: bool, "overwrite"?: bool, "role"?: str}
+    Body (all optional): {"source_dir"?: str, "dry_run"?: bool, "overwrite"?: bool, "role"?: str}
     Returns: {"job_id": str, "status": "running"}
     """
     try:
         body = await request.json()
     except Exception:
         body = {}
-    source = (body.get("source") or "conversations").strip().lower()
-    if source not in ("conversations", "audit"):
-        source = "conversations"
     source_dir = (body.get("source_dir") or "").strip()
-    audit_file = (body.get("audit_file") or "").strip()
-    entity_mode = (body.get("entity_mode") or "llm").strip().lower()
-    if entity_mode not in ("llm", "regex", "none"):
-        entity_mode = "llm"
     dry_run = bool(body.get("dry_run", False))
     overwrite = bool(body.get("overwrite", False))
     role_filter = (body.get("role") or "").strip() or None
@@ -918,15 +923,12 @@ async def post_cache_ingest(request: Request) -> JSONResponse:
 
     asyncio.create_task(run_ingest_job(
         job_id,
-        source=source,
         source_dir=source_dir,
-        audit_file=audit_file,
         dry_run=dry_run,
         overwrite=overwrite,
         role_filter=role_filter,
-        entity_mode=entity_mode,
     ))
-    _log.info("cache ingest job started job_id=%s source=%s dry_run=%s", job_id, source, dry_run)
+    _log.info("cache ingest job started job_id=%s dry_run=%s", job_id, dry_run)
     return JSONResponse({"job_id": job_id, "status": "running"})
 
 
@@ -1007,6 +1009,7 @@ app = Starlette(
         Route("/api/approvals/{id}/reject",      post_reject,      methods=["POST"]),
         Route("/api/cache/stats",                get_cache_stats,       methods=["GET"]),
         Route("/api/cache/intent-decision",      post_intent_decision,  methods=["POST"]),
+        Route("/api/cache/reload",               post_cache_reload,     methods=["POST"]),
         Route("/api/cache/ingest",               post_cache_ingest,     methods=["POST"]),
         Route("/api/cache/ingest/{job_id}",      get_cache_ingest_job,  methods=["GET"]),
     ],

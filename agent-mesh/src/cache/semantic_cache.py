@@ -234,7 +234,14 @@ class SemanticCacheStore:
                 )
             return entries  # sorted by similarity desc (dense) or fused rank (hybrid)
         except Exception as exc:
-            _log.warning("cache lookup_top_n error: %s", exc, exc_info=True)
+            import chromadb.errors as _chroma_errors
+            if isinstance(exc, _chroma_errors.InternalError):
+                _log.error(
+                    "cache lookup_top_n: ChromaDB InternalError — likely HNSW/SQLite desync "
+                    "(call POST /api/cache/reload or restart the server): %s", exc
+                )
+            else:
+                _log.warning("cache lookup_top_n error: %s", exc, exc_info=True)
             return []
 
     def store(
@@ -415,6 +422,26 @@ class SemanticCacheStore:
             "cache: ChromaDB collection '%s' opened at %s (%d entries)",
             self._collection_name, self._chroma_dir, self._collection.count(),
         )
+
+    def reload(self) -> int:
+        """Re-open ChromaDB and refresh the in-memory HNSW index.
+
+        Called after the ingest pipeline (a separate process) writes new entries.
+        Returns the new collection entry count.
+        """
+        with self._init_lock:
+            if self._client is not None:
+                try:
+                    self._client.close()
+                except Exception:
+                    pass
+            self._client = None
+            self._collection = None
+            self._initialized = False
+        self._ensure_initialized()
+        count = self._collection.count()
+        _log.info("cache: reloaded ChromaDB — %d entries now visible", count)
+        return count
 
     def _hybrid_rerank(self, query: str, entries: List["CacheEntry"]) -> List["CacheEntry"]:
         """Reorder dense candidates by fusing dense + BM25 rank (Reciprocal Rank Fusion).
