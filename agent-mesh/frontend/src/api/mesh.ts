@@ -1,5 +1,6 @@
 import { apiClient } from "@/lib/apiClient";
 import { config } from "@/lib/config";
+import type { StructuredFeedbackRequest, StructuredFeedbackResponse } from "@/types/feedback";
 import type {
   AuditDetailRecord,
   AuditListResponse,
@@ -177,6 +178,13 @@ export async function getMeshStatus(): Promise<NodeHealth[]> {
 
 export async function submitFeedback(payload: FeedbackRequest): Promise<FeedbackResponse> {
   const { data } = await apiClient.post<FeedbackResponse>("/api/feedback", payload);
+  return data;
+}
+
+export async function submitStructuredFeedback(
+  payload: StructuredFeedbackRequest,
+): Promise<StructuredFeedbackResponse> {
+  const { data } = await apiClient.post<StructuredFeedbackResponse>("/api/feedback/structured", payload);
   return data;
 }
 

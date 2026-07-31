@@ -26,6 +26,7 @@ from typing import Optional
 from src.config import Config
 
 _lock = threading.Lock()
+_structured_lock = threading.Lock()
 
 
 def record_feedback(
@@ -69,3 +70,47 @@ def record_feedback(
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
     return feedback_id
+
+
+def record_structured_feedback(
+    request_id: str,
+    session_id: str,
+    user: str,
+    dimensions: dict,
+    role: Optional[str] = None,
+    rating: Optional[str] = None,
+    comment: Optional[str] = None,
+    query: Optional[str] = None,
+    answer: Optional[str] = None,
+    route: Optional[str] = None,
+    blocked: Optional[bool] = None,
+) -> str:
+    """Append one structured feedback record to FEEDBACK_LOG_FILE.
+
+    Linked to the basic feedback record via feedback_id = f"fb_{request_id}".
+    Returns the structured_feedback_id (sfb_{request_id}).
+    """
+    sfb_id = f"sfb_{request_id}"
+    record = {
+        "record_type":            "structured",
+        "structured_feedback_id": sfb_id,
+        "feedback_id":            f"fb_{request_id}",
+        "ts":                     datetime.now(timezone.utc).isoformat(),
+        "request_id":             request_id,
+        "session_id":             session_id,
+        "user":                   user,
+        "role":                   role,
+        "rating":                 rating,
+        "comment":                comment,
+        "query":                  query,
+        "answer":                 answer,
+        "route":                  route,
+        "blocked":                blocked,
+        "dimensions":             dimensions,
+    }
+    path = Config.FEEDBACK_LOG_FILE
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with _structured_lock:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    return sfb_id

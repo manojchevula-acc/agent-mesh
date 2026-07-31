@@ -56,7 +56,7 @@ from starlette.routing import Route
 from src.a2a.hosting import TraceContextMiddleware
 from src.auth.identity_provider import login, list_users
 from src.config import Config
-from src.feedback.store import record_feedback
+from src.feedback.store import record_feedback, record_structured_feedback
 from src.mesh.orchestrator import handle_request, handle_request_stream
 from src.hitl.approval_store import approval_store
 from src.memory import ConversationStore
@@ -294,6 +294,67 @@ async def post_feedback(request: Request) -> JSONResponse:
     return JSONResponse({"success": True, "feedback_id": feedback_id})
 
 
+async def post_structured_feedback(request: Request) -> JSONResponse:
+    """Record structured 7-dimension feedback. POST /api/feedback/structured
+
+    Body: { request_id, session_id, user, dimensions: { <key>: { rating?, codes?, note? }, ... } }
+    Response: { success: true, structured_feedback_id }
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body."}, status_code=400)
+
+    required = {"request_id", "session_id", "user", "dimensions"}
+    if missing := required - body.keys():
+        return JSONResponse({"error": f"Missing required fields: {sorted(missing)}"}, status_code=400)
+
+    dimensions = body.get("dimensions")
+    if not isinstance(dimensions, dict) or not dimensions:
+        return JSONResponse({"error": "dimensions must be a non-empty object."}, status_code=400)
+
+    _VALID_DIMENSION_KEYS = {"intent", "workflow", "tools", "policy", "output", "correction", "effort"}
+    unknown = set(dimensions.keys()) - _VALID_DIMENSION_KEYS
+    if unknown:
+        return JSONResponse({"error": f"Unknown dimension keys: {sorted(unknown)}"}, status_code=400)
+
+    _VALID_RATINGS = {"good", "partial", "poor"}
+    for dim_key, dim_val in dimensions.items():
+        if not isinstance(dim_val, dict):
+            return JSONResponse({"error": f"Dimension '{dim_key}' must be an object."}, status_code=400)
+        rating = dim_val.get("rating")
+        if rating is not None and rating not in _VALID_RATINGS:
+            return JSONResponse(
+                {"error": f"Dimension '{dim_key}' has invalid rating '{rating}'."},
+                status_code=400,
+            )
+
+    try:
+        sfb_id = record_structured_feedback(
+            request_id=str(body["request_id"]),
+            session_id=str(body["session_id"]),
+            user=str(body["user"]),
+            dimensions=dimensions,
+            role=body.get("role"),
+            rating=body.get("rating"),
+            comment=body.get("comment"),
+            query=body.get("query"),
+            answer=body.get("answer"),
+            route=body.get("route"),
+            blocked=body.get("blocked"),
+        )
+    except Exception as exc:
+        _log.warning("structured feedback write failed: %s", exc, extra={"status": "ERROR"})
+        return JSONResponse({"error": "Failed to save structured feedback."}, status_code=500)
+
+    _log.info(
+        "Structured feedback recorded id=%s user=%s dims=%s",
+        sfb_id, body["user"], list(dimensions.keys()),
+        extra={"status": "SUCCESS"},
+    )
+    return JSONResponse({"success": True, "structured_feedback_id": sfb_id})
+
+
 async def get_feedback_stats(request: Request) -> JSONResponse:
     """Return aggregate feedback counts (total, up, down, with_comment)."""
     path = Config.FEEDBACK_LOG_FILE
@@ -308,6 +369,8 @@ async def get_feedback_stats(request: Request) -> JSONResponse:
                     continue
                 try:
                     rec = json.loads(line)
+                    if rec.get("record_type") == "structured":
+                        continue
                     if rec.get("rating") == "up":
                         up += 1
                     elif rec.get("rating") == "down":
@@ -675,6 +738,8 @@ async def get_feedback_list(request: Request):
                     continue
                 try:
                     rec = json.loads(line)
+                    if rec.get("record_type") == "structured":
+                        continue
                     # Exclude the bulky fine_tune_record from the list response
                     rec.pop("fine_tune_record", None)
                     records.append(rec)
@@ -999,9 +1064,10 @@ app = Starlette(
         Route("/api/audit/{request_id}",         get_audit_detail,         methods=["GET"]),
         Route("/api/traces",                     get_trace_list,           methods=["GET"]),
         Route("/api/conversations/list",         get_conversations_list,   methods=["GET"]),
-        Route("/api/feedback",                   post_feedback,            methods=["POST"]),
-        Route("/api/feedback/list",              get_feedback_list,        methods=["GET"]),
-        Route("/api/feedback/stats",             get_feedback_stats,       methods=["GET"]),
+        Route("/api/feedback",                   post_feedback,              methods=["POST"]),
+        Route("/api/feedback/structured",        post_structured_feedback,   methods=["POST"]),
+        Route("/api/feedback/list",              get_feedback_list,          methods=["GET"]),
+        Route("/api/feedback/stats",             get_feedback_stats,         methods=["GET"]),
         Route("/api/mesh/status",      get_mesh_status,     methods=["GET"]),
         Route("/api/conversations/{session_id}", get_conversation, methods=["GET"]),
         Route("/api/approvals/{id}",             get_approval,     methods=["GET"]),

@@ -5,6 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useChatContext } from "@/contexts/ChatContext";
 import { useChat } from "@/hooks/useChat";
 import MessageBubble from "@/components/chat/MessageBubble";
+import { StructuredFeedbackModal } from "@/components/chat/StructuredFeedbackModal";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
 import { SAMPLE_QUERY_GROUPS } from "@/config/constants";
@@ -14,11 +15,22 @@ export default function ChatPage() {
   const username = user?.username ?? "bob";
   const { sessionId } = useParams<{ sessionId?: string }>();
 
-  const { messages, sendMessage, refreshAnswer, resolveIntentSuggestion, stopGeneration, clearChat, handleFeedback, isLoading } = useChat({
+  const { messages, sendMessage, refreshAnswer, resolveIntentSuggestion, stopGeneration, clearChat, handleFeedback, handleStructuredFeedback, isLoading } = useChat({
     username,
     role: user?.role ?? "customer",
     initialSessionId: sessionId,
   });
+
+  const [detailedFeedbackTarget, setDetailedFeedbackTarget] = useState<{
+    requestId: string;
+    sessionId: string;
+    messageId: string;
+    answer: string;
+    route?: string;
+    blocked: boolean;
+    rating?: "up" | "down";
+    comment?: string;
+  } | null>(null);
 
   const { registerClearChat } = useChatContext();
   useEffect(() => { registerClearChat(clearChat); }, [clearChat, registerClearChat]);
@@ -91,7 +103,14 @@ export default function ChatPage() {
           <EmptyState onSampleClick={handleSampleClick} />
         ) : (
           messages.map((msg) => (
-            <MessageBubble key={msg.id} message={msg} onFeedback={handleFeedback} onRefresh={refreshAnswer} onResolveIntent={resolveIntentSuggestion} />
+            <MessageBubble
+              key={msg.id}
+              message={msg}
+              onFeedback={handleFeedback}
+              onRefresh={refreshAnswer}
+              onResolveIntent={resolveIntentSuggestion}
+              onDetailedFeedback={(ctx) => setDetailedFeedbackTarget(ctx)}
+            />
           ))
         )}
         <div ref={bottomRef} />
@@ -142,6 +161,19 @@ export default function ChatPage() {
           Ctrl+Enter to send
         </p>
       </div>
+
+      {detailedFeedbackTarget && (
+        <StructuredFeedbackModal
+          open={true}
+          requestId={detailedFeedbackTarget.requestId}
+          sessionId={detailedFeedbackTarget.sessionId}
+          user={username}
+          onClose={() => setDetailedFeedbackTarget(null)}
+          onSubmit={async (dims) => {
+            await handleStructuredFeedback(detailedFeedbackTarget, dims);
+          }}
+        />
+      )}
     </div>
 
   );

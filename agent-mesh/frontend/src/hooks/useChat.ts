@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getConversation, queryMeshStream, resolveIntentDecision, submitFeedback } from "@/api/mesh";
+import { getConversation, queryMeshStream, resolveIntentDecision, submitFeedback, submitStructuredFeedback } from "@/api/mesh";
 import type { CandidateItem, ChatMessage, ExecutionEvent, LLMReasoningEntry, MeshResult, SessionMessage } from "@/types/mesh";
+import type { StructuredFeedbackDimensions } from "@/types/feedback";
 
 const SESSION_ID_KEY = "agent-mesh-session-id";
 
@@ -465,6 +466,37 @@ export function useChat({ username, role, initialSessionId }: UseChatOptions) {
     [messages, username, role]
   );
 
+  const handleStructuredFeedback = useCallback(
+    async (
+      ctx: {
+        requestId: string; sessionId: string; messageId: string;
+        answer: string; route?: string; blocked: boolean;
+        rating?: "up" | "down"; comment?: string;
+      },
+      dimensions: StructuredFeedbackDimensions,
+    ) => {
+      const msgIndex = messages.findIndex((m) => m.id === ctx.messageId);
+      const userMsg = msgIndex > 0 ? messages[msgIndex - 1] : null;
+      await submitStructuredFeedback({
+        request_id: ctx.requestId,
+        session_id: ctx.sessionId,
+        user: username,
+        role,
+        rating: ctx.rating,
+        comment: ctx.comment,
+        query: userMsg?.content ?? "",
+        answer: ctx.answer,
+        route: ctx.route,
+        blocked: ctx.blocked,
+        dimensions,
+      });
+      setMessages((prev) =>
+        prev.map((m) => m.id === ctx.messageId ? { ...m, structuredFeedback: true } : m)
+      );
+    },
+    [messages, username, role]
+  );
+
   return {
     messages,
     sendMessage,
@@ -473,6 +505,7 @@ export function useChat({ username, role, initialSessionId }: UseChatOptions) {
     stopGeneration,
     clearChat,
     handleFeedback,
+    handleStructuredFeedback,
     isLoading,
     error,
   };

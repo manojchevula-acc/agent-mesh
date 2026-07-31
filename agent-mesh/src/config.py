@@ -210,6 +210,7 @@ class Config:
     # so the JSONL can be exported directly to a fine-tuning job.
     # ----------------------------------------------------------------------
     FEEDBACK_LOG_FILE: str = os.getenv("FEEDBACK_LOG_FILE", "data/feedback.jsonl")
+    STRUCTURED_FEEDBACK_LOG_FILE: str = os.getenv("STRUCTURED_FEEDBACK_LOG_FILE", "data/structured_feedback.jsonl")
 
     # ----------------------------------------------------------------------
     # DevUI (Microsoft Agent Framework dev tool) — Docker-free live trace viewer

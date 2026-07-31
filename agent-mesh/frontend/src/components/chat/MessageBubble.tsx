@@ -1,5 +1,5 @@
 import { memo, useMemo, useEffect, useRef, useState } from "react";
-import { ThumbsUp, ThumbsDown, Zap, RefreshCw, Layers } from "lucide-react";
+import { ThumbsUp, ThumbsDown, Zap, RefreshCw, Layers, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Markdown } from "@/components/ui/Markdown";
 import PipelineTrail from "./PipelineTrail";
@@ -184,9 +184,13 @@ interface FeedbackBarProps {
   messageId: string;
   existing?: { rating: "up" | "down"; comment?: string };
   onSubmit: (messageId: string, rating: "up" | "down", comment?: string) => Promise<void>;
+  requestId?: string;
+  sessionId?: string;
+  onDetailedFeedback?: (requestId: string, sessionId: string) => void;
+  structuredSubmitted?: boolean;
 }
 
-function FeedbackBar({ messageId, existing, onSubmit }: FeedbackBarProps) {
+function FeedbackBar({ messageId, existing, onSubmit, requestId, sessionId, onDetailedFeedback, structuredSubmitted }: FeedbackBarProps) {
   const [selected, setSelected] = useState<"up" | "down" | null>(existing?.rating ?? null);
   const [comment, setComment] = useState(existing?.comment ?? "");
   const [submitted, setSubmitted] = useState(!!existing);
@@ -211,6 +215,15 @@ function FeedbackBar({ messageId, existing, onSubmit }: FeedbackBarProps) {
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  if (structuredSubmitted) {
+    return (
+      <div className="flex items-center gap-2 mt-3 pt-2 border-t border-line">
+        <CheckCircle2 className="h-3.5 w-3.5 text-brand-500" />
+        <span className="text-xs text-muted">Detailed feedback submitted</span>
+      </div>
+    );
   }
 
   if (submitted) {
@@ -274,7 +287,20 @@ function FeedbackBar({ messageId, existing, onSubmit }: FeedbackBarProps) {
               "disabled:opacity-60 transition-colors"
             )}
           />
-          <div className="flex justify-end">
+          <div className="flex items-center justify-end gap-2">
+            {onDetailedFeedback && requestId && (
+              <button
+                type="button"
+                onClick={() => onDetailedFeedback(requestId, sessionId ?? "")}
+                className={cn(
+                  "text-xs px-3 py-1 rounded-lg font-medium transition-colors",
+                  "border border-brand-500 text-brand-600 hover:bg-brand-50",
+                  "dark:border-brand-400 dark:text-brand-400 dark:hover:bg-brand-900/20"
+                )}
+              >
+                Feedback Form
+              </button>
+            )}
             <button
               onClick={handleSubmit}
               disabled={locked}
@@ -294,11 +320,23 @@ function FeedbackBar({ messageId, existing, onSubmit }: FeedbackBarProps) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+interface DetailedFeedbackContext {
+  requestId: string;
+  sessionId: string;
+  messageId: string;
+  answer: string;
+  route?: string;
+  blocked: boolean;
+  rating?: "up" | "down";
+  comment?: string;
+}
+
 interface MessageBubbleProps {
   message: ChatMessage;
   onFeedback?: (messageId: string, rating: "up" | "down", comment?: string) => Promise<void>;
   onRefresh?: (messageId: string) => void;
   onResolveIntent?: (messageId: string, chosenEntryId: string, accepted: boolean) => void;
+  onDetailedFeedback?: (ctx: DetailedFeedbackContext) => void;
 }
 
 function formatTime(date: Date): string {
@@ -325,7 +363,7 @@ function RouteChip({ route }: { route: string }) {
 
 const LLM_REASONING_RE = /<llm_reasoning>[\s\S]*?<\/llm_reasoning>/g;
 
-const MessageBubble = memo(function MessageBubble({ message, onFeedback, onRefresh, onResolveIntent }: MessageBubbleProps) {
+const MessageBubble = memo(function MessageBubble({ message, onFeedback, onRefresh, onResolveIntent, onDetailedFeedback }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const timeLabel = useMemo(() => formatTime(message.timestamp), [message.timestamp]);
   const safeContent = useMemo(
@@ -533,6 +571,21 @@ const MessageBubble = memo(function MessageBubble({ message, onFeedback, onRefre
                   messageId={message.id}
                   existing={message.feedback}
                   onSubmit={onFeedback}
+                  requestId={result.request_id}
+                  sessionId={result.session_id ?? ""}
+                  structuredSubmitted={!!message.structuredFeedback}
+                  onDetailedFeedback={onDetailedFeedback
+                    ? (reqId, sessId) => onDetailedFeedback({
+                        requestId: reqId,
+                        sessionId: sessId,
+                        messageId: message.id,
+                        answer: message.content,
+                        route: result.route ?? undefined,
+                        blocked: result.blocked,
+                        rating: message.feedback?.rating,
+                        comment: message.feedback?.comment,
+                      })
+                    : undefined}
                 />
               )}
             </>

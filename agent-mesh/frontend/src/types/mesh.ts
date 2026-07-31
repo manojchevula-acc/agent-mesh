@@ -155,6 +155,7 @@ export interface ChatMessage {
   timestamp: Date;
   isLoading?: boolean;
   feedback?: { rating: "up" | "down"; comment?: string };
+  structuredFeedback?: boolean;
   // Streaming fields — populated incrementally as SSE events arrive
   streamingStage?: string;
   streamingEvents?: ExecutionEvent[];
