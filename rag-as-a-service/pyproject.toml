@@ -13,6 +13,13 @@ dependencies = [
     "FlagEmbedding>=1.2.9",
     "sentence-transformers>=3.0.0",
     "torch>=2.3.0",
+    # FlagEmbedding's FlagReranker calls tokenizer.prepare_for_model() directly.
+    # transformers 5.x split tokenizers into PythonBackend (keeps this method) and
+    # TokenizersBackend (dropped it) — XLMRobertaTokenizer (bge-reranker-v2-m3) now
+    # uses TokenizersBackend, so FlagEmbedding 1.4.0 breaks on any 5.x release even
+    # though its own dependency spec (transformers<6.0.0) allows it. Pin below 5.0
+    # until FlagEmbedding stops relying on the removed method.
+    "transformers>=4.44.2,<5.0.0",
     # Vector DBs
     "qdrant-client>=1.10.0",
     "pymilvus>=2.4.0",
