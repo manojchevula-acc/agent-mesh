@@ -55,9 +55,9 @@ const DIMENSIONS: DimensionConfig[] = [
     codes: ["steps_out_of_order", "check_skipped", "check_repeated", "check_too_late"],
     codeLabels: {
       steps_out_of_order: "Steps out of order",
-      check_skipped: "Check skipped",
-      check_repeated: "Check repeated",
-      check_too_late: "Check too late",
+      check_skipped: "Steps skipped",
+      check_repeated: "Steps repeated",
+      check_too_late: "Steps too late",
     },
   },
   {
