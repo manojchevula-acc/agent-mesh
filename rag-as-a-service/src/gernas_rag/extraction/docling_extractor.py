@@ -218,7 +218,7 @@ class DoclingExtractor(BaseExtractor):
         return ExtractionResult(
             elements=elements,
             raw_markdown=doc.export_to_markdown(),
-            page_count=getattr(doc, "num_pages", 0) or 0,
+            page_count=doc.num_pages(),
             file_path=str(file_path),
         )
 

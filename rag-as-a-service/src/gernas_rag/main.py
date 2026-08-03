@@ -10,7 +10,7 @@ from .api.routers import admin, evaluate, health, ingest, retrieve, search_histo
 from .cache.redis_cache import RAGCache
 from .config.settings import get_settings
 from .embeddings.factory import get_embedder
-from .generation.generator import ResponseGenerator
+from .generation.factory import build_generator
 from .ingestion.pipeline import IngestionPipeline
 from .llm.factory import get_llm
 from .retrieval.pipeline import RetrievalPipeline
@@ -37,22 +37,10 @@ async def lifespan(app: FastAPI):
         settings.redis_url, settings.redis_cache_ttl_seconds, enabled=settings.redis_enabled
     )
 
-    # Multimodal answer-time hydration (optional). When enabled, build an artifact
-    # store (to load images) and a separate vision-capable LLM (reusing LLM creds).
-    artifact_store = None
-    vision_llm = None
-    if settings.hydration.enabled or settings.enrichment.enabled:
-        from .storage.artifact_store import get_artifact_store
-
-        artifact_store = get_artifact_store(settings.artifact_store)
-    if settings.hydration.enabled:
-        vision_llm_config = settings.llm.model_copy(
-            update={
-                "provider": settings.hydration.vision_provider,
-                "model_name": settings.hydration.vision_model_name,
-            }
-        )
-        vision_llm = get_llm(vision_llm_config)
+    # Multimodal answer-time hydration (optional) is wired by the shared factory,
+    # which the offline evaluation suite also uses — so what is evaluated is
+    # always what is served.
+    generator, _ = build_generator(settings, llm)
 
     # Ensure the collection exists.
     await vectordb.create_collection(settings.vectordb.collection_name, embedder.dense_dim)
@@ -65,9 +53,7 @@ async def lifespan(app: FastAPI):
     app.state.cache = cache
     app.state.ingestion_pipeline = IngestionPipeline(settings, embedder, vectordb)
     app.state.retrieval_pipeline = RetrievalPipeline(settings, embedder, vectordb)
-    app.state.generator = ResponseGenerator(
-        settings, llm, artifact_store=artifact_store, vision_llm=vision_llm
-    )
+    app.state.generator = generator
     app.state.search_history_store = get_search_history_store(settings.search_history)
 
     yield

@@ -65,16 +65,28 @@ _REASON_RE = re.compile(r"REASON:\s*(.+)", re.IGNORECASE | re.DOTALL)
 
 
 def _clause_match(expected: str, actual: str) -> bool:
-    """Tolerant clause match: exact, or one is a substring of the other.
+    """Tolerant clause match: exact, or one is a dot-boundary prefix of the other.
 
-    Docling-derived clause labels aren't always normalized the same way twice
-    (e.g. "figure p.3" vs "3.1"), so exact-only matching would under-count
-    genuine hits.
+    Docling-derived clause labels aren't always normalized the same way twice, so
+    exact-only matching would under-count genuine hits. The dot boundary matters:
+    a plain substring test counts "2.1" as a hit against "12.14" and inflates the
+    retrieval hit rate.
+
+    NOTE: clause_reference is derived from chunk text (and for media chunks from
+    transcribed caption text), so it is not a reliable identity key at all — see
+    eval/stage2_enrichment/integrity.py. The eval/ suite matches on chunk_id
+    instead and supersedes this script; this fix only stops the legacy number
+    from being actively misleading.
     """
     if not expected or not actual:
         return expected == actual
-    e, a = expected.lower(), actual.lower()
-    return e == a or e in a or a in e
+    e, a = expected.strip().lower(), actual.strip().lower()
+    if e == a:
+        return True
+    for short, long in ((e, a), (a, e)):
+        if long.startswith(short) and long[len(short):].startswith("."):
+            return True
+    return False
 
 
 async def _judge(llm, question: str, gold_answer: str, agent_answer: str) -> dict:

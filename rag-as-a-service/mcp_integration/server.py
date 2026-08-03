@@ -67,7 +67,7 @@ async def _ensure_pipeline():
         try:
             from gernas_rag.config.settings import get_settings
             from gernas_rag.embeddings.factory import get_embedder
-            from gernas_rag.generation.generator import ResponseGenerator
+            from gernas_rag.generation.factory import build_generator
             from gernas_rag.llm.factory import get_llm
             from gernas_rag.retrieval.pipeline import RetrievalPipeline
             from gernas_rag.vectordb.factory import get_vectordb
@@ -82,7 +82,7 @@ async def _ensure_pipeline():
             )
 
             _pipeline = RetrievalPipeline(settings, embedder, vectordb)
-            _generator = ResponseGenerator(settings, llm)
+            _generator, _ = build_generator(settings, llm)
         except Exception as exc:
             _init_error = str(exc)
             raise

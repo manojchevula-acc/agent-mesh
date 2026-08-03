@@ -15,7 +15,7 @@ sys.path.insert(0, "src")
 from gernas_rag.config.settings import get_settings  # noqa: E402
 from gernas_rag.embeddings.factory import get_embedder  # noqa: E402
 from gernas_rag.evaluation.evaluator import RAGEvaluator  # noqa: E402
-from gernas_rag.generation.generator import ResponseGenerator  # noqa: E402
+from gernas_rag.generation.factory import build_generator  # noqa: E402
 from gernas_rag.llm.factory import get_llm  # noqa: E402
 from gernas_rag.retrieval.pipeline import RetrievalPipeline  # noqa: E402
 from gernas_rag.vectordb.factory import get_vectordb  # noqa: E402
@@ -27,7 +27,7 @@ async def main(reference_free: bool) -> None:
     vectordb = get_vectordb(settings.vectordb)
     llm = get_llm(settings.llm)
     pipeline = RetrievalPipeline(settings, embedder, vectordb)
-    generator = ResponseGenerator(settings, llm)
+    generator, _ = build_generator(settings, llm)
     evaluator = RAGEvaluator(pipeline, generator, settings)
 
     results = await evaluator.run(reference_free=reference_free)

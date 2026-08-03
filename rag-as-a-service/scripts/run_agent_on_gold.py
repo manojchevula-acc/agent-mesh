@@ -33,7 +33,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 from gernas_rag.config.settings import get_settings  # noqa: E402
 from gernas_rag.embeddings.factory import get_embedder  # noqa: E402
-from gernas_rag.generation.generator import ResponseGenerator  # noqa: E402
+from gernas_rag.generation.factory import build_generator  # noqa: E402
 from gernas_rag.llm.factory import get_llm  # noqa: E402
 from gernas_rag.models.retrieval import RetrieveRequest  # noqa: E402
 from gernas_rag.retrieval.pipeline import RetrievalPipeline  # noqa: E402
@@ -57,7 +57,12 @@ async def run(gold_path: Path, top_k: int, limit: int | None, ids: list[str] | N
     vectordb = get_vectordb(settings.vectordb)
     llm = get_llm(settings.llm)
     pipeline = RetrievalPipeline(settings, embedder, vectordb)
-    generator = ResponseGenerator(settings, llm)
+    # Built through the shared factory so the artifact store and vision LLM are
+    # wired exactly as the API wires them. Constructing ResponseGenerator directly
+    # here silently disabled image hydration, making every recorded answer
+    # text-only regardless of configuration.
+    generator, effective_settings = build_generator(settings, llm)
+    print(f"  hydration: {'on' if effective_settings.hydration.enabled else 'off'}")
 
     results: list[dict] = []
     for item in gold_set:

@@ -8,6 +8,8 @@ the image augments it, never replaces it. Hydration lives here (not in retrieval
 so the cached ``RetrieveResponse`` never carries image bytes.
 """
 
+from dataclasses import dataclass
+
 from ..config.settings import Settings
 from ..llm.base import BaseLLM, ImagePart, Message, TextPart
 from ..models.retrieval import RetrievedChunk
@@ -15,6 +17,24 @@ from ..storage.artifact_store import BaseArtifactStore
 from ..utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class GenerationTrace:
+    """What actually happened during one answer synthesis.
+
+    Whether the vision path ran is otherwise invisible to the caller: hydration
+    degrades to text silently on a missing artifact, an oversize image or an
+    unconfigured vision LLM. Evaluation needs that distinction to attribute a
+    failure, and production monitoring needs it to know the multimodal path is
+    live at all — so it is recorded rather than inferred.
+    """
+
+    context_blocks: int = 0
+    hydration_eligible: int = 0  # Chunks hydration would have loaded an image for.
+    images_hydrated: int = 0  # Images actually resolved from the artifact store.
+    vision_used: bool = False  # True only when the vision LLM answered.
+    prompt_chars: int = 0
 
 _SYSTEM_PROMPT = (
     "You are GERNAS, FAB's regulatory and credit-policy assistant. Answer strictly "
@@ -103,9 +123,19 @@ class ResponseGenerator:
         return parts
 
     async def generate(self, query: str, chunks: list[RetrievedChunk]) -> str:
+        answer, _ = await self.generate_with_trace(query, chunks)
+        return answer
+
+    async def generate_with_trace(
+        self, query: str, chunks: list[RetrievedChunk]
+    ) -> tuple[str, GenerationTrace]:
+        """Same as :meth:`generate`, plus a record of which path actually ran."""
         if not chunks:
             logger.info("No chunks to generate from", query=query[:80])
-            return "I could not find any relevant policy context to answer this question."
+            return (
+                "I could not find any relevant policy context to answer this question.",
+                GenerationTrace(),
+            )
 
         context = self._build_context(chunks)
         user_text = (
@@ -114,6 +144,7 @@ class ResponseGenerator:
             "Answer using only the context above. Cite every claim with [N] numbers "
             "and end with a 'Sources:' block."
         )
+        eligible = sum(1 for c in chunks if self._should_hydrate(c))
 
         image_parts = await self._hydrate(chunks) if self._hydration.enabled else []
         if image_parts and self._vision_llm is not None:
@@ -126,7 +157,13 @@ class ResponseGenerator:
             logger.info(
                 "Answer generated (vision)", query=query[:80], images=len(image_parts), chars=len(answer)
             )
-            return answer
+            return answer, GenerationTrace(
+                context_blocks=len(chunks),
+                hydration_eligible=eligible,
+                images_hydrated=len(image_parts),
+                vision_used=True,
+                prompt_chars=len(user_text),
+            )
 
         # Default text-only path — unchanged from single-modality behaviour.
         messages = [
@@ -135,4 +172,10 @@ class ResponseGenerator:
         ]
         answer = await self._llm.generate(messages)
         logger.info("Answer generated", query=query[:80], chars=len(answer))
-        return answer
+        return answer, GenerationTrace(
+            context_blocks=len(chunks),
+            hydration_eligible=eligible,
+            images_hydrated=len(image_parts),
+            vision_used=False,
+            prompt_chars=len(user_text),
+        )
