@@ -56,7 +56,7 @@ from starlette.routing import Route
 from src.a2a.hosting import TraceContextMiddleware
 from src.auth.identity_provider import login, list_users
 from src.config import Config
-from src.feedback.store import record_feedback, record_structured_feedback
+from src.feedback.store import record_feedback, record_structured_feedback, get_structured_feedback_list
 from src.mesh.orchestrator import handle_request, handle_request_stream
 from src.hitl.approval_store import approval_store
 from src.memory import ConversationStore
@@ -382,6 +382,12 @@ async def get_feedback_stats(request: Request) -> JSONResponse:
     except Exception as exc:
         _log.warning("feedback stats read failed: %s", exc)
     return JSONResponse({"total": up + down, "up": up, "down": down, "with_comment": commented})
+
+
+async def get_structured_feedback_list_handler(request: Request) -> JSONResponse:
+    """Return all structured feedback records, newest-first."""
+    records = get_structured_feedback_list()
+    return JSONResponse({"records": records, "total": len(records)})
 
 
 async def get_logs_list(request: Request) -> JSONResponse:
@@ -1065,9 +1071,10 @@ app = Starlette(
         Route("/api/traces",                     get_trace_list,           methods=["GET"]),
         Route("/api/conversations/list",         get_conversations_list,   methods=["GET"]),
         Route("/api/feedback",                   post_feedback,              methods=["POST"]),
-        Route("/api/feedback/structured",        post_structured_feedback,   methods=["POST"]),
-        Route("/api/feedback/list",              get_feedback_list,          methods=["GET"]),
-        Route("/api/feedback/stats",             get_feedback_stats,         methods=["GET"]),
+        Route("/api/feedback/structured",        post_structured_feedback,              methods=["POST"]),
+        Route("/api/feedback/structured/list",   get_structured_feedback_list_handler,  methods=["GET"]),
+        Route("/api/feedback/list",              get_feedback_list,                     methods=["GET"]),
+        Route("/api/feedback/stats",             get_feedback_stats,                    methods=["GET"]),
         Route("/api/mesh/status",      get_mesh_status,     methods=["GET"]),
         Route("/api/conversations/{session_id}", get_conversation, methods=["GET"]),
         Route("/api/approvals/{id}",             get_approval,     methods=["GET"]),

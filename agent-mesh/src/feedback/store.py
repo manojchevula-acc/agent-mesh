@@ -114,3 +114,25 @@ def record_structured_feedback(
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
     return sfb_id
+
+
+def get_structured_feedback_list() -> list[dict]:
+    """Return all structured feedback records (newest-first)."""
+    path = Config.FEEDBACK_LOG_FILE
+    if not os.path.exists(path):
+        return []
+    records: list[dict] = []
+    with _structured_lock:
+        with open(path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    if rec.get("record_type") == "structured":
+                        records.append(rec)
+                except json.JSONDecodeError:
+                    continue
+    records.reverse()
+    return records

@@ -1,6 +1,6 @@
 import { apiClient } from "@/lib/apiClient";
 import { config } from "@/lib/config";
-import type { StructuredFeedbackRequest, StructuredFeedbackResponse } from "@/types/feedback";
+import type { StructuredFeedbackRequest, StructuredFeedbackResponse, StructuredFeedbackListResponse } from "@/types/feedback";
 import type {
   AuditDetailRecord,
   AuditListResponse,
@@ -190,6 +190,11 @@ export async function submitStructuredFeedback(
 
 export async function getFeedback(): Promise<FeedbackListResponse> {
   const { data } = await apiClient.get<FeedbackListResponse>("/api/feedback/list");
+  return data;
+}
+
+export async function getStructuredFeedback(): Promise<StructuredFeedbackListResponse> {
+  const { data } = await apiClient.get<StructuredFeedbackListResponse>("/api/feedback/structured/list");
   return data;
 }
 

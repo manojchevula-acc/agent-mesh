@@ -83,3 +83,26 @@ export interface StructuredFeedbackResponse {
   success: boolean;
   structured_feedback_id: string;
 }
+
+export interface StructuredFeedbackRecord {
+  record_type: "structured";
+  structured_feedback_id: string;
+  feedback_id: string;
+  ts: string;
+  request_id: string;
+  session_id: string;
+  user: string;
+  role?: string;
+  rating?: string;
+  comment?: string;
+  query?: string;
+  answer?: string;
+  route?: string;
+  blocked?: boolean;
+  dimensions: StructuredFeedbackDimensions;
+}
+
+export interface StructuredFeedbackListResponse {
+  records: StructuredFeedbackRecord[];
+  total: number;
+}
