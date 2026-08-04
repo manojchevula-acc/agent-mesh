@@ -20,10 +20,10 @@ class EnrichmentConfig(BaseModel):
     base_url: str | None = None
     # Dense multi-series charts need real headroom for an exhaustive transcription
     # (every axis, tick, legend entry, row) — 1024 clipped mid-list on ~40% of the
-    # POC corpus. 4096 is comfortably under embedding.max_length in raw token terms
-    # for typical figures; row-group splitting (max_media_chunk_tokens) exists for
-    # the rare table that's still bigger than this.
-    max_tokens: int = 4096
+    # POC corpus; 4096 still clipped 2/14 captions (eval stage2a CAPTION_TRUNCATED).
+    # row-group splitting (max_media_chunk_tokens) exists for the rare table whose
+    # *complete* caption is still too large for one chunk after generation.
+    max_tokens: int = 8192
     timeout_seconds: int = 20
     min_image_bytes: int = 2048  # Skip decorative logos/rules/icons below this size.
     table_confidence_threshold: float = 0.7  # Docling table-structure confidence below which a VLM pass is used.

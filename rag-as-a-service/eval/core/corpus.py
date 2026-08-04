@@ -119,9 +119,13 @@ class ChunkIndex:
 
         Clause matching is tolerant (exact, or one side a prefix of the other on a
         dot boundary) because ``clause_reference`` is derived text and is not
-        normalised identically on every ingest. It is used *only* to bootstrap
-        qrels for human review — never as the identity key during scoring, where
-        ``chunk_id`` is used instead.
+        normalised identically on every ingest.
+
+        Stage 3's relevance grading deliberately does **not** use this: the label
+        is stale on a significant share of chunks (a chunk beginning "## 3.2
+        Revolving Credit Facilities" can carry ``clause_reference="2.4"``), which
+        is exactly what put title pages into judgment sets when grading was keyed
+        on it. ``chunk_id`` is the identity key during scoring.
         """
         candidates = self.by_document.get(document, [])
         if not include_parents:

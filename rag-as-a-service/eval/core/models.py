@@ -109,30 +109,48 @@ class TranscriptionSet(BaseModel):
 # ══════════════════════════════════════════════════════════════════════
 # Stage 3 — graded relevance judgments (qrels)
 # ══════════════════════════════════════════════════════════════════════
+# Unlike the other ground-truth files these are *derived* — regenerated from
+# gold_qa.json on every run rather than hand-edited — so they tolerate schema
+# drift instead of failing loudly. An older cache written by a previous version
+# must not crash the stage; it is about to be overwritten anyway.
+_QREL_CONFIG = ConfigDict(extra="ignore")
+
+
 class RelevanceJudgment(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = _QREL_CONFIG
 
     # chunk_id is the only stable identity: deterministic, unique, and unlike
     # clause_reference it is not derived from caption text (see stage 2 findings).
     chunk_id: str
     grade: int = Field(ge=0, le=3)
-    # Denormalised for human review of the qrels file; never used for matching.
+    # Denormalised so the file is readable; never used for matching.
     document: str = ""
     modality: str = "text"
     clause_reference: str = ""
+    # Why the grader assigned this grade — the gold facts or keys it found in the
+    # chunk. This is what makes an auto-derived judgment auditable: when a metric
+    # looks wrong you read the evidence rather than re-judging the corpus.
+    evidence: str = ""
     note: str = ""
 
 
 class QrelQuestion(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = _QREL_CONFIG
 
     id: str
     name: str = ""
     question: str
     answerable: bool = True
+    # Carried over from the gold set so scoring can measure context recall — what
+    # share of the answer's facts the retrieved text actually contains — without
+    # re-reading gold_qa.json.
+    expected_answer: str = ""
+    answer_keys: list[str] = Field(default_factory=list)
     judgments: list[RelevanceJudgment] = Field(default_factory=list)
-    verified: bool = False
-    ambiguous: bool = False  # Set by the deriver when a gold source matched >1 chunk.
+    # Which grader path produced these judgments: "numeric", "answer_keys",
+    # "lexical", "fallback_best" or "none". Reported so a weak basis is visible
+    # rather than implied.
+    basis: str = ""
 
     @property
     def graded(self) -> dict[str, int]:
@@ -143,14 +161,34 @@ class QrelQuestion(BaseModel):
         return {j.chunk_id for j in self.judgments if j.grade >= RELEVANT_GRADE}
 
     @property
+    def useful_ids(self) -> set[str]:
+        """Chunks worth showing at all, including grade-1 supporting context.
+
+        This is the relevance notion *precision* needs. ``relevant_ids`` is
+        narrower on purpose — it means "contains the answer", and scoring
+        precision against it would cap a question with one answer chunk at 0.2,
+        turning a correct result window into a permanent failure.
+        """
+        return {j.chunk_id for j in self.judgments if j.grade > 0}
+
+    @property
+    def judged_ids(self) -> set[str]:
+        """Every chunk this question has an opinion about, at any positive grade.
+
+        Anything outside this set is *unjudged*, which is not the same as
+        irrelevant — it is the denominator behind ``unjudged_rate_at_5``.
+        """
+        return {j.chunk_id for j in self.judgments}
+
+    @property
     def modalities(self) -> set[str]:
         return {j.modality for j in self.judgments if j.grade >= RELEVANT_GRADE}
 
 
 class QrelSet(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = _QREL_CONFIG
 
-    version: int = 1
+    version: int = 2
     questions: list[QrelQuestion] = Field(default_factory=list)
 
     def by_id(self) -> dict[str, QrelQuestion]:
@@ -164,24 +202,16 @@ class RankedHit(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     chunk_id: str
-    rank: int  # 0-based position in this stage's output.
+    rank: int  # 0-based position in the served ordering.
     score: float
     document: str = ""
     modality: str = "text"
     clause_reference: str = ""
     is_parent: bool = False
-
-
-class RetrievalStageResult(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    stage: str
-    hits: list[RankedHit] = Field(default_factory=list)
-    latency_ms: float = 0.0
-
-    @property
-    def ranked_ids(self) -> list[str]:
-        return [h.chunk_id for h in self.hits]
+    # The retrieved text itself. Stored so context recall — does the retrieved
+    # window actually contain the answer's facts? — can be computed at scoring
+    # time, and re-computed by --score-only without touching the collection.
+    text: str = ""
 
 
 class RetrievalRunRecord(BaseModel):
@@ -189,12 +219,17 @@ class RetrievalRunRecord(BaseModel):
 
     id: str
     question: str
-    stages: dict[str, RetrievalStageResult] = Field(default_factory=dict)
-    # True when the locally reproduced "final" ordering matched what
-    # RetrievalPipeline.retrieve() actually returned. False means the ablation
-    # has drifted from production and its numbers must not be trusted.
-    pipeline_parity: bool | None = None
+    # The ordering production serves, exactly as RetrievalPipeline produces it.
+    hits: list[RankedHit] = Field(default_factory=list)
+    latency_ms: float = 0.0
     generated_at: str = Field(default_factory=utc_now_iso)
+
+    @property
+    def ranked_ids(self) -> list[str]:
+        return [h.chunk_id for h in self.hits]
+
+    def text_window(self, k: int) -> str:
+        return "\n".join(h.text for h in self.hits[:k] if h.text)
 
 
 class RetrievalRun(BaseModel):
@@ -238,6 +273,11 @@ class GenerationRunRecord(BaseModel):
     retrieval_latency_ms: float = 0.0
     generation_latency_ms: float = 0.0
     top_k: int = 5
+    # "live" = this question hit the real retrieval pipeline; "reused" = contexts
+    # were rebuilt from a cached stage3 ranking (--reuse-retrieval), frozen at
+    # whatever point stage3 last ran. Defaults to "live" so runs recorded before
+    # this field existed still validate as exactly what they were.
+    retrieval_source: str = "live"
     generated_at: str = Field(default_factory=utc_now_iso)
 
 

@@ -215,6 +215,56 @@ def _squash(unit_token: str) -> str:
     return re.sub(r"\s+", " ", unit_token.strip().lower())
 
 
+# Families whose value encoding is only meaningful with the unit attached: a date
+# is stored as the integer YYYYMMDD, so letting it pair with a unit-less number
+# would match "20240315" against a bare quantity.
+_UNIT_STRICT_FAMILIES = frozenset({"date", "date_md"})
+
+
+def unit_compatible(a: str, b: str) -> bool:
+    """Can two facts with these unit families refer to the same quantity?
+
+    Equal families always match. A unit-*less* family matches anything else,
+    because a table cell or an axis reading carries no unit — the unit lives in
+    the column header or the axis label ("2.0bn" in a chart the gold answer
+    describes as "AED 2.0 billion"; "Apr 21" on a y-axis labelled "%"). Requiring
+    both sides to carry the same family turns every table lookup into a false
+    miss.
+
+    Two *different* non-empty families never match, so this still refuses
+    "50 bps" against "0.5%" — the unit error stage 2b exists to catch.
+    """
+    if a == b:
+        return True
+    if a in _UNIT_STRICT_FAMILIES or b in _UNIT_STRICT_FAMILIES:
+        return False
+    return not a or not b
+
+
+def match_keys(
+    reference: set[tuple[str, str]],
+    hypothesis: set[tuple[str, str]],
+    *,
+    strict_units: bool = True,
+) -> set[tuple[str, str]]:
+    """Reference keys that have a counterpart in ``hypothesis``.
+
+    With ``strict_units`` the match is plain set intersection on
+    ``(unit_family, value)``. Without it, values must still be equal but the unit
+    families only need to be :func:`unit_compatible`.
+    """
+    if strict_units:
+        return reference & hypothesis
+    by_value: dict[str, set[str]] = {}
+    for unit, value in hypothesis:
+        by_value.setdefault(value, set()).add(unit)
+    return {
+        (unit, value)
+        for unit, value in reference
+        if any(unit_compatible(unit, other) for other in by_value.get(value, ()))
+    }
+
+
 @dataclass(frozen=True)
 class NumericComparison:
     """Set comparison of the numeric facts in a reference and a hypothesis."""
@@ -235,16 +285,27 @@ class NumericComparison:
         return len(self.extra) / self.hypothesis_count
 
 
-def compare_numeric(reference: str, hypothesis: str) -> NumericComparison:
-    """Compare the numeric facts of two texts in both directions at once."""
+def compare_numeric(
+    reference: str, hypothesis: str, *, strict_units: bool = True
+) -> NumericComparison:
+    """Compare the numeric facts of two texts in both directions at once.
+
+    ``strict_units`` defaults to True, which is what stage 2b needs: it compares
+    two descriptions of the *same image*, so a unit divergence is a real defect.
+    Pass False when comparing prose against indexed chunk text, where units are
+    routinely carried by a table header instead of the cell (see
+    :func:`unit_compatible`).
+    """
     ref_facts = numeric_facts(reference)
     hyp_facts = numeric_facts(hypothesis)
     ref_keys = {f.key: f for f in ref_facts}
     hyp_keys = {f.key: f for f in hyp_facts}
 
-    matched_keys = ref_keys.keys() & hyp_keys.keys()
-    missing_keys = ref_keys.keys() - hyp_keys.keys()
-    extra_keys = hyp_keys.keys() - ref_keys.keys()
+    matched_keys = match_keys(set(ref_keys), set(hyp_keys), strict_units=strict_units)
+    missing_keys = ref_keys.keys() - matched_keys
+    extra_keys = set(hyp_keys) - match_keys(
+        set(hyp_keys), set(ref_keys), strict_units=strict_units
+    )
 
     return NumericComparison(
         recall=len(matched_keys) / len(ref_keys) if ref_keys else None,
@@ -257,13 +318,20 @@ def compare_numeric(reference: str, hypothesis: str) -> NumericComparison:
     )
 
 
-def unsupported_facts(hypothesis: str, sources: list[str]) -> tuple[list[str], int]:
+def unsupported_facts(
+    hypothesis: str, sources: list[str], *, strict_units: bool = True
+) -> tuple[list[str], int]:
     """Quantities in ``hypothesis`` that appear in none of ``sources``.
 
     This is the grounding check for generated answers: unlike comparing against
     a terse gold answer (where extra detail is legitimate), every number in an
     answer *must* trace back to a retrieved context block. Returns the
     unsupported facts and the total fact count, so the caller can report a rate.
+
+    Callers grounding an answer against *retrieved chunk text* should pass
+    ``strict_units=False``: an answer that correctly writes "AED 2.0 billion"
+    from a table row reading "2.0bn" is grounded, and flagging it would raise an
+    error-severity finding for a formatting difference.
     """
     hyp_facts = {f.key: f for f in numeric_facts(hypothesis)}
     if not hyp_facts:
@@ -271,5 +339,6 @@ def unsupported_facts(hypothesis: str, sources: list[str]) -> tuple[list[str], i
     supported: set[tuple[str, str]] = set()
     for source in sources:
         supported |= {f.key for f in numeric_facts(source)}
-    unsupported = [str(fact) for key, fact in hyp_facts.items() if key not in supported]
+    matched = match_keys(set(hyp_facts), supported, strict_units=strict_units)
+    unsupported = [str(fact) for key, fact in hyp_facts.items() if key not in matched]
     return sorted(unsupported), len(hyp_facts)

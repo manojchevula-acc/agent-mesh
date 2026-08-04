@@ -101,7 +101,7 @@ enrichment:
   # before writing any visible output (see thinking_budget:0 in vision_llm_enricher.py,
   # which disables that for Gemini specifically) — kept generous as a safety margin
   # for whatever budget the provider doesn't let us zero out.
-  max_tokens: 4096
+  max_tokens: 8192                     # raised from 4096 — still clipped 2/14 captions (eval stage2a CAPTION_TRUNCATED)
   timeout_seconds: 20
   min_image_bytes: 2048                # skip decorative logos/rules/icons
   table_confidence_threshold: 0.7
@@ -126,6 +126,9 @@ evaluation:
   judge_model: qwen/qwen3.6-27b        # strong reasoning for RAGAS eval metrics
   judge_base_url:                      # for ollama use http://localhost:11434/v1 ; ignored by groq
   judge_api_key:                       # ollama ignores this; OpenAI SDK needs a non-empty string (e.g. "ollama")
-  max_context_chars: 6000              # truncate contexts before sending to judge (too small drops the supporting table row -> recall/faithfulness collapse; override via RAG__EVALUATION__MAX_CONTEXT_CHARS)
-  top_k: 3                             # chunks per test question during eval
+  max_context_chars: 3000              # truncate contexts before sending to judge (too small drops the supporting table row -> recall/faithfulness collapse; too large and one request alone can exceed a constrained tier's whole per-minute budget -> 413. override via RAG__EVALUATION__MAX_CONTEXT_CHARS)
   embeddings_model: sentence-transformers/all-MiniLM-L6-v2  # fallback if embedder not passed in
+  judge_max_workers: 1                 # RAGAS's own concurrency (library default is 16 -- too many simultaneous jobs for a small TPM budget, causes mass TimeoutErrors)
+  judge_max_retries: 15                # RAGAS's own retry count per job (library default is 10)
+  judge_max_wait: 90                   # RAGAS's own max backoff between retries, seconds (library default is 60)
+  judge_timeout_seconds: 900           # RAGAS's own per-job timeout, seconds (library default is 180 -- too short when workers=1 and a job waits its turn)

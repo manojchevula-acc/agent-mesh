@@ -6,6 +6,14 @@
     # Iterate on the judge prompt without re-generating (cheap loop)
     python -m eval.stage4_generation.run --score-only --judge
 
+    # Add RAGAS metrics (faithfulness, answer_relevancy, context_precision/recall),
+    # scored against gold_qa.json's expected_answer
+    python -m eval.stage4_generation.run --ragas
+
+    # Skip retrieval entirely and reuse stage3's cached ranking (fast iteration on
+    # judge/RAGAS logic; requires a stage3 run with matching retrieval config)
+    python -m eval.stage4_generation.run --reuse-retrieval --judge --ragas
+
     # A/B the multimodal path
     python -m eval.stage4_generation.run --hydration on  --run-name hydrated --judge
     python -m eval.stage4_generation.run --hydration off --run-name textonly --judge
@@ -26,10 +34,11 @@ from gernas_rag.vectordb.factory import get_vectordb
 
 from ..core.corpus import ChunkIndex
 from ..core.io import parse_id_args, read_json, write_json
-from ..core.models import GenerationRun, GenerationRunRecord, StageReport, TranscriptionSet
+from ..core.models import GenerationRun, GenerationRunRecord, RetrievalRun, StageReport, TranscriptionSet
 from ..core.runner import base_parser, emit, paths_from_args, run_stage
-from . import scoring
+from . import ragas_metrics, scoring
 from .judge import AnswerJudge, Judgment
+from .retrieval_reuse import config_mismatches
 from .runner import GenerationRunner
 
 STAGE = scoring.STAGE
@@ -63,10 +72,26 @@ def build_parser() -> argparse.ArgumentParser:
         "--score-only", action="store_true", help="Score an existing run without generating."
     )
     parser.add_argument(
+        "--reuse-retrieval",
+        action="store_true",
+        help="Reuse stage3's cached retrieval ranking instead of a fresh call per question "
+        "(skips the expensive embed+search+rerank pipeline). Requires a stage3 run at "
+        "data/eval/runs/stage3_retrieval_run.json whose retrieval config matches current "
+        "settings; refuses to run if it doesn't. A question stage3 didn't cover, or covered "
+        "too shallowly, falls back to a live call. The reused score/order is frozen from "
+        "whenever stage3 last ran — see the report's meta for how stale that is.",
+    )
+    parser.add_argument(
         "--judge", action="store_true", help="Grade answers with the LLM judge before scoring."
     )
     parser.add_argument(
         "--judge-concurrency", type=int, default=3, help="Parallel judge calls (default: 3)."
+    )
+    parser.add_argument(
+        "--ragas",
+        action="store_true",
+        help="Score answers with RAGAS (faithfulness, answer_relevancy, context_precision, "
+        "context_recall) before scoring. Cached per run-name, like --judge.",
     )
     parser.add_argument(
         "--compare-run",
@@ -82,6 +107,10 @@ def _run_key(name: str) -> str:
 
 def _judgments_key(name: str) -> str:
     return f"{STAGE}_judgments_{name}"
+
+
+def _ragas_key(name: str) -> str:
+    return f"{STAGE}_ragas_{name}"
 
 
 async def main(args: argparse.Namespace) -> int:
@@ -109,8 +138,10 @@ async def main(args: argparse.Namespace) -> int:
 
     run_path = paths.run_file(_run_key(args.run_name))
     judgments_path = paths.run_file(_judgments_key(args.run_name))
+    ragas_path = paths.run_file(_ragas_key(args.run_name))
 
     # ── Generation ────────────────────────────────────────────────────
+    embedder = None
     if args.score_only:
         raw = read_json(run_path)
         if raw is None:
@@ -127,6 +158,35 @@ async def main(args: argparse.Namespace) -> int:
             print(f"  WARN could not load chunk index ({exc}); chunk_ids will be blank")
             index = None
 
+        reused_hits: dict[str, list] = {}
+        reuse_meta: dict[str, object] = {}
+        if args.reuse_retrieval:
+            stage3_run_path = paths.run_file("stage3_retrieval_run")
+            stage3_raw = read_json(stage3_run_path)
+            if stage3_raw is None:
+                raise SystemExit(
+                    f"--reuse-retrieval needs a stage3 run at {stage3_run_path}; "
+                    "run `python -m eval stage3` first, or drop --reuse-retrieval."
+                )
+            stage3_run = RetrievalRun.model_validate(stage3_raw)
+            mismatches = config_mismatches(stage3_run.config, settings)
+            if mismatches:
+                raise SystemExit(
+                    "--reuse-retrieval refused: stage3's cached run doesn't match current "
+                    "retrieval config, so its ranking can't be trusted to represent it:\n  "
+                    + "\n  ".join(mismatches)
+                    + "\nRe-run `python -m eval stage3` to refresh it, or drop --reuse-retrieval."
+                )
+            reused_hits = {r.id: r.hits for r in stage3_run.records}
+            reuse_meta = {
+                "retrieval_reused": True,
+                "retrieval_reused_from": stage3_run.generated_at,
+            }
+            print(
+                f"  reusing stage3's retrieval ({len(reused_hits)} question(s) cached, "
+                f"recorded {stage3_run.generated_at})"
+            )
+
         runner = GenerationRunner(
             settings,
             embedder,
@@ -135,30 +195,49 @@ async def main(args: argparse.Namespace) -> int:
             top_k=args.top_k or settings.retrieval.final_top_k,
             force_hydration=_HYDRATION_CHOICES[args.hydration],
             chunk_index=index,
+            reused_hits=reused_hits,
+            reuse_meta=reuse_meta,
         )
         config = runner.config_snapshot()
         print(f"  hydration: {'on' if config['hydration_enabled'] else 'off'} ({args.hydration})")
 
-        records: list[GenerationRunRecord] = []
+        # Merged and written to disk after EVERY question, not just at the end —
+        # generation is slow and LLM calls fail (rate limits, transient network
+        # errors), so a crash midway through a large batch must not cost the
+        # answers already recorded. A question that fails outright is skipped
+        # (logged, not fatal) so one bad call doesn't take down the whole run.
+        previous = read_json(run_path)
+        merged = {r.id: r for r in (GenerationRun.model_validate(previous).records if previous else [])}
+        order = [item["id"] for item in gold]
+        failed: list[str] = []
+
+        def _flush() -> None:
+            run = GenerationRun(config=config, records=[merged[i] for i in order if i in merged])
+            write_json(run_path, run.model_dump(mode="json"))
+
         for item in selected:
-            record = await runner.run(item["id"], item["question"])
+            try:
+                record = await runner.run(item["id"], item["question"])
+            except Exception as exc:  # noqa: BLE001 — one bad question must not lose the batch.
+                print(f"  FAILED: {item['id']:>3}  {exc}")
+                failed.append(item["id"])
+                continue
             print(
                 f"  done: {record.id:>3}  chunks={len(record.contexts)}  "
+                f"retrieval={record.retrieval_source:<6}  "
                 f"vision={'yes' if record.vision_used else 'no'}  "
                 f"{record.retrieval_latency_ms + record.generation_latency_ms:.0f}ms"
             )
-            records.append(record)
-
-        previous = read_json(run_path)
-        merged = {r.id: r for r in (GenerationRun.model_validate(previous).records if previous else [])}
-        for record in records:
             merged[record.id] = record
-        order = [item["id"] for item in gold]
-        run = GenerationRun(
-            config=config, records=[merged[i] for i in order if i in merged]
-        )
-        write_json(run_path, run.model_dump(mode="json"))
+            _flush()
+
+        run = GenerationRun(config=config, records=[merged[i] for i in order if i in merged])
         print(f"\n  run recorded -> {run_path}")
+        if failed:
+            print(
+                f"  WARN {len(failed)} question(s) failed and were skipped: {', '.join(failed)}. "
+                f"Re-run with --id {','.join(failed)} to fill them in without redoing the rest."
+            )
 
     # ── Judging ───────────────────────────────────────────────────────
     stored = read_json(judgments_path, default={}) or {}
@@ -177,18 +256,34 @@ async def main(args: argparse.Namespace) -> int:
         if targets:
             print(f"\n  judging {len(targets)} answer(s)")
             judge = AnswerJudge(get_llm(settings.llm), max_concurrent=args.judge_concurrency)
-            for judgment in await judge.judge_all(targets):
+            # Written to disk after EVERY judgment, not just at the end — same
+            # crash-safety reasoning as the generation loop above.
+            async for judgment in judge.judge_all(targets):
                 judgments[judgment.question_id] = judgment
                 name = gold_by_id[judgment.question_id].get("name", "")
                 print(f"    {judgment.question_id:>3} {judgment.verdict:<18} {name}")
-            write_json(
-                judgments_path,
-                {
-                    qid: {"verdict": j.verdict, "reason": j.reason, "raw": j.raw}
-                    for qid, j in sorted(judgments.items())
-                },
-            )
+                write_json(
+                    judgments_path,
+                    {
+                        qid: {"verdict": j.verdict, "reason": j.reason, "raw": j.raw}
+                        for qid, j in sorted(judgments.items())
+                    },
+                )
             print(f"  judgments recorded -> {judgments_path}")
+
+    # ── RAGAS ─────────────────────────────────────────────────────────
+    # Scoped to `selected` (the --id/--limit filter), same as generation and
+    # judging, and merged into whatever was already cached rather than
+    # overwriting it — so `--id 5,6 --ragas` tops up just those two without
+    # re-spending the (large) RAGAS call budget on the other 32.
+    ragas_scores: dict[str, dict[str, float]] = read_json(ragas_path, default={}) or {}
+    if args.ragas:
+        print(f"\n  scoring {len(selected)} answer(s) with RAGAS "
+              "(faithfulness, answer_relevancy, context_precision, context_recall)")
+        new_ragas_scores = ragas_metrics.run_ragas(run, selected, settings, embedder=embedder)
+        ragas_scores.update(new_ragas_scores)
+        write_json(ragas_path, ragas_scores)
+        print(f"  {len(new_ragas_scores)} question(s) scored, {len(ragas_scores)} total -> {ragas_path}")
 
     # ── Scoring ───────────────────────────────────────────────────────
     raw_transcriptions = read_json(paths.figure_transcriptions)
@@ -206,7 +301,7 @@ async def main(args: argparse.Namespace) -> int:
         ),
         meta={"run_file": str(run_path), "run_name": args.run_name, **run.config},
     )
-    scoring.score(run, gold, judgments, transcriptions, report)
+    scoring.score(run, gold, judgments, transcriptions, ragas_scores, report)
 
     if args.compare_run:
         other_raw = read_json(paths.run_file(_run_key(args.compare_run)))

@@ -1,81 +1,60 @@
 """Diagnostic: show the per-statement breakdown behind a faithfulness /
 answer-relevancy score.
 
-This is a READ-ONLY mirror of what RAGEvaluator already does. It imports the
-*unmodified* stock RAGAS ``faithfulness`` and ``answer_relevancy`` metrics, wires
-them to the same judge LLM and embeddings the real pipeline uses, then prints the
-judge's raw output: every decomposed statement, its 0/1 verdict, and the judge's
-own reason. No examples, expected answers, or verdicts are baked in here — every
-number comes from the live judge at runtime, for whatever question you pass.
+This is a READ-ONLY mirror of what ``--ragas`` already does in stage 4. It imports the
+*unmodified* stock RAGAS ``faithfulness`` and ``answer_relevancy`` metrics, wires them
+to the same judge LLM and embeddings ``ragas_metrics`` uses, then prints the judge's
+raw output: every decomposed statement, its 0/1 verdict, and the judge's own reason.
+No examples, expected answers, or verdicts are baked in here — every number comes
+from the live judge at runtime, for whatever question you pass.
 
 Usage:
     # Generate the answer via the real RAG pipeline, then diagnose it:
-    python scripts/diagnose_faithfulness.py --question "If FTP is 5.55% and the minimum spread is 145 bps, what is the minimum all-in rate?"
+    python -m eval.stage4_generation.diagnose_ragas \\
+        --question "If FTP is 5.55% and the minimum spread is 145 bps, what is the minimum all-in rate?"
 
     # Diagnose an answer/contexts you already have (skips retrieval+generation):
-    python scripts/diagnose_faithfulness.py \
-        --question "..." \
-        --answer "..." \
-        --context "first chunk text" --context "second chunk text"
+    python -m eval.stage4_generation.diagnose_ragas \\
+        --question "..." \\
+        --answer "..." --context "first chunk text" --context "second chunk text"
 """
+
+from __future__ import annotations
 
 import argparse
 import asyncio
-import sys
 
-sys.path.insert(0, "src")
+from gernas_rag.config.settings import get_settings
+from gernas_rag.embeddings.factory import get_embedder
+from gernas_rag.llm.factory import get_llm
+from gernas_rag.vectordb.factory import get_vectordb
 
-from gernas_rag.config.settings import get_settings  # noqa: E402
-from gernas_rag.embeddings.factory import get_embedder  # noqa: E402
-from gernas_rag.evaluation.evaluator import RAGEvaluator  # noqa: E402
-from gernas_rag.generation.factory import build_generator  # noqa: E402
-from gernas_rag.llm.factory import get_llm  # noqa: E402
-from gernas_rag.models.retrieval import RetrieveRequest  # noqa: E402
-from gernas_rag.retrieval.pipeline import RetrievalPipeline  # noqa: E402
-from gernas_rag.vectordb.factory import get_vectordb  # noqa: E402
+from . import ragas_metrics
+from .runner import GenerationRunner
 
 
 def _rule(char: str = "-") -> None:
     print(char * 78)
 
 
-async def diagnose(
-    question: str,
-    answer: str | None,
-    contexts: list[str] | None,
-) -> None:
+async def diagnose(question: str, answer: str | None, contexts: list[str] | None) -> None:
     settings = get_settings()
     embedder = get_embedder(settings.embedding)
 
-    # Build the same judge + embeddings the evaluator uses, via the evaluator's
-    # own factory methods, so this reflects production scoring exactly.
-    evaluator = RAGEvaluator(
-        pipeline=None,  # only needed if we have to retrieve below
-        generator=None,
-        settings=settings,
-        embedder=embedder,
-    )
-    evaluator._patch_ragas_vertexai_import()
-
-    # If the caller didn't supply the answer/contexts, run the real pipeline.
     if answer is None or contexts is None:
         vectordb = get_vectordb(settings.vectordb)
         llm = get_llm(settings.llm)
-        pipeline = RetrievalPipeline(settings, embedder, vectordb)
-        generator, _ = build_generator(settings, llm)
-
-        top_k = settings.evaluation.top_k if settings.evaluation else 3
-        response = await pipeline.retrieve(
-            RetrieveRequest(query=question, generate_answer=True, top_k=top_k)
-        )
-        answer = await generator.generate(question, response.chunks)
-        contexts = [c.text for c in response.chunks]
-        sources = [getattr(c, "source", "?") for c in response.chunks]
+        runner = GenerationRunner(settings, embedder, vectordb, llm, top_k=settings.retrieval.final_top_k)
+        record = await runner.run("diagnose", question)
+        answer = record.answer
+        contexts = [c.text for c in record.contexts]
+        sources = [c.document or "?" for c in record.contexts]
     else:
         sources = ["(supplied by caller)"] * len(contexts)
 
-    ragas_llm = evaluator._make_ragas_llm()
-    ragas_emb = evaluator._make_ragas_embeddings()
+    ragas_metrics._patch_ragas_vertexai_import()
+    ragas_llm = ragas_metrics.make_ragas_llm(settings)
+    ragas_emb = ragas_metrics.make_ragas_embeddings(settings, embedder)
 
     # --- echo the exact inputs being scored -------------------------------
     _rule("=")
@@ -139,8 +118,6 @@ async def diagnose(
 
     # NOTE: RAGAS asks for n=strictness completions in one call. Groq rejects
     # n>1 ('n must be at most 1'), so we loop n=1 to stay provider-agnostic.
-    # This is the same failure the real evaluator hits for answer_relevancy
-    # under a Groq judge unless LangchainLLMWrapper is built with bypass_n=True.
     responses = []
     for _ in range(answer_relevancy.strictness):
         out = await answer_relevancy.question_generation.generate_multiple(

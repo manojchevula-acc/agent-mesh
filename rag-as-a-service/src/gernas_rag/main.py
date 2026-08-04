@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api.middleware import RequestIDMiddleware, StructuredLoggingMiddleware
-from .api.routers import admin, evaluate, health, ingest, retrieve, search_history
+from .api.routers import admin, health, ingest, retrieve, search_history
 from .cache.redis_cache import RAGCache
 from .config.settings import get_settings
 from .embeddings.factory import get_embedder
@@ -86,7 +86,6 @@ def create_app() -> FastAPI:
     app.include_router(retrieve.router, prefix="/api/v1", tags=["retrieval"])
     app.include_router(ingest.router, prefix="/api/v1", tags=["ingestion"])
     app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
-    app.include_router(evaluate.router, prefix="/api/v1", tags=["evaluation"])
     app.include_router(search_history.router, prefix="/api/v1", tags=["search-history"])
 
     instrument_fastapi(app)

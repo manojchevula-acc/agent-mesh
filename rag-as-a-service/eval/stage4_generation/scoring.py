@@ -20,7 +20,7 @@ import re
 
 from ..core.metrics import mean, percentile
 from ..core.models import GenerationRun, StageReport, TranscriptionSet
-from ..core.numeric import compare_numeric, numeric_facts, unsupported_facts
+from ..core.numeric import compare_numeric, match_keys, numeric_facts, unsupported_facts
 from ..core.reporting import build_metric, rate, table
 from ..core.text import content_tokens, sentences, strip_citations
 from ..core.thresholds import STAGE4
@@ -101,7 +101,7 @@ def _citation_support(answer: str, record) -> tuple[int, int, int, int]:
             valid += 1
             block_text = f"{context.text}\n{context.parent_text or ''}"
             block_numbers = {f.key for f in numeric_facts(block_text)}
-            if claim_numbers and claim_numbers & block_numbers:
+            if claim_numbers and match_keys(claim_numbers, block_numbers, strict_units=False):
                 sentence_supported = True
             elif len(claim_tokens & content_tokens(block_text)) >= _MIN_SHARED_TOKENS:
                 sentence_supported = True
@@ -115,6 +115,7 @@ def score(
     gold: list[dict],
     judgments: dict[str, Judgment],
     transcriptions: TranscriptionSet | None,
+    ragas_scores: dict[str, dict[str, float]],
     report: StageReport,
 ) -> None:
     gold_by_id = {str(item["id"]): item for item in gold}
@@ -130,6 +131,7 @@ def score(
             "answers_scored": len(records),
             "verified_transcriptions_applied": len(verified),
             "judgments_available": len(judgments),
+            "retrieval_reused_count": f"{sum(1 for r in records if r.retrieval_source == 'reused')}/{len(records)}",
         }
     )
     if not records:
@@ -152,11 +154,15 @@ def score(
         expected = item.get("expected_answer", "")
         answer = record.answer
 
-        comparison = compare_numeric(expected, answer)
+        # Units are compared leniently on both sides here. The gold answer writes
+        # "AED 2.0 billion" where the source table row reads "2.0bn" and the unit
+        # lives in the column header — strict families would score a correct,
+        # fully grounded answer as ungrounded, at error severity.
+        comparison = compare_numeric(expected, answer, strict_units=False)
         numeric_recalls.append(comparison.recall)
 
         sources = _grounding_sources(record, verified)
-        unsupported, total_facts = unsupported_facts(answer, sources)
+        unsupported, total_facts = unsupported_facts(answer, sources, strict_units=False)
         grounded = 1.0 - (len(unsupported) / total_facts) if total_facts else None
         grounded_rates.append(grounded)
 
@@ -175,6 +181,7 @@ def score(
             [
                 record.id,
                 item.get("name", "-"),
+                record.retrieval_source,
                 verdict,
                 f"{comparison.recall:.2f}" if comparison.recall is not None else "-",
                 f"{grounded:.2f}" if grounded is not None else "-",
@@ -302,6 +309,7 @@ def score(
             [
                 record.id,
                 gold_by_id[record.id].get("name", "-"),
+                record.retrieval_source,
                 "REFUSED" if looks_like_refusal(record.answer) else "ANSWERED",
                 "n/a",
                 "n/a",
@@ -384,6 +392,41 @@ def score(
             "Run with --judge to grade the recorded answers.",
         )
 
+    # ── RAGAS ─────────────────────────────────────────────────────────
+    # Reference answer is gold_qa.json's expected_answer — the same file everything
+    # else in this stage scores against, not a separate curated set. Non-gating for
+    # now: these are new metrics on a system that has never been measured against
+    # them, so the bar gets set from real numbers rather than guessed in advance.
+    ragas_names = ("faithfulness", "answer_relevancy", "context_precision", "context_recall")
+    if ragas_scores:
+        for name in ragas_names:
+            values = [scores[name] for scores in ragas_scores.values() if name in scores]
+            report.add_metric(build_metric(STAGE4, f"ragas_{name}", mean(values)))
+        report.tables.append(
+            table(
+                "RAGAS per-question scores",
+                ["Id", "Faithfulness", "Answer relevancy", "Context precision", "Context recall"],
+                [
+                    [
+                        qid,
+                        *[f"{ragas_scores[qid][n]:.3f}" if n in ragas_scores[qid] else "-" for n in ragas_names],
+                    ]
+                    for qid in sorted(ragas_scores, key=lambda q: (len(q), q))
+                ],
+                note="ground_truth = gold_qa.json's expected_answer; contexts = the same "
+                "blocks the generator was actually given.",
+            )
+        )
+    else:
+        for name in ragas_names:
+            report.add_metric(build_metric(STAGE4, f"ragas_{name}", None))
+        report.add_finding(
+            "warn",
+            "NO_RAGAS_SCORES",
+            "run",
+            "No RAGAS scores were available. Run with --ragas to score the recorded answers.",
+        )
+
     # ── Multimodal path & latency ─────────────────────────────────────
     eligible = sum(r.hydration_eligible for r in records)
     hydrated = sum(r.images_hydrated for r in records)
@@ -432,6 +475,7 @@ def score(
             [
                 "Id",
                 "Name",
+                "Retrieval",
                 "Judge",
                 "Num recall",
                 "Grounded",

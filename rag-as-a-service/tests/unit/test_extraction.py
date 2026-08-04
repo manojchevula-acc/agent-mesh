@@ -63,7 +63,7 @@ def test_heading_tracking_and_figure_text_guard(monkeypatch):
     fake_doc = types.SimpleNamespace(
         iterate_items=lambda: iter([(heading_item, 0), (picture_item, 0)]),
         export_to_markdown=lambda: "# doc",
-        num_pages=1,
+        num_pages=lambda: 1,  # real DoclingDocument.num_pages is a method, not a property
     )
     fake_result = types.SimpleNamespace(document=fake_doc)
     fake_converter = types.SimpleNamespace(convert=lambda path: fake_result)

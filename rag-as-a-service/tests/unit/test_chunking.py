@@ -1,8 +1,9 @@
 """Unit tests for the chunking module."""
 
 from gernas_rag.chunking.factory import get_chunker
-from gernas_rag.chunking.hierarchical import HierarchicalChunker
+from gernas_rag.chunking.hierarchical import HierarchicalChunker, _is_fragmented_table
 from gernas_rag.config.chunking import ChunkingConfig, ChunkingStrategy
+from gernas_rag.extraction.base import ExtractionResult
 
 
 def _base_metadata() -> dict:
@@ -53,3 +54,22 @@ def test_fixed_size_chunker_has_no_parents(sample_extraction):
 def test_factory_returns_hierarchical_by_default():
     chunker = get_chunker(ChunkingConfig())
     assert isinstance(chunker, HierarchicalChunker)
+
+
+def test_long_table_split_across_chunks_keeps_header_in_every_piece():
+    # A high-confidence table stays as plain markdown and goes through the same
+    # RecursiveCharacterTextSplitter as prose; long enough here to force a
+    # mid-table split (eval stage2a's TABLE_FRAGMENTED regression).
+    rows = "\n".join(
+        f"| Row {i} | Value {i} | Some longer descriptive text for row {i} to pad length |"
+        for i in range(80)
+    )
+    markdown = f"# Section 6\n\n| Column A | Column B | Column C |\n|---|---|---|\n{rows}\n"
+    extraction = ExtractionResult(
+        elements=[], raw_markdown=markdown, page_count=1, file_path="x.pdf"
+    )
+    chunks = HierarchicalChunker(ChunkingConfig()).chunk(extraction, _base_metadata())
+    children = [c for c in chunks if not c.is_parent]
+
+    assert len(children) > 1, "test setup should force a split across multiple chunks"
+    assert not any(_is_fragmented_table(c.text) for c in children)

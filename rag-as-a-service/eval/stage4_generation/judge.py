@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass
+from typing import AsyncIterator
 
 from gernas_rag.llm.base import BaseLLM, Message
 
@@ -119,6 +120,15 @@ class AnswerJudge:
                     return Judgment(question_id, UNKNOWN, last_error, raw)
         return Judgment(question_id, UNKNOWN, f"judge call failed: {last_error}")
 
-    async def judge_all(self, items: list[tuple[str, str, str, str]]) -> list[Judgment]:
-        """Judge ``(id, question, gold_answer, agent_answer)`` tuples concurrently."""
-        return list(await asyncio.gather(*(self.judge_one(*item) for item in items)))
+    async def judge_all(self, items: list[tuple[str, str, str, str]]) -> AsyncIterator[Judgment]:
+        """Judge ``(id, question, gold_answer, agent_answer)`` tuples concurrently.
+
+        Yields each ``Judgment`` as soon as it's ready rather than waiting for the
+        whole batch (``asyncio.as_completed``, not ``gather``) — bounded concurrency
+        is still enforced by ``judge_one``'s own semaphore, this only changes when
+        the caller finds out about a finished result. That's what lets ``run.py``
+        write a judgment to disk the moment it lands instead of losing everything
+        computed so far if the process dies partway through a large batch.
+        """
+        for coro in asyncio.as_completed([self.judge_one(*item) for item in items]):
+            yield await coro

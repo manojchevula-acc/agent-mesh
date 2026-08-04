@@ -89,3 +89,36 @@ def test_text_chunks_still_produced():
     md = "# Section 1\n\n" + ("This is policy text. " * 60)
     chunks = chunker.chunk(_extraction([], markdown=md), _base_meta())
     assert any(c.metadata.modality == Modality.TEXT for c in chunks)
+
+
+def test_media_chunk_links_to_parent_with_matching_heading():
+    # eval stage2a's MEDIA_HAS_NO_PARENT: a figure's nearest_heading should join
+    # to the parent chunk that starts on that same heading, so retrieval's parent
+    # expansion returns real surrounding prose for a figure, not nothing.
+    chunker = HierarchicalChunker(ChunkingConfig(enable_parent_chunks=True))
+    md = "# 3.1 Pricing Grid\n\n" + ("Some section prose. " * 40)
+    fig = ExtractedElement(
+        element_type=ElementType.FIGURE,
+        text="A chart",
+        page_number=3,
+        metadata={"nearest_heading": "3.1 Pricing Grid", "artifact_ref": "sha256:deadbeef.png"},
+    )
+    chunks = chunker.chunk(_extraction([fig], markdown=md), _base_meta())
+
+    parent = next(c for c in chunks if c.is_parent)
+    media = next(c for c in chunks if c.metadata.modality == Modality.FIGURE)
+    assert media.metadata.parent_chunk_id == parent.id
+
+
+def test_media_chunk_with_no_matching_heading_has_no_parent():
+    chunker = HierarchicalChunker(ChunkingConfig(enable_parent_chunks=True))
+    md = "# 3.1 Pricing Grid\n\n" + ("Some section prose. " * 40)
+    fig = ExtractedElement(
+        element_type=ElementType.FIGURE,
+        text="A chart",
+        page_number=9,
+        metadata={"nearest_heading": "9.9 Nonexistent Section", "artifact_ref": "sha256:cafe.png"},
+    )
+    chunks = chunker.chunk(_extraction([fig], markdown=md), _base_meta())
+    media = next(c for c in chunks if c.metadata.modality == Modality.FIGURE)
+    assert media.metadata.parent_chunk_id is None

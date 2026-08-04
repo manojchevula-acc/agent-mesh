@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 
 from gernas_rag.config.settings import get_settings
+from gernas_rag.llm.factory import get_llm
 from gernas_rag.storage.artifact_store import get_artifact_store
 
 from ..core.corpus import ChunkIndex
@@ -76,6 +77,16 @@ async def main(args: argparse.Namespace) -> int:
             exported += 1
         print(f"  exported {exported} image(s) to {out_dir}")
 
+    # Reuse whichever LLM provider/key is already configured for the app (same
+    # settings.llm ingestion and stage 4's judge use) — no separate credential.
+    # health_check() is a pure config-presence check, no network call, so this
+    # is safe to do unconditionally on every run.
+    llm = get_llm(settings.llm)
+    judge = captions.CaptionJudge(llm) if await llm.health_check() else None
+    print(
+        f"  LLM re-triage: {'on (' + settings.llm.provider + '/' + settings.llm.model_name + ')' if judge else 'off — no LLM configured, deterministic-only'}"
+    )
+
     report = StageReport(
         stage=STAGE,
         title="Stage 2b — VLM caption fidelity",
@@ -90,7 +101,7 @@ async def main(args: argparse.Namespace) -> int:
             "enrichment_enabled": settings.enrichment.enabled,
         },
     )
-    captions.score(index, transcriptions, report)
+    await captions.score(index, transcriptions, report, judge=judge)
     return emit(report, args, paths)
 
 

@@ -1,76 +1,66 @@
-"""Score recorded retrieval runs: recall, ordering, ablation and modality slices.
+"""Score a recorded retrieval run against the derived relevance judgments.
 
-Gated metrics are computed on the ``final`` stage — the ordering production
-actually serves. The other stages appear in the ablation table, which is what
-tells you *where* a drop happened: a big gap between ``rrf`` and ``rerank``
-means the cross-encoder is the problem, not the embeddings.
+Two questions, kept separate because they fail for different reasons:
+
+  * **Did we find the answer?**  hit rate, recall, MRR — computed over chunks
+    graded "contains the answer" (grade >= 2).
+  * **Was what we returned worth returning?**  precision and context precision —
+    computed over chunks graded at least "related context" (grade >= 1), because
+    scoring precision against answer-bearing chunks alone would cap a question
+    with one answer chunk at 0.2.
+
+``context_recall`` sits outside both: it ignores judgments entirely and asks
+whether the *text* of the retrieved window contains the facts the gold answer
+asserts. That is the metric that survives a grading mistake, so it is the one to
+trust when a judgment looks wrong.
 """
 
 from __future__ import annotations
 
+from collections import Counter
+
 from ..core.metrics import (
-    count_demotions,
+    context_precision_at_k,
     first_relevant_rank,
+    hit_at_k,
     histogram,
     mean,
-    ndcg_at_k,
     precision_at_k,
     recall_at_k,
     reciprocal_rank,
 )
 from ..core.models import QrelSet, RetrievalRun, StageReport
+from ..core.numeric import match_keys, numeric_facts
 from ..core.reporting import build_metric, rate, table
 from ..core.thresholds import STAGE3
-from .runner import STAGE_ORDER
 
 STAGE = "stage3_retrieval"
 
-RECALL_DEPTHS = (1, 3, 5, 10)
-NDCG_DEPTH = 10
+PRIMARY_DEPTH = 5  # What production serves (retrieval.final_top_k).
+DEEP_DEPTH = 10
 FIGURE_MODALITIES = {"figure", "table", "page_image"}
 
 
-def _stage_metrics(run: RetrievalRun, qrels: QrelSet, stage: str) -> dict[str, float | None]:
-    """Aggregate ranking metrics for one pipeline stage across all questions."""
-    by_id = qrels.by_id()
-    recalls: dict[int, list[float | None]] = {k: [] for k in RECALL_DEPTHS}
-    reciprocals: list[float | None] = []
-    ndcgs: list[float | None] = []
-    precisions: list[float | None] = []
+def _context_recall(record, question) -> float | None:
+    """Share of the gold answer's facts present in the retrieved text window.
 
-    for record in run.records:
-        question = by_id.get(record.id)
-        stage_result = record.stages.get(stage)
-        if question is None or stage_result is None or not question.relevant_ids:
-            continue
-        ranked = stage_result.ranked_ids
-        for depth in RECALL_DEPTHS:
-            recalls[depth].append(recall_at_k(ranked, question.relevant_ids, depth))
-        reciprocals.append(reciprocal_rank(ranked, question.relevant_ids))
-        ndcgs.append(ndcg_at_k(ranked, question.graded, NDCG_DEPTH))
-        precisions.append(precision_at_k(ranked, question.relevant_ids, 5))
-
-    out: dict[str, float | None] = {f"recall_at_{k}": mean(v) for k, v in recalls.items()}
-    out["mrr"] = mean(reciprocals)
-    out[f"ndcg_at_{NDCG_DEPTH}"] = mean(ndcgs)
-    out["precision_at_5"] = mean(precisions)
-    return out
-
-
-def _slice_recall(run: RetrievalRun, qrels: QrelSet, want_media: bool, depth: int = 5) -> tuple[float | None, int]:
-    """Recall@depth restricted to questions whose answer lives in media (or text)."""
-    by_id = qrels.by_id()
-    values: list[float | None] = []
-    for record in run.records:
-        question = by_id.get(record.id)
-        final = record.stages.get("final")
-        if question is None or final is None or not question.relevant_ids:
-            continue
-        is_media_question = bool(question.modalities & FIGURE_MODALITIES)
-        if is_media_question != want_media:
-            continue
-        values.append(recall_at_k(final.ranked_ids, question.relevant_ids, depth))
-    return mean(values), len(values)
+    Deterministic counterpart to RAGAS's LLM-judged ``context_recall``. Answers
+    "could a perfect generator have answered from what we retrieved?" without
+    any judgment of *which* chunk was supposed to carry the fact — so a grading
+    error cannot flatter it, and it stays meaningful when an answer is spread
+    across several chunks.
+    """
+    window = record.text_window(DEEP_DEPTH)
+    if not window:
+        return None
+    if question.answer_keys:
+        body = window.casefold()
+        found = sum(1 for k in question.answer_keys if k.casefold() in body)
+        return found / len(question.answer_keys)
+    gold = {f.key for f in numeric_facts(question.expected_answer)}
+    if not gold:
+        return None
+    return len(match_keys(gold, {f.key for f in numeric_facts(window)}, strict_units=False)) / len(gold)
 
 
 def score(run: RetrievalRun, qrels: QrelSet, report: StageReport) -> None:
@@ -82,7 +72,10 @@ def score(run: RetrievalRun, qrels: QrelSet, report: StageReport) -> None:
             "questions_in_run": len(run.records),
             "questions_scored": len(scored),
             "questions_unjudged": len(run.records) - len(scored),
-            "verified_qrels": sum(1 for q in qrels.questions if q.verified),
+            "grading_basis": ", ".join(
+                f"{basis}={count}"
+                for basis, count in sorted(Counter(q.basis or "-" for q in qrels.questions).items())
+            ),
         }
     )
     if not scored:
@@ -91,191 +84,190 @@ def score(run: RetrievalRun, qrels: QrelSet, report: StageReport) -> None:
             "NO_JUDGED_QUESTIONS",
             "qrels",
             "No question in the run has a relevance judgment, so nothing can be scored. "
-            "Derive qrels first (`--derive-qrels`) and review them.",
+            "Check that gold_qa.json's expected_sources name documents that exist in the "
+            "live index, then re-run (judgments are derived on every run).",
         )
         return
 
     for question in qrels.questions:
-        if question.ambiguous and not question.verified:
+        if question.basis == "none":
             report.add_finding(
                 "warn",
-                "QRELS_AMBIGUOUS",
+                "QRELS_NO_EVIDENCE",
                 question.id,
-                "A gold source resolved to more than one chunk when these judgments were "
-                "derived, and they have not been reviewed. Recall may be overstated.",
+                "No chunk in the expected document contains any fact from this question's "
+                "gold answer, so it is excluded from every metric. Either the gold answer "
+                "is wrong or extraction lost the content — check stage 1 for this document.",
             )
-    unverified = sum(1 for q in qrels.questions if not q.verified)
-    if unverified:
-        report.add_finding(
-            "warn",
-            "QRELS_UNVERIFIED",
-            f"{unverified}/{len(qrels.questions)}",
-            "Judgments derived automatically from the gold set have not been reviewed by "
-            "a human. Treat the numbers as indicative until they are.",
-        )
+        elif question.basis == "fallback_best":
+            report.add_finding(
+                "warn",
+                "QRELS_WEAK_EVIDENCE",
+                question.id,
+                "Nothing met the grader's bar, so the closest chunk in the expected "
+                "document was graded 2. Recall for this question is weakly grounded — add "
+                "`answer_keys` to its gold entry to make the judgment explicit.",
+            )
 
-    # ── Gated metrics on the served ordering ──────────────────────────
-    final_metrics = _stage_metrics(run, qrels, "final")
-    for name in ("recall_at_5", "recall_at_10", "mrr"):
-        report.add_metric(build_metric(STAGE3, name, final_metrics.get(name)))
-    report.add_metric(
-        build_metric(
-            STAGE3,
-            "ndcg_at_10",
-            final_metrics.get("ndcg_at_10"),
-            detail="the ordering metric — changes when a correct chunk moves rank",
-        )
-    )
+    # ── Collect per-question values ───────────────────────────────────
+    hits5: list[float | None] = []
+    hits10: list[float | None] = []
+    recalls5: list[float | None] = []
+    recalls10: list[float | None] = []
+    precisions: list[float | None] = []
+    ctx_precisions: list[float | None] = []
+    ctx_recalls: list[float | None] = []
+    reciprocals: list[float | None] = []
+    unjudged = window_total = 0
 
-    media_recall, media_count = _slice_recall(run, qrels, want_media=True)
-    text_recall, text_count = _slice_recall(run, qrels, want_media=False)
-    report.add_metric(
-        build_metric(
-            STAGE3,
-            "recall_at_5_figure",
-            media_recall,
-            detail=f"{media_count} question(s) answerable from a figure/table chunk",
-        )
-    )
-    report.add_metric(
-        build_metric(
-            STAGE3,
-            "recall_at_5_text",
-            text_recall,
-            detail=f"{text_count} text-only question(s)",
-        )
-    )
-    if media_recall is not None and text_recall is not None and media_recall < text_recall - 0.1:
-        report.add_finding(
-            "warn",
-            "MODALITY_RECALL_GAP",
-            "figure vs text",
-            f"Figure-answerable recall@5 ({media_recall:.2f}) trails text recall@5 "
-            f"({text_recall:.2f}) by more than 10 points — VLM captions are not competing "
-            "with prose in the same embedding space.",
-        )
-
-    # ── Reranker regression ───────────────────────────────────────────
-    demotions = drops = 0
-    demotion_rows: list[list[object]] = []
     for record in scored:
         question = by_id[record.id]
-        before = record.stages.get("rrf")
-        after = record.stages.get("rerank")
-        if before is None or after is None:
-            continue
-        demoted, dropped = count_demotions(
-            before.ranked_ids, after.ranked_ids, question.relevant_ids
+        ranked = record.ranked_ids
+        hits5.append(hit_at_k(ranked, question.relevant_ids, PRIMARY_DEPTH))
+        hits10.append(hit_at_k(ranked, question.relevant_ids, DEEP_DEPTH))
+        recalls5.append(recall_at_k(ranked, question.relevant_ids, PRIMARY_DEPTH))
+        recalls10.append(recall_at_k(ranked, question.relevant_ids, DEEP_DEPTH))
+        precisions.append(precision_at_k(ranked, question.useful_ids, PRIMARY_DEPTH))
+        ctx_precisions.append(
+            context_precision_at_k(ranked, question.useful_ids, DEEP_DEPTH)
         )
-        demotions += demoted
-        drops += dropped
-        if dropped:
-            report.add_finding(
-                "error",
-                "RERANK_DROPPED_RELEVANT",
-                record.id,
-                f"The cross-encoder pushed {dropped} known-relevant chunk(s) out of the "
-                "result window entirely. Cross-encoders are trained on prose; transcribed "
-                "captions do not look like prose.",
-            )
-        if demoted or dropped:
-            demotion_rows.append([record.id, question.name, demoted, dropped])
+        ctx_recalls.append(_context_recall(record, question))
+        reciprocals.append(reciprocal_rank(ranked, question.relevant_ids))
+        window = ranked[:PRIMARY_DEPTH]
+        window_total += len(window)
+        unjudged += sum(1 for cid in window if cid not in question.judged_ids)
 
+    # ── Did we find the answer? ───────────────────────────────────────
     report.add_metric(
-        build_metric(STAGE3, "rerank_demotion_count", float(demotions), unit="count")
-    )
-    report.add_metric(build_metric(STAGE3, "rerank_drop_count", float(drops), unit="count"))
-    if demotion_rows:
-        report.tables.append(
-            table(
-                "Reranker movements on relevant chunks (rrf -> rerank)",
-                ["Question", "Name", "Demoted", "Dropped"],
-                demotion_rows,
-            )
+        build_metric(
+            STAGE3,
+            "hit_rate_at_5",
+            mean(hits5),
+            detail="questions with at least one answer-bearing chunk in the served top 5",
         )
+    )
+    report.add_metric(
+        build_metric(
+            STAGE3, "hit_rate_at_10", mean(hits10), detail="same, looking 10 deep"
+        )
+    )
+    report.add_metric(
+        build_metric(
+            STAGE3,
+            "recall_at_5",
+            mean(recalls5),
+            detail="share of ALL answer-bearing chunks found, not just one",
+        )
+    )
+    report.add_metric(build_metric(STAGE3, "recall_at_10", mean(recalls10)))
+    report.add_metric(
+        build_metric(
+            STAGE3,
+            "mrr",
+            mean(reciprocals),
+            detail="1/rank of the first answer-bearing chunk, averaged",
+        )
+    )
 
-    # ── Ablation ──────────────────────────────────────────────────────
-    ablation_rows: list[list[object]] = []
-    for stage in STAGE_ORDER:
-        metrics = _stage_metrics(run, qrels, stage)
-        ablation_rows.append(
+    # ── Was what we returned worth returning? ─────────────────────────
+    report.add_metric(
+        build_metric(
+            STAGE3,
+            "precision_at_5",
+            mean(precisions),
+            detail="share of the top 5 graded relevant or supporting — a LOWER BOUND, "
+            "since a chunk the gold answer says nothing about is graded 0 even if useful",
+        )
+    )
+    report.add_metric(
+        build_metric(
+            STAGE3,
+            "context_precision_at_10",
+            mean(ctx_precisions),
+            detail="rank-weighted precision — the same chunks score higher when ranked "
+            "earlier, unlike precision_at_5",
+        )
+    )
+    report.add_metric(
+        build_metric(
+            STAGE3,
+            "context_recall",
+            mean(ctx_recalls),
+            detail=f"share of the gold answer's facts present in the retrieved top "
+            f"{DEEP_DEPTH} text — judgment-free, so a grading error cannot flatter it",
+        )
+    )
+    report.add_metric(
+        build_metric(
+            STAGE3,
+            "unjudged_rate_at_5",
+            rate(unjudged, window_total),
+            detail=f"{unjudged}/{window_total} top-5 slots the grader had no opinion on — "
+            "the closer to 0, the closer precision_at_5 is to true precision",
+        )
+    )
+
+    # ── Modality split ────────────────────────────────────────────────
+    # The multimodal-specific risk: a VLM caption competing against prose in the
+    # same embedding space. Reported as a table rather than a gate so it informs
+    # without failing a build on a two-question slice.
+    modality_rows: list[list[object]] = []
+    for label, want_media in (("figure/table", True), ("text", False)):
+        subset = [
+            r for r in scored if bool(by_id[r.id].modalities & FIGURE_MODALITIES) == want_media
+        ]
+        if not subset:
+            continue
+        modality_rows.append(
             [
-                stage,
-                _fmt(metrics.get("recall_at_1")),
-                _fmt(metrics.get("recall_at_3")),
-                _fmt(metrics.get("recall_at_5")),
-                _fmt(metrics.get("recall_at_10")),
-                _fmt(metrics.get("mrr")),
-                _fmt(metrics.get("ndcg_at_10")),
-                _fmt(
-                    mean(
-                        [
-                            r.stages[stage].latency_ms
-                            for r in run.records
-                            if stage in r.stages
-                        ]
-                    ),
-                    digits=1,
-                ),
+                label,
+                len(subset),
+                _fmt(mean([hit_at_k(r.ranked_ids, by_id[r.id].relevant_ids, PRIMARY_DEPTH) for r in subset])),
+                _fmt(mean([recall_at_k(r.ranked_ids, by_id[r.id].relevant_ids, PRIMARY_DEPTH) for r in subset])),
+                _fmt(mean([reciprocal_rank(r.ranked_ids, by_id[r.id].relevant_ids) for r in subset])),
             ]
         )
+    if len(modality_rows) == 2:
+        media_hit, text_hit = float(modality_rows[0][2]), float(modality_rows[1][2])
+        if media_hit < text_hit - 0.10:
+            report.add_finding(
+                "warn",
+                "MODALITY_RECALL_GAP",
+                "figure vs text",
+                f"Figure-answerable hit rate@5 ({media_hit:.2f}) trails text "
+                f"({text_hit:.2f}) by more than 10 points — VLM captions are not competing "
+                "with prose in the same embedding space.",
+            )
     report.tables.append(
         table(
-            "Stage ablation",
-            ["Stage", "R@1", "R@3", "R@5", "R@10", "MRR", "nDCG@10", "Latency ms"],
-            ablation_rows,
-            note="Read the deltas, not the absolutes. A large R@10-vs-R@3 gap is a ranking "
-            "problem (fix the reranker); a low R@10 everywhere is a recall problem (fix "
-            "embeddings, chunking or extraction).",
+            "By answer modality",
+            ["Answer lives in", "Questions", "Hit@5", "R@5", "MRR"],
+            modality_rows,
+            note="Whether captioned figures retrieve as well as prose. A gap here is an "
+            "embedding or captioning problem, not a ranking one.",
         )
     )
 
     # ── Rank distribution ─────────────────────────────────────────────
-    ranks = [
-        first_relevant_rank(record.stages["final"].ranked_ids, by_id[record.id].relevant_ids)
-        for record in scored
-        if "final" in record.stages
-    ]
-    distribution = histogram(ranks, [1, 3, 5, 10])
+    ranks = [first_relevant_rank(r.ranked_ids, by_id[r.id].relevant_ids) for r in scored]
     report.tables.append(
         table(
-            "Rank of first relevant chunk (final ordering)",
+            "Rank of first answer-bearing chunk",
             ["Bucket", "Questions"],
-            sorted(distribution.items(), key=lambda kv: (kv[0] == "miss", kv[0])),
-            note="An average rank hides the tail; this shows whether a weak MRR is "
+            sorted(
+                histogram(ranks, [1, 3, 5, 10]).items(),
+                key=lambda kv: (kv[0] == "miss", kv[0]),
+            ),
+            note="An average hides the tail; this shows whether a weak MRR is "
             "'everything at rank 3' or 'most at rank 1 with four outright misses'.",
         )
     )
-
-    # ── Pipeline parity ───────────────────────────────────────────────
-    checked = [r for r in run.records if r.pipeline_parity is not None]
-    matching = sum(1 for r in checked if r.pipeline_parity)
-    report.add_metric(
-        build_metric(
-            STAGE3,
-            "pipeline_parity_rate",
-            rate(matching, len(checked)),
-            detail=f"{matching}/{len(checked)} questions where the reproduced final "
-            "ordering matched RetrievalPipeline.retrieve()",
-        )
-    )
-    for record in checked:
-        if not record.pipeline_parity:
-            report.add_finding(
-                "error",
-                "PIPELINE_PARITY_BROKEN",
-                record.id,
-                "The ablation's reproduced ordering no longer matches the real pipeline, "
-                "so every stage 3 number is measuring something production does not do. "
-                "Re-sync eval/stage3_retrieval/runner.py with RetrievalPipeline.retrieve().",
-            )
 
     # ── Per-question detail ───────────────────────────────────────────
     rows: list[list[object]] = []
     for record in scored:
         question = by_id[record.id]
-        final = record.stages.get("final")
-        ranked = final.ranked_ids if final else []
+        ranked = record.ranked_ids
         rank = first_relevant_rank(ranked, question.relevant_ids)
         rows.append(
             [
@@ -284,15 +276,45 @@ def score(run: RetrievalRun, qrels: QrelSet, report: StageReport) -> None:
                 "media" if question.modalities & FIGURE_MODALITIES else "text",
                 len(question.relevant_ids),
                 rank if rank else "MISS",
-                _fmt(recall_at_k(ranked, question.relevant_ids, 5)),
-                _fmt(ndcg_at_k(ranked, question.graded, NDCG_DEPTH)),
+                _fmt(recall_at_k(ranked, question.relevant_ids, PRIMARY_DEPTH)),
+                _fmt(precision_at_k(ranked, question.useful_ids, PRIMARY_DEPTH)),
+                _fmt(_context_recall(record, question)),
+                f"{record.latency_ms:.0f}",
             ]
         )
     report.tables.append(
         table(
-            "Per-question results (final ordering)",
-            ["Id", "Name", "Answer modality", "Relevant", "First hit rank", "R@5", "nDCG@10"],
+            "Per-question results",
+            ["Id", "Name", "Modality", "Relevant", "First hit", "R@5", "P@5", "CtxRecall", "ms"],
             rows,
+        )
+    )
+
+    # ── Ground-truth basis ────────────────────────────────────────────
+    basis_rows: list[list[object]] = []
+    for question in qrels.questions:
+        primary = [j for j in question.judgments if j.grade == 3]
+        top = primary[0] if primary else (question.judgments[0] if question.judgments else None)
+        basis_rows.append(
+            [
+                question.id,
+                question.name or "-",
+                question.basis or "-",
+                len(primary),
+                len(question.relevant_ids),
+                (top.evidence[:70] if top else "-") or "-",
+            ]
+        )
+    report.tables.append(
+        table(
+            "Ground-truth basis (how each question was graded)",
+            ["Id", "Name", "Basis", "Grade 3", "Relevant", "Evidence"],
+            basis_rows,
+            note="Judgments are derived from gold_qa.json's expected_answer, never from "
+            "retriever output. `numeric` and `answer_keys` are the strong paths; `lexical` "
+            "is weaker; `fallback_best` means nothing met the bar and the closest chunk was "
+            "taken — add `answer_keys` to those gold entries. This is what you audit when a "
+            "number looks wrong.",
         )
     )
 

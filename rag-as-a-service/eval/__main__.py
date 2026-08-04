@@ -4,7 +4,7 @@
     python -m eval stage1 --init-manifest
     python -m eval stage2a
     python -m eval stage2b --init
-    python -m eval stage3 --derive-qrels
+    python -m eval stage3
     python -m eval stage4 --judge
     python -m eval all                   # every stage in order; exits non-zero if any fail
 

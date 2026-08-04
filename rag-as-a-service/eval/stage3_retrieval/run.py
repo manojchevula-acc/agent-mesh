@@ -1,12 +1,15 @@
 """Stage 3 CLI — retrieval quality and ordering.
 
-    # One-time: bootstrap chunk-id judgments from the existing gold set, then review
-    python -m eval.stage3_retrieval.run --derive-qrels
-
-    # Normal run (retrieve + score)
+    # Normal run: derive judgments from the gold answers, retrieve, score
     python -m eval.stage3_retrieval.run
     python -m eval.stage3_retrieval.run --id 13,14,15   # re-run a subset; others are kept
     python -m eval.stage3_retrieval.run --score-only    # re-score the last run, no retrieval
+    python -m eval.stage3_retrieval.run --derive-only   # refresh qrels.json and stop
+
+Relevance judgments are *derived* from ``gold_qa.json``'s expected answers on
+every run — there is no review step and no ``verified`` flag to flip. See
+``qrels.py`` for the grading rules and why deriving them from the gold answer
+(rather than from retriever output) is not circular.
 
 Retrieval is the expensive part (embedder + cross-encoder load); scoring is free,
 so ``--score-only`` lets you iterate on metrics without re-running the pipeline.
@@ -26,7 +29,7 @@ from ..core.models import RetrievalRun, RetrievalRunRecord, StageReport
 from ..core.runner import base_parser, emit, paths_from_args, run_stage
 from . import scoring
 from .qrels import derive, load_qrels, save_qrels
-from .runner import AblationRunner
+from .runner import RetrievalRunner
 
 STAGE = scoring.STAGE
 
@@ -34,10 +37,10 @@ STAGE = scoring.STAGE
 def build_parser() -> argparse.ArgumentParser:
     parser = base_parser(__doc__ or "")
     parser.add_argument(
-        "--derive-qrels",
+        "--derive-only",
         action="store_true",
-        help="Rebuild qrels.json from gold_qa.json by resolving expected_sources against "
-        "the live index. Verified questions are never overwritten.",
+        help="Regenerate qrels.json from the gold answers and exit, without running "
+        "retrieval. Useful for inspecting the judgments after a re-ingest.",
     )
     parser.add_argument(
         "--id",
@@ -60,12 +63,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Score the existing run file without executing any retrieval.",
     )
-    parser.add_argument(
-        "--no-parity-check",
-        action="store_true",
-        help="Skip the per-question comparison against RetrievalPipeline.retrieve() "
-        "(halves the query count, but stops detecting ablation drift).",
-    )
     return parser
 
 
@@ -75,8 +72,14 @@ async def main(args: argparse.Namespace) -> int:
     run_path = paths.run_file(f"{STAGE}_run")
 
     # ── Ground truth ──────────────────────────────────────────────────
-    qrels = load_qrels(paths.qrels)
-    if args.derive_qrels or qrels is None:
+    # Judgments are derived, not curated: regenerating on every run keeps them in
+    # step with the live index for free. --score-only reuses the cached file so a
+    # scoring change can be iterated on without touching the collection.
+    if args.score_only:
+        qrels = load_qrels(paths.qrels)
+        if qrels is None:
+            raise SystemExit(f"No qrels at {paths.qrels}; drop --score-only to derive them.")
+    else:
         gold = read_json(paths.gold_qa)
         if gold is None:
             raise SystemExit(
@@ -85,12 +88,17 @@ async def main(args: argparse.Namespace) -> int:
             )
         print(f"  loading collection: {settings.vectordb.collection_name}")
         index = await ChunkIndex.load(settings)
-        qrels, warnings = derive(gold, index, qrels)
+        qrels, warnings = derive(gold, index)
         save_qrels(paths.qrels, qrels)
-        print(f"  derived {len(qrels.questions)} qrel question(s) -> {paths.qrels}")
+        graded = sum(1 for q in qrels.questions if q.relevant_ids)
+        print(
+            f"  graded {graded}/{len(qrels.questions)} question(s) against the gold "
+            f"answers -> {paths.qrels}"
+        )
         for warning in warnings:
             print(f"    WARN {warning}")
-        print("  Review the judgments, prune ambiguous matches, then set verified: true.")
+        if args.derive_only:
+            return 0
 
     questions = qrels.questions
     ids = parse_id_args(args.ids)
@@ -113,18 +121,17 @@ async def main(args: argparse.Namespace) -> int:
         print("  loading embedder / vector DB (this is the slow part)")
         embedder = get_embedder(settings.embedding)
         vectordb = get_vectordb(settings.vectordb)
-        ablation = AblationRunner(settings, embedder, vectordb, rank_depth=args.rank_depth)
+        runner = RetrievalRunner(settings, embedder, vectordb, rank_depth=args.rank_depth)
 
         records: list[RetrievalRunRecord] = []
         for question in questions:
-            record = await ablation.run(question, check_parity=not args.no_parity_check)
-            final = record.stages["final"]
+            record = await runner.run(question)
             hit = next(
-                (h.rank + 1 for h in final.hits if h.chunk_id in question.relevant_ids), None
+                (h.rank + 1 for h in record.hits if h.chunk_id in question.relevant_ids), None
             )
             print(
                 f"  done: {question.id:>3}  first_hit_rank={hit or 'MISS'}  "
-                f"parity={record.pipeline_parity}"
+                f"{record.latency_ms:.0f}ms"
             )
             records.append(record)
 
@@ -142,7 +149,7 @@ async def main(args: argparse.Namespace) -> int:
                 "rrf_k": settings.retrieval.rrf_k,
                 "pre_rerank_top_k": settings.retrieval.pre_rerank_top_k,
                 "final_top_k": settings.retrieval.final_top_k,
-                "rank_depth": ablation.rank_depth,
+                "rank_depth": runner.rank_depth,
                 "embedding_model": settings.embedding.model_name,
                 "freshness_penalty_enabled": settings.retrieval.freshness_penalty_enabled,
             },
@@ -156,9 +163,8 @@ async def main(args: argparse.Namespace) -> int:
         stage=STAGE,
         title="Stage 3 — Retrieval quality & ordering",
         summary=(
-            "Graded-relevance scoring of the ordering production serves, plus a "
-            "per-component ablation so a regression can be attributed to dense, sparse, "
-            "fusion, reranking or the freshness penalty."
+            "Graded-relevance scoring of the ordering production serves. Judgments are "
+            "derived from the gold answers on every run; nothing here is hand-reviewed."
         ),
         meta={"run_file": str(run_path), "qrels": str(paths.qrels), **run.config},
     )

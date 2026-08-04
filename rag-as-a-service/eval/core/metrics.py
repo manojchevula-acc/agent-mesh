@@ -77,6 +77,35 @@ def reciprocal_rank(ranked: Sequence[str], relevant: set[str]) -> float | None:
     return 1.0 / rank if rank else 0.0
 
 
+def context_precision_at_k(
+    ranked: Sequence[str], relevant: set[str], k: int
+) -> float | None:
+    """Rank-weighted precision over the top ``k`` (the RAGAS context-precision form).
+
+    ``mean(precision@i)`` taken at every rank ``i`` that holds a relevant item::
+
+        Σ (precision@i × rel_i) / |relevant items in the top k|
+
+    Unlike plain precision@k this is *ordering-sensitive*: the same set of
+    relevant chunks scores higher when they sit at ranks 1-2 than at ranks 4-5,
+    which is what matters when only the first few blocks realistically influence
+    the generated answer. ``None`` when nothing relevant was retrieved, so "not
+    found" is never averaged in as a hard zero alongside genuine ranking losses.
+    """
+    if not relevant:
+        return None
+    window = ranked[:k]
+    hits = 0
+    total = 0.0
+    for i, item in enumerate(window, start=1):
+        if item in relevant:
+            hits += 1
+            total += hits / i
+    if hits == 0:
+        return None
+    return total / hits
+
+
 # ── Graded relevance ──────────────────────────────────────────────────
 def dcg(gains: Sequence[float]) -> float:
     """Discounted cumulative gain with the standard log2(rank+1) discount."""

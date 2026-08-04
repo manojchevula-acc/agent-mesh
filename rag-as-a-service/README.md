@@ -7,7 +7,8 @@ grounded** responses.
 
 The retrieval stack combines dense + sparse embeddings (BGE-M3), Reciprocal Rank
 Fusion, cross-encoder reranking, freshness penalties, parent-chunk expansion, an
-optional LLM answer-generation step, and a RAGAS evaluation harness.
+optional LLM answer-generation step, and a stage-wise evaluation harness (deterministic
+metrics, an LLM judge, and RAGAS) scored against a curated gold Q&A set.
 
 Everything is **configurable via `.env` / YAML** — switching the vector DB, embedding
 model, LLM provider, chunking strategy, or extraction engine requires **no code
@@ -37,7 +38,7 @@ provider/factory pattern (see [Design principles](#design-principles)).
    - [Parent-chunk expansion](#10-parent-chunk-expansion)
    - [Answer generation (LLM)](#11-answer-generation-llm)
    - [Caching](#12-caching)
-   - [Evaluation (RAGAS)](#13-evaluation-ragas)
+   - [Evaluation](#13-evaluation)
    - [API layer](#14-api-layer)
    - [Cross-cutting utilities](#15-cross-cutting-utilities)
    - [Frontend](#16-frontend)
@@ -61,8 +62,9 @@ hallucinate or quote stale rules. This service instead:
 3. **Penalises stale documents** so superseded policy ranks lower and is flagged.
 4. **Optionally generates** a grounded answer that **cites the source document and
    clause** for every claim, and refuses to answer when the context is insufficient.
-5. **Evaluates** answer quality with RAGAS metrics (faithfulness, relevancy,
-   precision, recall) against a curated FAB test set.
+5. **Evaluates** retrieval and answer quality stage-by-stage against a curated gold
+   Q&A set — deterministic numeric-fact matching, an LLM judge, and RAGAS metrics
+   (faithfulness, relevancy, precision, recall) all scored against the same file.
 
 The mock corpus lives in [`docs/`](docs/) and includes the FAB Credit Pricing Policy,
 the CBUAE AI-Governance circular, the Model Risk Management framework, the Credit
@@ -476,31 +478,43 @@ Key tunables (defaults shown):
   which dominates latency and (for the LLM step) cost. **Valkey** is used as the
   drop-in, BSD-licensed Redis fork.
 
-### 13. Evaluation (RAGAS)
+### 13. Evaluation
 
-**Files:** [`evaluation/`](src/gernas_rag/evaluation/) — `evaluator.py`,
-`test_dataset.py`, `metrics.py`; CLI [`scripts/run_evaluation.py`](scripts/run_evaluation.py);
-endpoints in [`api/routers/evaluate.py`](src/gernas_rag/api/routers/evaluate.py).
+**Files:** [`eval/`](eval/) — a stage-wise CLI (`python -m eval <stage>`) that mirrors
+the ingest/serve pipeline one stage at a time, so a regression is attributed to the
+stage that caused it. See [`eval/README.md`](eval/README.md) for the full breakdown
+(stages 1–4); this section covers stage 4's generation scoring, including RAGAS.
 
-- **RAGAS** scores the RAG system end-to-end. Two modes:
-  - **Reference-based** (default): `faithfulness` (≥0.85), `answer_relevancy` (≥0.80),
-    `context_precision` (≥0.75), `context_recall` (≥0.80) — needs a `ground_truth`.
-  - **Reference-free**: `faithfulness`, `answer_relevancy`, `context_utilization`
-    (the no-reference variant of precision) — runs over arbitrary/production queries
-    with no gold answer.
-- A curated **7-question FAB test set** ([`test_dataset.py`](src/gernas_rag/evaluation/test_dataset.py))
-  covers pricing floors, approval authority, CBUAE AI governance, MRM evidence,
-  concentration limits, eligible tenors, and submission documentation.
-- The evaluator **reuses the already-loaded embedder** (via a sync `_EmbeddingsBridge`
-  that runs the async coroutine in a worker thread) so it doesn't load a second copy.
-  The **LLM judge** is a *separate, smaller* model (`llama-3.1-8b-instant`) to stay
-  within free-tier token limits, and contexts are truncated to keep judge prompts small.
-- A single-answer endpoint (`/evaluate/answer`) scores one live Q+A+contexts triple
-  reference-free in ~10–30 s, for in-UI "rate this answer" feedback.
-- **Why RAGAS:** it provides RAG-specific, LLM-as-judge metrics that separately measure
-  **retrieval quality** (precision/recall/utilization) from **generation quality**
-  (faithfulness/relevancy) — so a regression can be localised to the retriever or the
-  generator. The pass/fail thresholds turn evaluation into a CI-style gate.
+There is exactly **one** curated ground-truth file for retrieval and generation:
+[`data/eval/gold_qa.json`](data/eval/gold_qa.json). Every metric below — deterministic,
+LLM-judged, or RAGAS — is scored against it; none maintain a separate test set.
+
+Stage 4 (`python -m eval stage4`) runs three independent scoring passes over the same
+recorded run:
+- **Deterministic** — numeric-fact recall/groundedness (`answer_numeric_recall`,
+  `answer_numeric_groundedness`) and citation checks, no LLM involved, zero run-to-run
+  variance.
+- **Custom LLM judge** (`--judge`) — CORRECT / PARTIALLY_CORRECT / INCORRECT verdicts,
+  tuned specifically for this corpus's numeric-heavy answers.
+- **RAGAS** (`--ragas`, [`eval/stage4_generation/ragas_metrics.py`](eval/stage4_generation/ragas_metrics.py)) —
+  stock `faithfulness` (≥0.85), `answer_relevancy` (≥0.80), `context_precision` (≥0.75),
+  `context_recall` (≥0.80) from the `ragas` package, currently reported non-gating.
+  `ground_truth` is `gold_qa.json`'s `expected_answer` for each question.
+  - **Reuses the already-loaded embedder** (via a sync `_EmbeddingsBridge` that runs the
+    async coroutine in a worker thread) so it doesn't load a second copy.
+  - The **judge LLM** is *separate and configurable* from both the answer-generation LLM
+    and the custom judge above (`settings.evaluation.judge_provider`/`judge_model`,
+    defaults to a hosted Groq model) — a judge tuned for cheap/fast generation is not
+    necessarily a good grader.
+  - `python -m eval.stage4_generation.diagnose_ragas --question "..."` prints the raw
+    per-statement judge reasoning behind a faithfulness/answer_relevancy score.
+- **Why three passes, not one:** deterministic metrics are free and reproducible but
+  numeric-only; the custom judge grades general correctness against this corpus's
+  grading rules; RAGAS adds retrieval-quality-at-generation-time metrics
+  (`context_precision`/`context_recall`) and an off-the-shelf grounding check
+  (`faithfulness`) that a different tool can be pointed at for comparison. All three
+  are cheap to compute independently and cached separately, so none forces re-running
+  the others.
 
 ### 14. API layer
 
@@ -516,12 +530,13 @@ Endpoints:
 | `POST /api/v1/retrieve`           | retrieve | Hybrid retrieval (+ optional LLM answer), cached.      |
 | `POST /api/v1/ingest`             | ingest   | Upload a document; async ingestion; returns`job_id`. |
 | `GET /api/v1/ingest/{job_id}`     | ingest   | Poll ingestion job status.                             |
-| `POST /api/v1/evaluate`           | evaluate | Run RAGAS over the FAB test set.                       |
-| `POST /api/v1/evaluate/answer`    | evaluate | Reference-free score for one answer.                   |
-| `GET /api/v1/evaluate/test-cases` | evaluate | Return the 7 test cases.                               |
 | `POST /api/v1/admin/reindex`      | admin    | Drop + recreate the collection.                        |
 | `DELETE /api/v1/admin/collection` | admin    | Delete the collection.                                 |
 
+- **No `/evaluate` endpoints.** Evaluation (deterministic metrics, the LLM judge, and
+  RAGAS) is offline-only, run via `python -m eval stage4 [--judge] [--ragas]` — see
+  [§13](#13-evaluation) and [`eval/README.md`](eval/README.md). It reads/writes
+  `data/eval/`, not the live app process.
 - **Auth** ([`auth.py`](src/gernas_rag/api/auth.py)) is tiered: a Bearer **JWT** is
   required if `jwt_secret` is set (production); otherwise a matching **`X-API-Key`** if
   `api_key` is set (dev); otherwise open (local). **Why:** one dependency adapts from
@@ -581,7 +596,7 @@ Endpoints:
 | Chunking   | **Hierarchical** (parent/child)                           | Fixed-size                                                 | Semantic boundaries + small-to-big retrieval                |
 | LLM        | **Groq llama-3.1-70b**                                    | Anthropic; HuggingFace (on-prem); OpenAI-compat            | Low latency + low cost for the POC; provider is a flag      |
 | Cache      | **Redis / Valkey**                                        | —                                                         | Repetitive queries; soft-fail                               |
-| Eval       | **RAGAS** (judge: llama-3.1-8b)                           | —                                                         | RAG-specific, separates retrieval vs generation quality     |
+| Eval       | Stage-wise CLI: deterministic + LLM judge + **RAGAS**     | —                                                         | Attributes a regression to the stage that caused it         |
 | Logging    | **structlog** (JSON) + OpenTelemetry                      | —                                                         | Queryable events + tracing                                  |
 
 The recurring theme: **the default optimises for a bank's constraints** (data residency,
@@ -689,13 +704,13 @@ src/gernas_rag/
 ├── generation/      # ResponseGenerator (grounded, cited prompt)
 ├── llm/             # Groq (primary), Anthropic, HuggingFace, OpenAI-compat + factory
 ├── cache/           # RAGCache (Redis/Valkey)
-├── evaluation/      # RAGEvaluator, FAB test set, metric thresholds
 ├── api/             # FastAPI app: routers, deps, auth, middleware
 └── utils/           # retry, hashing, structured logging, telemetry
 
 config/              # default/<env>/local YAML layers
 docs/                # mock FAB corpus (PDFs)
-scripts/             # ingest, evaluate, setup, inspect CLIs
+eval/                # stage-wise evaluation CLI: deterministic, LLM judge, RAGAS — see eval/README.md
+scripts/             # ingest, setup, inspect CLIs
 tests/               # unit/ + integration/
 frontend/            # React + TypeScript SPA
 ```

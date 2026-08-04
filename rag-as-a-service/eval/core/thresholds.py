@@ -87,21 +87,33 @@ STAGE2_CAPTIONS: dict[str, Gate] = {
 
 # ── Stage 3: retrieval ────────────────────────────────────────────────
 STAGE3: dict[str, Gate] = {
-    "recall_at_5": Gate(0.95),
-    "recall_at_10": Gate(0.98),
+    # ── Did we find the answer? ───────────────────────────────────────
+    # Hit rate is the headline: most questions here have exactly one
+    # answer-bearing chunk, so "did anything correct surface in what the
+    # generator sees" is the thing that decides whether stage 4 can succeed.
+    "hit_rate_at_5": Gate(0.95),
+    "hit_rate_at_10": Gate(0.98),
+    # Recall only differs from hit rate when an answer spans several chunks.
+    # Held slightly lower because a partial multi-chunk answer is a real but
+    # softer failure than retrieving nothing.
+    "recall_at_5": Gate(0.90),
+    "recall_at_10": Gate(0.95),
     "mrr": Gate(0.80),
-    "ndcg_at_10": Gate(0.80),
-    # Figure-answerable questions are the multimodal-specific risk; held to the
-    # same bar as text so a regression there cannot hide inside the average.
-    "recall_at_5_figure": Gate(0.90),
-    "recall_at_5_text": Gate(0.95),
-    # Reranking a caption below a prose chunk is the classic cross-encoder
-    # failure on this kind of corpus.
-    "rerank_demotion_count": Gate(0, direction="max", gating=False),
-    "rerank_drop_count": Gate(0, direction="max"),
-    # The ablation reproduces the pipeline's final ordering locally; if that ever
-    # stops matching production, every number in the stage is suspect.
-    "pipeline_parity_rate": Gate(1.0),
+    # ── Was what we returned worth returning? ─────────────────────────
+    # Precision is a *lower bound*, not a measurement: judgments are anchored on
+    # the gold answer, so a genuinely useful chunk that restates none of its
+    # facts scores 0. Non-gating for that reason — watch the trend, and read it
+    # next to unjudged_rate_at_5.
+    "precision_at_5": Gate(0.30, gating=False),
+    # Rank-weighted, so it moves when correct chunks slide down the window even
+    # though the set retrieved is unchanged. This is the ordering metric.
+    "context_precision_at_10": Gate(0.70),
+    # Judgment-free: does the retrieved text actually contain the answer's facts.
+    # The one metric a grading mistake cannot flatter, which is why it gates.
+    "context_recall": Gate(0.90),
+    # How much of a typical window the grader had no opinion on — says whether
+    # precision above is trustworthy or merely pessimistic.
+    "unjudged_rate_at_5": Gate(0.50, direction="max", gating=False),
 }
 
 # ── Stage 4: generation ───────────────────────────────────────────────
@@ -118,6 +130,13 @@ STAGE4: dict[str, Gate] = {
     # is the most costly failure mode there is.
     "abstention_accuracy": Gate(1.0),
     "judge_unknown_rate": Gate(0.02, direction="max"),
+    # RAGAS, scored against gold_qa.json's expected_answer. Non-gating until real
+    # numbers have been seen against these thresholds (carried over from the old
+    # standalone RAGAS evaluator's bars) — flip gating=True once they're trustworthy.
+    "ragas_faithfulness": Gate(0.85, gating=False),
+    "ragas_answer_relevancy": Gate(0.80, gating=False),
+    "ragas_context_precision": Gate(0.75, gating=False),
+    "ragas_context_recall": Gate(0.80, gating=False),
 }
 
 

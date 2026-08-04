@@ -5,6 +5,12 @@ Ground-truth files are *inputs a human curates* and live directly under
 ``data/eval/runs/`` (machine-readable) or ``data/eval/reports/`` (human-readable),
 so the curated files can never be clobbered by a run and ``runs/`` can be wiped
 without losing anything that was hand-written.
+
+The split is the whole point: if a file is in the root a human wrote it and it is
+the answer key; if it is under ``runs/`` the suite computed it and regenerating
+is free. Stage 3's relevance judgments moved to ``runs/`` when they stopped being
+hand-reviewed — filing a derived artifact next to the answer keys is what made it
+look like a second, competing source of truth.
 """
 
 from __future__ import annotations
@@ -34,16 +40,29 @@ class EvalPaths:
         return self.root / "figure_transcriptions.json"
 
     @property
-    def qrels(self) -> Path:
-        """Stage 3 ground truth: graded relevance judgments keyed by chunk_id."""
-        return self.root / "qrels.json"
-
-    @property
     def gold_qa(self) -> Path:
-        """Stage 4 ground truth: questions and expected answers."""
+        """Stage 3 and 4 ground truth: questions, expected answers, source documents.
+
+        The only curated input either retrieval or generation is scored against.
+        Stage 3's relevance judgments are *derived* from this file — see
+        :attr:`qrels`.
+        """
         return self.root / "gold_qa.json"
 
     # ── Derived ───────────────────────────────────────────────────────
+    @property
+    def qrels(self) -> Path:
+        """Stage 3 relevance judgments, derived from :attr:`gold_qa` on every run.
+
+        Lives under ``runs/`` rather than beside the curated files because it is
+        an output, not an input: nothing here is hand-written, and deleting it
+        costs only the time to regenerate. Kept on disk rather than held in
+        memory so ``--score-only`` can work without the index, and so a diff
+        distinguishes "the judgments moved" (chunk ids changed after a re-ingest)
+        from "retrieval got worse" when a metric drops.
+        """
+        return self.runs_dir / "stage3_qrels.json"
+
     @property
     def runs_dir(self) -> Path:
         return self.root / "runs"

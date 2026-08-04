@@ -1,5 +1,6 @@
 """Primary chunker — hierarchical (parent/child) splitting."""
 
+import re
 from typing import Any
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -15,6 +16,46 @@ logger = get_logger(__name__)
 
 # Approximate characters-per-token for converting token budgets to char budgets.
 _CHARS_PER_TOKEN = 4
+
+# A markdown table header: a row immediately followed by its delimiter row
+# (e.g. "| A | B |\n|---|---|"). RecursiveCharacterTextSplitter has no notion of
+# table structure, so a table longer than chunk_size gets cut between rows —
+# every row after the cut loses its header and becomes uninterpretable on its
+# own at retrieval time (eval/stage2_enrichment's TABLE_FRAGMENTED finding).
+_TABLE_ROW = re.compile(r"^[ \t]*\|.*\|[ \t]*$", re.MULTILINE)
+_TABLE_SEPARATOR = re.compile(r"^[ \t]*\|[\s:|-]+\|[ \t]*$", re.MULTILINE)
+_TABLE_HEADER_BLOCK = re.compile(
+    r"^[ \t]*\|.*\|[ \t]*\r?\n^[ \t]*\|[\s:|-]+\|[ \t]*$", re.MULTILINE
+)
+
+
+def _is_fragmented_table(text: str) -> bool:
+    """True when *text* holds table rows but not the header that defines them."""
+    if len(_TABLE_ROW.findall(text)) < 2:
+        return False
+    return not _TABLE_SEPARATOR.search(text)
+
+
+def _repair_fragmented_table(child_text: str, container_text: str) -> str:
+    """Re-attach a table's header to a chunk that only got the tail rows.
+
+    Finds the nearest table header block in *container_text* that precedes
+    *child_text*'s position and prepends it, so the chunk is self-contained
+    even when split away from its header. Left unchanged if the header can't be
+    located (e.g. the splitter's overlap altered the substring) rather than
+    guessing at the wrong table's header.
+    """
+    if not _is_fragmented_table(child_text):
+        return child_text
+    idx = container_text.find(child_text)
+    if idx == -1:
+        return child_text
+    preceding_headers = [
+        m.group(0) for m in _TABLE_HEADER_BLOCK.finditer(container_text) if m.end() <= idx
+    ]
+    if not preceding_headers:
+        return child_text
+    return f"{preceding_headers[-1]}\n{child_text}"
 
 
 class HierarchicalChunker(BaseChunker):
@@ -50,6 +91,9 @@ class HierarchicalChunker(BaseChunker):
         text = extraction.raw_markdown
         doc_name = base_metadata["document_name"]
         chunks: list[Chunk] = []
+        # Heading -> parent chunk id, used to link a media element to the parent
+        # section it visually belongs to (see _build_media_chunks).
+        parent_id_by_heading: dict[str, str] = {}
 
         if self._config.enable_parent_chunks:
             parent_texts = self._parent_splitter.split_text(text)
@@ -57,6 +101,8 @@ class HierarchicalChunker(BaseChunker):
                 parent_heading = self._extract_heading(parent_text)
                 parent_clause = self._extract_clause_ref(parent_text, parent_heading)
                 parent_id = make_chunk_id(doc_name, f"parent_{pi}")
+                if parent_heading:
+                    parent_id_by_heading.setdefault(parent_heading.strip().lower(), parent_id)
                 parent_meta = ChunkMetadata(
                     **{
                         **base_metadata,
@@ -71,6 +117,7 @@ class HierarchicalChunker(BaseChunker):
                 for ci, child_text in enumerate(self._splitter.split_text(parent_text)):
                     if len(child_text.split()) < self._config.min_chunk_size // 4:
                         continue  # Skip too-small chunks
+                    child_text = _repair_fragmented_table(child_text, parent_text)
                     clause_ref = self._extract_clause_ref(child_text, parent_heading)
                     child_id = make_chunk_id(doc_name, f"p{pi}_c{ci}")
                     child_meta = ChunkMetadata(
@@ -84,6 +131,7 @@ class HierarchicalChunker(BaseChunker):
                     chunks.append(Chunk(id=child_id, text=child_text, metadata=child_meta))
         else:
             for i, child_text in enumerate(self._splitter.split_text(text)):
+                child_text = _repair_fragmented_table(child_text, text)
                 heading = self._extract_heading(child_text)
                 clause_ref = self._extract_clause_ref(child_text, heading)
                 chunk_id = make_chunk_id(doc_name, str(i))
@@ -99,13 +147,18 @@ class HierarchicalChunker(BaseChunker):
         # Media chunks are built atomically from enriched elements — one figure /
         # table = exactly one chunk, never routed through the text splitter (so a
         # long caption can never be fragmented). See design §9.
-        chunks.extend(self._build_media_chunks(extraction.elements, base_metadata))
+        chunks.extend(
+            self._build_media_chunks(extraction.elements, base_metadata, parent_id_by_heading)
+        )
 
         logger.info("Chunking complete", total_chunks=len(chunks), document=doc_name)
         return chunks
 
     def _build_media_chunks(
-        self, elements: list[ExtractedElement], base_metadata: dict[str, Any]
+        self,
+        elements: list[ExtractedElement],
+        base_metadata: dict[str, Any],
+        parent_id_by_heading: dict[str, str],
     ) -> list[Chunk]:
         """Turn each enriched media element (those carrying an ``artifact_ref``)
         into exactly one atomic chunk. The full caption goes in as a single unit.
@@ -123,6 +176,15 @@ class HierarchicalChunker(BaseChunker):
                 self._extract_clause_ref(el.text, heading)
                 or (f"{modality} p.{page}" if page is not None else modality)
             )
+            # Best-effort link to the parent section this figure/table visually
+            # falls under, matched by heading text since media elements aren't
+            # positioned inside any parent_text (they're built from raw elements,
+            # never routed through the text splitter). Only resolves when the
+            # element's nearest heading is itself the heading a parent chunk
+            # starts on; a figure deep inside a section split into multiple
+            # parent chunks links to that section's first parent rather than the
+            # nearest one — an approximation, but real prose context beats none.
+            parent_id = parent_id_by_heading.get(heading.strip().lower()) if heading else None
             meta = ChunkMetadata(
                 **{
                     **base_metadata,
@@ -133,6 +195,7 @@ class HierarchicalChunker(BaseChunker):
                     "artifact_ref": ref,
                     "bbox": el.bbox,
                     "enrichment_model": el.metadata.get("enrichment_model"),
+                    "parent_chunk_id": parent_id,
                 }
             )
             # Keyed on the artifact ref so re-ingesting maps the same image to the
