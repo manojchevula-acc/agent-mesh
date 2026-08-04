@@ -1,23 +1,23 @@
 """Mesh client orchestrator.
 
-Drives a single user request across the distributed agent mesh using a
-Microsoft Agent Framework **Workflow** (see ``src/mesh/workflow.py``). The
-workflow graph enforces a defense-in-depth safety/governance pipeline:
+Drives a single user request across the distributed agent mesh using a LangGraph
+StateGraph (see ``src/mesh/workflow.py``).  The workflow graph enforces a
+defense-in-depth safety/governance pipeline:
 
   1. Deterministic input screen  (hard gate: injection / PII / destructive)
-  2. Compliance node (A2A)       -> semantic safety review (hard gate)
-  3. Policy node (A2A)           -> resolves the corporate rules that apply
-  4. Deterministic output redaction (PII)
+  2. RBAC validation             (FAB banking role enforcement)
+  3. Compliance node (HTTP POST) -> semantic safety review (hard gate)
+  4. Domain routing (HTTP POST)  -> PriceAssistAgent / DataAgent
+  5. Deterministic output redaction (PII)
 
-Each stage is a workflow executor, so the framework emits native ``workflow.run``
-/ ``executor.process`` spans and auto-propagates trace context between hops. A
-root ``mesh.request`` span ties the whole request together; the A2A client
-carries the context across process boundaries so every node joins one trace.
+A root ``mesh.request`` span ties the whole request together; the HTTP client
+carries W3C traceparent across process boundaries so every node joins one trace.
 
 The public surface (``handle_request`` + ``MeshResult``) and the ``ask_remote``
 seam are preserved for the offline test suite.
 """
 import asyncio
+import contextlib
 import sys
 import time
 import uuid
@@ -54,12 +54,17 @@ class MeshResult:
     session_id: str = ""
 
 
-async def handle_request(user: User, query: str, session_id: str | None = None, request_id: str | None = None) -> MeshResult:
+async def handle_request(
+    user: User,
+    query: str,
+    session_id: str | None = None,
+    request_id: str | None = None,
+) -> MeshResult:
     """Runs one request through the full mesh workflow.
 
-    Opens a root ``mesh.request`` span so every downstream executor / agent / A2A
+    Opens a root ``mesh.request`` span so every downstream node / agent / A2A
     span nests under one coherent distributed trace, then maps the workflow's
-    terminal :class:`MeshState` to a :class:`MeshResult`.
+    terminal state dict to a :class:`MeshResult`.
 
     ``session_id`` ties consecutive turns into one conversation. When omitted, a
     fresh per-conversation id is generated; callers (api_server) should echo the
@@ -96,77 +101,88 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
             ],
         )
 
-    initial = MeshState(
-        user_name=user.username,
-        role=user.role.value,
-        query=query,
-        session_id=session_id,
-    )
-
     # Load prior conversation turns for this session so PriceAssistAgent can resolve
     # follow-ups in-context. No-op (empty history) when memory is disabled.
     store = ConversationStore()
+    history: List[dict] = []
     if Config.ENABLE_CONVERSATION_MEMORY:
         try:
-            initial.conversation_history = store.load(session_id, Config.CONVERSATION_MAX_TURNS)
+            history = store.load(session_id, Config.CONVERSATION_MAX_TURNS)
         except Exception as exc:  # never let memory I/O break a request
             _log.warning("conversation history load failed session=%s: %s", session_id, exc)
+
+    initial_dict: MeshState = {
+        "user_name":           user.username,
+        "role":                user.role.value,
+        "query":               query,
+        "session_id":          session_id,
+        "compliance_verdict":  "",
+        "answer":              "",
+        "blocked":             False,
+        "block_stage":         None,
+        "trail":               [],
+        "conversation_history": history,
+    }
 
     # Build the workflow fresh per request, passing the (possibly patched at test
     # time) module-level ``ask_remote`` so the A2A seam is honoured.
     workflow = build_mesh_workflow(ask=ask_remote)
 
-    final = None
+    final: Optional[dict] = None
     t0 = time.perf_counter()
     try:
-        # Root the whole request in a single span (framework-native tracer). All
-        # workflow/executor/agent/A2A spans become children of this one.
+        # Root the whole request in a single span. All workflow node / agent / A2A
+        # spans become children of this one.
         span_cm = _root_span(user, query, session_id, request_id)
         with span_cm as root_span:
-            _log.info("Request start user=%s role=%s query_len=%d req=%s",
-                      user.username, user.role.value, len(query), request_id,
-                      extra={"user": user.username, "session_id": session_id})
-            events = await workflow.run(initial)
+            _log.info(
+                "Request start user=%s role=%s query_len=%d req=%s",
+                user.username, user.role.value, len(query), request_id,
+                extra={"user": user.username, "session_id": session_id},
+            )
+            final = await workflow.ainvoke(initial_dict)
 
-        final = _final_state(events)
         _enrich_root_span(root_span, final, request_id)
     finally:
         duration_ms = (time.perf_counter() - t0) * 1000
         if final is None:
             record_mesh_request("ERROR", "internal_error", duration_ms)
-        elif final.blocked:
-            record_mesh_request("BLOCKED", final.block_stage or "none", duration_ms)
+        elif final["blocked"]:
+            record_mesh_request("BLOCKED", final["block_stage"] or "none", duration_ms)
         else:
             record_mesh_request("SUCCESS", "none", duration_ms)
         detach_baggage(_baggage_token)
 
     if final is None:
         _log.error("Workflow produced no output", extra={"user": user.username})
-        return MeshResult(answer="Internal error: no workflow output.", blocked=True,
-                          block_stage="internal_error", trail=["no_output"],
-                          session_id=session_id)
+        return MeshResult(
+            answer="Internal error: no workflow output.",
+            blocked=True,
+            block_stage="internal_error",
+            trail=["no_output"],
+            session_id=session_id,
+        )
 
     # Safety-net: strip any <llm_reasoning> blocks that slipped through the
-    # DomainExecutor extraction pass (e.g. on a retry path or when the LLM
-    # placed the synthesis block after the answer text rather than before it).
-    if final.answer:
-        final.answer = strip_reasoning_markers(final.answer)
+    # domain_node extraction pass.
+    if final["answer"]:
+        final["answer"] = strip_reasoning_markers(final["answer"])
 
-    # Persist this turn so the next request in the session sees it. Only non-blocked
-    # turns with a real answer are stored (blocked queries carry no useful context).
-    if Config.ENABLE_CONVERSATION_MEMORY and not final.blocked and final.answer:
+    # Persist this turn so the next request in the session sees it. Only
+    # non-blocked turns with a real answer are stored.
+    if Config.ENABLE_CONVERSATION_MEMORY and not final["blocked"] and final["answer"]:
         try:
-            store.append_turn(session_id, query, final.answer)
-            # Bind owner on the first turn; no-op on subsequent turns in the session.
+            store.append_turn(session_id, query, final["answer"])
+            # Bind owner on the first turn; no-op on subsequent turns.
             store.bind_session(session_id, user.username)
         except Exception as exc:  # never let memory I/O break a request
             _log.warning("conversation history save failed session=%s: %s", session_id, exc)
 
     return MeshResult(
-        answer=final.answer,
-        blocked=final.blocked,
-        block_stage=final.block_stage,
-        trail=final.trail,
+        answer=final["answer"],
+        blocked=final["blocked"],
+        block_stage=final["block_stage"],
+        trail=final["trail"],
         session_id=session_id,
     )
 
@@ -208,10 +224,12 @@ def _root_span(user: User, query: str, session_id: str, request_id: str = ""):
     is still open (before ``__exit__``).
     """
     try:
-        from agent_framework.observability import get_tracer
+        from opentelemetry import trace
         from opentelemetry.trace import SpanKind
 
-        cm = get_tracer().start_as_current_span("mesh.request", kind=SpanKind.SERVER)
+        cm = trace.get_tracer("agent_mesh").start_as_current_span(
+            "mesh.request", kind=SpanKind.SERVER
+        )
 
         class _Wrapped:
             def __enter__(self):
@@ -232,28 +250,27 @@ def _root_span(user: User, query: str, session_id: str, request_id: str = ""):
 
         return _Wrapped()
     except Exception:
-        import contextlib
         return contextlib.nullcontext()
 
 
-def _enrich_root_span(span, final: Optional[MeshState], request_id: str) -> None:
+def _enrich_root_span(span, final: Optional[dict], request_id: str) -> None:
     """Enriches the root span with workflow outcome while it is still open."""
     try:
         if span is None or not hasattr(span, "set_attribute"):
             return
         if final:
-            span.set_attribute("mesh.blocked",            final.blocked)
-            span.set_attribute("mesh.block_stage",        final.block_stage or "none")
-            span.set_attribute("mesh.trail",              " -> ".join(final.trail))
-            span.set_attribute("mesh.compliance_verdict", (final.compliance_verdict or "")[:120])
+            span.set_attribute("mesh.blocked",            final["blocked"])
+            span.set_attribute("mesh.block_stage",        final["block_stage"] or "none")
+            span.set_attribute("mesh.trail",              " -> ".join(final["trail"]))
+            span.set_attribute("mesh.compliance_verdict", (final["compliance_verdict"] or "")[:120])
             span.set_attribute("fab.request_id",          request_id)
             span.add_event("mesh.request.completed", attributes={
-                "blocked":     final.blocked,
-                "block_stage": final.block_stage or "none",
-                "trail":       " -> ".join(final.trail),
+                "blocked":     final["blocked"],
+                "block_stage": final["block_stage"] or "none",
+                "trail":       " -> ".join(final["trail"]),
             })
         else:
-            span.set_attribute("mesh.blocked",    True)
+            span.set_attribute("mesh.blocked",     True)
             span.set_attribute("mesh.block_stage", "internal_error")
             span.add_event("mesh.request.completed", attributes={
                 "blocked":     True,
@@ -262,15 +279,3 @@ def _enrich_root_span(span, final: Optional[MeshState], request_id: str) -> None
             })
     except Exception:
         pass
-
-
-def _final_state(events) -> Optional[MeshState]:
-    """Extracts the terminal MeshState from workflow run events."""
-    try:
-        outputs = events.get_outputs()
-        for out in reversed(outputs):
-            if isinstance(out, MeshState):
-                return out
-    except Exception:
-        pass
-    return None

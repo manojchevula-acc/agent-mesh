@@ -21,7 +21,6 @@ project_root = str(pathlib.Path(__file__).resolve().parents[2])
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from agent_framework import Agent
 from src.agents.agent_factory import create_demo_agent
 from src.config import Config
 from src.tools.collaboration_tools import COORDINATION_TOOLS
@@ -145,7 +144,7 @@ Reasoning block rules:
 """
 
 
-def get_price_assist_agent(log_path: str = None) -> Agent:
+def get_price_assist_agent(log_path: str = None):
     return create_demo_agent(
         name="PriceAssistAgent",
         instructions=PRICE_ASSIST_INSTRUCTIONS,

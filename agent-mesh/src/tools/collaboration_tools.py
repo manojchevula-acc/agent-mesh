@@ -22,7 +22,7 @@ project_root = str(pathlib.Path(__file__).resolve().parents[2])
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from agent_framework import tool
+from langchain_core.tools import tool
 from src.a2a.clients import ask_remote
 
 # Bounds nested peer delegation within a single process.

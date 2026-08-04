@@ -1,13 +1,12 @@
 """Data Agent node.
 
-A thin Microsoft Agent Framework agent that answers questions about FAB customer
-and deal data. It holds NO business logic: all data access is delegated to the
-DataLayer-as-a-Service over MCP (its 5 SQL-view tools are auto-discovered). The
-LLM decides which tool(s) to call and synthesises the answer.
+A thin LangGraph ReAct agent that answers questions about FAB customer and deal
+data.  It holds NO business logic: all data access is delegated to the
+DataLayer-as-a-Service over MCP (SQL-view tools are discovered at startup).
+The LLM decides which tool(s) to call and synthesises the answer.
 
-The MCP tool is connected (and kept alive) by the A2A server; for in-process use
-(e.g. DevUI) an unconnected tool is created and must be connected by the caller.
-18 SQL-view tools are auto-discovered via MCP (15 core/enhanced + 3 new analytical views).
+MCP tools are connected and passed in by the A2A server; for in-process use
+(e.g. DevUI) pass an empty list and connect tools separately.
 """
 import sys
 import pathlib
@@ -16,10 +15,12 @@ project_root = str(pathlib.Path(__file__).resolve().parents[2])
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from agent_framework import Agent
+from typing import List
+
+from langchain_mcp_adapters.client import MultiServerMCPClient
+
 from src.agents.agent_factory import create_demo_agent
 from src.config import Config
-from src.integrations.mcp_clients import make_datalayer_mcp_tool
 
 DATA_INSTRUCTIONS = """
 You are the Data Agent for FAB (First Abu Dhabi Bank). Answer questions about customers,
@@ -102,20 +103,35 @@ Also, after your final data answer, append on its own line:
 """
 
 
-def get_data_agent(log_path: str = None, mcp_tool=None) -> Agent:
+def get_data_agent(log_path: str = None, mcp_tools: list = None):
     """Builds the Data Agent.
 
     Args:
         log_path: optional audit log path.
-        mcp_tool: a (connected) DataLayer MCP tool. When None, an unconnected tool
-            is created — the caller is responsible for connecting it before use.
+        mcp_tools: pre-connected LangChain tools from MultiServerMCPClient.get_tools().
+            When None or empty, the agent starts with no MCP tools.
     """
-    tool = mcp_tool or make_datalayer_mcp_tool()
+    tools = mcp_tools or []
     return create_demo_agent(
         name="DataAgent",
         instructions=DATA_INSTRUCTIONS,
-        tools=[tool],
+        tools=tools,
         log_path=log_path,
         model=Config.DATA_AGENT_MODEL,
         api_key=Config.DATA_AGENT_API_KEY,
     )
+
+
+async def connect_data_mcp() -> tuple:
+    """Opens a MultiServerMCPClient for DataLayer and returns (client, tools_list).
+
+    The caller must call ``client.__aexit__(None, None, None)`` on shutdown.
+    """
+    client = MultiServerMCPClient({
+        "datalayer": {
+            "url":       Config.DATALAYER_MCP_URL,
+            "transport": "streamable_http",
+        }
+    })
+    await client.__aenter__()
+    return client, client.get_tools()

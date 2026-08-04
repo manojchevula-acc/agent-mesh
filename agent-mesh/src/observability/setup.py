@@ -164,10 +164,30 @@ def _ensure_composite_propagator() -> None:
 
 
 def _setup_dev(log: logging.Logger) -> None:
-    """Dev: framework OTel providers exporting to console and/or OTLP."""
-    from agent_framework.observability import configure_otel_providers
+    """Dev: OTel providers exporting to console and/or OTLP."""
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from opentelemetry import trace as _trace
 
-    configure_otel_providers(enable_sensitive_data=Config.ENABLE_SENSITIVE_DATA)
+    resource = Resource.create({"service.name": Config.OTEL_SERVICE_NAME})
+    tracer_provider = TracerProvider(resource=resource)
+
+    if Config.OTEL_EXPORTER_OTLP_ENDPOINT:
+        try:
+            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+            tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+        except Exception as _exc:
+            log.debug("OTLP gRPC exporter unavailable: %s", _exc)
+
+    if Config.ENABLE_CONSOLE_EXPORTERS:
+        try:
+            from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
+            tracer_provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
+        except Exception:
+            pass
+
+    _trace.set_tracer_provider(tracer_provider)
     _ensure_composite_propagator()
     log.info(
         "Observability profile=dev: OTLP endpoint=%s, console=%s, sensitive=%s",
@@ -216,9 +236,9 @@ def _setup_grafana(log: logging.Logger) -> None:
     from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
     from opentelemetry import trace as _trace, metrics as _metrics
     from opentelemetry._logs import set_logger_provider
-    from agent_framework.observability import create_resource, enable_instrumentation
+    from opentelemetry.sdk.resources import Resource
 
-    resource = create_resource()
+    resource = Resource.create({"service.name": Config.OTEL_SERVICE_NAME})
 
     # Traces → Grafana Tempo
     tracer_provider = TracerProvider(resource=resource)
@@ -246,7 +266,6 @@ def _setup_grafana(log: logging.Logger) -> None:
         LoggingHandler(level=logging.DEBUG, logger_provider=logger_provider)
     )
 
-    enable_instrumentation(enable_sensitive_data=Config.ENABLE_SENSITIVE_DATA)
     _ensure_composite_propagator()
     log.info(
         "Observability profile=grafana: OTLP/HTTP → %s (Tempo + Mimir + Loki).",
@@ -266,14 +285,12 @@ def _setup_prod(log: logging.Logger) -> None:
         return
 
     from azure.monitor.opentelemetry import configure_azure_monitor
-    from agent_framework.observability import create_resource, enable_instrumentation
+    from opentelemetry.sdk.resources import Resource
 
     configure_azure_monitor(
         connection_string=conn,
-        resource=create_resource(),
+        resource=Resource.create({"service.name": Config.OTEL_SERVICE_NAME}),
         enable_live_metrics=True,
     )
-    # Activate Agent Framework's telemetry code paths on the Azure-configured providers.
-    enable_instrumentation(enable_sensitive_data=Config.ENABLE_SENSITIVE_DATA)
     _ensure_composite_propagator()
     log.info("Observability profile=prod: Azure Monitor active (live metrics on).")

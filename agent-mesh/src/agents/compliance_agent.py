@@ -8,7 +8,6 @@ if project_root not in sys.path:
 
 from src.agents.agent_factory import create_demo_agent
 from src.config import Config
-from agent_framework import Agent
 
 COMPLIANCE_INSTRUCTIONS = """
 You are the Compliance Agent — the semantic safety gate for FAB's (First Abu Dhabi Bank)
@@ -86,14 +85,16 @@ Reasoning block rules:
 - Emit the block on a new line immediately after the verdict; the system strips it before display.
 """
 
-def get_compliance_agent(log_path: str = None) -> Agent:
+
+def get_compliance_agent(log_path: str = None):
     return create_demo_agent(
         name="ComplianceAgent",
         instructions=COMPLIANCE_INSTRUCTIONS,
+        tools=[],
         log_path=log_path,
         model=Config.COMPLIANCE_MODEL,
         api_key=Config.COMPLIANCE_API_KEY,
     )
 
-agent = get_compliance_agent()
 
+agent = get_compliance_agent()

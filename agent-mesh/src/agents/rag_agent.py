@@ -1,13 +1,13 @@
 """RAG Agent node.
 
-A thin Microsoft Agent Framework agent that answers policy/document questions by
-retrieving grounded, cited context from RAG-as-a-Service over MCP. It holds NO
-retrieval logic: embeddings, hybrid search, reranking, freshness and answer
-generation all live in the RAG service. The agent's ``search_documents`` tool is
-auto-discovered from the service's MCP server.
+A thin LangGraph ReAct agent that answers policy/document questions by
+retrieving grounded, cited context from RAG-as-a-Service over MCP.  It holds
+NO retrieval logic: embeddings, hybrid search, reranking, freshness, and answer
+generation all live in the RAG service.  The agent's ``search_documents`` tool
+is auto-discovered from the service's MCP server.
 
-The MCP tool is connected (and kept alive) by the A2A server; for in-process use
-(e.g. DevUI) an unconnected tool is created and must be connected by the caller.
+MCP tools are connected and passed in by the A2A server; for in-process use
+(e.g. DevUI) pass an empty list and connect tools separately.
 """
 import sys
 import pathlib
@@ -16,10 +16,10 @@ project_root = str(pathlib.Path(__file__).resolve().parents[2])
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from agent_framework import Agent
+from langchain_mcp_adapters.client import MultiServerMCPClient
+
 from src.agents.agent_factory import create_demo_agent
 from src.config import Config
-from src.integrations.mcp_clients import make_rag_mcp_tool
 
 RAG_INSTRUCTIONS = """
 You are the RAG Agent for FAB's (First Abu Dhabi Bank) credit and regulatory policy
@@ -74,20 +74,34 @@ Also, after returning document text, append on its own line:
 """
 
 
-def get_rag_agent(log_path: str = None, mcp_tool=None) -> Agent:
+def get_rag_agent(log_path: str = None, mcp_tools: list = None):
     """Builds the RAG Agent.
 
     Args:
         log_path: optional audit log path.
-        mcp_tool: a (connected) RAG MCP tool. When None, an unconnected tool is
-            created — the caller is responsible for connecting it before use.
+        mcp_tools: pre-connected LangChain tools from MultiServerMCPClient.get_tools().
+            When None or empty, the agent starts with no MCP tools.
     """
-    tool = mcp_tool or make_rag_mcp_tool()
+    tools = mcp_tools or []
     return create_demo_agent(
         name="RAGAgent",
         instructions=RAG_INSTRUCTIONS,
-        tools=[tool],
+        tools=tools,
         log_path=log_path,
         model=Config.RAG_AGENT_MODEL,
         api_key=Config.RAG_AGENT_API_KEY,
     )
+
+
+async def connect_rag_mcp() -> tuple:
+    """Opens a MultiServerMCPClient for the RAG service and returns (client, tools_list).
+
+    The caller must call ``client.__aexit__(None, None, None)`` on shutdown.
+    """
+    headers = {"X-API-Key": Config.RAG_API_KEY} if Config.RAG_API_KEY else {}
+    spec: dict = {"url": Config.RAG_MCP_URL, "transport": "streamable_http"}
+    if headers:
+        spec["headers"] = headers
+    client = MultiServerMCPClient({"rag": spec})
+    await client.__aenter__()
+    return client, client.get_tools()

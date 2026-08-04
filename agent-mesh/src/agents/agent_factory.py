@@ -7,45 +7,47 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from typing import Any, List, Optional
-from agent_framework import Agent, AgentMiddleware
-from agent_framework.openai import OpenAIChatCompletionClient
+
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import SystemMessage
+from langgraph.prebuilt import create_react_agent
+
 from src.config import Config
-from src.middleware.audit_middleware import AuditMiddleware
+from src.middleware.audit_middleware import AuditCallbackHandler
+
 
 def create_demo_agent(
     name: str,
     instructions: str,
     tools: Optional[List[Any]] = None,
-    extra_middlewares: Optional[List[AgentMiddleware]] = None,
+    extra_middlewares: Optional[List[Any]] = None,
     log_path: str = None,
     model: Optional[str] = None,
     api_key: Optional[str] = None,
-) -> Agent:
+):
     """
-    Creates and returns a Microsoft Agent Framework Agent powered by Groq.
-    Optionally wires function/MCP/A2A tools the agent may call.
+    Creates and returns a LangGraph ReAct agent powered by Groq via the
+    OpenAI-compatible endpoint.
+
+    The audit callback is bound to the LLM so every invocation is logged to
+    the JSONL audit trail regardless of which code path calls ainvoke().
     """
-    # 1. Instantiate Groq client via OpenAI Chat Completions-compatible endpoint
-    client = OpenAIChatCompletionClient(
+    # 1. Instantiate LLM via OpenAI Chat Completions-compatible Groq endpoint.
+    llm = ChatOpenAI(
         model=model or Config.GROQ_MODEL,
         api_key=api_key or Config.GROQ_API_KEY,
         base_url=Config.LLM_BASE_URL,
     )
 
-    # 2. Setup standard middleware (Audit trail)
-    audit = AuditMiddleware(log_path=log_path)
-    
-    middlewares = [audit]
-    if extra_middlewares:
-        middlewares.extend(extra_middlewares)
+    # 2. Bind audit callback to the LLM so it fires on every LLM call.
+    callbacks = [AuditCallbackHandler(agent_name=name, log_path=log_path)]
+    llm = llm.with_config({"callbacks": callbacks})
 
-    # 3. Create Agent
-    agent_kwargs: dict[str, Any] = dict(
-        client=client,
-        name=name,
-        instructions=instructions,
-        middleware=middlewares,
+    # 3. Create LangGraph ReAct agent with system prompt injected via
+    #    state_modifier (applied before every LLM call).
+    return create_react_agent(
+        llm,
+        tools or [],
+        state_modifier=SystemMessage(content=instructions),
+        checkpointer=None,
     )
-    if tools:
-        agent_kwargs["tools"] = tools
-    return Agent(**agent_kwargs)

@@ -87,9 +87,6 @@ def _send_to_app_insights(event: dict) -> None:
         configure_azure_monitor(
             connection_string=os.environ["APPINSIGHTS_CONNECTION_STRING"]
         )
-        # Optional: capture full message content in spans
-        from agent_framework.observability import enable_sensitive_telemetry
-        enable_sensitive_telemetry()
 
     OPTION B: Any OTLP backend (Jaeger, Grafana, etc.)
     ---------------------------------------------------
@@ -97,8 +94,8 @@ def _send_to_app_insights(event: dict) -> None:
         OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
         OTEL_SERVICE_NAME=agent_mesh
 
-        from agent_framework.observability import configure_otel_providers
-        configure_otel_providers()
+    Then call src.observability.setup_observability() which configures the
+    standard OTel TracerProvider with the appropriate exporter.
 
     ENV VARS:
         APPINSIGHTS_CONNECTION_STRING = InstrumentationKey=<key>;IngestionEndpoint=...
@@ -120,9 +117,8 @@ def _otel_span(name: str, attrs: dict, status: str, error: str | None = None) ->
     Safe no-op if OTel is not configured.
     """
     try:
-        from agent_framework.observability import get_tracer
         from opentelemetry import trace
-        tracer = get_tracer("agent_mesh")
+        tracer = trace.get_tracer("agent_mesh")
         with tracer.start_as_current_span(f"mesh.{name}") as span:
             for k, v in attrs.items():
                 safe_v = v if isinstance(v, (bool, int, float, str)) else str(v)

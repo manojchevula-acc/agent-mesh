@@ -1,8 +1,13 @@
 """A2A hosting helpers.
 
-Wraps an ``agent_framework`` Agent as an isolated A2A-protocol HTTP server so the
-node can be reached by other agents over the network. Uses the version-correct
-hosting pattern for the installed ``a2a`` SDK (Starlette + JSON-RPC routes).
+Wraps a LangGraph CompiledGraph as an isolated HTTP server so the node can be
+reached by other agents over the network.  Exposes two endpoints:
+
+    GET  /health  — liveness check (status, uptime, model)
+    POST /invoke  — accepts {"message": "..."} and returns {"text": "..."}
+
+The ``TraceContextMiddleware`` continues the caller's distributed trace on every
+inbound request so all spans inside the node become children of the caller's span.
 """
 import sys
 import pathlib
@@ -13,32 +18,27 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 import time as _time
-from typing import List
 
 import uvicorn
+from langchain_core.messages import HumanMessage
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
-from a2a.server.request_handlers import DefaultRequestHandler
-from a2a.server.routes import create_jsonrpc_routes, create_agent_card_routes
-from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
-from agent_framework.a2a import A2AExecutor
 
 from src.config import Config
 
 
 class TraceContextMiddleware(BaseHTTPMiddleware):
-    """Continues the caller's distributed trace on inbound A2A requests.
+    """Continues the caller's distributed trace on inbound requests.
 
-    Extracts W3C ``traceparent`` / ``tracestate`` (injected by the A2A client in
+    Extracts W3C ``traceparent`` / ``tracestate`` (injected by the client in
     ``src/a2a/clients.py``) from the request headers and attaches the resulting
-    OpenTelemetry context for the duration of the request. This makes every span
-    the node emits (``invoke_agent``, ``chat``, ``execute_tool``) a child of the
-    orchestrator's span, yielding one coherent end-to-end distributed trace.
+    OpenTelemetry context for the duration of the request.  This makes every span
+    the node emits a child of the orchestrator's span, yielding one coherent
+    end-to-end distributed trace.
 
     Safe no-op when OpenTelemetry is not installed/configured.
     """
@@ -54,9 +54,8 @@ class TraceContextMiddleware(BaseHTTPMiddleware):
             ctx = extract(dict(request.headers))
             token = otel_context.attach(ctx)
 
-            # Enrich the active span (created by ASGI instrumentation) with the
-            # caller's identity from propagated baggage so remote spans are queryable
-            # by request_id / user / role in Grafana Tempo.
+            # Enrich the active span with the caller's identity from propagated baggage
+            # so remote spans are queryable by request_id / user / role in Grafana Tempo.
             try:
                 span = trace.get_current_span()
                 if span and span.is_recording():
@@ -84,63 +83,49 @@ class TraceContextMiddleware(BaseHTTPMiddleware):
                     pass
 
 
-def build_agent_card(
-    name: str,
-    description: str,
+def build_starlette_app(
+    agent,
+    card_name: str,
+    card_description: str,
     port: int,
-    skills: List[AgentSkill] | None = None,
-) -> AgentCard:
-    """Builds the public AgentCard advertised by an A2A server node."""
-    url = f"http://{Config.A2A_HOST}:{port}/"
-    return AgentCard(
-        name=name,
-        description=description,
-        version="1.0.0",
-        default_input_modes=["text"],
-        default_output_modes=["text"],
-        capabilities=AgentCapabilities(streaming=True),
-        supported_interfaces=[
-            AgentInterface(url=url, protocol_binding="JSONRPC"),
-        ],
-        skills=skills or [],
-    )
+) -> Starlette:
+    """Wraps a LangGraph CompiledGraph into a Starlette HTTP application.
 
-
-def build_starlette_app(agent, card: AgentCard) -> Starlette:
-    """Wraps an agent_framework Agent into a Starlette A2A application.
-
-    Installs ``TraceContextMiddleware`` so inbound A2A calls continue the
-    caller's distributed trace.
-
-    Adds a ``GET /health`` endpoint so the launcher and ``api_server`` mesh-status
-    fan-out can liveness-check each A2A node independently.
+    Installs ``TraceContextMiddleware`` so inbound calls continue the caller's
+    distributed trace.  Adds a ``GET /health`` endpoint for liveness checks.
     """
     _start_time = _time.time()
 
-    async def _health(request: Request) -> JSONResponse:
+    async def invoke(request: Request) -> JSONResponse:
+        body = await request.json()
+        message = body.get("message", "")
+        result = await agent.ainvoke({"messages": [HumanMessage(content=message)]})
+        text = result["messages"][-1].content
+        return JSONResponse({"text": text})
+
+    async def health(request: Request) -> JSONResponse:
         return JSONResponse({
-            "status": "ok",
-            "node": card.name,
+            "status":         "ok",
+            "node":           card_name,
             "uptime_seconds": round(_time.time() - _start_time, 1),
-            "model": getattr(Config, "GROQ_MODEL", "unknown"),
+            "model":          getattr(Config, "GROQ_MODEL", "unknown"),
         })
 
-    request_handler = DefaultRequestHandler(
-        agent_executor=A2AExecutor(agent),
-        task_store=InMemoryTaskStore(),
-        agent_card=card,
-    )
     return Starlette(
         middleware=[Middleware(TraceContextMiddleware)],
         routes=[
-            Route("/health", _health, methods=["GET"]),
-            *create_agent_card_routes(card),
-            *create_jsonrpc_routes(request_handler, "/"),
+            Route("/health", health, methods=["GET"]),
+            Route("/invoke",  invoke,  methods=["POST"]),
         ],
     )
 
 
-def serve(agent, card: AgentCard, port: int) -> None:
-    """Blocks serving the agent as an A2A HTTP server on the given port."""
-    app = build_starlette_app(agent, card)
+def serve(
+    agent,
+    card_name: str,
+    card_description: str,
+    port: int,
+) -> None:
+    """Blocks serving the agent as an HTTP server on the given port."""
+    app = build_starlette_app(agent, card_name, card_description, port)
     uvicorn.run(app, host=Config.A2A_HOST, port=port, log_level="warning")

@@ -2,28 +2,19 @@
 # AgentMesh 15.0.6.2026 — Unified Requirements
 # Covers: agent-mesh / datalayer-as-service / rag-as-a-service
 # Python: 3.13+   (confirmed against .venv313 installed package versions)
-# Install: create venv at a SHORT path to avoid Windows MAX_PATH (260 char) limit,
-#   then install with --pre (required for agent-framework-* pre-release builds):
+# Install: create venv at a SHORT path to avoid Windows MAX_PATH (260 char) limit:
 #
 #   py -3.13 -m venv C:\fab-venv
-#   C:\fab-venv\Scripts\pip install --pre -r requirements.txt
+#   C:\fab-venv\Scripts\pip install -r requirements.txt
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# Microsoft Agent Framework (MAF) — core + extensions
-# Versions pinned to what is already installed in agent-mesh/.venv313
+# LangGraph / LangChain — replaces Microsoft Agent Framework (MAF)
 # -----------------------------------------------------------------------------
-agent-framework>=1.9.0
-agent-framework-core>=1.9.0
-agent-framework-a2a>=1.0.0b260604
-agent-framework-ollama>=1.0.0b260521
-agent-framework-devui>=1.0.0b260528
-agent-framework-openai>=1.8.2
-agent-framework-anthropic>=1.0.0b260618
-agent-framework-foundry>=1.8.2
-agent-framework-orchestrations>=1.0.0
-agent-framework-declarative>=1.0.0rc2
-a2a-sdk>=1.1.0
+langgraph>=0.2.0
+langchain-mcp-adapters>=0.1.0
+langchain-openai>=0.3.0
+langchain-groq>=1.1.0
 
 # -----------------------------------------------------------------------------
 # FastAPI / ASGI stack
@@ -46,7 +37,7 @@ pydantic-settings>=2.14.2
 anthropic>=0.80.0
 openai>=2.43.0
 ollama>=0.5.3
-groq>=1.5.0
+groq>=0.30.0,<1.0.0
 
 # -----------------------------------------------------------------------------
 # MCP (Model Context Protocol) — consumed by DataAgent and RAGAgent
