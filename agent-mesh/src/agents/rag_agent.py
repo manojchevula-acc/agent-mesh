@@ -16,8 +16,6 @@ project_root = str(pathlib.Path(__file__).resolve().parents[2])
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from langchain_mcp_adapters.client import MultiServerMCPClient
-
 from src.agents.agent_factory import create_demo_agent
 from src.config import Config
 
@@ -92,16 +90,3 @@ def get_rag_agent(log_path: str = None, mcp_tools: list = None):
         api_key=Config.RAG_AGENT_API_KEY,
     )
 
-
-async def connect_rag_mcp() -> tuple:
-    """Opens a MultiServerMCPClient for the RAG service and returns (client, tools_list).
-
-    The caller must call ``client.__aexit__(None, None, None)`` on shutdown.
-    """
-    headers = {"X-API-Key": Config.RAG_API_KEY} if Config.RAG_API_KEY else {}
-    spec: dict = {"url": Config.RAG_MCP_URL, "transport": "streamable_http"}
-    if headers:
-        spec["headers"] = headers
-    client = MultiServerMCPClient({"rag": spec})
-    await client.__aenter__()
-    return client, client.get_tools()

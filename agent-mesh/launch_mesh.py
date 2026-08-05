@@ -37,7 +37,11 @@ from src.agents.node_registry import NODE_NAMES
 #   Data-only:  START_ORDER = ["data_agent"]   (current)
 #               + ENABLE_PRICE_ASSIST=false, ENABLE_COMPLIANCE=false in .env
 # START_ORDER = ["compliance", "data_agent", "rag_agent", "price_assist"]
-START_ORDER = ["data_agent","rag_agent","price_assist"]
+START_ORDER = ["data_agent", "rag_agent", "price_assist"]
+# Note: data_agent requires DataLayer-as-a-Service on port 9100 (MySQL + FastMCP).
+#       rag_agent  requires RAG-as-a-Service on port 9000 (Qdrant + BGE-M3).
+#       If those services are not running, those two nodes will retry 8 times then
+#       exit cleanly; price_assist will still start and serve queries.
 _PORT_READY_TIMEOUT = 30.0  # seconds to wait for each node's port to bind
 
 

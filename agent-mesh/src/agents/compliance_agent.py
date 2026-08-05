@@ -97,4 +97,3 @@ def get_compliance_agent(log_path: str = None):
     )
 
 
-agent = get_compliance_agent()

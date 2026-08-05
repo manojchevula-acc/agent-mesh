@@ -17,8 +17,6 @@ if project_root not in sys.path:
 
 from typing import List
 
-from langchain_mcp_adapters.client import MultiServerMCPClient
-
 from src.agents.agent_factory import create_demo_agent
 from src.config import Config
 
@@ -120,18 +118,3 @@ def get_data_agent(log_path: str = None, mcp_tools: list = None):
         model=Config.DATA_AGENT_MODEL,
         api_key=Config.DATA_AGENT_API_KEY,
     )
-
-
-async def connect_data_mcp() -> tuple:
-    """Opens a MultiServerMCPClient for DataLayer and returns (client, tools_list).
-
-    The caller must call ``client.__aexit__(None, None, None)`` on shutdown.
-    """
-    client = MultiServerMCPClient({
-        "datalayer": {
-            "url":       Config.DATALAYER_MCP_URL,
-            "transport": "streamable_http",
-        }
-    })
-    await client.__aenter__()
-    return client, client.get_tools()

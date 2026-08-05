@@ -39,15 +39,20 @@ def create_demo_agent(
         base_url=Config.LLM_BASE_URL,
     )
 
-    # 2. Bind audit callback to the LLM so it fires on every LLM call.
-    callbacks = [AuditCallbackHandler(agent_name=name, log_path=log_path)]
-    llm = llm.with_config({"callbacks": callbacks})
-
-    # 3. Create LangGraph ReAct agent with system prompt injected via
-    #    state_modifier (applied before every LLM call).
-    return create_react_agent(
+    # 2. Create the ReAct agent from the raw LLM so create_react_agent can call
+    #    llm.bind_tools() on the underlying ChatOpenAI instance directly.
+    #    Wrapping the LLM with with_config() before this step produces a
+    #    RunnableBinding that prevents bind_tools() from working, which means tool
+    #    schemas are never sent to the Groq API and the model falls back to
+    #    generating <function=...> text that Groq rejects with a 400.
+    agent = create_react_agent(
         llm,
         tools or [],
-        state_modifier=SystemMessage(content=instructions),
-        checkpointer=None,
+        prompt=SystemMessage(content=instructions),
     )
+
+    # 3. Attach the audit callback to the finished agent (not the LLM).
+    #    LangChain propagates callbacks to all child runnables, so on_llm_start /
+    #    on_llm_end still fire correctly inside the agent's LLM calls.
+    callbacks = [AuditCallbackHandler(agent_name=name, log_path=log_path)]
+    return agent.with_config({"callbacks": callbacks})
