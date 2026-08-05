@@ -81,6 +81,14 @@ _WORD_NUM_ALT = "|".join(_WORD_NUMBERS)
 # wholesale so "2.1.1" never contributes the facts 2.1 and 1.
 _DOTTED_ID_RE = re.compile(r"\b\d+(?:\.\d+){2,}\b")
 
+# Markdown ordered-list markers ("1. Mandatory review...", "2) Reviewer access
+# ..."). Generated answers are routinely formatted as numbered lists, and a
+# bare line-leading "1." has no unit to disambiguate it from a real quantity —
+# left unmasked it shows up as a fabricated/ungrounded "1", "2", "3" in every
+# multi-point answer. Anchored to the start of a line so a genuine value never
+# collides ("35 bps" never opens a line looking like "35. ").
+_LIST_MARKER_RE = re.compile(r"^[ \t]*\(?\d{1,2}[.)]\s+", re.MULTILINE)
+
 _DATE_RE = re.compile(
     rf"\b(?:"
     rf"(?P<d1>\d{{1,2}})\s*[-/ ]\s*(?P<m1>{_MONTH_ALT})[a-z]*\.?\s*[-/, ]\s*(?P<y1>\d{{4}})"
@@ -152,7 +160,11 @@ def numeric_facts(text: str, *, strip_citation_markers: bool = True) -> list[Num
     """
     if not text:
         return []
-    working = strip_citations(text) if strip_citation_markers else text
+    # List markers must be masked before strip_citations: that helper collapses
+    # every whitespace run (including newlines) to a single space, after which
+    # a MULTILINE "^" no longer lines up with where a line actually started.
+    working = _mask(text, [m.span() for m in _LIST_MARKER_RE.finditer(text)])
+    working = strip_citations(working) if strip_citation_markers else working
 
     facts: list[NumericFact] = []
     consumed: list[tuple[int, int]] = [m.span() for m in _DOTTED_ID_RE.finditer(working)]

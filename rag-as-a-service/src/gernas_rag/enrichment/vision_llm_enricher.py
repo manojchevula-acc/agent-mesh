@@ -12,6 +12,7 @@ from typing import Any
 
 from ..config.enrichment import EnrichmentConfig
 from ..utils.logging import get_logger
+from ..utils.retry import async_retry
 from .base import BaseEnricher, EnrichmentInput, EnrichmentOutput
 
 logger = get_logger(__name__)
@@ -79,6 +80,12 @@ class VisionLLMEnricher(BaseEnricher):
             )
             return EnrichmentOutput(caption_text="", model_name=None, ok=False)
 
+    # Every other LLM call-site in this codebase retries transient failures
+    # (see anthropic_llm.py, groq_llm.py, openai_compat.py) — this one didn't,
+    # so a single network timeout permanently dropped an otherwise-fine figure
+    # (observed: "Request timed out." on a 20s budget, no second attempt, image
+    # left orphaned). Same policy as everywhere else: 3 attempts, 1s/2s backoff.
+    @async_retry(max_attempts=3, backoff_factor=2.0)
     async def _call_anthropic(self, b64: str, mime_type: str, prompt: str) -> tuple[str, bool]:
         response = await self._client.messages.create(
             model=self._config.vlm_model_name,
@@ -100,6 +107,7 @@ class VisionLLMEnricher(BaseEnricher):
         text = "".join(b.text for b in response.content if getattr(b, "type", "") == "text")
         return text, response.stop_reason == "max_tokens"
 
+    @async_retry(max_attempts=3, backoff_factor=2.0)
     async def _call_openai(self, b64: str, mime_type: str, prompt: str) -> tuple[str, bool]:
         kwargs: dict[str, Any] = {}
         if self._is_gemini():

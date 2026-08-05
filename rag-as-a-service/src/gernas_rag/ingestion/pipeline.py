@@ -162,13 +162,28 @@ class IngestionPipeline:
                 )
                 if result.ok and result.caption_text:
                     el.text = result.caption_text  # Full caption becomes the chunk text.
+                else:
+                    # VLM failed and the element has no other text (figures carry
+                    # none natively) — artifact_ref still gets set below so the
+                    # image stays resolvable, but with empty text the chunker's
+                    # `_build_media_chunks` will drop the element entirely. Surface
+                    # that now instead of leaving a stored-but-unindexed image for
+                    # stage2a to discover later as an ORPHAN_ARTIFACT.
+                    if not el.text.strip():
+                        logger.warning(
+                            "VLM enrichment failed with no fallback text; this "
+                            "element will be dropped during chunking",
+                            artifact_ref=ref,
+                            element_type=el.element_type.value,
+                            page=el.page_number,
+                        )
                 el.metadata["artifact_ref"] = ref  # Marks this as an enriched media chunk.
                 el.metadata["enrichment_model"] = result.model_name  # None on degrade.
                 # Free the raw bytes now they are persisted (kept only for the chunk ref).
                 el.image_bytes = None
 
         await asyncio.gather(*(_process(el) for el in candidates))
-        enriched = sum(1 for el in candidates if el.metadata.get("artifact_ref"))
+        enriched = sum(1 for el in candidates if el.metadata.get("enrichment_model"))
         logger.info("Enrichment complete", media_elements=len(candidates), enriched=enriched)
         return extraction
 

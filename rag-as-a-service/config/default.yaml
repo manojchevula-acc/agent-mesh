@@ -101,8 +101,20 @@ enrichment:
   # before writing any visible output (see thinking_budget:0 in vision_llm_enricher.py,
   # which disables that for Gemini specifically) — kept generous as a safety margin
   # for whatever budget the provider doesn't let us zero out.
-  max_tokens: 8192                     # raised from 4096 — still clipped 2/14 captions (eval stage2a CAPTION_TRUNCATED)
-  timeout_seconds: 20
+  # raised 4096 -> 8192 -> 16384: even with reasoning_effort="low" on Gemini,
+  # dense figures (multi-row fee schedules, dashboards) still clipped 3/21
+  # captions at 8192 (eval stage2a CAPTION_TRUNCATED) — "transcribe every
+  # visible value" on a busy chart is a genuinely long completion, not a
+  # thinking-budget artifact.
+  max_tokens: 16384
+  # Raised alongside max_tokens: doubling the completion budget without raising
+  # the wall-clock budget just trades a clean "clipped at max_tokens" failure
+  # for a "Request timed out" one (observed on this exact re-ingest — a figure
+  # that had a valid caption before got no caption at all this run, purely
+  # because 20s wasn't enough time to generate up to the new 16384-token
+  # ceiling). Now retried 3x via @async_retry regardless, but a timeout that
+  # keeps failing all 3 attempts is worse than one that just runs long.
+  timeout_seconds: 45
   min_image_bytes: 2048                # skip decorative logos/rules/icons
   table_confidence_threshold: 0.7
   max_concurrent: 4

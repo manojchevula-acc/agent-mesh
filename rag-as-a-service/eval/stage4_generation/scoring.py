@@ -22,7 +22,7 @@ from ..core.metrics import mean, percentile
 from ..core.models import GenerationRun, StageReport, TranscriptionSet
 from ..core.numeric import compare_numeric, match_keys, numeric_facts, unsupported_facts
 from ..core.reporting import build_metric, rate, table
-from ..core.text import content_tokens, sentences, strip_citations
+from ..core.text import content_tokens, sentences, strip_citations, strip_sources_section
 from ..core.thresholds import STAGE4
 from .judge import UNKNOWN, Judgment
 
@@ -153,16 +153,20 @@ def score(
         item = gold_by_id[record.id]
         expected = item.get("expected_answer", "")
         answer = record.answer
+        # The trailing "Sources:" block echoes document filenames (which embed
+        # years/circular numbers, e.g. "..._2024_BSE_047_...") — bibliographic
+        # metadata, not a claim, so it must not feed numeric-fact comparisons.
+        answer_facts_text = strip_sources_section(answer)
 
         # Units are compared leniently on both sides here. The gold answer writes
         # "AED 2.0 billion" where the source table row reads "2.0bn" and the unit
         # lives in the column header — strict families would score a correct,
         # fully grounded answer as ungrounded, at error severity.
-        comparison = compare_numeric(expected, answer, strict_units=False)
+        comparison = compare_numeric(expected, answer_facts_text, strict_units=False)
         numeric_recalls.append(comparison.recall)
 
         sources = _grounding_sources(record, verified)
-        unsupported, total_facts = unsupported_facts(answer, sources, strict_units=False)
+        unsupported, total_facts = unsupported_facts(answer_facts_text, sources, strict_units=False)
         grounded = 1.0 - (len(unsupported) / total_facts) if total_facts else None
         grounded_rates.append(grounded)
 

@@ -278,10 +278,14 @@ def derive(gold: list[dict[str, Any]], index: ChunkIndex) -> tuple[QrelSet, list
                 )
             else:
                 basis = "none"
-                warnings.append(
-                    f"[{question_id}] nothing in {sorted(documents)} matches the gold answer "
-                    "at all; this question cannot be scored and is excluded from every metric"
-                )
+                if item.get("answerable", True):
+                    warnings.append(
+                        f"[{question_id}] nothing in {sorted(documents)} matches the gold answer "
+                        "at all; this question cannot be scored and is excluded from every metric"
+                    )
+                # else: expected — an "answerable": false question has no expected
+                # source to match, by design. Scored by stage 4's abstention_accuracy
+                # instead; see QRELS_UNANSWERABLE in the stage 3 report.
 
         questions.append(
             QrelQuestion(

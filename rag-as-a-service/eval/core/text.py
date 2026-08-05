@@ -19,12 +19,35 @@ _WS_RE = re.compile(r"\s+")
 _PUNCT_RE = re.compile(r"[^\w%.\-/]+", re.UNICODE)
 _DASH_RE = re.compile(r"[‐-―−]")
 
+# The generation prompt (see generator.py) instructs the model to end every
+# answer with a "Sources:" block listing the document each citation number came
+# from, e.g. "[1] CBUAE_Circular_2024_BSE_047_AI_Governance – Article 8, Section
+# 8.1". Filenames routinely embed a year or a circular number, so that block is
+# a reliable source of "quantities" that appear nowhere in the retrieved
+# context and never should have been checked for grounding in the first place —
+# it is bibliographic metadata, not a claim. Matched from a "Sources" heading
+# (optionally bolded/colon-terminated) to the end of the text.
+_SOURCES_SECTION_RE = re.compile(
+    r"\n\s*[*_]{0,2}\s*Sources\s*[*_:]{0,3}[ \t]*\n.*\Z", re.IGNORECASE | re.DOTALL
+)
+
 
 def strip_citations(text: str) -> str:
     """Remove inline citation markers and tidy the whitespace they leave behind."""
     cleaned = CITATION_RE.sub(" ", text)
     cleaned = re.sub(r"\s+([.,;:])", r"\1", cleaned)
     return _WS_RE.sub(" ", cleaned).strip()
+
+
+def strip_sources_section(text: str) -> str:
+    """Drop a trailing 'Sources:' attribution block.
+
+    Use before extracting numeric facts from a generated answer: the block
+    echoes document filenames (which embed years/circular numbers), not claims
+    the answer is making, so leaving it in place makes every such digit look
+    like a fabricated, ungrounded quantity.
+    """
+    return _SOURCES_SECTION_RE.sub("", text).rstrip()
 
 
 def normalize(text: str) -> str:
@@ -93,6 +116,26 @@ def char_error_rate(reference: str, hypothesis: str) -> float | None:
 # separator or an unclosed delimiter means the model stopped mid-row/mid-clause.
 _TRUNCATION_SUFFIXES = ("|", ",", ":", ";", "-", "/", "(", "[", "{", "…")
 
+# A complete markdown table row: opens AND closes with "|" (e.g.
+# "| **B** | 9.65% |"). Every well-formed table's last row legitimately ends in
+# "|" — that is the closing delimiter of its last cell, not a dangling
+# separator. A row cut off mid-cell also often still opens *and* closes with
+# "|" though (e.g. a row missing its trailing cells but not its trailing
+# delimiter), so a well-formed last row is only "complete" if it has at least
+# as many cells as the table's other rows — fewer means a cell went missing.
+_COMPLETE_TABLE_ROW_RE = re.compile(r"^\s*\|.*\|\s*$")
+_TABLE_SEPARATOR_ROW_RE = re.compile(r"^\s*\|[\s:|-]+\|\s*$")
+
+
+def _table_row_cell_count(line: str) -> int | None:
+    """Number of "|" delimiters in *line*, or None if it isn't a data row
+    (not a table row at all, or the header's "|---|---|" separator, which
+    carries no column-count signal of its own)."""
+    candidate = line.strip()
+    if not _COMPLETE_TABLE_ROW_RE.match(candidate) or _TABLE_SEPARATOR_ROW_RE.match(candidate):
+        return None
+    return candidate.count("|")
+
 
 def looks_truncated(text: str) -> bool:
     """Heuristic: did this caption stop mid-transcription?
@@ -106,6 +149,19 @@ def looks_truncated(text: str) -> bool:
     stripped = text.rstrip()
     if not stripped:
         return False
+    if stripped.endswith("|"):
+        lines = stripped.split("\n")
+        last_count = _table_row_cell_count(lines[-1])
+        if last_count is None:
+            return True  # Not even a well-formed row: a bare dangling "|".
+        for prior in reversed(lines[:-1]):
+            if not prior.strip() or _TABLE_SEPARATOR_ROW_RE.match(prior.strip()):
+                continue  # Blank line or header separator — keep looking back.
+            prior_count = _table_row_cell_count(prior)
+            if prior_count is None:
+                return True  # Ran into non-table content with no row to compare against.
+            return last_count < prior_count
+        return True  # No prior row in this table to compare against.
     if stripped.endswith(_TRUNCATION_SUFFIXES):
         return True
     return stripped.count("(") > stripped.count(")") or stripped.count("[") > stripped.count("]")

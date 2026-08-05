@@ -167,8 +167,23 @@ class HierarchicalChunker(BaseChunker):
         chunks: list[Chunk] = []
         for el in elements:
             ref = el.metadata.get("artifact_ref")
-            if not ref or not el.text.strip():
-                continue  # Not an enriched media element, or empty caption.
+            if not ref:
+                continue  # Not an enriched media element.
+            if not el.text.strip():
+                # artifact_ref is set unconditionally by the ingestion pipeline once
+                # the image is stored, even when VLM enrichment failed — so this is
+                # a stored-but-uncaptioned image, not an unenriched one. Dropping it
+                # silently here is exactly the ORPHAN_ARTIFACT failure mode stage2a
+                # detects after the fact; log it now, at the point it happens.
+                logger.warning(
+                    "Media element has no caption text; dropping from index "
+                    "(image remains stored as an orphan artifact)",
+                    artifact_ref=ref,
+                    element_type=el.element_type.value,
+                    page=el.page_number,
+                    document=doc_name,
+                )
+                continue
             modality = el.element_type.value  # "figure" | "table"
             heading = el.metadata.get("nearest_heading", "")
             page = el.page_number

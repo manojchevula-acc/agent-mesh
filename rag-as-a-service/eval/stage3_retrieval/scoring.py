@@ -90,7 +90,16 @@ def score(run: RetrievalRun, qrels: QrelSet, report: StageReport) -> None:
         return
 
     for question in qrels.questions:
-        if question.basis == "none":
+        if question.basis == "none" and not question.answerable:
+            report.add_finding(
+                "info",
+                "QRELS_UNANSWERABLE",
+                question.id,
+                "Marked answerable: false in the gold set, so having no relevance "
+                "judgment is expected — correctly excluded from retrieval metrics. "
+                "Scored instead by stage 4's abstention_accuracy.",
+            )
+        elif question.basis == "none":
             report.add_finding(
                 "warn",
                 "QRELS_NO_EVIDENCE",

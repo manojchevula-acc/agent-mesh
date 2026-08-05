@@ -8,6 +8,7 @@ the image augments it, never replaces it. Hydration lives here (not in retrieval
 so the cached ``RetrieveResponse`` never carries image bytes.
 """
 
+import re
 from dataclasses import dataclass
 
 from ..config.settings import Settings
@@ -47,6 +48,10 @@ _SYSTEM_PROMPT = (
     "If the context does not contain the answer, say so explicitly and do not speculate. "
     "Flag any context marked as ⚠ STALE."
 )
+
+# Inline citation markers, e.g. "[1]" or "[2][3]" — matches what the system
+# prompt above tells the model to emit.
+_CITATION_RE = re.compile(r"\[\s*(\d+)\s*\]")
 
 
 class ResponseGenerator:
@@ -91,6 +96,28 @@ class ResponseGenerator:
                 body = c.text
             blocks.append(f"{header}\n{body}")
         return "\n\n---\n\n".join(blocks)
+
+    def _validate_citations(self, answer: str, num_blocks: int, query: str) -> None:
+        """Warn when the model cites a context number that was never supplied.
+
+        Context blocks are numbered [1]..[num_blocks] in the prompt, but nothing
+        stops the model from citing a number outside that range (stage 4 eval's
+        CITATION_OUT_OF_RANGE finding caught exactly this). That citation then
+        points at nothing, which is silent in production — there is no exception,
+        just a reference a user could click into and find nothing. This can't be
+        corrected without risking mangling an otherwise-grounded sentence, but it
+        must be visible, so it is logged loudly here rather than only caught
+        after the fact by the offline eval suite.
+        """
+        cited = {int(n) for n in _CITATION_RE.findall(answer)}
+        out_of_range = sorted(n for n in cited if n < 1 or n > num_blocks)
+        if out_of_range:
+            logger.warning(
+                "Answer cites context block(s) outside the supplied range",
+                query=query[:80],
+                out_of_range=out_of_range,
+                context_blocks=num_blocks,
+            )
 
     def _should_hydrate(self, chunk: RetrievedChunk) -> bool:
         if not self._hydration.enabled or self._hydration.mode == "off":
@@ -157,6 +184,7 @@ class ResponseGenerator:
             logger.info(
                 "Answer generated (vision)", query=query[:80], images=len(image_parts), chars=len(answer)
             )
+            self._validate_citations(answer, len(chunks), query)
             return answer, GenerationTrace(
                 context_blocks=len(chunks),
                 hydration_eligible=eligible,
@@ -172,6 +200,7 @@ class ResponseGenerator:
         ]
         answer = await self._llm.generate(messages)
         logger.info("Answer generated", query=query[:80], chars=len(answer))
+        self._validate_citations(answer, len(chunks), query)
         return answer, GenerationTrace(
             context_blocks=len(chunks),
             hydration_eligible=eligible,
