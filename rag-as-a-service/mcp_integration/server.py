@@ -29,7 +29,10 @@ if str(_SRC_DIR) not in sys.path:
 # Load project .env so this process shares the backend's config.
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
-from mcp.server.fastmcp import FastMCP  # noqa: E402 (after path setup)
+try:
+    from mcp.server.fastmcp import FastMCP  # mcp < 2.0
+except ImportError:
+    from fastmcp import FastMCP  # mcp >= 2.0 — FastMCP is now a standalone package
 
 DEFAULT_GENERATE_ANSWER = os.getenv("RAG_GENERATE_ANSWER", "false").lower() in {
     "1",
@@ -41,7 +44,7 @@ MCP_TRANSPORT = os.getenv("MCP_TRANSPORT", "stdio").lower()
 MCP_HOST = os.getenv("MCP_HOST", "127.0.0.1")
 MCP_PORT = int(os.getenv("MCP_PORT", "9000"))
 
-mcp = FastMCP("gernas-rag-search", host=MCP_HOST, port=MCP_PORT)
+mcp = FastMCP("gernas-rag-search")
 
 # ── Lazy pipeline singletons ───────────────────────────────────────────────────
 _pipeline = None
@@ -179,7 +182,7 @@ async def search_documents(
 if __name__ == "__main__":
     if MCP_TRANSPORT in {"http", "streamable-http"}:
         # Network service: remote agents connect to http://MCP_HOST:MCP_PORT/mcp
-        mcp.run(transport="streamable-http")
+        mcp.run(transport="streamable-http", host=MCP_HOST, port=MCP_PORT)
     elif MCP_TRANSPORT == "sse":
         mcp.run(transport="sse")
     else:

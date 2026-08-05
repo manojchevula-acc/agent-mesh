@@ -99,9 +99,21 @@ def build_starlette_app(
     async def invoke(request: Request) -> JSONResponse:
         body = await request.json()
         message = body.get("message", "")
-        result = await agent.ainvoke({"messages": [HumanMessage(content=message)]})
-        text = result["messages"][-1].content
-        return JSONResponse({"text": text})
+        try:
+            result = await agent.ainvoke({"messages": [HumanMessage(content=message)]})
+            text = result["messages"][-1].content
+            return JSONResponse({"text": text})
+        except Exception as exc:
+            # Groq returns 400 when Llama generates a malformed tool call.
+            # Return gracefully instead of crashing the server process.
+            import logging
+            logging.getLogger("mesh.hosting").warning(
+                "Agent invoke error (will retry on next request): %s", exc
+            )
+            return JSONResponse({"text": (
+                "I had trouble processing that request. "
+                "Please rephrase your question and try again."
+            )})
 
     async def health(request: Request) -> JSONResponse:
         return JSONResponse({
