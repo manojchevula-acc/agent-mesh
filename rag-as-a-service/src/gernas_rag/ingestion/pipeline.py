@@ -3,15 +3,21 @@
 import asyncio
 from pathlib import Path
 
+from typing import TYPE_CHECKING
+
 from ..chunking.factory import get_chunker
 from ..config.settings import Settings
 from ..embeddings.base import BaseEmbedder
 from ..extraction.factory import get_extractor
+from ..models.asset import ContentType
 from ..models.chunk import Chunk, EmbeddedChunk
 from ..models.ingestion import IngestionResult, IngestionStatus
 from ..utils.logging import get_logger
 from ..vectordb.base import BaseVectorDB
 from .metadata import MetadataExtractor
+
+if TYPE_CHECKING:
+    from .image_pipeline import ImageIngestionPipeline
 
 logger = get_logger(__name__)
 
@@ -26,10 +32,17 @@ class IngestionPipeline:
     Idempotent — re-running on the same document updates existing chunks.
     """
 
-    def __init__(self, settings: Settings, embedder: BaseEmbedder, vectordb: BaseVectorDB) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        embedder: BaseEmbedder,
+        vectordb: BaseVectorDB,
+        image_pipeline: "ImageIngestionPipeline | None" = None,
+    ) -> None:
         self._settings = settings
         self._embedder = embedder
         self._vectordb = vectordb
+        self._image_pipeline = image_pipeline
         self._chunker = get_chunker(settings.chunking)
         self._metadata = MetadataExtractor()
         # Extractor is shared across all files — avoids reloading Docling weights per document.
@@ -69,10 +82,40 @@ class IngestionPipeline:
 
             # Step 4: Upsert
             count = await self._vectordb.upsert(embedded_chunks)
-            logger.info("Ingestion complete", file=str(file_path), chunks_upserted=count)
+
+            # Step 5: Image sub-pipeline (skipped entirely when disabled).
+            images_indexed = 0
+            if self._image_pipeline is not None:
+                try:
+                    image_result = await self._image_pipeline.ingest_images(
+                        file_path, extraction, chunks, base_metadata
+                    )
+                    images_indexed = image_result.images_indexed
+                except Exception as exc:  # noqa: BLE001
+                    # Image indexing NEVER fails a text ingestion. Degrading to
+                    # the text-only behaviour is always acceptable; losing the
+                    # document is not.
+                    logger.error(
+                        "Image ingestion failed; text ingestion stands",
+                        file=str(file_path),
+                        error=str(exc),
+                    )
+
+            tables = sum(
+                1 for c in chunks if c.metadata.content_type == ContentType.TABLE.value
+            )
+            logger.info(
+                "Ingestion complete",
+                file=str(file_path),
+                chunks_upserted=count,
+                tables=tables,
+                images_indexed=images_indexed,
+            )
             return IngestionResult(
                 file_path=str(file_path),
                 chunks_created=count,
+                images_indexed=images_indexed,
+                tables_found=tables,
                 status=IngestionStatus.SUCCESS.value,
             )
         except Exception as exc:  # Never crash the pipeline — log and report.

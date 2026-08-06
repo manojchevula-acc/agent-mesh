@@ -27,6 +27,7 @@ from .embedding import EmbeddingConfig
 from .evaluation import EvaluationConfig
 from .ingestion import IngestionConfig
 from .llm import LLMConfig
+from .multimodal import MultimodalConfig
 from .retrieval import RetrievalConfig
 from .vectordb import VectorDBConfig
 
@@ -90,6 +91,7 @@ class Settings(BaseSettings):
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     ingestion: IngestionConfig = Field(default_factory=IngestionConfig)
     evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
+    multimodal: MultimodalConfig = Field(default_factory=MultimodalConfig)
 
 
 def _load_yaml_overrides() -> dict[str, Any]:

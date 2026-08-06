@@ -91,6 +91,12 @@ class RetrievalPipeline:
                 freshness_warning=r.metadata.get("freshness_score", 1.0)
                 < _FRESHNESS_WARNING_THRESHOLD,
                 parent_text=parent_map.get(r.metadata.get("parent_chunk_id", ""), None),
+                # Content classification — lets the generator fence tables and
+                # lets the multimodal pipeline promote their rendered crops.
+                content_type=r.metadata.get("content_type", "text"),
+                asset_id=r.metadata.get("asset_id"),
+                table_part=r.metadata.get("table_part"),
+                page_number=r.metadata.get("source_page"),
             )
             for r in candidates
         ]

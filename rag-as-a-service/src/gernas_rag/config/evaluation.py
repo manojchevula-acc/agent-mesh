@@ -22,7 +22,11 @@ class EvaluationConfig(BaseModel):
     # Model used by RAGAS as the LLM judge (separate from the answer-generation LLM).
     # Use a small/fast model to stay within free-tier TPM limits.
     # For Ollama use the local tag, e.g. "llama3.1:8b" or "mistral".
-    judge_model: str = "qwen/qwen3.6-27b"
+    #
+    # MUST NOT equal llm.vision_model_name: qwen/qwen3.6-27b is now the vision
+    # GENERATOR, and a model grading its own output inflates faithfulness and
+    # answer-relevancy scores with no visible failure.
+    judge_model: str = "openai/gpt-oss-120b"
 
     # Max output tokens for the judge. Faithfulness emits a per-claim verdict list
     # (one JSON object per statement in the answer), which easily exceeds 1k tokens

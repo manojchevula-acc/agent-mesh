@@ -12,6 +12,15 @@ class DocumentFilter(BaseModel):
     deprecated: bool = False
 
 
+class ImageQuery(BaseModel):
+    """Image-as-query. Exactly one field must be set."""
+
+    asset_id: str | None = None  # Re-query using an already-indexed asset
+    image_base64: str | None = None
+    # image_url is deliberately NOT supported: a server-side fetch of a
+    # client-supplied URL is an SSRF primitive.
+
+
 class RetrieveRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -20,6 +29,11 @@ class RetrieveRequest(BaseModel):
     top_k: int = Field(default=5, ge=1, le=20)
     include_parent: bool = True
     generate_answer: bool = False  # If True, call LLM after retrieval
+
+    # ── Multimodal (all optional — old payloads stay valid) ───────────
+    include_images: bool | None = None  # None => decided by the intent router
+    query_image: ImageQuery | None = None
+    modalities: list[str] | None = None  # e.g. ["text"], ["text", "image"]
 
 
 class RetrievedChunk(BaseModel):
@@ -34,6 +48,34 @@ class RetrievedChunk(BaseModel):
     freshness_warning: bool
     parent_text: str | None = None
 
+    # ── Content classification (D8) ───────────────────────────────────
+    content_type: str = "text"  # 'text' | 'table' | 'list' | 'image_stub'
+    asset_id: str | None = None  # Set on table chunks with a rendered crop
+    table_part: str | None = None  # "2/3" when the table was row-split
+    page_number: int | None = None
+
+
+class RetrievedImage(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    asset_id: str
+    uri: str
+    thumbnail_uri: str | None = None
+    source: str  # document_name
+    page_number: int | None = None
+    caption: str = ""
+    nearest_heading: str = ""
+    role: str = "unknown"
+    score: float = 0.0  # Raw similarity in the multimodal space
+    rank: int = 0
+    width: int = 0
+    height: int = 0
+    effective_date: str = ""
+    freshness_warning: bool = False
+    # True when this image was surfaced because its table chunk was retrieved
+    # (§8.7.6 step 5) rather than by the visual ANN.
+    promoted_from_text: bool = False
+
 
 class RetrieveResponse(BaseModel):
     chunks: list[RetrievedChunk]
@@ -42,3 +84,8 @@ class RetrieveResponse(BaseModel):
     freshness_warning_global: bool
     answer: str | None = None  # Only populated if generate_answer=True
     cache_hit: bool = False
+
+    # ── Multimodal (defaults keep old cached JSON valid) ──────────────
+    images: list[RetrievedImage] = Field(default_factory=list)
+    image_search_performed: bool = False
+    multimodal_space_id: str | None = None

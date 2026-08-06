@@ -1,0 +1,129 @@
+# Known multimodal encoders. Keys are aliases; `model_name` may also be given
+# verbatim and will be matched against `hf_id`.
+#
+# Adding a KNOWN model is a YAML edit — zero code.
+# Adding a new model FAMILY is one new provider class + @register_provider.
+#
+# score_floor values are STARTING POINTS. They MUST be re-tuned per corpus with
+# scripts/eval_multimodal.py --sweep-floor, and re-tuned again after ANY change
+# to the model, its revision, or int8 quantisation.
+
+version: 1
+
+defaults:
+  provider: hf_dual_encoder
+  normalize: true
+  distance_metric: cosine
+  score_floor: 0.10
+
+models:
+  siglip2-base:
+    hf_id: google/siglip2-base-patch16-224
+    provider: hf_dual_encoder
+    dim: 768
+    image_size: 224
+    max_text_length: 64
+    trust_remote_code: false
+    licence: apache-2.0
+    commercial_use: true
+    score_floor: 0.10
+    notes: "Default. Best quality/CPU trade-off. Requires transformers>=4.49."
+
+  siglip2-base-512:
+    hf_id: google/siglip2-base-patch16-512
+    provider: hf_dual_encoder
+    dim: 768
+    image_size: 512
+    max_text_length: 64
+    trust_remote_code: false
+    licence: apache-2.0
+    commercial_use: true
+    score_floor: 0.10
+    notes: "~4x slower per image; better on dense charts and small labels."
+
+  siglip2-so400m-384:
+    hf_id: google/siglip2-so400m-patch16-384
+    provider: hf_dual_encoder
+    dim: 1152
+    image_size: 384
+    max_text_length: 64
+    trust_remote_code: false
+    licence: apache-2.0
+    commercial_use: true
+    score_floor: 0.10
+    notes: "GPU-class. Listed for completeness; not CPU-viable."
+
+  siglip-base:
+    hf_id: google/siglip-base-patch16-224
+    provider: hf_dual_encoder
+    dim: 768
+    image_size: 224
+    max_text_length: 64
+    trust_remote_code: false
+    licence: apache-2.0
+    commercial_use: true
+    score_floor: 0.10
+
+  clip-vit-l14:
+    hf_id: openai/clip-vit-large-patch14
+    provider: hf_dual_encoder
+    dim: 768
+    image_size: 224
+    max_text_length: 77
+    trust_remote_code: false
+    licence: mit
+    commercial_use: true
+    score_floor: 0.20
+    notes: "Softmax-trained: similarity band differs from SigLIP; higher floor."
+
+  clip-vit-b32:
+    hf_id: openai/clip-vit-base-patch32
+    provider: hf_dual_encoder
+    dim: 512
+    image_size: 224
+    max_text_length: 77
+    trust_remote_code: false
+    licence: mit
+    commercial_use: true
+    score_floor: 0.20
+
+  openclip-b32:
+    hf_id: laion/CLIP-ViT-B-32-laion2B-s34B-b79K
+    provider: open_clip
+    open_clip_arch: ViT-B-32
+    open_clip_pretrained: laion2b_s34b_b79k
+    dim: 512
+    image_size: 224
+    max_text_length: 77
+    licence: mit
+    commercial_use: true
+    score_floor: 0.20
+    notes: "Fastest CPU option. Use on <=8 GB RAM machines."
+
+  jina-clip-v2:
+    hf_id: jinaai/jina-clip-v2
+    provider: st
+    dim: 1024
+    image_size: 512
+    max_text_length: 8192
+    trust_remote_code: true          # REQUIRED by this model
+    licence: cc-by-nc-4.0
+    commercial_use: false            # Gated in the factory
+    truncate_dim_supported: true
+    score_floor: 0.15
+    notes: >
+      Only candidate whose text tower is a real long-context retriever, i.e. the
+      only path to a UNIFIED single index. 0.9B params (~3.6 GB fp32) - slow on
+      CPU. Non-commercial licence: requires Legal sign-off before any prod use.
+
+  bge-vl-base:
+    hf_id: BAAI/BGE-VL-base
+    provider: bge_vl
+    dim: 512
+    image_size: 224
+    max_text_length: 77
+    trust_remote_code: true          # REQUIRED
+    licence: mit
+    commercial_use: true
+    score_floor: 0.20
+    notes: "Composed image retrieval (image + edit instruction). Custom set_processor API."

@@ -6,7 +6,7 @@ from typing import Any
 
 from ..config.llm import LLMConfig
 from ..utils.logging import get_logger
-from .base import BaseLLM, Message
+from .base import BaseLLM, Message, reject_images
 
 logger = get_logger(__name__)
 
@@ -34,9 +34,10 @@ class HuggingFaceLLM(BaseLLM):
             )
 
     def _sync_generate(self, messages: list[Message]) -> str:
+        reject_images(messages, self._config.hf_model_id)
         self._load()
         assert self._pipeline is not None
-        chat = [{"role": m.role, "content": m.content} for m in messages]
+        chat = [{"role": m.role, "content": m.flatten()} for m in messages]
         outputs = self._pipeline(
             chat,
             max_new_tokens=self._config.max_tokens,

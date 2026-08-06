@@ -8,7 +8,7 @@ from ..utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-_KEY_PREFIX = "gernas:retrieve:"
+_KEY_PREFIX = "gernas:retrieve:v2:"  # Bump on any response-shape change.
 
 
 class RAGCache:
@@ -16,11 +16,23 @@ class RAGCache:
 
     Every operation is wrapped so that a cache outage degrades gracefully to a
     cache miss rather than failing the request. Disable entirely via ``enabled``.
+
+    ``key_namespace`` must encode the retrieval CONFIGURATION, not just the
+    request: with ``image_intent: heuristic`` and ``include_images`` unset, the
+    request JSON is identical whether or not multimodal is enabled, so flipping
+    the flag would otherwise serve stale image-free responses until the TTL.
     """
 
-    def __init__(self, redis_url: str, ttl_seconds: int, enabled: bool = True) -> None:
+    def __init__(
+        self,
+        redis_url: str,
+        ttl_seconds: int,
+        enabled: bool = True,
+        key_namespace: str = "",
+    ) -> None:
         self._ttl = ttl_seconds
         self._enabled = enabled
+        self._ns = key_namespace
         self._client: Any | None = None
         if enabled:
             try:
@@ -31,9 +43,8 @@ class RAGCache:
                 logger.warning("Redis unavailable; caching disabled", error=str(exc))
                 self._enabled = False
 
-    @staticmethod
-    def make_key(request: RetrieveRequest) -> str:
-        payload = request.model_dump_json()
+    def make_key(self, request: RetrieveRequest) -> str:
+        payload = f"{self._ns}|{request.model_dump_json()}"
         digest = hashlib.sha256(payload.encode()).hexdigest()
         return f"{_KEY_PREFIX}{digest}"
 

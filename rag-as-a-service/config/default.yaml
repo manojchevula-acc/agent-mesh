@@ -46,12 +46,25 @@ vectordb:
 
 llm:
   provider: groq
-  model_name: openai/gpt-oss-120b
+  model_name: openai/gpt-oss-120b        # text path — unchanged
   temperature: 0.0
   max_tokens: 2048
   timeout_seconds: 30
   hf_model_id: mistralai/Mistral-7B-Instruct-v0.2
   hf_device: cpu
+
+  # ── Vision generation (D7) ───────────────────────────────────────────
+  # Only image-bearing requests use the vision model; text-only queries keep
+  # model_name above. Flip vision_enabled in Phase 4b.
+  vision_enabled: false
+  vision_model_name: qwen/qwen3.6-27b    # PREVIEW model — only Groq VLM
+  vision_max_images: 3                   # Groq docs conflict (3 vs 5) — take 3
+  vision_max_tokens: 3072
+  vision_timeout_seconds: 60
+  vision_fallback_to_text: true          # degrade to captions, never fail
+  vision_image_max_side_px: 768          # cost lever: halving ~quarters tokens
+  vision_image_format: JPEG
+  vision_image_quality: 85
 
 chunking:
   strategy: hierarchical
@@ -62,6 +75,8 @@ chunking:
   max_chunk_size: 600
   enable_parent_chunks: true
   parent_chunk_size: 1500
+  protect_tables: true                   # D8 — tables are atomic, never split
+  table_caption_window_chars: 200
   unstructured_strategy: hi_res
   infer_table_structure: true
 
@@ -86,9 +101,89 @@ ingestion:
     - .pdf
     - .docx
 
+# ── Multimodal (text <-> image shared embedding space) ──────────────────
+# Master switch. false => byte-identical behaviour to the text-only pipeline.
+multimodal:
+  enabled: false
+
+  image_collection_base: fab_gernas_images
+  image_collection_name:      # null => derived as {base}__{model_slug}__d{dim}
+
+  # ══ THE ONLY BLOCK YOU EDIT TO SWAP MODELS ══════════════════════════
+  embedding:
+    type: multimodal
+    provider:                 # null => resolved from config/model_registry.yaml
+    model_name: google/siglip2-base-patch16-224
+    revision:                 # pin a commit sha for reproducible indexes
+    device: cpu
+    dtype: float32            # NEVER float16 on CPU — emulated, slower
+    torch_num_threads:        # null => min(8, cpu_count // 2)
+    quantize_dynamic_int8: false
+    trust_remote_code: false
+    local_files_only: false
+    cache_dir:
+    embedding_dim:            # null => probed at load and asserted vs collection
+    truncate_dim:             # Matryoshka (jina-clip-v2 only)
+    normalize: true
+    distance_metric: cosine
+    text_batch_size: 16
+    image_batch_size: 8
+    max_text_length:          # null => model default (SigLIP-2 = 64 tokens)
+    lazy_load: true
+    warmup_on_start: false
+    embedding_cache_enabled: true
+    embedding_cache_ttl_seconds: 604800
+
+  extraction:
+    enabled: true
+    backend: auto             # auto | pymupdf | docling
+    min_width: 96
+    min_height: 96
+    min_area_px: 20000
+    max_aspect_ratio: 12.0
+    near_uniform_std_threshold: 6.0
+    max_images_per_page: 8
+    max_images_per_document: 200
+    dedup_exact: true
+    dedup_perceptual: true
+    phash_hamming_threshold: 4
+    caption_window_chars: 600
+    write_image_stub_chunks: true
+    extract_table_crops: true   # D8 — render table regions for the vision LLM
+    table_render_dpi: 200       # higher than figures: cell text must stay legible
+    table_crop_pad_pt: 4.0
+    include_page_renders: false
+    page_render_dpi: 144
+
+  storage:
+    backend: local
+    root: ./image_store
+    image_format: WEBP
+    quality: 90
+    max_side_px: 1024
+    thumbnail_side_px: 320
+    serve_base_url: /api/v1/assets
+
+  retrieval:
+    mode: side_car            # off | side_car | unified_rrf
+    image_top_k: 20
+    image_final_k: 4
+    image_score_floor:        # null => per-model default from the registry
+    image_score_margin_ratio: 0.55
+    rrf_k: 60
+    text_weight: 1.0
+    image_weight: 0.6
+    image_intent: heuristic   # always | never | heuristic
+    max_images_in_context: 3
+    weak_text_threshold: 0.15
+    enable_image_query: false
+    max_query_image_bytes: 8388608
+
 evaluation:
   judge_provider: groq                 # 'groq' | 'ollama' | 'openai'
-  judge_model: qwen/qwen3.6-27b        # strong reasoning for RAGAS eval metrics
+  # NOTE: must NOT be llm.vision_model_name — a model grading its own output
+  # inflates faithfulness and answer-relevancy scores (design doc R11).
+  judge_model: openai/gpt-oss-120b
   judge_base_url:                      # for ollama use http://localhost:11434/v1 ; ignored by groq
   judge_api_key:                       # ollama ignores this; OpenAI SDK needs a non-empty string (e.g. "ollama")
   max_context_chars: 6000              # truncate contexts before sending to judge (too small drops the supporting table row -> recall/faithfulness collapse; override via RAG__EVALUATION__MAX_CONTEXT_CHARS)

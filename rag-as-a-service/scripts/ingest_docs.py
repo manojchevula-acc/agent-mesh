@@ -23,14 +23,24 @@ async def main() -> None:
     parser.add_argument("--document-type", default="")  # empty = auto-infer from filename
     parser.add_argument("--product-applicability", default="")
     parser.add_argument("--effective-date", default="")
+    parser.add_argument(
+        "--with-images", action="store_true", help="force multimodal.enabled for this run"
+    )
     args = parser.parse_args()
+
+    if args.with_images:
+        import os
+
+        os.environ["RAG__MULTIMODAL__ENABLED"] = "true"
+        get_settings.cache_clear()
 
     settings = get_settings()
     embedder = get_embedder(settings.embedding)
     vectordb = get_vectordb(settings.vectordb)
     await vectordb.create_collection(settings.vectordb.collection_name, embedder.dense_dim)
 
-    pipeline = IngestionPipeline(settings, embedder, vectordb)
+    image_pipeline = await _build_image_pipeline(settings, embedder, vectordb)
+    pipeline = IngestionPipeline(settings, embedder, vectordb, image_pipeline)
     doc_path = Path(args.path)
 
     if doc_path.is_file():
@@ -40,11 +50,48 @@ async def main() -> None:
             [p.strip() for p in args.product_applicability.split(",") if p.strip()],
             args.effective_date,
         )
-        print(f"Ingested: {result.chunks_created} chunks — {result.status}")
+        print(
+            f"Ingested: {result.chunks_created} chunks "
+            f"({result.tables_found} tables, {result.images_indexed} images) "
+            f"— {result.status}"
+        )
     else:
         results = await pipeline.ingest_directory(doc_path, args.document_type)
         total = sum(r.chunks_created for r in results)
-        print(f"Ingested {len(results)} documents · {total} total chunks")
+        tables = sum(r.tables_found for r in results)
+        images = sum(r.images_indexed for r in results)
+        print(
+            f"Ingested {len(results)} documents · {total} chunks "
+            f"· {tables} tables · {images} images"
+        )
+
+
+async def _build_image_pipeline(settings, embedder, vectordb):
+    """None when multimodal is disabled — the pipeline then behaves as before."""
+    if not settings.multimodal.enabled:
+        return None
+
+    from gernas_rag.embeddings.multimodal.factory import get_multimodal_embedder
+    from gernas_rag.images.store import get_asset_store
+    from gernas_rag.ingestion.image_pipeline import ImageIngestionPipeline
+    from gernas_rag.vectordb.image_factory import get_image_store
+
+    mm_embedder = get_multimodal_embedder(settings.multimodal.embedding)
+    space = mm_embedder.space
+    collection = settings.multimodal.image_collection_name or space.collection_name(
+        settings.multimodal.image_collection_base
+    )
+    image_store = get_image_store(settings.vectordb, collection, vectordb)
+    await image_store.create_collection(collection, space.dim, space.metric)
+    print(f"Multimodal: {space.model_name} (dim={space.dim}) -> {collection}")
+    return ImageIngestionPipeline(
+        settings,
+        mm_embedder,
+        embedder,
+        image_store,
+        vectordb,
+        get_asset_store(settings.multimodal.storage),
+    )
 
 
 if __name__ == "__main__":

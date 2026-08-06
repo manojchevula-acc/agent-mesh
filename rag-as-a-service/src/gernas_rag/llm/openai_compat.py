@@ -3,7 +3,7 @@
 from ..config.llm import LLMConfig
 from ..utils.logging import get_logger
 from ..utils.retry import async_retry
-from .base import BaseLLM, Message
+from .base import BaseLLM, Message, reject_images
 
 logger = get_logger(__name__)
 
@@ -23,9 +23,10 @@ class OpenAICompatLLM(BaseLLM):
 
     @async_retry(max_attempts=3, backoff_factor=2.0)
     async def generate(self, messages: list[Message]) -> str:
+        reject_images(messages, self._config.model_name)
         response = await self._client.chat.completions.create(
             model=self._config.model_name,
-            messages=[{"role": m.role, "content": m.content} for m in messages],
+            messages=[{"role": m.role, "content": m.flatten()} for m in messages],
             temperature=self._config.temperature,
             max_tokens=self._config.max_tokens,
         )

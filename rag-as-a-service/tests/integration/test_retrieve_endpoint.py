@@ -10,6 +10,7 @@ from gernas_rag.cache.redis_cache import RAGCache
 from gernas_rag.config.settings import Settings
 from gernas_rag.generation.generator import ResponseGenerator
 from gernas_rag.models.chunk import EmbeddedChunk
+from gernas_rag.retrieval.multimodal_pipeline import MultimodalRetrievalPipeline
 from gernas_rag.retrieval.pipeline import RetrievalPipeline
 
 
@@ -22,12 +23,18 @@ def app(settings, fake_embedder, fake_vectordb, fake_llm, sample_chunk):
     app.include_router(health.router, tags=["health"])
     app.include_router(retrieve.router, prefix="/api/v1", tags=["retrieval"])
 
+    text_pipeline = RetrievalPipeline(settings, fake_embedder, fake_vectordb)
     app.state.settings = settings
     app.state.embedder = fake_embedder
     app.state.vectordb = fake_vectordb
     app.state.llm = fake_llm
     app.state.cache = RAGCache(settings.redis_url, 900, enabled=False)
-    app.state.retrieval_pipeline = RetrievalPipeline(settings, fake_embedder, fake_vectordb)
+    app.state.retrieval_pipeline = text_pipeline
+    # The route depends on the multimodal wrapper; with the flag off it is a
+    # pure pass-through, so these assertions still describe the text path.
+    app.state.multimodal_pipeline = MultimodalRetrievalPipeline(
+        settings, text_pipeline, None, None
+    )
     app.state.generator = ResponseGenerator(settings, fake_llm)
     return app
 

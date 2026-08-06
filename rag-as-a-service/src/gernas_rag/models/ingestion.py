@@ -20,6 +20,8 @@ class IngestionStatus(str, Enum):
 class IngestionResult(BaseModel):
     file_path: str
     chunks_created: int = 0
+    images_indexed: int = 0  # Multimodal sub-pipeline; 0 when disabled
+    tables_found: int = 0  # Atomic table chunks produced (D8)
     status: str = IngestionStatus.SUCCESS.value
     error: str | None = None
     created_at: datetime = Field(default_factory=_utcnow)

@@ -1,111 +1,47 @@
-"""Shared test fixtures and in-memory fakes for external dependencies."""
+"""Shared test fixtures.
+
+The in-memory fakes live in tests/fakes.py so test modules can import them
+directly; ``tests/`` is inserted into sys.path below.
+"""
 
 import sys
 from pathlib import Path
 
 import pytest
 
-# Make the src layout importable without installation.
-_SRC = Path(__file__).resolve().parents[1] / "src"
-if str(_SRC) not in sys.path:
-    sys.path.insert(0, str(_SRC))
+# Make the src layout and the tests dir importable without installation.
+_ROOT = Path(__file__).resolve().parent
+_SRC = _ROOT.parent / "src"
+for _path in (_SRC, _ROOT):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
+from fakes import (  # noqa: E402
+    FakeAssetStore,
+    FakeEmbedder,
+    FakeImageStore,
+    FakeLLM,
+    FakeMultimodalEmbedder,
+    FakeVectorDB,
+)
 from gernas_rag.config.settings import Settings  # noqa: E402
-from gernas_rag.embeddings.base import BaseEmbedder, EmbeddingOutput  # noqa: E402
 from gernas_rag.extraction.base import (  # noqa: E402
     ElementType,
     ExtractedElement,
     ExtractionResult,
 )
-from gernas_rag.llm.base import BaseLLM, Message  # noqa: E402
-from gernas_rag.models.chunk import Chunk, ChunkMetadata, EmbeddedChunk  # noqa: E402
-from gernas_rag.models.retrieval import DocumentFilter  # noqa: E402
-from gernas_rag.vectordb.base import BaseVectorDB, SearchResult  # noqa: E402
+from gernas_rag.models.asset import ImageAsset  # noqa: E402
+from gernas_rag.models.chunk import Chunk, ChunkMetadata  # noqa: E402
 
-
-# ── Fakes ─────────────────────────────────────────────────────────────
-class FakeEmbedder(BaseEmbedder):
-    """Deterministic embedder — hashes text into a small dense + sparse vector."""
-
-    def __init__(self, dim: int = 8, sparse: bool = True) -> None:
-        self._dim = dim
-        self._sparse = sparse
-
-    def _vec(self, text: str) -> list[float]:
-        seed = sum(ord(c) for c in text) or 1
-        return [((seed * (i + 1)) % 97) / 97.0 for i in range(self._dim)]
-
-    async def embed_documents(self, texts: list[str]) -> EmbeddingOutput:
-        dense = [self._vec(t) for t in texts]
-        if self._sparse:
-            indices = [[1, 2, 3] for _ in texts]
-            values = [[0.5, 0.3, 0.2] for _ in texts]
-        else:
-            indices, values = [], []
-        return EmbeddingOutput(dense_vectors=dense, sparse_indices=indices, sparse_values=values)
-
-    async def embed_query(self, text: str) -> EmbeddingOutput:
-        return await self.embed_documents([text])
-
-    @property
-    def dense_dim(self) -> int:
-        return self._dim
-
-    @property
-    def supports_sparse(self) -> bool:
-        return self._sparse
-
-
-class FakeVectorDB(BaseVectorDB):
-    """In-memory vector DB. Stores embedded chunks and returns them by insertion order."""
-
-    def __init__(self) -> None:
-        self.store: dict[str, EmbeddedChunk] = {}
-        self.collections: set[str] = set()
-
-    async def create_collection(self, name: str, dense_dim: int) -> None:
-        self.collections.add(name)
-
-    async def delete_collection(self, name: str) -> None:
-        self.collections.discard(name)
-        self.store.clear()
-
-    async def upsert(self, chunks: list[EmbeddedChunk]) -> int:
-        for c in chunks:
-            self.store[c.chunk.id] = c
-        return len(chunks)
-
-    def _results(self, top_k: int, filters: DocumentFilter | None) -> list[SearchResult]:
-        out: list[SearchResult] = []
-        for i, ec in enumerate(self.store.values()):
-            if ec.chunk.is_parent:
-                continue
-            meta = {**ec.chunk.metadata.model_dump(mode="json"), "chunk_id": ec.chunk.id}
-            out.append(SearchResult(ec.chunk.id, ec.chunk.text, 1.0 - i * 0.01, meta, i))
-            if len(out) >= top_k:
-                break
-        return out
-
-    async def dense_search(self, query_vector, top_k, filters=None):
-        return self._results(top_k, filters)
-
-    async def sparse_search(self, query_indices, query_values, top_k, filters=None):
-        return self._results(top_k, filters)
-
-    async def get_by_ids(self, ids: list[str]) -> list[Chunk]:
-        return [self.store[i].chunk for i in ids if i in self.store]
-
-    async def health_check(self) -> bool:
-        return True
-
-
-class FakeLLM(BaseLLM):
-    async def generate(self, messages: list[Message]) -> str:
-        user = next((m.content for m in reversed(messages) if m.role == "user"), "")
-        return f"FAKE-ANSWER based on {len(user)} chars of context."
-
-    async def health_check(self) -> bool:
-        return True
+__all__ = [
+    "FakeAssetStore",
+    "FakeEmbedder",
+    "FakeImageStore",
+    "FakeLLM",
+    "FakeMultimodalEmbedder",
+    "FakeVectorDB",
+    "make_image_asset",
+]
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────
@@ -131,6 +67,72 @@ def fake_vectordb() -> FakeVectorDB:
 @pytest.fixture
 def fake_llm() -> FakeLLM:
     return FakeLLM()
+
+
+@pytest.fixture
+def llm_factory():
+    """The FakeLLM class itself, for tests that need custom constructor args."""
+    return FakeLLM
+
+
+@pytest.fixture
+def image_asset_factory():
+    return make_image_asset
+
+
+@pytest.fixture
+def fake_multimodal_embedder() -> FakeMultimodalEmbedder:
+    return FakeMultimodalEmbedder()
+
+
+@pytest.fixture
+def fake_image_store() -> FakeImageStore:
+    return FakeImageStore()
+
+
+@pytest.fixture
+def fake_asset_store() -> FakeAssetStore:
+    return FakeAssetStore()
+
+
+@pytest.fixture
+def sample_table_markdown() -> str:
+    """A 6-row pricing table embedded in prose — the D8 fixture."""
+    return (
+        "# Pricing Policy\n\n"
+        "## 4.2 Pricing floors\n\n"
+        "Table 3: Minimum pricing floors by rating\n\n"
+        "| Rating | Tenor | AED bps | USD bps |\n"
+        "| ------ | ----- | ------- | ------- |\n"
+        "| AAA    | 1-3y  | 120     | 130     |\n"
+        "| AA     | 1-3y  | 150     | 160     |\n"
+        "| A      | 3-5y  | 210     | 220     |\n"
+        "| BBB    | 3-5y  | 310     | 325     |\n"
+        "| BB     | 3-5y  | 260     | 275     |\n"
+        "| B      | 5-7y  | 450     | 470     |\n\n"
+        "The floors above apply to all corporate term loans denominated in AED. "
+        "Any deviation requires Segment Credit Head approval under the delegated "
+        "authority matrix set out in section 5.1 of this policy document.\n"
+    )
+
+
+def make_image_asset(asset_id: str, concept: str, **overrides) -> ImageAsset:
+    """Build a minimal ImageAsset for tests."""
+    defaults = dict(
+        id=asset_id,
+        content_sha256=asset_id * 2,
+        phash="0" * 16,
+        document_name="doc",
+        document_type="pricing_policy",
+        page_number=1,
+        width=400,
+        height=300,
+        uri=f"/api/v1/assets/{asset_id}",
+        storage_path=f"memory://{asset_id}",
+        caption=concept,
+    )
+    defaults.update(overrides)
+    return ImageAsset(**defaults)
 
 
 @pytest.fixture

@@ -5,9 +5,9 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from ...cache.redis_cache import RAGCache
 from ...generation.generator import ResponseGenerator
 from ...models.retrieval import RetrieveRequest, RetrieveResponse
-from ...retrieval.pipeline import RetrievalPipeline
+from ...retrieval.multimodal_pipeline import MultimodalRetrievalPipeline
 from ...utils.logging import get_logger
-from ..deps import get_cache, get_generator, get_retrieval_pipeline, verify_auth
+from ..deps import get_cache, get_generator, get_multimodal_pipeline, verify_auth
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -17,7 +17,7 @@ router = APIRouter()
 async def retrieve(
     request: RetrieveRequest,
     background_tasks: BackgroundTasks,
-    pipeline: RetrievalPipeline = Depends(get_retrieval_pipeline),
+    pipeline: MultimodalRetrievalPipeline = Depends(get_multimodal_pipeline),
     generator: ResponseGenerator = Depends(get_generator),
     cache: RAGCache = Depends(get_cache),
     _: None = Depends(verify_auth),
@@ -39,9 +39,13 @@ async def retrieve(
     try:
         response = await pipeline.retrieve(request)
 
-        # Optionally generate an answer
-        if request.generate_answer and response.chunks:
-            answer = await generator.generate(request.query, response.chunks)
+        # Optionally generate an answer. Figures are passed through so the
+        # vision path can send their pixels; with vision off they become [IN]
+        # caption descriptors instead.
+        if request.generate_answer and (response.chunks or response.images):
+            answer = await generator.generate(
+                request.query, response.chunks, response.images
+            )
             response = response.model_copy(update={"answer": answer})
     except Exception as exc:
         logger.error("Retrieval failed", error=str(exc))

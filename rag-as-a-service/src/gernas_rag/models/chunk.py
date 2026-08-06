@@ -34,6 +34,15 @@ class ChunkMetadata(BaseModel):
     parent_chunk_id: str | None = None
     source_page: int | None = None
 
+    # ── Multimodal / table additions ──────────────────────────────────
+    # All default to today's values, so points written before this change
+    # deserialise unchanged (Pydantic fills the defaults). No backfill needed.
+    modality: str = "text"  # 'text' | 'image_stub' (Modality enum value)
+    asset_id: str | None = None  # Image stubs, and table chunks with a crop
+    content_type: str = "text"  # 'text' | 'table' | 'list' | 'image_stub'
+    table_rows: int | None = None  # Row count — lets the generator size the block
+    table_part: str | None = None  # "2/3" when an oversized table was row-split
+
 
 class Chunk(BaseModel):
     model_config = ConfigDict(frozen=True)

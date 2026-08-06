@@ -45,6 +45,13 @@ class ChunkingConfig(BaseModel):
         ]
     )
 
+    # ── Tables (D8) ───────────────────────────────────────────────────
+    # Tables are ATOMIC: a markdown pipe-table is never split across chunks.
+    # Oversized tables are split BY ROWS with the header repeated in each part,
+    # so no chunk ever holds rows whose columns are unlabelled.
+    protect_tables: bool = True  # false restores pre-D8 behaviour exactly
+    table_caption_window_chars: int = 200  # Prose scanned above a table for its title
+
     # ── Unstructured.io specific ──────────────────────────────────────
     unstructured_strategy: str = "hi_res"  # 'fast' | 'hi_res' | 'ocr_only'
     infer_table_structure: bool = True
