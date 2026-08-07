@@ -1,0 +1,21 @@
+customer_id,customer_name,customer_segment,risk_category,relationship_status,relationship_tenure_years,relationship_discount_pct,policy_max_relationship_discount_pct,approval_required_if_discount_above_pct,discount_eligible,approval_required,eligibility_reason
+CUST001,Al Noor Trading LLC,SME,Medium,Existing,5,0.25,0.25,0.2,True,True,Discount within cap but above approval threshold - approval required.
+CUST002,Falcon Steel Industries,Corporate,Low,Strategic,9,0.45,0.45,0.3,True,True,Discount within cap but above approval threshold - approval required.
+CUST003,Gulf Star Logistics,Corporate,Medium,Existing,7,0.3,0.45,0.3,True,False,Discount within policy - auto-eligible.
+CUST004,Oasis Retail Group,SME,Medium,Existing,4,0.2,0.25,0.2,True,False,Discount within policy - auto-eligible.
+CUST005,Emirates Healthcare Services,Corporate,Low,Strategic,8,0.4,0.45,0.3,True,True,Discount within cap but above approval threshold - approval required.
+CUST006,Desert Sands Construction,Corporate,High,Existing,6,0.1,0.45,0.3,True,False,Discount within policy - auto-eligible.
+CUST007,Pearl Foods Distribution,SME,Medium,New,3,0.1,0.25,0.2,True,False,Discount within policy - auto-eligible.
+CUST008,Blue Wave Shipping,Corporate,Medium,Strategic,10,0.35,0.45,0.3,True,True,Discount within cap but above approval threshold - approval required.
+CUST009,Green Energy MEA,Corporate,Low,Existing,5,0.35,0.45,0.3,True,True,Discount within cap but above approval threshold - approval required.
+CUST010,Metro Auto Parts LLC,SME,Medium,Existing,4,0.18,0.25,0.2,True,False,Discount within policy - auto-eligible.
+CUST011,Royal Hospitality LLC,SME,Medium,Existing,6,0.22,0.25,0.2,True,True,Discount within cap but above approval threshold - approval required.
+CUST012,Skyline Real Estate,Corporate,High,Existing,8,0.05,0.45,0.3,True,False,Discount within policy - auto-eligible.
+CUST013,Union Pharma Trading,SME,Low,Strategic,5,0.35,0.25,0.2,False,True,Discount exceeds policy cap - not eligible without exception.
+CUST014,Arabian Textiles,SME,Medium,New,2,0.08,0.25,0.2,True,False,Discount within policy - auto-eligible.
+CUST015,Prime Tech Solutions,SME,Low,Existing,3,0.3,0.25,0.2,False,True,Discount exceeds policy cap - not eligible without exception.
+CUST016,Capital Education Group,Corporate,Low,Strategic,11,0.45,0.45,0.3,True,True,Discount within cap but above approval threshold - approval required.
+CUST017,Red Dune Mining,Corporate,High,Existing,6,0.08,0.45,0.3,True,False,Discount within policy - auto-eligible.
+CUST018,Lulu Fresh Markets,Corporate,Medium,Strategic,12,0.38,0.45,0.3,True,True,Discount within cap but above approval threshold - approval required.
+CUST019,Coastal Marine Services,SME,Medium,Existing,5,0.2,0.25,0.2,True,False,Discount within policy - auto-eligible.
+CUST020,Nile General Supplies,SME,High,New,1,0.0,0.25,0.2,True,False,Discount within policy - auto-eligible.

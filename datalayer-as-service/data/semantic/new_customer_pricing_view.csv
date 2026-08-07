@@ -1,0 +1,13 @@
+customer_id,customer_name,customer_segment,industry,region,risk_category,internal_rating,relationship_status,no_previous_relationship_flag,product_id,product_name,product_type,currency,tenor,requested_amount,benchmark_rate_pct_treasury,funding_cost_pct,target_margin_pct,risk_premium_pct,new_customer_buffer_pct,ops_cost_margin_pct,recommended_price_pct,base_margin_floor_pct,min_profitability_margin_pct
+CUST021,Sahara Medical Supplies LLC,SME,Healthcare,Dubai,Medium,BBB-,New,Y,PROD001,Working Capital Loan,Loan,AED,6M,5000000,5.2,5.4,2.45,0.4,0.1167,1.1167,9.4834,2.0,0.75
+CUST022,Mira Electronics Trading,SME,Trading,Sharjah,Low,A-,New,Y,PROD004,Invoice Discounting,Trade Finance,AED,3M,3500000,5.05,5.25,1.8,0.1,0.1167,1.4667,8.7334,1.35,0.75
+CUST023,Nova Build Contracting,Corporate,Construction,Abu Dhabi,High,BB+,New,Y,PROD002,Term Loan,Loan,AED,36M,45000000,5.55,5.85,2.3,0.85,0.1167,0.1667,9.2834,1.85,0.75
+CUST024,Palm Logistics Freezone,Corporate,Logistics,Dubai,Medium,BBB+,New,Y,PROD003,Trade Finance LC,Trade Finance,AED,12M,12000000,5.35,5.55,1.65,0.4,0.1167,0.2167,7.9334,1.2,0.75
+CUST025,Apex Cloud Services FZ LLC,SME,Technology,Dubai,Low,A,New,Y,PROD006,USD Term Loan,Loan,USD,24M,9000000,5.05,5.3,2.45,0.1,0.1167,1.1167,9.0834,2.0,0.75
+CUST026,Gulf Agro Commodities,SME,FMCG,Ajman,Medium,BBB,New,Y,PROD005,Overdraft Facility,Loan,AED,12M,6000000,5.35,5.55,2.45,0.4,0.1167,1.1167,9.6334,2.0,0.75
+CUST027,Harbor Marine Engineering,Corporate,Marine Services,Abu Dhabi,Medium,BBB-,New,Y,PROD006,USD Term Loan,Loan,USD,36M,22000000,5.15,5.4,2.3,0.4,0.1167,0.1667,8.3834,1.85,0.75
+CUST028,City Retail Mart LLC,SME,Retail,Dubai,Medium,BBB-,New,Y,PROD001,Working Capital Loan,Loan,AED,6M,4000000,5.2,5.4,2.45,0.4,0.1167,1.1167,9.4834,2.0,0.75
+CUST029,Zenith Pharma Distribution,Corporate,Pharma Trading,Sharjah,Low,A-,New,Y,PROD003,Trade Finance LC,Trade Finance,AED,12M,18000000,5.35,5.55,1.65,0.1,0.1167,0.2167,7.6334,1.2,0.75
+CUST030,Orbit Hospitality Services,SME,Hospitality,Ras Al Khaimah,High,BB,New,Y,PROD005,Overdraft Facility,Loan,AED,6M,3000000,5.2,5.4,2.45,0.85,0.1167,1.1167,9.9334,2.0,0.75
+CUST031,Silver Line Auto Components,SME,Automotive,Dubai,Medium,BBB,New,Y,PROD004,Invoice Discounting,Trade Finance,AED,3M,2500000,5.05,5.25,1.8,0.4,0.1167,1.4667,9.0334,1.35,0.75
+CUST032,Falcon Renewable Parts,Corporate,Energy,Abu Dhabi,Low,A,New,Y,PROD006,USD Term Loan,Loan,USD,60M,35000000,5.25,5.55,2.3,0.1,0.1167,0.1667,8.2334,1.85,0.75

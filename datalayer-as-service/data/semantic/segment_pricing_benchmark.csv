@@ -1,0 +1,43 @@
+customer_segment,product_type,risk_category,base_margin_floor_pct,target_margin_pct,risk_premium_pct,new_customer_buffer_pct,max_relationship_discount_pct,min_profitability_margin_pct,approval_required_if_discount_above_pct,pricing_cushion_for_rating_drop_pct,product_id,product_name
+Corporate,Loan,High,1.85,2.3,0.85,0.1167,0.2667,0.75,0.3,0.5,PROD001,Working Capital Loan
+Corporate,Loan,High,1.85,2.3,0.85,0.1167,0.2667,0.75,0.3,0.5,PROD002,Term Loan
+Corporate,Loan,High,1.85,2.3,0.85,0.1167,0.2667,0.75,0.3,0.5,PROD005,Overdraft Facility
+Corporate,Loan,High,1.85,2.3,0.85,0.1167,0.2667,0.75,0.3,0.5,PROD006,USD Term Loan
+Corporate,Loan,Low,1.85,2.3,0.1,0.1167,0.2667,0.75,0.5,0.1,PROD001,Working Capital Loan
+Corporate,Loan,Low,1.85,2.3,0.1,0.1167,0.2667,0.75,0.5,0.1,PROD002,Term Loan
+Corporate,Loan,Low,1.85,2.3,0.1,0.1167,0.2667,0.75,0.5,0.1,PROD005,Overdraft Facility
+Corporate,Loan,Low,1.85,2.3,0.1,0.1167,0.2667,0.75,0.5,0.1,PROD006,USD Term Loan
+Corporate,Loan,Medium,1.85,2.3,0.4,0.1167,0.2667,0.75,0.5,0.25,PROD001,Working Capital Loan
+Corporate,Loan,Medium,1.85,2.3,0.4,0.1167,0.2667,0.75,0.5,0.25,PROD002,Term Loan
+Corporate,Loan,Medium,1.85,2.3,0.4,0.1167,0.2667,0.75,0.5,0.25,PROD005,Overdraft Facility
+Corporate,Loan,Medium,1.85,2.3,0.4,0.1167,0.2667,0.75,0.5,0.25,PROD006,USD Term Loan
+Corporate,Trade Finance,High,1.2,1.65,0.85,0.1167,0.2667,0.75,0.3,0.5,PROD003,Trade Finance LC
+Corporate,Trade Finance,High,1.2,1.65,0.85,0.1167,0.2667,0.75,0.3,0.5,PROD004,Invoice Discounting
+Corporate,Trade Finance,Low,1.2,1.65,0.1,0.1167,0.2667,0.75,0.5,0.1,PROD003,Trade Finance LC
+Corporate,Trade Finance,Low,1.2,1.65,0.1,0.1167,0.2667,0.75,0.5,0.1,PROD004,Invoice Discounting
+Corporate,Trade Finance,Medium,1.2,1.65,0.4,0.1167,0.2667,0.75,0.5,0.25,PROD003,Trade Finance LC
+Corporate,Trade Finance,Medium,1.2,1.65,0.4,0.1167,0.2667,0.75,0.5,0.25,PROD004,Invoice Discounting
+Corporate,Treasury,High,0.55,1.0,0.85,0.1167,0.2667,0.25,0.3,0.5,PROD007,FX Forward Facility
+Corporate,Treasury,Low,0.55,1.0,0.1,0.1167,0.2667,0.25,0.5,0.1,PROD007,FX Forward Facility
+Corporate,Treasury,Medium,0.55,1.0,0.4,0.1167,0.2667,0.25,0.5,0.25,PROD007,FX Forward Facility
+SME,Loan,High,2.0,2.45,0.85,0.1167,0.2333,0.75,0.3,0.5,PROD001,Working Capital Loan
+SME,Loan,High,2.0,2.45,0.85,0.1167,0.2333,0.75,0.3,0.5,PROD002,Term Loan
+SME,Loan,High,2.0,2.45,0.85,0.1167,0.2333,0.75,0.3,0.5,PROD005,Overdraft Facility
+SME,Loan,High,2.0,2.45,0.85,0.1167,0.2333,0.75,0.3,0.5,PROD006,USD Term Loan
+SME,Loan,Low,2.0,2.45,0.1,0.1167,0.2333,0.75,0.5,0.1,PROD001,Working Capital Loan
+SME,Loan,Low,2.0,2.45,0.1,0.1167,0.2333,0.75,0.5,0.1,PROD002,Term Loan
+SME,Loan,Low,2.0,2.45,0.1,0.1167,0.2333,0.75,0.5,0.1,PROD005,Overdraft Facility
+SME,Loan,Low,2.0,2.45,0.1,0.1167,0.2333,0.75,0.5,0.1,PROD006,USD Term Loan
+SME,Loan,Medium,2.0,2.45,0.4,0.1167,0.2333,0.75,0.5,0.25,PROD001,Working Capital Loan
+SME,Loan,Medium,2.0,2.45,0.4,0.1167,0.2333,0.75,0.5,0.25,PROD002,Term Loan
+SME,Loan,Medium,2.0,2.45,0.4,0.1167,0.2333,0.75,0.5,0.25,PROD005,Overdraft Facility
+SME,Loan,Medium,2.0,2.45,0.4,0.1167,0.2333,0.75,0.5,0.25,PROD006,USD Term Loan
+SME,Trade Finance,High,1.35,1.8,0.85,0.1167,0.2333,0.75,0.3,0.5,PROD003,Trade Finance LC
+SME,Trade Finance,High,1.35,1.8,0.85,0.1167,0.2333,0.75,0.3,0.5,PROD004,Invoice Discounting
+SME,Trade Finance,Low,1.35,1.8,0.1,0.1167,0.2333,0.75,0.5,0.1,PROD003,Trade Finance LC
+SME,Trade Finance,Low,1.35,1.8,0.1,0.1167,0.2333,0.75,0.5,0.1,PROD004,Invoice Discounting
+SME,Trade Finance,Medium,1.35,1.8,0.4,0.1167,0.2333,0.75,0.5,0.25,PROD003,Trade Finance LC
+SME,Trade Finance,Medium,1.35,1.8,0.4,0.1167,0.2333,0.75,0.5,0.25,PROD004,Invoice Discounting
+SME,Treasury,High,0.7,1.15,0.85,0.1167,0.2333,0.25,0.3,0.5,PROD007,FX Forward Facility
+SME,Treasury,Low,0.7,1.15,0.1,0.1167,0.2333,0.25,0.5,0.1,PROD007,FX Forward Facility
+SME,Treasury,Medium,0.7,1.15,0.4,0.1167,0.2333,0.25,0.5,0.25,PROD007,FX Forward Facility

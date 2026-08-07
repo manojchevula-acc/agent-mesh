@@ -1,0 +1,17 @@
+product_id,customer_segment,product_name,product_type,ops_cost_margin_pct,avg_annual_operating_cost_aed,avg_onboarding_cost_aed,avg_monthly_servicing_cost_aed,avg_exception_handling_cost_aed
+PROD001,Corporate,Working Capital Loan,Loan,0.1667,42046.6667,10681.6667,1353.75,1200.0
+PROD001,SME,Working Capital Loan,Loan,1.1167,27913.3333,6283.3333,902.5,1200.0
+PROD002,Corporate,Term Loan,Loan,0.1667,42046.6667,10681.6667,1353.75,1200.0
+PROD002,SME,Term Loan,Loan,1.1167,27913.3333,6283.3333,902.5,1200.0
+PROD003,Corporate,Trade Finance LC,Trade Finance,0.2167,54265.3333,8545.3333,1710.0,1200.0
+PROD003,SME,Trade Finance LC,Trade Finance,1.4667,36706.6667,5026.6667,1140.0,1200.0
+PROD004,Corporate,Invoice Discounting,Trade Finance,0.2167,54265.3333,8545.3333,1710.0,1200.0
+PROD004,SME,Invoice Discounting,Trade Finance,1.4667,36706.6667,5026.6667,1140.0,1200.0
+PROD005,Corporate,Overdraft Facility,Loan,0.1667,42046.6667,10681.6667,1353.75,1200.0
+PROD005,SME,Overdraft Facility,Loan,1.1167,27913.3333,6283.3333,902.5,1200.0
+PROD006,Corporate,USD Term Loan,Loan,0.1667,42046.6667,10681.6667,1353.75,1200.0
+PROD006,SME,USD Term Loan,Loan,1.1167,27913.3333,6283.3333,902.5,1200.0
+PROD007,Corporate,FX Forward Facility,Treasury,0.1067,26946.6667,5751.6667,926.25,650.0
+PROD007,SME,FX Forward Facility,Treasury,0.72,17993.3333,3383.3333,617.5,650.0
+PROD008,Corporate,Corporate Deposit,Deposit,0.0467,11265.0,2958.0,356.25,650.0
+PROD008,SME,Corporate Deposit,Deposit,0.3,7470.0,1740.0,237.5,650.0

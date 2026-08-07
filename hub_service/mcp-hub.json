@@ -1,0 +1,117 @@
+{
+  "version": "2.0",
+  "hub_name": "FAB MCP Hub",
+
+  "servers": [
+    {
+      "id": "weather-server",
+      "name": "Weather Information Service",
+      "endpoint": "http://localhost:8001/sse",
+      "transport": "sse",
+      "capability": "Real-time weather and climate data",
+      "skills": [
+        "current conditions",
+        "5-day forecast",
+        "historical weather",
+        "temperature",
+        "humidity",
+        "wind speed"
+      ],
+      "description": "Provides current weather, forecasts, and historical climate data for cities worldwide.",
+      "examples": [
+        "What is the weather in London?",
+        "Get me a 5-day forecast for Tokyo"
+      ],
+      "start_cmd": "MCP_SERVER_ID=weather-server python datalayer-as-service/mcp_server/weather_server.py 8001"
+    },
+    {
+      "id": "calculator-server",
+      "name": "Mathematical Calculator Service",
+      "endpoint": "http://localhost:8002/sse",
+      "transport": "sse",
+      "capability": "Mathematical computation and unit conversion",
+      "skills": [
+        "arithmetic",
+        "scientific functions",
+        "statistics (mean/median/std)",
+        "unit conversion",
+        "factorial",
+        "powers and roots"
+      ],
+      "description": "Performs arithmetic, scientific functions, statistical summaries, and unit conversions.",
+      "examples": [
+        "Calculate 15 factorial",
+        "Convert 100 km to miles"
+      ],
+      "start_cmd": "MCP_SERVER_ID=calculator-server python datalayer-as-service/mcp_server/calc_server.py 8002"
+    },
+    {
+      "id": "data-server",
+      "name": "Reference Data Lookup Service",
+      "endpoint": "http://localhost:8003/sse",
+      "transport": "sse",
+      "capability": "Geographic and currency reference data",
+      "skills": [
+        "country info",
+        "capital cities",
+        "national currency",
+        "currency exchange rates",
+        "timezone lookup",
+        "UTC offset"
+      ],
+      "description": "Looks up reference data about countries, currencies, and timezones.",
+      "examples": [
+        "What is the capital of Japan?",
+        "What currency does Brazil use?"
+      ],
+      "start_cmd": "MCP_SERVER_ID=data-server python datalayer-as-service/mcp_server/data_server.py 8003"
+    },
+    {
+      "id": "fab-customer-server",
+      "name": "FAB Customer Intelligence MCP Server",
+      "endpoint": "http://127.0.0.1:9100/mcp/",
+      "transport": "streamable-http",
+      "capability": "FAB banking customer intelligence",
+      "skills": [
+        "360 profile (CUST...)",
+        "profitability analysis",
+        "margin performance",
+        "RWA exposure",
+        "win/loss history",
+        "credit rating events",
+        "cross-sell opportunities",
+        "relationship discounts",
+        "peer-group benchmarks"
+      ],
+      "description": "FAB customer intelligence layer. Answers questions about WHO a customer is — 360 profile, profitability, margin performance, RWA exposure, win/loss history, credit rating events, cross-sell opportunities, relationship discounts, and peer-group pricing benchmarks. Use for any query referencing a customer ID (CUST...) or customer-centric analysis.",
+      "examples": [
+        "Show me the 360 profile for CUST001",
+        "What is CUST002's profitability and win rate?"
+      ],
+      "start_cmd": "cd datalayer-as-service && MCP_SERVER_ID=fab-customer-server MCP_TRANSPORT=http MCP_HOST=127.0.0.1 MCP_PORT=9100 python -m mcp_server.customer_server"
+    },
+    {
+      "id": "fab-pricing-server",
+      "name": "FAB Pricing Engine MCP Server",
+      "endpoint": "http://127.0.0.1:9200/mcp/",
+      "transport": "streamable-http",
+      "capability": "FAB banking deal pricing and compliance",
+      "skills": [
+        "pricing recommendation (DEAL...)",
+        "step-by-step price build",
+        "competitor offer comparison",
+        "segment pricing benchmarks",
+        "policy compliance check",
+        "non-compliant deal list",
+        "operational cost impact",
+        "new customer pricing"
+      ],
+      "description": "FAB pricing engine layer. Answers questions about HOW to price a deal — pricing recommendations, step-by-step price builds, competitor offer comparisons, segment benchmarks, operational cost impact, and policy compliance checks. Use for any query referencing a deal ID (DEAL...) or pricing/compliance analysis.",
+      "examples": [
+        "Which deals are non-compliant and why?",
+        "Explain step-by-step how the price was built for DEAL040"
+      ],
+      "start_cmd": "cd datalayer-as-service && MCP_SERVER_ID=fab-pricing-server MCP_TRANSPORT=http MCP_HOST=127.0.0.1 MCP_PORT=9200 python -m mcp_server.pricing_server"
+    }
+  ]
+}
