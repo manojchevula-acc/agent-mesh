@@ -8,7 +8,16 @@ class RetrievalConfig(BaseModel):
     dense_top_k: int = 40  # Dense ANN candidates
     sparse_top_k: int = 40  # Sparse BM25 candidates
     rrf_k: int = 60  # RRF constant (60 is standard)
-    pre_rerank_top_k: int = 20  # Candidates sent to reranker
+    # Candidates sent to the reranker. Raised 20 -> 40: the cross-encoder can
+    # only reorder what RRF hands it, so this is a hard ceiling on recall that
+    # no amount of reranking quality can recover from. Figure chunks lose the
+    # RRF stage disproportionately (their captions are markdown scaffolding, so
+    # they rank low in both retrievers before the cross-encoder ever sees them),
+    # and every question that missed outright in eval stage 3 needed a figure.
+    # Widening the window costs one extra cross-encoder batch per query and is
+    # the cheaper half of the fix; the other half is giving captions prose to
+    # match on (see _TRANSCRIBE_PROMPT in enrichment/vision_llm_enricher.py).
+    pre_rerank_top_k: int = 40
     final_top_k: int = 5  # Final results returned
 
     # ── Freshness ─────────────────────────────────────────────────────

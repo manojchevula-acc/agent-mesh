@@ -17,11 +17,37 @@ from .base import BaseEnricher, EnrichmentInput, EnrichmentOutput
 
 logger = get_logger(__name__)
 
+# A caption is two surfaces at once, and they have opposite requirements.
+#
+# The *retrieval* surface is whatever the embedder and cross-encoder see. A
+# pure verbatim transcription is nearly all layout scaffolding ("### Title &
+# Subtitle", "#### Main Process Flow Boxes (Left to Right)", "| --- | --- |"),
+# which shares almost no vocabulary with a natural-language question — figures
+# measurably under-retrieved against prose chunks (eval stage 3
+# MODALITY_RECALL_GAP: figure hit@5 0.69 vs text 0.81), and the questions that
+# missed entirely were ones whose answer lives in a figure.
+#
+# The *answer* surface is what the generator reads to state a number, and there
+# a transcription is exactly right — inference is how a caption invents a value
+# the image never showed.
+#
+# So: ask for a prose lead the retriever can match, then the verbatim data the
+# generator can quote, and keep the no-inference rule on the part that carries
+# the numbers. The "no preamble" instruction drops the "Here is the exact
+# transcription of..." boilerplate that otherwise opens every caption and
+# dilutes the embedding before a single real term appears.
 _TRANSCRIBE_PROMPT = (
-    "Transcribe this {element_type} from a banking policy document. "
-    "List every visible label, unit, row/column header, axis, and numeric value "
-    "exactly as shown. Do not infer or summarise trends — transcribe only what is "
-    "legibly printed. If a value is illegible, write [illegible] rather than guessing."
+    "Transcribe this {element_type} from a banking policy document.\n\n"
+    "Reply with exactly these two sections and no preamble:\n\n"
+    "Summary: one or two plain-prose sentences naming what this {element_type} "
+    "covers and the subjects, metrics and categories it names, phrased the way a "
+    "policy reader would ask about it. Use the document's own terminology and "
+    "spell out abbreviations where the image does. Describe only what is visibly "
+    "labelled — no trends, conclusions or commentary.\n\n"
+    "Details: every visible label, unit, row/column header, axis and numeric "
+    "value exactly as shown. Do not infer or summarise — transcribe only what is "
+    "legibly printed. If a value is illegible, write [illegible] rather than "
+    "guessing."
 )
 
 

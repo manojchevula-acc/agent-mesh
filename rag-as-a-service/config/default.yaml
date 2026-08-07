@@ -69,7 +69,7 @@ retrieval:
   dense_top_k: 40
   sparse_top_k: 40
   rrf_k: 60
-  pre_rerank_top_k: 20
+  pre_rerank_top_k: 40                 # raised from 20: the reranker can only reorder what RRF hands it, so this caps recall regardless of rerank quality. Figure chunks rank low in both retrievers (caption text is markdown scaffolding), and every outright miss in eval stage 3 needed a figure
   final_top_k: 5
   freshness_penalty_enabled: true
   freshness_max_age_days: 180
@@ -138,6 +138,7 @@ evaluation:
   judge_model: qwen/qwen3.6-27b        # strong reasoning for RAGAS eval metrics
   judge_base_url:                      # for ollama use http://localhost:11434/v1 ; ignored by groq
   judge_api_key:                       # ollama ignores this; OpenAI SDK needs a non-empty string (e.g. "ollama")
+  judge_max_tokens: 4096               # raised from 2048: faithfulness/context_recall emit one verdict per claim and hit the cap, returning n/a (LLMDidNotFinishException) while the two short-output metrics scored fine. Shares one 8000-token per-request budget with the context below on Groq on-demand -- if a 413 appears, lower this before max_context_chars
   max_context_chars: 3000              # truncate contexts before sending to judge (too small drops the supporting table row -> recall/faithfulness collapse; too large and one request alone can exceed a constrained tier's whole per-minute budget -> 413. override via RAG__EVALUATION__MAX_CONTEXT_CHARS)
   embeddings_model: sentence-transformers/all-MiniLM-L6-v2  # fallback if embedder not passed in
   judge_max_workers: 1                 # RAGAS's own concurrency (library default is 16 -- too many simultaneous jobs for a small TPM budget, causes mass TimeoutErrors)

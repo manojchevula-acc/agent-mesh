@@ -45,6 +45,14 @@ _SYSTEM_PROMPT = (
     "each with the document name and section. "
     "Context blocks marked [Figure] or [Table] are machine-transcribed from images; "
     "treat their contents as authoritative text but note the transcription source if asked. "
+    # A policy answer is only actionable if it carries the actual figures. Without
+    # this, the model reliably describes the mechanism and omits the number — e.g.
+    # naming Credit Spread as a component and citing the policy it is governed by,
+    # while never stating the 65-450 bps range printed in the very chunk it cited
+    # (eval stage 4, answer_numeric_recall 0.75 with the correct chunk at rank 1).
+    "When the context states a specific quantity that answers the question — a rate, "
+    "threshold, limit, range, deadline, duration or amount — restate it verbatim, "
+    "with its unit, rather than describing it in general terms. "
     "If the context does not contain the answer, say so explicitly and do not speculate. "
     "Flag any context marked as ⚠ STALE."
 )

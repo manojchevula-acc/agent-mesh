@@ -64,7 +64,15 @@ def citations_in(text: str) -> list[int]:
 
 
 def looks_like_refusal(text: str) -> bool:
-    return bool(_REFUSAL_RE.search(text or ""))
+    """Did the system decline to answer?
+
+    Scored on the answer body only. The trailing "Sources:" block routinely
+    carries citation-hygiene commentary in refusal-shaped language — e.g.
+    "[3] is not cited as it does not provide any additional information" — which
+    describes an unused *context block*, not an inability to answer. Left in,
+    that phrasing marks a fully correct answer as an over-abstention.
+    """
+    return bool(_REFUSAL_RE.search(strip_sources_section(text or "")))
 
 
 def _grounding_sources(record, verified: dict[str, str]) -> list[str]:

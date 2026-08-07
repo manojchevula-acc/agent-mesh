@@ -89,6 +89,26 @@ _DOTTED_ID_RE = re.compile(r"\b\d+(?:\.\d+){2,}\b")
 # collides ("35 bps" never opens a line looking like "35. ").
 _LIST_MARKER_RE = re.compile(r"^[ \t]*\(?\d{1,2}[.)]\s+", re.MULTILINE)
 
+# Structural cross-references ("Article 4", "Section 8.1", "Clause 2.2",
+# "paragraph 3"). These point *at* a place in a document — they are not
+# quantities the answer is asserting, and a gold answer that cites five
+# articles ("Article 4 ... Article 5 ... Article 7 ... Article 8") otherwise
+# contributes five phantom facts that no correct answer can ever "recall",
+# driving answer_numeric_recall to 0 on an answer that got the substance right.
+# Only the number immediately following the keyword is consumed, so "Article 5
+# requires 25% coverage" still yields the real fact 25%.
+#
+# Deliberately excludes "tier": unlike a section number, a tier number is often
+# the asserted fact itself ("Tier 1 (High) — full independent validation;
+# Tier 2 (Medium) — targeted, biennial"), so masking it would delete a real
+# quantity rather than a pointer.
+_STRUCTURAL_REF_RE = re.compile(
+    r"\b(?:article|section|clause|paragraph|para|sub-?clause|chapter|"
+    r"annex|appendix|schedule|exhibit|table|figure|fig)"
+    r"\s*\.?\s*\d+(?:\.\d+)*\b",
+    re.IGNORECASE,
+)
+
 _DATE_RE = re.compile(
     rf"\b(?:"
     rf"(?P<d1>\d{{1,2}})\s*[-/ ]\s*(?P<m1>{_MONTH_ALT})[a-z]*\.?\s*[-/, ]\s*(?P<y1>\d{{4}})"
@@ -165,6 +185,8 @@ def numeric_facts(text: str, *, strip_citation_markers: bool = True) -> list[Num
     # a MULTILINE "^" no longer lines up with where a line actually started.
     working = _mask(text, [m.span() for m in _LIST_MARKER_RE.finditer(text)])
     working = strip_citations(working) if strip_citation_markers else working
+    # Structural cross-references, before any number pass can claim their digits.
+    working = _mask(working, [m.span() for m in _STRUCTURAL_REF_RE.finditer(working)])
 
     facts: list[NumericFact] = []
     consumed: list[tuple[int, int]] = [m.span() for m in _DOTTED_ID_RE.finditer(working)]

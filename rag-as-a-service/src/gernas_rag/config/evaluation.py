@@ -33,7 +33,17 @@ class EvaluationConfig(BaseModel):
     # requests. Raising this eats directly into how much context (max_context_chars)
     # a single call can carry before that one request alone exceeds 8000 and Groq
     # returns a 413, no amount of retrying will get a too-large request through.
-    judge_max_tokens: int = 2048
+    #
+    # Raised 2048 -> 4096: at 2048, `faithfulness` and `context_recall` — the two
+    # metrics that enumerate one verdict per claim, so the longest outputs of the
+    # four — hit the cap and returned n/a on every question, while the two
+    # short-output metrics scored fine. Budget arithmetic for the raise, worst
+    # case: (max_context_chars 3000 x top_k 3) / 4 chars-per-token ~= 2250 input
+    # tokens for context, + ~500 for the answer + ~300 prompt scaffolding ~= 3050
+    # in, + 4096 out = ~7150 against the 8000 ceiling. Tight but inside it. If a
+    # 413 appears, drop this back before touching max_context_chars — a truncated
+    # judgement is recoverable, missing context silently zeroes context_recall.
+    judge_max_tokens: int = 4096
 
     # Max characters per context chunk sent to the RAGAS judge. Too small drops the
     # sentence the answer/ground-truth depends on (e.g. a pricing-table row deep in a
