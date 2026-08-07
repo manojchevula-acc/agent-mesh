@@ -51,19 +51,31 @@ async def main() -> None:
             args.effective_date,
         )
         print(
-            f"Ingested: {result.chunks_created} chunks "
-            f"({result.tables_found} tables, {result.images_indexed} images) "
-            f"— {result.status}"
+            f"Ingested: {result.chunks_created} text chunks "
+            f"({result.tables_found} tables) · "
+            f"{result.images_indexed} image vectors "
+            f"({result.figures_indexed} figures + {result.table_crops_indexed} "
+            f"table crops) — {result.status}"
         )
     else:
         results = await pipeline.ingest_directory(doc_path, args.document_type)
         total = sum(r.chunks_created for r in results)
         tables = sum(r.tables_found for r in results)
-        images = sum(r.images_indexed for r in results)
+        figures = sum(r.figures_indexed for r in results)
+        crops = sum(r.table_crops_indexed for r in results)
         print(
-            f"Ingested {len(results)} documents · {total} chunks "
-            f"· {tables} tables · {images} images"
+            f"Ingested {len(results)} documents · {total} text chunks "
+            f"(of which {tables} are tables)"
         )
+        print(
+            f"Image vectors: {figures + crops} = {figures} figures "
+            f"+ {crops} table crops"
+        )
+        if crops:
+            print(
+                "  (a table crop is a SECOND encoding of a table that already has "
+                "a text chunk — not an extra document image)"
+            )
 
 
 async def _build_image_pipeline(settings, embedder, vectordb):

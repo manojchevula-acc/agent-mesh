@@ -51,3 +51,20 @@ class BaseVectorDB(ABC):
 
     @abstractmethod
     async def health_check(self) -> bool: ...
+
+    # Deliberately NOT abstract: adding an abstract method here would break
+    # every existing implementation, including the test fakes.
+    async def reconcile_document(
+        self, document_name: str, keep_chunk_ids: list[str]
+    ) -> int:
+        """Drop points for *document_name* whose chunk id is not in *keep*.
+
+        Re-ingestion is only idempotent while chunk ids are stable. Any change
+        to chunk boundaries — enabling table protection, or a non-deterministic
+        extractor such as Docling under memory pressure — produces new ids, and
+        the previous run's points linger forever because upsert never deletes.
+
+        Returns the number of stale points removed. The default implementation
+        is a no-op for backends that have not implemented it.
+        """
+        return 0

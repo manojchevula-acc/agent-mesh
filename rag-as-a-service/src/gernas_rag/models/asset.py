@@ -103,9 +103,15 @@ class EmbeddedImage(BaseModel):
 
 
 class ImageIngestionResult(BaseModel):
-    """Per-document outcome of the image sub-pipeline."""
+    """Per-document outcome of the image sub-pipeline.
+
+    ``images_indexed`` counts VECTORS in the image collection, which is not the
+    same as "pictures in the document": a table contributes one crop vector in
+    addition to its text chunk. ``figures`` and ``table_crops`` break it down.
+    """
 
     images_indexed: int = 0
+    figures: int = 0  # genuine pictures/charts/diagrams
+    table_crops: int = 0  # rendered crops OF tables (D8 dual representation)
     stubs_created: int = 0
-    table_crops: int = 0
     stats: dict[str, int] = Field(default_factory=dict)

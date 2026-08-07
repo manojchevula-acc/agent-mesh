@@ -20,7 +20,12 @@ class IngestionStatus(str, Enum):
 class IngestionResult(BaseModel):
     file_path: str
     chunks_created: int = 0
-    images_indexed: int = 0  # Multimodal sub-pipeline; 0 when disabled
+    # Vectors in the image collection = figures + table_crops. NOT the number of
+    # pictures in the document: each table adds a crop vector on top of its text
+    # chunk (D8 dual representation).
+    images_indexed: int = 0
+    figures_indexed: int = 0  # genuine pictures/charts/diagrams
+    table_crops_indexed: int = 0  # rendered crops OF tables
     tables_found: int = 0  # Atomic table chunks produced (D8)
     status: str = IngestionStatus.SUCCESS.value
     error: str | None = None

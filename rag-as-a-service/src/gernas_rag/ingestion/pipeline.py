@@ -80,17 +80,31 @@ class IngestionPipeline:
             # Step 3: Embed in batches
             embedded_chunks = await self._embed_chunks_in_batches(chunks)
 
-            # Step 4: Upsert
+            # Step 4: Upsert, then drop any points this document left behind
+            # under different chunk ids (boundaries change when table protection
+            # is toggled, or when Docling degrades under memory pressure).
             count = await self._vectordb.upsert(embedded_chunks)
+            try:
+                await self._vectordb.reconcile_document(
+                    base_metadata["document_name"], [c.id for c in chunks]
+                )
+            except Exception as exc:  # noqa: BLE001 - never fail an ingest on cleanup
+                logger.warning(
+                    "Stale-chunk reconcile failed",
+                    file=str(file_path),
+                    error=str(exc),
+                )
 
             # Step 5: Image sub-pipeline (skipped entirely when disabled).
-            images_indexed = 0
+            images_indexed = figures_indexed = table_crops_indexed = 0
             if self._image_pipeline is not None:
                 try:
                     image_result = await self._image_pipeline.ingest_images(
                         file_path, extraction, chunks, base_metadata
                     )
                     images_indexed = image_result.images_indexed
+                    figures_indexed = image_result.figures
+                    table_crops_indexed = image_result.table_crops
                 except Exception as exc:  # noqa: BLE001
                     # Image indexing NEVER fails a text ingestion. Degrading to
                     # the text-only behaviour is always acceptable; losing the
@@ -115,6 +129,8 @@ class IngestionPipeline:
                 file_path=str(file_path),
                 chunks_created=count,
                 images_indexed=images_indexed,
+                figures_indexed=figures_indexed,
+                table_crops_indexed=table_crops_indexed,
                 tables_found=tables,
                 status=IngestionStatus.SUCCESS.value,
             )

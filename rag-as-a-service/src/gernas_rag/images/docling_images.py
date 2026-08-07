@@ -88,29 +88,53 @@ class DoclingImageExtractor(BaseImageExtractor):
         # ── Tables (D8) ───────────────────────────────────────────────
         # Rendered from bbox, not extracted: a PDF table is usually vector
         # strokes plus live text, so there is no image object to pull.
+        table_crops = 0
         if self._c.extract_table_crops:
             for i, table in enumerate(getattr(doc, "tables", []) or []):
                 if len(out) >= self._c.max_images_per_document:
                     break
                 page_no, bbox = _page_of(table), _bbox_of(table)
                 if page_no is None or bbox is None:
+                    logger.warning(
+                        "Table has no usable provenance; no crop",
+                        index=i,
+                        page=page_no,
+                        has_bbox=bbox is not None,
+                    )
                     continue
                 rendered = self._renderer.render(
-                    file_path, page_no, bbox, role=ImageRole.TABLE_IMAGE
+                    file_path,
+                    page_no,
+                    bbox,
+                    role=ImageRole.TABLE_IMAGE,
+                    bottom_left_origin=_is_bottom_left(table),
                 )
                 if rendered is None:
+                    logger.warning(
+                        "Table crop render failed", index=i, page=page_no, bbox=bbox
+                    )
                     continue
                 rendered.caption = self._caption_of(table, doc)
                 rendered.index_on_page = i
+                table_crops += 1
                 out.append(rendered)
 
+        n_tables = len(getattr(doc, "tables", []) or [])
         logger.info(
             "Docling image extraction complete",
             path=str(file_path),
             pictures=len(getattr(doc, "pictures", []) or []),
-            tables=len(getattr(doc, "tables", []) or []),
+            tables=n_tables,
+            table_crops=table_crops,  # must track `tables` when crops are enabled
             kept=len(out),
         )
+        if self._c.extract_table_crops and n_tables and not table_crops:
+            logger.warning(
+                "Docling found tables but produced ZERO crops — check bbox "
+                "coordinate origin handling",
+                path=str(file_path),
+                tables=n_tables,
+            )
         return out
 
     @staticmethod
@@ -175,6 +199,20 @@ def _bbox_of(item: Any) -> tuple[float, float, float, float] | None:
             return tuple(float(v) for v in bbox)  # type: ignore[return-value]
         except Exception:  # noqa: BLE001
             return None
+
+
+def _is_bottom_left(item: Any) -> bool:
+    """Docling defaults to CoordOrigin.BOTTOMLEFT, which PyMuPDF cannot consume.
+
+    Read it off the bbox rather than assuming: Docling has exposed both origins
+    across versions, and guessing wrong flips every crop to the wrong half of
+    the page.
+    """
+    prov = getattr(item, "prov", None)
+    if not prov:
+        return False
+    origin = getattr(getattr(prov[0], "bbox", None), "coord_origin", None)
+    return "BOTTOMLEFT" in str(origin).upper()
 
 
 def _png_bytes(pil_image: Any) -> bytes:

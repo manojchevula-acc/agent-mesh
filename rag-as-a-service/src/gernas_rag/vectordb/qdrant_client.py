@@ -154,6 +154,66 @@ class QdrantVectorDB(BaseVectorDB):
         )
         return [self._payload_to_chunk(r.payload) for r in records if r.payload]
 
+    async def reconcile_document(
+        self, document_name: str, keep_chunk_ids: list[str]
+    ) -> int:
+        """Remove this document's points that the latest ingest did not produce.
+
+        Runs AFTER the upsert, so there is never a window in which the document
+        has no chunks in the index.
+        """
+        from qdrant_client.models import (
+            FieldCondition,
+            Filter,
+            FilterSelector,
+            MatchValue,
+        )
+
+        keep = set(keep_chunk_ids)
+        stale: list[str] = []
+        offset = None
+        doc_filter = Filter(
+            must=[FieldCondition(key="document_name", match=MatchValue(value=document_name))]
+        )
+        while True:
+            records, offset = await self._client.scroll(
+                collection_name=self._config.collection_name,
+                scroll_filter=doc_filter,
+                limit=512,
+                offset=offset,
+                with_payload=True,
+            )
+            for record in records:
+                chunk_id = (record.payload or {}).get("chunk_id")
+                if chunk_id and chunk_id not in keep:
+                    stale.append(chunk_id)
+            if offset is None:
+                break
+
+        if not stale:
+            return 0
+
+        await self._client.delete(
+            collection_name=self._config.collection_name,
+            points_selector=FilterSelector(
+                filter=Filter(
+                    must=[
+                        FieldCondition(
+                            key="document_name", match=MatchValue(value=document_name)
+                        )
+                    ],
+                    should=[
+                        FieldCondition(key="chunk_id", match=MatchValue(value=cid))
+                        for cid in stale
+                    ],
+                )
+            ),
+        )
+        logger.info(
+            "Removed stale chunks", document=document_name, removed=len(stale)
+        )
+        return len(stale)
+
     async def health_check(self) -> bool:
         try:
             await self._client.get_collections()

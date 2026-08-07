@@ -174,17 +174,22 @@ class ImageIngestionPipeline:
         if self._config.write_image_stub_chunks:
             stubs = await self._upsert_stubs(assets, base_metadata)
 
+        table_crops = sum(1 for a in assets if a.role is ImageRole.TABLE_IMAGE)
+        figures = len(assets) - table_crops
         logger.info(
             "Image ingestion complete",
             file=str(file_path),
-            indexed=indexed,
+            image_vectors=indexed,  # = figures + table_crops
+            figures=figures,
+            table_crops=table_crops,
             stubs=stubs,
-            **{k: v for k, v in stats.items()},
+            **{k: v for k, v in stats.items() if k.startswith("rejected_")},
         )
         return ImageIngestionResult(
             images_indexed=indexed,
+            figures=figures,
+            table_crops=table_crops,
             stubs_created=stubs,
-            table_crops=stats.get("table_crops", 0),
             stats=dict(stats),
         )
 

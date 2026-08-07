@@ -33,8 +33,16 @@ class RegionRenderer:
         bbox: tuple[float, float, float, float],
         role: ImageRole = ImageRole.TABLE_IMAGE,
         dpi: int | None = None,
+        bottom_left_origin: bool = False,
     ) -> RawImage | None:
-        """Render one page region. Returns None rather than raising on bad input."""
+        """Render one page region. Returns None rather than raising on bad input.
+
+        ``bottom_left_origin`` MUST be set for Docling bboxes. Docling reports
+        ``CoordOrigin.BOTTOMLEFT`` (PDF-native: y grows upward, so t > b), while
+        PyMuPDF uses a top-left origin and expects y0 < y1. Passing a bottom-left
+        box straight to ``fitz.Rect`` yields ``is_empty == True`` — which silently
+        drops every crop.
+        """
         try:
             import fitz  # pymupdf
         except ImportError:
@@ -48,12 +56,26 @@ class RegionRenderer:
                 return None
             page = doc[page_number - 1]
 
+            x0, y0, x1, y1 = bbox
+            if bottom_left_origin:
+                height = page.rect.height
+                y0, y1 = height - y0, height - y1
+            # Normalise: fitz.Rect does NOT reorder its corners, and treats
+            # y0 >= y1 as an empty rect.
+            rect = fitz.Rect(min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+
             pad = self._c.table_crop_pad_pt
             # Padding keeps outer table rules from being shaved — a clipped
             # border reads as ambiguous to a vision model.
-            clip = fitz.Rect(*bbox) + (-pad, -pad, pad, pad)
+            clip = rect + (-pad, -pad, pad, pad)
             clip = clip & page.rect  # never exceed the page
             if clip.is_empty or clip.width < 8 or clip.height < 8:
+                logger.debug(
+                    "Region render produced an empty clip",
+                    page=page_number,
+                    bbox=bbox,
+                    bottom_left_origin=bottom_left_origin,
+                )
                 return None
 
             zoom = (dpi or self._c.table_render_dpi) / _PDF_USER_SPACE_DPI

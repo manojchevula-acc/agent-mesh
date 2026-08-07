@@ -17,6 +17,11 @@ qdrant_storage/
 milvus_storage/
 *.sqlite3
 
+# Extracted image assets. Figures and table crops lifted out of internal policy
+# documents — they inherit the source document's classification and must never
+# be committed. Regenerable at any time by re-running ingestion.
+image_store/
+
 # Test / coverage
 .pytest_cache/
 .coverage
@@ -55,3 +60,4 @@ Thumbs.db
 *.sln
 *.sw?
 documentation/
+image_store/

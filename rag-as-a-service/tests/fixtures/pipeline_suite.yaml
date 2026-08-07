@@ -1,0 +1,265 @@
+# Retrieval test suite for THIS pipeline.
+#
+# Every question is grounded in content verified present in the index — no
+# invented facts. Designed to cover the full cross-product of:
+#
+#   PATHS      text->text | text->table | text->image | image_stub | crop promotion
+#   CONTENT    text chunks | table chunks | image_stub chunks | figure vectors
+#   BEHAVIOUR  intent routing | score gating | filters | unanswerable | OCR | cross-doc
+#   DOCUMENTS  all 8 in the corpus
+#
+# Assertion fields (all optional except `query`):
+#   expect_doc            substring of document_name that must appear in results
+#   expect_content_type   text | table | image_stub — must appear in results
+#   must_contain          strings that must appear in retrieved text (case-insens.)
+#   expect_images         true/false — must the image branch return anything?
+#   expect_image_role     table_image | figure | chart | diagram
+#   expect_promoted       true — a table crop must be promoted from its text chunk
+#   max_rank              expected doc must appear at or above this rank (1-based)
+#   filters               DocumentFilter fields to apply
+#   top_k                 default 5
+#
+# WHY facts and not clause references: this pipeline's clause_reference
+# identifies only 10% of chunks (it regexes the first section cross-reference in
+# the text), and section_heading often resolves to the page letterhead
+# ("FIRST ABU DHABI BANK"). Neither is a usable retrieval target. Document +
+# content_type + the load-bearing fact are.
+
+version: 1
+
+cases:
+
+  # ══ PATH 1: text -> text ════════════════════════════════════════════
+  - id: T01
+    covers: "text->text; prose clause retrieval"
+    query: "How often must an AI/ML systems return be submitted to the Central Bank and by what date?"
+    expect_doc: "CBUAE"
+    expect_content_type: text
+    must_contain: ["31 March"]
+    expect_images: false
+    max_rank: 3
+
+  - id: T02
+    covers: "text->text; long-form obligation"
+    query: "If a customer asks why their pricing was set that way and AI influenced it, must the bank explain?"
+    expect_doc: "CBUAE"
+    expect_content_type: text
+    must_contain: ["meaningful explanation"]
+    max_rank: 3
+
+  - id: T03
+    covers: "text->text; numbered sub-clause"
+    query: "What human-in-the-loop controls are mandatory for HIGH-risk AI systems?"
+    expect_doc: "CBUAE"
+    must_contain: ["human review"]
+    max_rank: 3
+
+  - id: T04
+    covers: "text->text; incident notification window"
+    query: "Within how many days must the Central Bank be notified of a new high-risk AI deployment?"
+    expect_doc: "CBUAE"
+    must_contain: ["30 calendar days"]
+
+  # ══ PATH 2: text -> table (D8, sparse lexical match) ════════════════
+  - id: B01
+    covers: "text->table; exact figure lookup in a table cell"
+    query: "What is the arrangement fee standard rate and floor rate for a facility under AED 50 million?"
+    expect_doc: "Corporate_Term_Loan"
+    expect_content_type: table
+    must_contain: ["60 bps", "30 bps"]
+    max_rank: 3
+
+  - id: B02
+    covers: "text->table; sector limits table"
+    query: "What are the soft limit and hard limit for the Real Estate UAE sector?"
+    expect_doc: "Concentration_Limits"
+    expect_content_type: table
+    must_contain: ["20%", "25%"]
+    max_rank: 3
+
+  - id: B03
+    covers: "text->table; counterparty exposure amounts"
+    query: "What is the maximum exposure for a Financial Institution investment grade counterparty?"
+    expect_doc: "Concentration_Limits"
+    expect_content_type: table
+    must_contain: ["2,500,000,000"]
+
+  - id: B04
+    covers: "text->table; document control header table"
+    query: "What is the document reference and effective date of the credit concentration limits policy?"
+    expect_doc: "Concentration_Limits"
+    expect_content_type: table
+    must_contain: ["FAB-CRP-CONC-2024-v1.8", "1 April 2024"]
+
+  - id: B05
+    covers: "text->table; product parameter table"
+    query: "What is the minimum facility size for a corporate term loan?"
+    expect_doc: "Corporate_Term_Loan"
+    expect_content_type: table
+    must_contain: ["5,000,000"]
+
+  - id: B06
+    covers: "text->table; syndicated fee floors"
+    query: "When FAB acts as mandated lead arranger, what is the minimum arrangement fee floor?"
+    expect_doc: "Pricing_Policy"
+    expect_content_type: table
+    must_contain: ["30 bps"]
+
+  - id: B07
+    covers: "text->table; risk tier classification table"
+    query: "Which AI risk class covers systems with direct impact on credit decisions and pricing?"
+    expect_doc: "CBUAE"
+    expect_content_type: table
+    must_contain: ["HIGH"]
+
+  - id: B08
+    covers: "text->table; key dates table"
+    query: "What is the circular reference number and issue date of the CBUAE AI governance circular?"
+    expect_doc: "CBUAE"
+    expect_content_type: table
+    must_contain: ["15 March 2024"]
+
+  # ══ PATH 3: text -> image (visual ANN) ══════════════════════════════
+  # These target content that does NOT exist as text. The concentration
+  # policy's "Current Utilisation" column literally reads "Updated monthly
+  # -see MIS", so the actual utilisation number is only in the chart.
+  - id: I01
+    covers: "text->image; diagram retrieval via intent keyword"
+    query: "show me the approval authority escalation path diagram"
+    expect_images: true
+    max_rank: 5
+
+  - id: I02
+    covers: "text->image; governance org chart"
+    query: "display the AI governance reporting structure org chart"
+    expect_doc: "Governance_Diagrams"
+    expect_images: true
+
+  - id: I03
+    covers: "text->image; monitoring dashboard chart (values not in text)"
+    query: "show the performance monitoring dashboard chart with override rate over time"
+    expect_doc: "Model_Risk"
+    expect_images: true
+
+  - id: I04
+    covers: "text->image; portfolio analytics charts and heatmaps"
+    query: "show me the portfolio risk heatmap figure"
+    expect_doc: "Portfolio_Risk"
+    expect_images: true
+
+  # ══ PATH 4: image_stub retrieval (BGE-M3 finds the figure caption) ══
+  - id: S01
+    covers: "image_stub; figure findable through the TEXT index"
+    query: "figure showing key dates and compliance deadlines under this circular"
+    expect_doc: "CBUAE"
+    expect_content_type: image_stub
+
+  - id: S02
+    covers: "image_stub; risk classification figure caption"
+    query: "figure of AI ML risk classification tiers examples and validation cadence"
+    expect_doc: "CBUAE"
+    expect_content_type: image_stub
+
+  # ══ PATH 5: table crop promotion (D8 dual representation) ═══════════
+  # A table TEXT chunk is retrieved; its rendered crop must be pulled into
+  # the image budget even though the visual ANN did not surface it.
+  - id: P01
+    covers: "crop promotion; requires llm.vision_enabled"
+    query: "sector concentration soft limit and hard limit percentages by industry"
+    expect_doc: "Concentration_Limits"
+    expect_content_type: table
+    expect_promoted: true
+
+  - id: P02
+    covers: "crop promotion; fee schedule table"
+    query: "arrangement fee schedule by facility size band standard versus floor rate"
+    expect_doc: "Corporate_Term_Loan"
+    expect_content_type: table
+    expect_promoted: true
+
+  # ══ BEHAVIOUR: intent routing ══════════════════════════════════════
+  - id: R01
+    covers: "intent router MISS; precise factual question must not trigger images"
+    query: "what is the minimum facility size for a corporate term loan in AED"
+    expect_images: false
+
+  - id: R02
+    covers: "intent router HIT; keyword 'diagram'"
+    query: "which diagram shows the human-in-the-loop control flow"
+    expect_images: true
+
+  - id: R03
+    covers: "explicit override beats the heuristic (include_images forced off)"
+    query: "show me the approval diagram"
+    include_images: false
+    expect_images: false
+
+  - id: R04
+    covers: "explicit override beats the heuristic (include_images forced on)"
+    query: "what is the arrangement fee for a facility under AED 50 million"
+    include_images: true
+    expect_images: true
+
+  # ══ BEHAVIOUR: metadata filters ════════════════════════════════════
+  - id: F01
+    covers: "document_type filter restricts results"
+    query: "what are the concentration limits"
+    filters:
+      document_type: ["risk_policy"]
+    expect_doc: "Concentration_Limits"
+
+  # ══ BEHAVIOUR: cross-document synthesis ════════════════════════════
+  - id: X01
+    covers: "cross-doc; answer spans pricing + governance"
+    query: "For a large corporate facility, what pricing floor applies and which committee must approve it?"
+    top_k: 8
+    min_distinct_docs: 2
+
+  - id: X02
+    covers: "cross-doc; AI governance obligations span circular and MRM framework"
+    query: "What validation and human oversight is required before deploying a credit pricing AI model?"
+    top_k: 8
+    min_distinct_docs: 2
+
+  # ══ BEHAVIOUR: OCR / scanned document ══════════════════════════════
+  # This document produced 2 chunks and 0 tables — OCR reconstructs text, not
+  # table structure. It is the weakest content in the corpus by design.
+  - id: O01
+    covers: "scanned document is reachable at all"
+    query: "executed term sheet signature and counterparty details"
+    expect_doc: "Term_Sheet"
+    top_k: 10
+
+  # ══ BEHAVIOUR: unanswerable / out of corpus ════════════════════════
+  # Dense ANN always returns something, so we do NOT assert "no chunks".
+  # We assert no IMAGES pass the gate, and record the top score so a
+  # refusal threshold can be calibrated against the answerable cases.
+  - id: N01
+    covers: "out-of-corpus; retail mortgage LTV"
+    query: "What is the maximum loan-to-value ratio for a retail residential mortgage?"
+    expect_images: false
+    report_only: true
+
+  - id: N02
+    covers: "out-of-corpus; AML transaction threshold"
+    query: "What is the minimum transaction value that triggers enhanced AML due diligence?"
+    expect_images: false
+    report_only: true
+
+  - id: N03
+    covers: "out-of-corpus; HR policy"
+    query: "How many days of annual leave are FAB employees entitled to?"
+    expect_images: false
+    report_only: true
+
+# ── KNOWN GAPS (documented, not testable against this corpus) ─────────
+#
+# row_split_tables : every table in this corpus fits inside max_chunk_size, so
+#                    all chunks carry table_part=None. The header-repetition
+#                    path is covered by tests/unit/test_table_chunking.py with
+#                    a synthetic 200-row table instead.
+# image_to_image   : multimodal.retrieval.enable_image_query is false by
+#                    default; enable it and add a case using an asset_id from
+#                    the image collection.
+# freshness_warning: no document in the corpus has an effective_date older
+#                    than freshness_max_age_days, so the penalty never fires.
