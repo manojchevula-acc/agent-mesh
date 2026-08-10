@@ -1,5 +1,5 @@
 import { Link, NavLink } from "react-router-dom";
-import { MessageSquare, X, SquarePen, ThumbsUp, MessagesSquare, GitBranch, Layers } from "lucide-react";
+import { MessageSquare, X, SquarePen, ThumbsUp, MessagesSquare, GitBranch, Layers, ClipboardCheck } from "lucide-react";
 import { ApiStatus } from "./ApiStatus";
 import { Logo } from "@/components/ui/Logo";
 import { cn } from "@/lib/utils";
@@ -28,6 +28,12 @@ const NAV_ITEMS = [
     label: "Feedback",
     icon: ThumbsUp,
     description: "User ratings & satisfaction",
+  },
+  {
+    to: "/app/approvals",
+    label: "Approvals",
+    icon: ClipboardCheck,
+    description: "Pending HITL approval requests",
   },
   {
     to: "/app/conversations",

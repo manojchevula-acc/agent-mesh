@@ -946,6 +946,11 @@ _CORS_ORIGINS = [
     "http://127.0.0.1:4173",
 ]
 
+async def get_approvals_list(request: Request) -> JSONResponse:
+    """List all pending approvals. GET /api/approvals"""
+    return JSONResponse(approval_store.get_pending())
+
+
 async def get_approval(request: Request) -> JSONResponse:
     """Fetch approval details for the standalone approval page. GET /api/approvals/{id}"""
     aid = request.path_params.get("id", "").strip().upper()
@@ -1135,6 +1140,7 @@ app = Starlette(
         Route("/api/feedback/stats",             get_feedback_stats,                    methods=["GET"]),
         Route("/api/mesh/status",      get_mesh_status,     methods=["GET"]),
         Route("/api/conversations/{session_id}", get_conversation, methods=["GET"]),
+        Route("/api/approvals",                  get_approvals_list, methods=["GET"]),
         Route("/api/approvals/{id}",             get_approval,     methods=["GET"]),
         Route("/api/approvals/{id}/approve",     post_approve,     methods=["POST"]),
         Route("/api/approvals/{id}/reject",      post_reject,      methods=["POST"]),

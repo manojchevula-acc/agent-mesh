@@ -12,6 +12,7 @@ import AuditDashboardPage from "@/pages/AuditDashboardPage";
 import ConversationsDashboardPage from "@/pages/ConversationsDashboardPage";
 import LogsDashboardPage from "@/pages/LogsDashboardPage";
 import RequestActivityPage from "@/pages/RequestActivityPage";
+import ApprovalsDashboardPage from "@/pages/ApprovalsDashboardPage";
 import { EmptyState } from "@/components/ui/EmptyState";
 
 export default function App() {
@@ -35,6 +36,7 @@ export default function App() {
           <Route path="audit" element={<AuditDashboardPage />} />
           <Route path="conversations" element={<ConversationsDashboardPage />} />
           <Route path="logs" element={<LogsDashboardPage />} />
+          <Route path="approvals" element={<ApprovalsDashboardPage />} />
         </Route>
       </Route>
 

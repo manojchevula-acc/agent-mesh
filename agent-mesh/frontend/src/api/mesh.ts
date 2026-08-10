@@ -223,6 +223,11 @@ export async function getLogs(): Promise<LogsResponse> {
   return data;
 }
 
+export async function getApprovalsList(): Promise<import("@/types/mesh").ApprovalListItem[]> {
+  const { data } = await apiClient.get("/api/approvals");
+  return data;
+}
+
 export async function getApprovalDetails(approvalId: string): Promise<HitlDetails & { approval_id: string }> {
   const { data } = await apiClient.get(`/api/approvals/${encodeURIComponent(approvalId)}`);
   return data;

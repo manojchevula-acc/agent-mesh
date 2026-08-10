@@ -168,6 +168,16 @@ export interface ChatMessage {
   cacheContext?: CandidateItem[];
 }
 
+export interface ApprovalListItem {
+  approval_id: string;
+  user_name: string;
+  role: string;
+  query: string;
+  hitl_type: "role_approval" | "tool_approval";
+  tool_name?: string;
+  tool_args?: Record<string, string | number>;
+}
+
 export interface HitlDetails {
   user_name: string;
   role: string;

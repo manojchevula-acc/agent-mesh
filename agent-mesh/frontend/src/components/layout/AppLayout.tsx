@@ -28,6 +28,10 @@ const PAGE_TITLES: Record<string, { title: string; subtitle: string }> = {
     title: "Trace Spans",
     subtitle: "Agent-to-agent wire call spans — latency, payload sizes, and response previews.",
   },
+  "/app/approvals": {
+    title: "Approvals",
+    subtitle: "Pending HITL approval requests — grouped by requester role.",
+  },
   "/app/conversations": {
     title: "Conversations",
     subtitle: "All chat sessions with full message history.",
