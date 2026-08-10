@@ -72,7 +72,7 @@ EXPECTED_VIEWS = [
 
 def build_engine(host, port, user, password, database):
     url = (
-        f"mysql+pymysql://{quote_plus(user)}:{quote_plus(password)}@{host}:{port}/{database}"
+        f"mysql+mysqlconnector://{quote_plus(user)}:{quote_plus(password)}@{host}:{port}/{database}"
         "?charset=utf8mb4"
     )
     return create_engine(url, echo=False, pool_pre_ping=True)

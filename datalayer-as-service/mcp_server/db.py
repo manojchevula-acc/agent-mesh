@@ -40,7 +40,7 @@ def get_engine() -> Engine:
         raise RuntimeError("MYSQL_PASSWORD is not set in .env")
 
     url = (
-        f"mysql+pymysql://{quote_plus(user)}:{quote_plus(password)}"
+        f"mysql+mysqlconnector://{quote_plus(user)}:{quote_plus(password)}"
         f"@{host}:{port}/{database}?charset=utf8mb4"
     )
 

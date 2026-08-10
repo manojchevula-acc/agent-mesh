@@ -287,4 +287,7 @@ def set_active_tracer(tracer: ExecutionTracer) -> contextvars.Token:
 
 
 def clear_active_tracer(token: contextvars.Token) -> None:
-    _active_tracer.reset(token)
+    try:
+        _active_tracer.reset(token)
+    except ValueError:
+        pass

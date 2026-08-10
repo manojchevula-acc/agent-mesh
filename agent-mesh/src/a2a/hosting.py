@@ -104,12 +104,18 @@ def build_starlette_app(
             text = result["messages"][-1].content
             return JSONResponse({"text": text})
         except Exception as exc:
-            # Groq returns 400 when Llama generates a malformed tool call.
-            # Return gracefully instead of crashing the server process.
-            import logging
-            logging.getLogger("mesh.hosting").warning(
-                "Agent invoke error (will retry on next request): %s", exc
-            )
+            import traceback, pathlib
+            tb = traceback.format_exc()
+            # Print to stdout so the parent launch_mesh.py terminal shows it
+            print(f"\n[mesh.hosting:{card_name}] INVOKE ERROR:\n{tb}", flush=True)
+            # Also write to a file for reliable debugging
+            try:
+                _err_dir = pathlib.Path(__file__).resolve().parents[2] / "data" / "logs"
+                _err_dir.mkdir(parents=True, exist_ok=True)
+                with open(_err_dir / f"invoke_error_{card_name}.txt", "w") as _f:
+                    _f.write(tb)
+            except Exception:
+                pass
             return JSONResponse({"text": (
                 "I had trouble processing that request. "
                 "Please rephrase your question and try again."

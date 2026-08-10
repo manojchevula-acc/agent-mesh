@@ -8,7 +8,7 @@ if project_root not in sys.path:
 
 from typing import Any, List, Optional
 
-from langchain_openai import ChatOpenAI
+from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage
 from langgraph.prebuilt import create_react_agent
 
@@ -26,17 +26,17 @@ def create_demo_agent(
     api_key: Optional[str] = None,
 ):
     """
-    Creates and returns a LangGraph ReAct agent powered by Groq via the
-    OpenAI-compatible endpoint.
+    Creates and returns a LangGraph ReAct agent powered by Groq.
 
-    The audit callback is bound to the LLM so every invocation is logged to
-    the JSONL audit trail regardless of which code path calls ainvoke().
+    Uses ChatGroq (native Groq client) instead of ChatOpenAI so that tool
+    calls are serialised in the format Groq actually expects, avoiding the
+    <function=...> XML mismatch that causes 400 errors with the OpenAI shim.
     """
-    # 1. Instantiate LLM via OpenAI Chat Completions-compatible Groq endpoint.
-    llm = ChatOpenAI(
+    # 1. Instantiate LLM via the native Groq client.
+    llm = ChatGroq(
         model=model or Config.GROQ_MODEL,
         api_key=api_key or Config.GROQ_API_KEY,
-        base_url=Config.LLM_BASE_URL,
+        max_retries=5,  # auto-backoff on 429 rate limit errors
     )
 
     # 2. Create the ReAct agent from the raw LLM so create_react_agent can call

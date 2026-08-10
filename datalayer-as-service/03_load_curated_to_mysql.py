@@ -47,7 +47,7 @@ SQL_DIR = "sql"
 # ---------------------------------------------------------------------------
 
 def build_engine(host, port, user, password, database=None):
-    base = f"mysql+pymysql://{quote_plus(user)}:{quote_plus(password)}@{host}:{port}"
+    base = f"mysql+mysqlconnector://{quote_plus(user)}:{quote_plus(password)}@{host}:{port}"
     url = f"{base}/{database}?charset=utf8mb4" if database else f"{base}?charset=utf8mb4"
     return create_engine(url, echo=False, pool_pre_ping=True)
 

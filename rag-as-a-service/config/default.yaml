@@ -81,7 +81,7 @@ retrieval:
 ingestion:
   docs_path: ./docs
   batch_size: 32
-  max_concurrent_documents: 3
+  max_concurrent_documents: 1
   supported_extensions:
     - .pdf
     - .docx

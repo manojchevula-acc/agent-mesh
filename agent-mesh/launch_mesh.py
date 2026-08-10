@@ -61,7 +61,7 @@ def main():
     server = str(pathlib.Path(__file__).resolve().parent / "a2a_server.py")
     procs = []
     print("=" * 70)
-    print("  LAUNCHING AGENT MESH (Microsoft Agent Framework + A2A)")
+    print("  LAUNCHING AGENT MESH (Framework + A2A)")
     print("=" * 70)
     for name in START_ORDER:
         port = Config.AGENT_PORTS[name]

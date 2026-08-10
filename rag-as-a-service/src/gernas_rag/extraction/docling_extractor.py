@@ -3,7 +3,6 @@
 import asyncio
 from functools import partial
 from pathlib import Path
-from typing import Any
 
 from ..utils.logging import get_logger
 from .base import BaseExtractor, ElementType, ExtractedElement, ExtractionResult
@@ -21,72 +20,23 @@ class DoclingExtractor(BaseExtractor):
     """
 
     def __init__(self) -> None:
-        # Two converters cached lazily: one with OCR enabled (for scanned PDFs),
-        # one with OCR disabled (for digital PDFs with a text layer). Keyed by
-        # the do_ocr flag so model loading is amortised across documents.
-        self._converters: dict[bool, Any] = {}
+        # Single converter, created lazily on first use.
+        # Pydantic 2.14a1 (required by Docling 2.x) has a bug where model_dump()
+        # returns {} for inherited model fields inside spawned worker processes.
+        # Docling's ThreadedPdfPipeline re-validates PdfFormatOption in its own
+        # workers, hitting the bug.  Using DocumentConverter() with NO format_options
+        # lets Docling construct its defaults internally, bypassing our code entirely
+        # and avoiding the broken serialisation path.
+        self._converter = None
 
-    def _get_converter(self, do_ocr: bool) -> Any:
-        if do_ocr not in self._converters:
-            from docling.datamodel.base_models import InputFormat
-            from docling.datamodel.pipeline_options import PdfPipelineOptions
-            from docling.document_converter import DocumentConverter, PdfFormatOption
-
-            opts = PdfPipelineOptions()
-            opts.do_ocr = do_ocr
-            opts.do_table_structure = True
-            # Caps page-rasterization memory when OCR is on, preventing the
-            # std::bad_alloc that heavy pages trigger at the default scale.
-            opts.images_scale = 1.0
-            opts.generate_page_images = False
-
-            self._converters[do_ocr] = DocumentConverter(
-                format_options={
-                    InputFormat.PDF: PdfFormatOption(pipeline_options=opts)
-                }
-            )
-        return self._converters[do_ocr]
-
-    def _pdf_has_text_layer(self, file_path: Path) -> bool:
-        """Cheaply check whether a PDF carries an extractable text layer.
-
-        Reads only the stored text objects (no rasterization), so a scanned
-        PDF returns ~0 characters while a digital one returns plenty. Used to
-        decide whether OCR is needed. Falls back to assuming no text layer
-        (OCR on) if detection fails for any reason.
-        """
-        try:
-            import pypdfium2 as pdfium
-
-            pdf = pdfium.PdfDocument(str(file_path))
-            try:
-                page_count = len(pdf)
-                total_chars = 0
-                for page in pdf:
-                    textpage = page.get_textpage()
-                    total_chars += len(textpage.get_text_bounded().strip())
-                    textpage.close()
-                    page.close()
-                avg_chars = total_chars / max(page_count, 1)
-                # A genuine text layer averages well over ~50 chars/page;
-                # scanned PDFs return close to zero.
-                return avg_chars >= 50
-            finally:
-                pdf.close()
-        except Exception as exc:  # noqa: BLE001 - detection must never block ingestion
-            logger.warning(
-                "Text-layer detection failed; defaulting to OCR",
-                path=str(file_path),
-                error=str(exc),
-            )
-            return False
+    def _get_converter(self):
+        if self._converter is None:
+            from docling.document_converter import DocumentConverter
+            self._converter = DocumentConverter()
+        return self._converter
 
     def _sync_extract(self, file_path: Path) -> ExtractionResult:
-        do_ocr = True
-        if file_path.suffix.lower() == ".pdf":
-            do_ocr = not self._pdf_has_text_layer(file_path)
-        logger.info("Extraction mode", path=str(file_path), do_ocr=do_ocr)
-        result = self._get_converter(do_ocr).convert(str(file_path))
+        result = self._get_converter().convert(str(file_path))
         doc = result.document
         elements: list[ExtractedElement] = []
         for item, level in doc.iterate_items():
