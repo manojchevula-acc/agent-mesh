@@ -22,6 +22,26 @@ logger = get_logger(__name__)
 _MEDIA_TYPES = (ElementType.FIGURE, ElementType.TABLE)
 
 
+def _context_text(el: ExtractedElement) -> str:
+    """Textual context to hand the VLM alongside the crop.
+
+    A figure/table title very often sits in its own layout block — a separate
+    "section_header" line above the plot, or a caption below it — outside the
+    picture/table's own bounding box that ``get_image()`` crops. Anything
+    printed only there (a date range, a figure number, the series it covers)
+    is invisible to a model that only sees the crop, no matter how well it
+    reads pixels. Docling's own caption link (see ``DoclingExtractor._caption_of``)
+    is the reliable half of this; the nearest heading is a fallback for when no
+    caption link exists. Both are handed over as text, not asked to be
+    transcribed as if printed on the image.
+    """
+    heading = el.metadata.get("nearest_heading", "")
+    caption = el.metadata.get("docling_caption", "")
+    if heading and caption:
+        return f"{heading}. Caption: {caption}"
+    return caption or heading
+
+
 class IngestionPipeline:
     """Orchestrates the full ingestion flow:
 
@@ -156,7 +176,7 @@ class IngestionPipeline:
                         image_bytes=el.image_bytes,
                         mime_type="image/png",
                         element_type=el.element_type.value,
-                        context_text=el.metadata.get("nearest_heading", ""),
+                        context_text=_context_text(el),
                         confidence=el.metadata.get("table_confidence"),
                     )
                 )

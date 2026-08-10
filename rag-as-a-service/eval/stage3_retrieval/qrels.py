@@ -28,7 +28,7 @@ from typing import Any, Iterable
 from ..core.corpus import ChunkIndex, IndexedChunk
 from ..core.io import read_json, write_json
 from ..core.models import QrelQuestion, QrelSet, RelevanceJudgment
-from ..core.numeric import match_keys, numeric_facts
+from ..core.numeric import is_weak_fact, match_keys, numeric_facts
 from ..core.text import content_tokens
 
 # Grade scale:
@@ -62,14 +62,6 @@ _STOPWORDS = content_tokens(
 )
 
 
-# A unit-less small integer ("1" and "3" parsed out of "1-3yr", an article
-# number, a markdown list marker) appears in almost every chunk, so counting it
-# as evidence lets unrelated chunks clear the grade-2 bar on structural noise
-# alone. Facts at or above this magnitude, and any fact carrying a unit, are
-# distinctive enough to be worth matching on.
-_WEAK_BARE_VALUE = 10
-
-
 @dataclass(frozen=True)
 class _Proposal:
     grade: int
@@ -80,22 +72,12 @@ class _Proposal:
 def _distinctive_facts(facts: dict[tuple[str, str], str]) -> dict[tuple[str, str], str]:
     """Keep only facts distinctive enough to identify a chunk.
 
-    Returns empty when a gold answer carries nothing but weak integers ("Tier 1,
-    Tier 2, Tier 3"). That is deliberate: falling back to matching on them would
-    grade most of the corpus relevant, so such a question is better served by the
-    lexical path, which an empty result routes it to.
+    Returns empty when a gold answer carries nothing but label-like integers
+    ("Tier 1, Tier 2, Tier 3"). That is deliberate: falling back to matching on
+    them would grade most of the corpus relevant, so such a question is better
+    served by the lexical path, which an empty result routes it to.
     """
-
-    def strong(key: tuple[str, str]) -> bool:
-        unit, value = key
-        if unit:
-            return True
-        try:
-            return abs(float(value)) >= _WEAK_BARE_VALUE
-        except ValueError:
-            return True
-
-    return {k: v for k, v in facts.items() if strong(k)}
+    return {k: v for k, v in facts.items() if not is_weak_fact(k)}
 
 
 def load_qrels(path: Path) -> QrelSet | None:

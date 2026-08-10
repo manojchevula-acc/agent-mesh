@@ -275,6 +275,30 @@ def unit_compatible(a: str, b: str) -> bool:
     return not a or not b
 
 
+# A unit-less integer below this magnitude is far more often a label than a
+# quantity: "Tier 1 / Tier 2 / Tier 3", "Article 4", a markdown list marker, a
+# legend index. Treating those as facts produces "missing"/"hallucinated"
+# findings that say nothing about numeric accuracy — the exact false positives
+# the LLM re-triage was spending calls to filter out.
+_WEAK_BARE_VALUE = 10
+
+
+def is_weak_fact(key: tuple[str, str]) -> bool:
+    """True for a unit-less small integer — a label, not a measured quantity."""
+    unit, value = key
+    if unit:
+        return False
+    try:
+        return abs(float(value)) < _WEAK_BARE_VALUE
+    except ValueError:
+        return False
+
+
+def distinctive_keys(keys: set[tuple[str, str]]) -> set[tuple[str, str]]:
+    """Drop label-like facts, keeping every unit-bearing or large-valued one."""
+    return {k for k in keys if not is_weak_fact(k)}
+
+
 def match_keys(
     reference: set[tuple[str, str]],
     hypothesis: set[tuple[str, str]],
@@ -320,20 +344,31 @@ class NumericComparison:
 
 
 def compare_numeric(
-    reference: str, hypothesis: str, *, strict_units: bool = True
+    reference: str,
+    hypothesis: str,
+    *,
+    strict_units: bool = True,
+    drop_weak: bool = False,
 ) -> NumericComparison:
     """Compare the numeric facts of two texts in both directions at once.
 
-    ``strict_units`` defaults to True, which is what stage 2b needs: it compares
-    two descriptions of the *same image*, so a unit divergence is a real defect.
-    Pass False when comparing prose against indexed chunk text, where units are
-    routinely carried by a table header instead of the cell (see
-    :func:`unit_compatible`).
+    ``strict_units`` requires both sides to name the same unit family. Leave it
+    True only when a unit divergence is itself the defect being measured; pass
+    False whenever one side may write a quantity bare because its unit sits in a
+    column header, an axis label, or a shared suffix ("65/80/100/130 bps" gives
+    the unit to 130 alone). See :func:`unit_compatible`.
+
+    ``drop_weak`` removes label-like facts — unit-less integers below 10 — from
+    both sides before comparing, so "Tier 1 / Tier 2 / Tier 3" cannot register as
+    three missing quantities. See :func:`is_weak_fact`.
     """
     ref_facts = numeric_facts(reference)
     hyp_facts = numeric_facts(hypothesis)
     ref_keys = {f.key: f for f in ref_facts}
     hyp_keys = {f.key: f for f in hyp_facts}
+    if drop_weak:
+        ref_keys = {k: v for k, v in ref_keys.items() if not is_weak_fact(k)}
+        hyp_keys = {k: v for k, v in hyp_keys.items() if not is_weak_fact(k)}
 
     matched_keys = match_keys(set(ref_keys), set(hyp_keys), strict_units=strict_units)
     missing_keys = ref_keys.keys() - matched_keys

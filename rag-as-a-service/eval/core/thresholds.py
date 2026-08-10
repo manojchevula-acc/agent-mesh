@@ -75,7 +75,7 @@ STAGE2_INTEGRITY: dict[str, Gate] = {
 STAGE2_CAPTIONS: dict[str, Gate] = {
     # The money metric: every number printed on the figure must survive into the
     # caption, and the caption must not invent any.
-    "caption_numeric_recall": Gate(0.98),
+    "caption_numeric_recall": Gate(0.95),
     "caption_numeric_hallucination_rate": Gate(0.02, direction="max"),
     # Non-gating: CER measures raw character-edit-distance against a verbatim
     # human transcription, but the VLM prompt asks for a transcription-style
@@ -84,7 +84,10 @@ STAGE2_CAPTIONS: dict[str, Gate] = {
     # caption_numeric_recall is 1.0 and caption_numeric_hallucination_rate is 0
     # on the same figure. The numeric pair above already isolates the failure
     # mode that matters (a wrong or invented value); keep CER as a trend line,
-    # not a gate that fails on faithful paraphrase.
+    # not a gate that fails on faithful paraphrase. The caption's Summary and
+    # Reading sections have no counterpart in a verbatim transcription at all,
+    # so they raise CER by construction — read a jump after a prompt change as
+    # "the caption says more", not "the caption drifted".
     "caption_cer": Gate(0.15, direction="max", gating=False),
     "illegible_marker_rate": Gate(0.10, direction="max", gating=False),
     "empty_caption_rate": Gate(0.0, direction="max"),

@@ -75,6 +75,41 @@ class TestUnitCompatibility:
         sources = ["| Corp-IG (AAA-BBB) | 3.5bn | 14% T1 |"]
         assert unsupported_facts(answer, sources, strict_units=False)[0] == ["AED 9.9 billion"]
 
+    def test_shared_unit_suffix_notation_is_not_a_caption_defect(self):
+        # A transcription gives the unit to the last value only; the caption
+        # attaches it to each. Strict matching reports the same numbers as both
+        # missing and hallucinated — the stage 2b failure this fixes.
+        transcription = "AAA/AA — 65/80/100/130 bps"
+        caption = "AAA/AA: 65 bps, 80 bps, 100 bps, 130 bps"
+        assert compare_numeric(transcription, caption).recall < 1.0
+        lenient = compare_numeric(transcription, caption, strict_units=False)
+        assert lenient.recall == 1.0
+        assert lenient.extra == []
+
+
+class TestWeakFactFiltering:
+    """Unit-less small integers are labels, not measured quantities."""
+
+    def test_labels_are_weak_but_units_and_large_values_are_not(self):
+        from eval.core.numeric import is_weak_fact
+
+        assert is_weak_fact(("", "3"))  # "Tier 3"
+        assert not is_weak_fact(("pct", "3"))  # "3%"
+        assert not is_weak_fact(("", "215"))  # a bare axis reading
+        assert not is_weak_fact(("bps", "5"))  # small, but carries a unit
+
+    def test_tier_labels_do_not_count_as_missing_quantities(self):
+        transcription = "Tier 1 HIGH, Tier 2 MEDIUM, Tier 3 LOW. Re-validation within 6 months."
+        caption = "High, Medium and Low risk tiers; re-validation within 6 months."
+        assert compare_numeric(transcription, caption).recall < 1.0
+        assert compare_numeric(transcription, caption, drop_weak=True).recall == 1.0
+
+    def test_dropping_weak_facts_never_hides_a_real_value(self):
+        transcription = "The floor is 165 bps and utilisation is 18.4%."
+        caption = "The floor is 165 bps."
+        result = compare_numeric(transcription, caption, strict_units=False, drop_weak=True)
+        assert result.missing == ["18.4%"]
+
 
 # ══════════════════════════════════════════════════════════════════════
 # Stage 3 qrels auto-grader

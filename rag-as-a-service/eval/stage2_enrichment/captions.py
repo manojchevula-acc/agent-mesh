@@ -266,7 +266,17 @@ async def score(
 
     for chunk in sorted(scored, key=lambda c: (c.document, c.source_page or 0)):
         truth = verified[chunk.artifact_ref]
-        comparison = compare_numeric(truth.transcription, chunk.text)
+        # Units are compared leniently and label-like integers dropped, because
+        # neither divergence says anything about caption accuracy:
+        #   * a transcription writes "65/80/100/130 bps", giving the unit to 130
+        #     alone, while the caption attaches it to every value — the same
+        #     numbers then register as both missing AND hallucinated;
+        #   * "Tier 1 / Tier 2 / Tier 3" parses as three quantities.
+        # A genuine unit error still fails: unit_compatible only lets a
+        # *unit-less* side match, so 50 bps never matches 0.5%.
+        comparison = compare_numeric(
+            truth.transcription, chunk.text, strict_units=False, drop_weak=True
+        )
         cer = char_error_rate(truth.transcription, chunk.text)
 
         missing, extra = comparison.missing, comparison.extra

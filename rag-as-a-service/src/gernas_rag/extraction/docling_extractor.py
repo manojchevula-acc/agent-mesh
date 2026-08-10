@@ -138,6 +138,33 @@ class DoclingExtractor(BaseExtractor):
             return None
         return _pil_to_png_bytes(pil_image)
 
+    def _caption_of(self, item: Any, doc: Any) -> str:
+        """Resolve Docling's own figure/table caption link, when the layout model found one.
+
+        ``item.get_image(doc)`` crops exactly the picture/table's own bounding
+        box — it does not know a title or caption sits in a separate text block
+        above or below it, so that text (and any date/label printed only there,
+        never inside the plot area itself) is invisible to the VLM. Docling
+        tracks the link anyway: a picture or table item carries ``.captions``,
+        a list of references to the actual caption text elements the layout
+        model associated with it. Resolving that costs nothing extra — the
+        document is already fully parsed — and it is far more reliable than
+        guessing from vertical position, because it is Docling's own layout
+        judgement rather than a proximity heuristic re-derived from bboxes.
+        """
+        captions = getattr(item, "captions", None)
+        if not captions:
+            return ""
+        texts = []
+        for ref in captions:
+            try:
+                resolved = ref.resolve(doc)
+                if getattr(resolved, "text", ""):
+                    texts.append(resolved.text)
+            except Exception:  # noqa: BLE001 — a bad ref must not fail extraction.
+                continue
+        return " ".join(texts)
+
     def _bbox_of(self, item: Any) -> tuple[float, float, float, float] | None:
         try:
             prov = getattr(item, "prov", None)
@@ -181,6 +208,7 @@ class DoclingExtractor(BaseExtractor):
             if self._enrichment_enabled and el_type == ElementType.FIGURE:
                 image_bytes = self._capture_image(item, doc)
                 bbox = self._bbox_of(item)
+                metadata["docling_caption"] = self._caption_of(item, doc)
             elif el_type == ElementType.TABLE:
                 table_confidence = float(getattr(item, "confidence", 1.0) or 1.0)
                 metadata["table_confidence"] = table_confidence
@@ -192,6 +220,7 @@ class DoclingExtractor(BaseExtractor):
                 ):
                     image_bytes = self._capture_image(item, doc)
                     bbox = self._bbox_of(item)
+                    metadata["docling_caption"] = self._caption_of(item, doc)
 
             elements.append(
                 ExtractedElement(
