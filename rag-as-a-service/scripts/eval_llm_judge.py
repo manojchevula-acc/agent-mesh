@@ -227,7 +227,7 @@ async def main() -> None:
     for case in cases:
         answerable = case.get("answerable", True)
         response = await pipeline.retrieve(
-            RetrieveRequest(query=case["question"], top_k=5, include_images=True)
+            RetrieveRequest(query=case["question"], top_k=settings.retrieval.final_top_k, include_images=True)
         )
         answer = ""
         if not args.no_generate:
@@ -301,9 +301,14 @@ async def main() -> None:
     print("  means fix generation (prompt, model, context budget).")
 
     if args.report:
-        Path(args.report).write_text(
-            _markdown(records, settings, judge_model, counts), encoding="utf-8"
-        )
+        report_path = Path(args.report)
+        content = _markdown(records, settings, judge_model, counts)
+        # append with separator so successive runs accumulate in one file
+        if report_path.exists():
+            with report_path.open("a", encoding="utf-8") as fh:
+                fh.write("\n\n---\n\n" + content)
+        else:
+            report_path.write_text(content, encoding="utf-8")
         print(f"\nreport written to {args.report}")
 
 

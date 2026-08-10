@@ -4,3 +4,10 @@
 # log_level: DEBUG
 # embedding:
 #   device: mps
+
+retrieval:
+  final_top_k: 3   # balance: enough context for text cases, fits under ~8K with 1 small image
+
+multimodal:
+  retrieval:
+    image_intent: always   # fire image branch on every query, not just keyword hits
