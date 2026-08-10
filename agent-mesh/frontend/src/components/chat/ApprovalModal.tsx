@@ -1,4 +1,4 @@
-import { ShieldAlert } from "lucide-react";
+import { ShieldAlert, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import type { HitlDetails } from "@/types/mesh";
 
@@ -21,6 +21,8 @@ export function ApprovalModal({
 }: ApprovalModalProps) {
   if (!open) return null;
 
+  const isToolApproval = details.hitl_type === "tool_approval";
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop — no click-to-dismiss; reviewer must make an explicit decision */}
@@ -35,18 +37,23 @@ export function ApprovalModal({
         {/* Header */}
         <div className="flex items-start gap-3 mb-5">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-500/15">
-            <ShieldAlert className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+            {isToolApproval
+              ? <Wrench className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+              : <ShieldAlert className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+            }
           </div>
           <div>
             <h3
               id="hitl-dialog-title"
               className="text-base font-semibold text-fg"
             >
-              Human Review Required
+              {isToolApproval ? "Tool Action Approval Required" : "Human Review Required"}
             </h3>
             <p className="mt-0.5 text-sm text-muted">
-              A credit officer request has passed compliance and is awaiting
-              your approval before the pipeline continues.
+              {isToolApproval
+                ? "A write operation requires your approval before it is executed. Review the exact parameters below."
+                : "A credit officer request has passed compliance and is awaiting your approval before the pipeline continues."
+              }
             </p>
           </div>
         </div>
@@ -59,14 +66,42 @@ export function ApprovalModal({
               ({details.role.replace(/_/g, " ")})
             </span>
           </DetailRow>
-          <DetailRow label="Query">
-            <span className="text-fg">{details.query}</span>
-          </DetailRow>
-          <DetailRow label="Compliance">
-            <code className="block text-xs font-mono bg-surface rounded px-2 py-1 whitespace-pre-wrap break-words border border-line">
-              {details.compliance_verdict}
-            </code>
-          </DetailRow>
+
+          {isToolApproval ? (
+            <>
+              <DetailRow label="Tool">
+                <code className="font-mono text-xs bg-surface rounded px-2 py-0.5 border border-line text-fg">
+                  {details.tool_name}
+                </code>
+              </DetailRow>
+              {details.tool_args && Object.keys(details.tool_args).length > 0 && (
+                <DetailRow label="Arguments">
+                  <table className="w-full text-xs border-collapse">
+                    <tbody>
+                      {Object.entries(details.tool_args).map(([k, v]) => (
+                        <tr key={k} className="border-b border-line last:border-0">
+                          <td className="py-1 pr-3 font-medium text-muted w-36">{k}</td>
+                          <td className="py-1 font-mono text-fg">{String(v)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </DetailRow>
+              )}
+            </>
+          ) : (
+            <>
+              <DetailRow label="Query">
+                <span className="text-fg">{details.query}</span>
+              </DetailRow>
+              <DetailRow label="Compliance">
+                <code className="block text-xs font-mono bg-surface rounded px-2 py-1 whitespace-pre-wrap break-words border border-line">
+                  {details.compliance_verdict}
+                </code>
+              </DetailRow>
+            </>
+          )}
+
           <DetailRow label="Approval ID">
             <span className="font-mono text-xs text-muted">{approvalId}</span>
           </DetailRow>

@@ -174,6 +174,10 @@ export interface HitlDetails {
   query: string;
   compliance_verdict: string;
   compliance_reasoning?: LLMReasoningEntry[];
+  // UC-3: tool-level HITL fields
+  hitl_type?: "role_approval" | "tool_approval";
+  tool_name?: string;
+  tool_args?: Record<string, string | number>;
 }
 
 // SSE stream event types from POST /api/query/stream
@@ -181,7 +185,7 @@ export type StreamEvent =
   | { type: "stage"; stage: string; status: string; message?: string; judge_invoked?: boolean; judge_decision?: string; judge_reason?: string }
   | { type: "result"; result: MeshResult }
   | { type: "reasoning"; entries: LLMReasoningEntry[] }
-  | { type: "hitl"; approval_id: string; details: HitlDetails }
+  | { type: "hitl"; approval_id: string; hitl_type?: string; details: HitlDetails }
   | {
       type: "intent_suggestion";
       // top-level fields (backward compat, reflect top-1)

@@ -58,7 +58,7 @@ from src.auth.identity_provider import login, list_users
 from src.config import Config
 from src.feedback.store import record_feedback, record_structured_feedback, get_structured_feedback_list
 from src.mesh.orchestrator import handle_request, handle_request_stream
-from src.hitl.approval_store import approval_store
+from src.hitl.approval_store import approval_store, CHECKPOINT_DIR
 from src.memory import ConversationStore
 from src.observability import get_logger, CAT_SYSTEM, flush_observability
 from src.tracing.execution_trace import ExecutionTracer, set_active_tracer, clear_active_tracer
@@ -812,6 +812,21 @@ async def _lifespan(app):
             asyncio.create_task(index_conversations_async())
         except Exception as exc:
             _log.warning("cache indexer startup failed: %s", exc)
+    # UC-5: Re-hydrate any HITL approvals that were pending when the server last shut down.
+    # save_checkpoint() writes MeshState to data/checkpoints/{aid}.json before yielding;
+    # this restore loop ensures those approvals survive restarts (no resubmission needed).
+    if CHECKPOINT_DIR.exists():
+        restored = 0
+        for cp_file in CHECKPOINT_DIR.glob("*.json"):
+            aid = cp_file.stem
+            state = approval_store.load_checkpoint(aid)
+            if state:
+                approval_store.restore(aid, state)
+                restored += 1
+                _log.info("UC-5: Restored pending HITL approval %s from checkpoint", aid,
+                          extra={"status": "HITL_RESTORED"})
+        if restored:
+            _log.info("UC-5: Restored %d pending HITL approval(s) from data/checkpoints/", restored)
     yield
     _log.info("api_server shutting down — flushing observability exporters.")
     flush_observability()
@@ -943,10 +958,53 @@ async def get_approval(request: Request) -> JSONResponse:
 async def post_approve(request: Request) -> JSONResponse:
     """Approve a pending HITL request. POST /api/approvals/{id}/approve"""
     aid = request.path_params.get("id", "").strip().upper()
-    ok = approval_store.approve(aid)
+    ok = approval_store.approve(aid)   # signals asyncio.Event
     if not ok:
         return JSONResponse({"error": f"Approval '{aid}' not found or already resolved."}, status_code=404)
     _log.info("HITL approved id=%s", aid, extra={"status": "HITL_APPROVED"})
+    # UC-5 cold-path: yield to event loop — if a live coroutine was waiting in
+    # handle_request_stream it will consume the event now and clear _live_waiters.
+    await asyncio.sleep(0)
+    if not approval_store.is_live(aid):
+        # No live coroutine consumed the event → server was restarted while this
+        # approval was pending. Load the checkpoint and resume the pipeline directly.
+        state = approval_store.load_checkpoint(aid)
+        if state:
+            _log.info("UC-5 cold-path resume for approval %s", aid,
+                      extra={"status": "HITL_COLD_RESUME"})
+            from src.mesh.workflow import build_hitl_resume_workflow
+            from src.a2a.clients import ask_remote
+            try:
+                resume_wf = build_hitl_resume_workflow(ask=ask_remote)
+                resume_events = await resume_wf.run(state)
+                # Extract final MeshState (same pattern as orchestrator._final_state)
+                result_state = None
+                try:
+                    for out in reversed(resume_events.get_outputs()):
+                        if hasattr(out, "answer"):
+                            result_state = out
+                            break
+                except Exception:
+                    pass
+                answer = result_state.answer if result_state else (
+                    "Your request has been approved and processed."
+                )
+                # Store result in conversation history so user sees it on reconnect
+                if state.session_id:
+                    try:
+                        store = ConversationStore()
+                        store.append_turn(state.session_id, state.query, answer)
+                    except Exception:
+                        pass
+            except Exception as exc:
+                _log.warning("UC-5 cold-path resume failed for %s: %s", aid, exc)
+                answer = "Your request was approved. Please re-open the conversation to see the result."
+            approval_store.delete_checkpoint(aid)
+            approval_store._pending.pop(aid, None)
+            return JSONResponse({
+                "success": True, "approval_id": aid, "decision": "approved",
+                "resumed": True, "answer": answer,
+            })
     return JSONResponse({"success": True, "approval_id": aid, "decision": "approved"})
 
 

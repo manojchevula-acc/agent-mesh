@@ -13,6 +13,7 @@ Two safeguards:
    coordinator can tell the user a source is unavailable instead of crashing.
 """
 import asyncio
+import json
 import sys
 import time
 import pathlib
@@ -166,4 +167,50 @@ async def query_knowledge_base(question: str) -> str:
     return await _consult_peer("rag_agent", question, "RAG_UNAVAILABLE")
 
 
-COORDINATION_TOOLS = [query_structured_data, query_knowledge_base]
+# UC-3: Signal prefix returned by write-tool interceptors.
+# DomainExecutor detects this prefix and triggers tool-level HITL.
+APPROVAL_SIGNAL_PREFIX = "AWAITING_TOOL_APPROVAL:"
+
+
+@tool(description=(
+    "Submit a pricing rate change for a customer. "
+    "Requires supervisor approval before the change is applied. "
+    "Use for explicit pricing updates (e.g. 'change pricing for CUST001 to 4.5%')."
+))
+async def submit_pricing_change(customer_id: str, new_rate: float, effective_date: str) -> str:
+    """Interceptor: creates an approval request and returns a signal string."""
+    from src.hitl.approval_store import approval_store
+    tool_args = {"customer_id": customer_id, "new_rate": new_rate, "effective_date": effective_date}
+    aid = approval_store.create_tool_approval(
+        tool_name="submit_pricing_change",
+        tool_args=tool_args,
+    )
+    payload = json.dumps({"approval_id": aid, "tool_name": "submit_pricing_change",
+                          "tool_args": tool_args})
+    return f"{APPROVAL_SIGNAL_PREFIX}{payload}"
+
+
+@tool(description=(
+    "Adjust the credit limit for a customer. "
+    "Requires supervisor approval before the limit is changed. "
+    "Use for explicit credit limit adjustments (e.g. 'increase credit limit for CUST001 to 5M')."
+))
+async def adjust_credit_limit(customer_id: str, new_limit: float, reason: str) -> str:
+    """Interceptor: creates an approval request and returns a signal string."""
+    from src.hitl.approval_store import approval_store
+    tool_args = {"customer_id": customer_id, "new_limit": new_limit, "reason": reason}
+    aid = approval_store.create_tool_approval(
+        tool_name="adjust_credit_limit",
+        tool_args=tool_args,
+    )
+    payload = json.dumps({"approval_id": aid, "tool_name": "adjust_credit_limit",
+                          "tool_args": tool_args})
+    return f"{APPROVAL_SIGNAL_PREFIX}{payload}"
+
+
+COORDINATION_TOOLS = [
+    query_structured_data,
+    query_knowledge_base,
+    submit_pricing_change,
+    adjust_credit_limit,
+]

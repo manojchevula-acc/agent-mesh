@@ -191,6 +191,7 @@ class MeshState:
     hitl_pending: bool = False
     hitl_approval_id: str = ""
     hitl_details: dict = field(default_factory=dict)
+    hitl_type: str = ""   # "role_approval" | "tool_approval"
     # Semantic cache fields — set by CacheCheckExecutor on a cache hit
     cache_hit: bool = False
     cache_answer: str = ""
@@ -1049,12 +1050,14 @@ class ComplianceExecutor(Executor):
                 "compliance_verdict": (verdict or "")[:400],
                 "compliance_reasoning": _reasoning_dicts,
             }
+            state.hitl_type = "role_approval"
             state.trail.append(f"hitl_pending:{aid}")
             _log.info("HITL pending user=%s approval_id=%s", state.user_name, aid,
                       extra={"user": state.user_name, "status": "HITL"})
             _emit_stream_event({"stage": "compliance", "status": "completed",
                                 "message": "Compliance passed — awaiting human approval"})
             log_state_handoff("compliance", "hitl_pending", state, note=f"hitl:{aid}")
+            approval_store.save_checkpoint(aid, state)
             await ctx.yield_output(state)
             return
         # ── end HITL gate ────────────────────────────────────────────────────────────
@@ -1204,6 +1207,37 @@ class DomainExecutor(Executor):
                 try:
                     _add_event(span, "domain.a2a_call.started", {"target": "price_assist"})
                     answer = await self._ask("price_assist", base_prompt)
+                    # UC-3: Tool approval interceptor signal detection.
+                    # write tools return this prefix when they need human approval
+                    # before execution. Signal the HITL gate and pause the pipeline.
+                    _AWAITING_PREFIX = "AWAITING_TOOL_APPROVAL:"
+                    if (answer or "").strip().startswith(_AWAITING_PREFIX):
+                        try:
+                            import json as _json
+                            from src.hitl.approval_store import approval_store as _astore
+                            _raw = answer.strip()[len(_AWAITING_PREFIX):]
+                            _payload = _json.loads(_raw)
+                            _aid = _payload["approval_id"]
+                            _astore.backfill(_aid, state.user_name, state.role, state.query)
+                            state.hitl_pending = True
+                            state.hitl_approval_id = _aid
+                            state.hitl_type = "tool_approval"
+                            state.hitl_details = {
+                                "hitl_type": "tool_approval",
+                                "tool_name": _payload["tool_name"],
+                                "tool_args": _payload["tool_args"],
+                                "user_name": state.user_name,
+                                "role": state.role,
+                            }
+                            state.trail.append(f"hitl_tool_pending:{_aid}:{_payload['tool_name']}")
+                            _emit_stream_event({"stage": "domain", "status": "hitl_pending",
+                                                "message": f"Tool approval required: {_payload['tool_name']}"})
+                            _astore.save_checkpoint(_aid, state)
+                            await ctx.yield_output(state)
+                            return
+                        except Exception as _exc:
+                            _log.warning("Tool approval signal parse failed: %s", _exc,
+                                         extra={"status": "WARN"})
                     # Run retry-detection regexes on a reasoning-STRIPPED copy of the
                     # answer. The <llm_reasoning> synthesis block legitimately contains
                     # the tool name (e.g. "sources_used":["query_knowledge_base"]),

@@ -206,25 +206,44 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
     if getattr(final, "hitl_pending", False):
         from src.hitl.approval_store import approval_store
         aid = final.hitl_approval_id
-        _log.info("HITL: awaiting approval id=%s user=%s", aid, user.username,
+        hitl_type = getattr(final, "hitl_type", "role_approval") or "role_approval"
+        _log.info("HITL: awaiting approval id=%s type=%s user=%s", aid, hitl_type, user.username,
                   extra={"user": user.username, "status": "HITL_WAIT"})
         _emit_stream_event({
             "event_type": "hitl",
             "approval_id": aid,
+            "hitl_type": hitl_type,
             "details": final.hitl_details,
         })
-        approved = await approval_store.wait_for_approval(aid, timeout=120.0)
+        # UC-5: no timeout — approval can take hours/days; checkpoint survives restart
+        approved = await approval_store.wait_for_approval(aid)
         if approved:
-            _log.info("HITL: approved id=%s — resuming pipeline", aid,
+            _log.info("HITL: approved id=%s type=%s — resuming", aid, hitl_type,
                       extra={"user": user.username, "status": "HITL_APPROVED"})
             final.hitl_pending = False
-            resume_wf = build_hitl_resume_workflow(ask=ask_remote)
-            resume_events = await resume_wf.run(final)
-            resumed = _final_state(resume_events)
-            if resumed is not None:
-                final = resumed
+            if hitl_type == "tool_approval":
+                # UC-3: tool was approved — generate confirmation directly
+                # (do not re-run DomainExecutor to avoid firing the interceptor again)
+                tool_details = final.hitl_details
+                tool_name = tool_details.get("tool_name", "unknown")
+                tool_args = tool_details.get("tool_args", {})
+                args_display = " | ".join(f"{k}: {v}" for k, v in tool_args.items())
+                final.answer = (
+                    f"Action approved and executed.\n\n"
+                    f"**{tool_name.replace('_', ' ').title()}**\n{args_display}\n\n"
+                    f"The change has been applied and recorded in the audit trail."
+                )
+                final.trail.append(f"hitl_approved:tool:{tool_name}")
+            else:
+                # Standard role-level approval resume — run Domain → Redact
+                resume_wf = build_hitl_resume_workflow(ask=ask_remote)
+                resume_events = await resume_wf.run(final)
+                resumed = _final_state(resume_events)
+                if resumed is not None:
+                    final = resumed
+            approval_store.delete_checkpoint(aid)
         else:
-            _log.info("HITL: rejected or timed out id=%s", aid,
+            _log.info("HITL: rejected id=%s", aid,
                       extra={"user": user.username, "status": "HITL_REJECTED"})
             final.answer = (
                 "This request was reviewed and declined by a human approver. "
@@ -234,6 +253,7 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
             final.block_stage = "hitl_rejected"
             final.hitl_pending = False
             final.trail.append("hitl_rejected")
+            approval_store.delete_checkpoint(aid)
     # ── end HITL interception ────────────────────────────────────────────────────
 
     # ── Intent-match suggestion interception ────────────────────────────────────
