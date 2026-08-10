@@ -5,6 +5,7 @@ import {
   CheckCircle2, XCircle, Loader2, AlertCircle, InboxIcon,
 } from "lucide-react";
 import { getApprovalsList, approveRequest, rejectRequest } from "@/api/mesh";
+import { useAuth } from "@/contexts/AuthContext";
 import { CenteredSpinner } from "@/components/ui/Spinner";
 import { cn } from "@/lib/utils";
 import type { ApprovalListItem } from "@/types/mesh";
@@ -193,14 +194,20 @@ function RoleSection({
 // ---------------------------------------------------------------------------
 
 export default function ApprovalsDashboardPage() {
+  const { user } = useAuth();
   const [activeRoleTab, setActiveRoleTab] = useState<string>("all");
   const [acting, setActing] = useState<Record<string, boolean>>({});
 
-  const { data: approvals = [], isLoading, isError, refetch, isFetching } = useQuery({
-    queryKey: ["approvals-list"],
+  const { data: rawApprovals = [], isLoading, isError, refetch, isFetching } = useQuery({
+    queryKey: ["approvals-list", user?.username],
     queryFn: getApprovalsList,
     refetchInterval: 10_000,
   });
+
+  const approvals = useMemo(
+    () => rawApprovals.filter(a => a.user_name === user?.username),
+    [rawApprovals, user?.username],
+  );
 
   const rolesWithPending = useMemo(
     () => [...new Set(approvals.map((a) => a.role))].sort(),

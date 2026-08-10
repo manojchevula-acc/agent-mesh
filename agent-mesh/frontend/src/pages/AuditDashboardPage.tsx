@@ -8,6 +8,7 @@ import {
   TrendingUp, Zap,
 } from "lucide-react";
 import { getAudit, getAuditDetail } from "@/api/mesh";
+import { useAuth } from "@/contexts/AuthContext";
 import { Metric } from "@/components/ui/Metric";
 import { CenteredSpinner } from "@/components/ui/Spinner";
 import { cn } from "@/lib/utils";
@@ -362,8 +363,10 @@ function InvocationRow({ record }: { record: AuditRecord }) {
 // ---------------------------------------------------------------------------
 
 export default function AuditDashboardPage() {
+  const { user } = useAuth();
+
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
-    queryKey: ["audit-list"],
+    queryKey: ["audit-list", user?.username],
     queryFn: getAudit,
     refetchInterval: 30_000,
   });
@@ -372,19 +375,23 @@ export default function AuditDashboardPage() {
   const [agentFilter, setAgentFilter]   = useState("all");
   const [search, setSearch]             = useState("");
 
+  const myRecords = useMemo(
+    () => (data?.records ?? []).filter(r => r.user === user?.username),
+    [data, user?.username],
+  );
+
   const agentStats = useMemo(() =>
-    data ? computeAgentStats(data.records) : [],
-    [data],
+    computeAgentStats(myRecords),
+    [myRecords],
   );
 
   const agents = useMemo(() =>
-    Array.from(new Set((data?.records ?? []).map(r => r.agent_name))).sort(),
-    [data],
+    Array.from(new Set(myRecords.map(r => r.agent_name))).sort(),
+    [myRecords],
   );
 
   const filtered = useMemo(() => {
-    if (!data) return [];
-    return data.records.filter(r => {
+    return myRecords.filter(r => {
       if (statusFilter !== "all" && r.status !== statusFilter) return false;
       if (agentFilter !== "all" && r.agent_name !== agentFilter) return false;
       if (search) {
@@ -395,11 +402,21 @@ export default function AuditDashboardPage() {
       }
       return true;
     });
-  }, [data, statusFilter, agentFilter, search]);
+  }, [myRecords, statusFilter, agentFilter, search]);
 
-  const successRate = !data || data.total === 0
+  const mySuccessCount = useMemo(
+    () => myRecords.filter(r => r.status === "SUCCESS").length,
+    [myRecords],
+  );
+
+  const myAvgLatency = useMemo(() => {
+    if (myRecords.length === 0) return 0;
+    return Math.round(myRecords.reduce((s, r) => s + r.latency_ms, 0) / myRecords.length);
+  }, [myRecords]);
+
+  const successRate = myRecords.length === 0
     ? null
-    : Math.round((data.success_count / data.total) * 100);
+    : Math.round((mySuccessCount / myRecords.length) * 100);
 
   return (
     <div className="space-y-6 px-4 py-6 sm:px-6 lg:px-8 max-w-5xl mx-auto w-full">
@@ -426,7 +443,7 @@ export default function AuditDashboardPage() {
 
       {/* Summary metrics */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <Metric label="Total Calls" value={isLoading ? "—" : String(data?.total ?? 0)} tone="default" />
+        <Metric label="My Calls" value={isLoading ? "—" : String(myRecords.length)} tone="default" />
         <Metric
           label="Success Rate"
           value={isLoading ? "—" : successRate !== null ? `${successRate}%` : "—"}
@@ -434,14 +451,14 @@ export default function AuditDashboardPage() {
         />
         <Metric
           label="Avg Latency"
-          value={isLoading ? "—" : formatLatency(data?.avg_latency_ms ?? 0)}
+          value={isLoading ? "—" : formatLatency(myAvgLatency)}
           tone="default"
-          hint="across all agents"
+          hint="across my requests"
         />
         <Metric
           label="Errors"
-          value={isLoading ? "—" : String(data?.error_count ?? 0)}
-          tone={isLoading ? "default" : (data?.error_count ?? 0) === 0 ? "good" : "bad"}
+          value={isLoading ? "—" : String(myRecords.length - mySuccessCount)}
+          tone={isLoading ? "default" : (myRecords.length - mySuccessCount) === 0 ? "good" : "bad"}
         />
       </div>
 
@@ -496,8 +513,8 @@ export default function AuditDashboardPage() {
                 {agents.map(a => <option key={a} value={a}>{agentMeta(a).displayName}</option>)}
               </select>
             )}
-            {!isLoading && data && (
-              <span className="text-xs text-faint">{filtered.length} of {data.total}</span>
+            {!isLoading && (
+              <span className="text-xs text-faint">{filtered.length} of {myRecords.length}</span>
             )}
           </div>
         </div>

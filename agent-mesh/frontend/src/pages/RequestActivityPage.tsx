@@ -6,6 +6,7 @@ import {
   Clock, Coins, ArrowRight, AlertCircle, TrendingUp,
 } from "lucide-react";
 import { getLogs } from "@/api/mesh";
+import { useAuth } from "@/contexts/AuthContext";
 import { Metric } from "@/components/ui/Metric";
 import { CenteredSpinner } from "@/components/ui/Spinner";
 import { cn } from "@/lib/utils";
@@ -290,8 +291,10 @@ function RequestRow({ group }: { group: RequestGroup }) {
 // ---------------------------------------------------------------------------
 
 export default function RequestActivityPage() {
+  const { user } = useAuth();
+
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
-    queryKey: ["logs-list"],
+    queryKey: ["logs-list", user?.username],
     queryFn: getLogs,
     refetchInterval: 15_000,
   });
@@ -299,29 +302,33 @@ export default function RequestActivityPage() {
   const [statusFilter, setStatusFilter] = useState<"all" | "success" | "issues">("all");
   const [userSearch, setUserSearch] = useState("");
 
+  const myGroups = useMemo(
+    () => (data?.groups ?? []).filter(g => !g.user || g.user === user?.username),
+    [data, user?.username],
+  );
+
   const avgDuration = useMemo(() => {
-    if (!data || data.groups.length === 0) return 0;
-    return Math.round(data.groups.reduce((s, g) => s + g.duration_ms, 0) / data.groups.length);
-  }, [data]);
+    if (myGroups.length === 0) return 0;
+    return Math.round(myGroups.reduce((s, g) => s + g.duration_ms, 0) / myGroups.length);
+  }, [myGroups]);
 
   const successCount = useMemo(() =>
-    data?.groups.filter(g => !g.has_error).length ?? 0,
-    [data],
+    myGroups.filter(g => !g.has_error).length,
+    [myGroups],
   );
 
   const successRate = useMemo(() => {
-    if (!data || data.groups.length === 0) return null;
-    return Math.round((successCount / data.groups.length) * 100);
-  }, [data, successCount]);
+    if (myGroups.length === 0) return null;
+    return Math.round((successCount / myGroups.length) * 100);
+  }, [myGroups, successCount]);
 
   const pipelineStats = useMemo(() =>
-    data ? analysePipeline(data.groups) : null,
-    [data],
+    analysePipeline(myGroups),
+    [myGroups],
   );
 
   const visibleGroups = useMemo(() => {
-    if (!data) return [];
-    return data.groups.filter(g => {
+    return myGroups.filter(g => {
       if (userSearch) {
         const q = userSearch.toLowerCase();
         if (!(g.user ?? "").toLowerCase().includes(q) &&
@@ -331,7 +338,7 @@ export default function RequestActivityPage() {
       if (statusFilter === "issues" && !g.has_error) return false;
       return true;
     });
-  }, [data, userSearch, statusFilter]);
+  }, [myGroups, userSearch, statusFilter]);
 
   return (
     <div className="space-y-6 px-4 py-6 sm:px-6 lg:px-8 max-w-5xl mx-auto w-full">

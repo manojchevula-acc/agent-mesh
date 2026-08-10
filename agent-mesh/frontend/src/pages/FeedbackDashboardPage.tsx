@@ -19,6 +19,7 @@ import {
   Clock,
 } from "lucide-react";
 import { getFeedback, getStructuredFeedback } from "@/api/mesh";
+import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardBody } from "@/components/ui/Card";
 import { Metric } from "@/components/ui/Metric";
 import { Badge } from "@/components/ui/Badge";
@@ -338,10 +339,11 @@ function StructuredFeedbackCard({ record }: { record: StructuredFeedbackRecord }
 // ---------------------------------------------------------------------------
 
 export default function FeedbackDashboardPage() {
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<"basic" | "structured">("basic");
 
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
-    queryKey: ["feedback-list"],
+    queryKey: ["feedback-list", user?.username],
     queryFn: getFeedback,
     refetchInterval: 30_000,
   });
@@ -353,7 +355,7 @@ export default function FeedbackDashboardPage() {
     refetch: sfRefetch,
     isFetching: sfFetching,
   } = useQuery({
-    queryKey: ["structured-feedback-list"],
+    queryKey: ["structured-feedback-list", user?.username],
     queryFn: getStructuredFeedback,
     refetchInterval: 30_000,
   });
@@ -362,14 +364,22 @@ export default function FeedbackDashboardPage() {
   const [routeFilter, setRouteFilter] = useState("all");
   const [search, setSearch] = useState("");
 
+  const myRecords = useMemo(
+    () => (data?.records ?? []).filter(r => r.user === user?.username),
+    [data, user?.username],
+  );
+
+  const myStructured = useMemo(
+    () => (structuredData?.records ?? []).filter(r => r.user === user?.username),
+    [structuredData, user?.username],
+  );
+
   const routes = useMemo(() => {
-    if (!data) return [];
-    return Array.from(new Set(data.records.map((r) => r.route).filter(Boolean))).sort();
-  }, [data]);
+    return Array.from(new Set(myRecords.map((r) => r.route).filter(Boolean))).sort();
+  }, [myRecords]);
 
   const filtered = useMemo(() => {
-    if (!data) return [];
-    return data.records.filter((r) => {
+    return myRecords.filter((r) => {
       if (ratingFilter !== "all" && r.rating !== ratingFilter) return false;
       if (routeFilter !== "all" && r.route !== routeFilter) return false;
       if (search) {
@@ -383,14 +393,18 @@ export default function FeedbackDashboardPage() {
       }
       return true;
     });
-  }, [data, ratingFilter, routeFilter, search]);
+  }, [myRecords, ratingFilter, routeFilter, search]);
+
+  const myUp = useMemo(() => myRecords.filter(r => r.rating === "up").length, [myRecords]);
+  const myDown = useMemo(() => myRecords.filter(r => r.rating === "down").length, [myRecords]);
+  const myWithComment = useMemo(() => myRecords.filter(r => r.comment).length, [myRecords]);
 
   const satisfactionTone =
-    !data || data.total === 0
+    myRecords.length === 0
       ? "default"
-      : data.up / data.total >= 0.8
+      : myUp / myRecords.length >= 0.8
       ? "good"
-      : data.up / data.total >= 0.5
+      : myUp / myRecords.length >= 0.5
       ? "warn"
       : "bad";
 
@@ -432,9 +446,9 @@ export default function FeedbackDashboardPage() {
             ) : (
               <>
                 Structured Feedback
-                {(structuredData?.total ?? 0) > 0 && (
+                {myStructured.length > 0 && (
                   <span className="rounded-full bg-brand-100 dark:bg-brand-900/30 px-1.5 text-xs text-brand-600 dark:text-brand-400">
-                    {structuredData!.total}
+                    {myStructured.length}
                   </span>
                 )}
               </>
@@ -449,8 +463,8 @@ export default function FeedbackDashboardPage() {
           {/* Stat tiles */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <Metric
-              label="Total Responses"
-              value={isLoading ? "—" : String(data?.total ?? 0)}
+              label="My Responses"
+              value={isLoading ? "—" : String(myRecords.length)}
               hint="all time"
               tone="default"
             />
@@ -459,32 +473,32 @@ export default function FeedbackDashboardPage() {
               value={
                 isLoading
                   ? "—"
-                  : data && data.total > 0
-                  ? `${Math.round((data.up / data.total) * 100)}%`
+                  : myRecords.length > 0
+                  ? `${Math.round((myUp / myRecords.length) * 100)}%`
                   : "—"
               }
-              hint={isLoading ? undefined : `${data?.up ?? 0} thumbs up`}
+              hint={isLoading ? undefined : `${myUp} thumbs up`}
               tone={satisfactionTone}
             />
             <Metric
               label="Negative"
-              value={isLoading ? "—" : String(data?.down ?? 0)}
+              value={isLoading ? "—" : String(myDown)}
               hint="thumbs down"
-              tone={isLoading ? "default" : (data?.down ?? 0) === 0 ? "good" : "bad"}
+              tone={isLoading ? "default" : myDown === 0 ? "good" : "bad"}
             />
             <Metric
               label="With Comments"
-              value={isLoading ? "—" : String(data?.with_comment ?? 0)}
+              value={isLoading ? "—" : String(myWithComment)}
               hint="added a note"
               tone="default"
             />
           </div>
 
           {/* Sentiment bar */}
-          {!isLoading && data && data.total > 0 && (
+          {!isLoading && myRecords.length > 0 && (
             <Card>
               <CardBody>
-                <SentimentBar up={data.up} total={data.total} />
+                <SentimentBar up={myUp} total={myRecords.length} />
               </CardBody>
             </Card>
           )}
@@ -522,9 +536,9 @@ export default function FeedbackDashboardPage() {
                 ))}
               </select>
             )}
-            {!isLoading && data && (
+            {!isLoading && (
               <span className="text-xs text-muted ml-auto">
-                Showing {filtered.length} of {data.total}
+                Showing {filtered.length} of {myRecords.length}
               </span>
             )}
           </div>
@@ -540,11 +554,11 @@ export default function FeedbackDashboardPage() {
             <div className="flex flex-col items-center justify-center gap-3 py-20 text-center">
               <MessageSquare className="h-10 w-10 text-faint" />
               <p className="text-base font-medium text-fg">
-                {data?.total === 0 ? "No feedback yet" : "No results match your filters"}
+                {myRecords.length === 0 ? "No feedback yet" : "No results match your filters"}
               </p>
               <p className="text-sm text-muted">
-                {data?.total === 0
-                  ? "Feedback will appear here after users rate responses in the chat."
+                {myRecords.length === 0
+                  ? "Feedback will appear here after you rate responses in the chat."
                   : "Try clearing your search or changing the filters above."}
               </p>
             </div>
@@ -567,7 +581,7 @@ export default function FeedbackDashboardPage() {
             <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/30 p-5 text-sm text-red-700 dark:text-red-400">
               Failed to load structured feedback. Make sure the API server is running.
             </div>
-          ) : !structuredData || structuredData.total === 0 ? (
+          ) : myStructured.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-3 py-20 text-center">
               <MessageSquare className="h-10 w-10 text-faint" />
               <p className="text-base font-medium text-fg">No structured feedback yet</p>
@@ -577,7 +591,7 @@ export default function FeedbackDashboardPage() {
             </div>
           ) : (
             <div className="space-y-4">
-              {structuredData.records.map((record) => (
+              {myStructured.map((record) => (
                 <StructuredFeedbackCard key={record.structured_feedback_id} record={record} />
               ))}
             </div>

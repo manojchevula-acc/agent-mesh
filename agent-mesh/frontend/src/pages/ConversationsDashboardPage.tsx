@@ -10,6 +10,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { getConversations } from "@/api/mesh";
+import { useAuth } from "@/contexts/AuthContext";
 import { Metric } from "@/components/ui/Metric";
 import { Badge } from "@/components/ui/Badge";
 import { CenteredSpinner } from "@/components/ui/Spinner";
@@ -175,28 +176,39 @@ function SessionCard({ session }: { session: SessionSummary }) {
 // ---------------------------------------------------------------------------
 
 export default function ConversationsDashboardPage() {
+  const { user } = useAuth();
+
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
-    queryKey: ["conversations-list"],
+    queryKey: ["conversations-list", user?.username],
     queryFn: getConversations,
     refetchInterval: 30_000,
   });
 
   const [search, setSearch] = useState("");
 
+  const mySessions = useMemo(
+    () => (data?.sessions ?? []).filter(s => s.user === user?.username),
+    [data, user?.username],
+  );
+
   const filtered = useMemo(() => {
-    if (!data) return [];
-    if (!search) return data.sessions;
+    if (!search) return mySessions;
     const q = search.toLowerCase();
-    return data.sessions.filter(s =>
+    return mySessions.filter(s =>
       s.user.toLowerCase().includes(q) ||
       s.session_id.toLowerCase().includes(q) ||
       s.first_query.toLowerCase().includes(q),
     );
-  }, [data, search]);
+  }, [mySessions, search]);
 
-  const avgMessages = !data || data.total_sessions === 0
+  const myTotalMessages = useMemo(
+    () => mySessions.reduce((sum, s) => sum + s.message_count, 0),
+    [mySessions],
+  );
+
+  const avgMessages = mySessions.length === 0
     ? 0
-    : Math.round(data.total_messages / data.total_sessions);
+    : Math.round(myTotalMessages / mySessions.length);
 
   return (
     <div className="space-y-6 px-4 py-6 sm:px-6 lg:px-8 max-w-5xl mx-auto w-full">
@@ -221,18 +233,13 @@ export default function ConversationsDashboardPage() {
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <Metric
-          label="Total Sessions"
-          value={isLoading ? "—" : String(data?.total_sessions ?? 0)}
+          label="My Sessions"
+          value={isLoading ? "—" : String(mySessions.length)}
           tone="default"
         />
         <Metric
-          label="Total Messages"
-          value={isLoading ? "—" : String(data?.total_messages ?? 0)}
-          tone="default"
-        />
-        <Metric
-          label="Unique Users"
-          value={isLoading ? "—" : String(data?.unique_users ?? 0)}
+          label="My Messages"
+          value={isLoading ? "—" : String(myTotalMessages)}
           tone="default"
         />
         <Metric
@@ -255,9 +262,9 @@ export default function ConversationsDashboardPage() {
             className="w-full rounded-lg border border-line bg-surface pl-9 pr-3 py-2 text-sm text-fg placeholder:text-faint focus:outline-none focus:ring-2 focus:ring-brand-500/50"
           />
         </div>
-        {!isLoading && data && (
+        {!isLoading && (
           <span className="text-xs text-muted ml-auto">
-            Showing {filtered.length} of {data.total_sessions}
+            Showing {filtered.length} of {mySessions.length}
           </span>
         )}
       </div>
@@ -273,11 +280,11 @@ export default function ConversationsDashboardPage() {
         <div className="flex flex-col items-center justify-center gap-3 py-20 text-center">
           <MessagesSquare className="h-10 w-10 text-faint" />
           <p className="text-base font-medium text-fg">
-            {data?.total_sessions === 0 ? "No conversations yet" : "No sessions match your search"}
+            {mySessions.length === 0 ? "No conversations yet" : "No sessions match your search"}
           </p>
           <p className="text-sm text-muted">
-            {data?.total_sessions === 0
-              ? "Sessions will appear here after users chat with Price Assist."
+            {mySessions.length === 0
+              ? "Sessions will appear here after you chat with Price Assist."
               : "Try a different search term."}
           </p>
         </div>

@@ -8,6 +8,7 @@ import {
   AlertCircle, Coins,
 } from "lucide-react";
 import { getLogs } from "@/api/mesh";
+import { useAuth } from "@/contexts/AuthContext";
 import { Metric } from "@/components/ui/Metric";
 import { Badge } from "@/components/ui/Badge";
 import { CenteredSpinner } from "@/components/ui/Spinner";
@@ -486,11 +487,12 @@ function JourneyCard({ group, preExpanded, msgSearch }: {
 // ---------------------------------------------------------------------------
 
 export default function LogsDashboardPage() {
+  const { user } = useAuth();
   const [searchParams] = useSearchParams();
   const preSelectedId = searchParams.get("request") ?? "";
 
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
-    queryKey: ["logs-list"],
+    queryKey: ["logs-list", user?.username],
     queryFn: getLogs,
     refetchInterval: 15_000,
   });
@@ -504,14 +506,18 @@ export default function LogsDashboardPage() {
     if (preSelectedId) setRequestSearch(preSelectedId);
   }, [preSelectedId]);
 
+  const myGroups = useMemo(
+    () => (data?.groups ?? []).filter(g => !g.user || g.user === user?.username),
+    [data, user?.username],
+  );
+
   const avgDuration = useMemo(() => {
-    if (!data || data.groups.length === 0) return 0;
-    return Math.round(data.groups.reduce((s, g) => s + g.duration_ms, 0) / data.groups.length);
-  }, [data]);
+    if (myGroups.length === 0) return 0;
+    return Math.round(myGroups.reduce((s, g) => s + g.duration_ms, 0) / myGroups.length);
+  }, [myGroups]);
 
   const visibleGroups = useMemo(() => {
-    if (!data) return [];
-    return data.groups.filter(g => {
+    return myGroups.filter(g => {
       if (requestSearch) {
         const q = requestSearch.toLowerCase();
         if (!g.request_id.toLowerCase().includes(q) &&
@@ -530,7 +536,7 @@ export default function LogsDashboardPage() {
       }
       return true;
     });
-  }, [data, requestSearch, msgSearch, statusFilter]);
+  }, [myGroups, requestSearch, msgSearch, statusFilter]);
 
   return (
     <div className="space-y-6 px-4 py-6 sm:px-6 lg:px-8 max-w-5xl mx-auto w-full">
@@ -557,7 +563,7 @@ export default function LogsDashboardPage() {
 
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <Metric label="Requests" value={isLoading ? "—" : String(data?.unique_requests ?? 0)} tone="default" />
+        <Metric label="My Requests" value={isLoading ? "—" : String(myGroups.length)} tone="default" />
         <Metric
           label="Avg Response Time"
           value={isLoading ? "—" : avgDuration > 0 ? `${(avgDuration / 1000).toFixed(1)}s` : "—"}
@@ -565,18 +571,18 @@ export default function LogsDashboardPage() {
         />
         <Metric
           label="Warnings"
-          value={isLoading ? "—" : String(data?.warning_count ?? 0)}
-          tone={isLoading ? "default" : (data?.warning_count ?? 0) > 0 ? "warn" : "good"}
+          value={isLoading ? "—" : String(myGroups.filter(g => g.has_warning).length)}
+          tone={isLoading ? "default" : myGroups.some(g => g.has_warning) ? "warn" : "good"}
         />
         <Metric
           label="Errors"
-          value={isLoading ? "—" : String(data?.error_count ?? 0)}
-          tone={isLoading ? "default" : (data?.error_count ?? 0) > 0 ? "bad" : "good"}
+          value={isLoading ? "—" : String(myGroups.filter(g => g.has_error).length)}
+          tone={isLoading ? "default" : myGroups.some(g => g.has_error) ? "bad" : "good"}
         />
       </div>
 
       {/* Stage legend — compact inline */}
-      {!isLoading && (data?.unique_requests ?? 0) > 0 && (
+      {!isLoading && myGroups.length > 0 && (
         <div className="flex flex-wrap gap-4 text-xs text-muted px-1">
           {[
             { Icon: Activity,       label: "System",          cls: "text-brand-500" },
@@ -628,9 +634,9 @@ export default function LogsDashboardPage() {
           <option value="warning">⚠ Warnings</option>
           <option value="error">✕ Errors</option>
         </select>
-        {!isLoading && data && (
+        {!isLoading && (
           <span className="text-xs text-muted ml-auto">
-            {visibleGroups.length} of {data.unique_requests} requests
+            {visibleGroups.length} of {myGroups.length} requests
           </span>
         )}
       </div>
