@@ -36,7 +36,7 @@ def create_agents(chat_client: OpenAIChatCompletionClient):
             "Once a specialist has resolved the issue and handed back to you, "
             "ask if there is anything else you can help with. "
             "If the customer says no or thanks you, say goodbye warmly -- "
-            "end your reply with 'Thank you for banking with us. Have a great day!'",
+            "end your reply with 'Thank you for banking with us. Have a great day!'"
         ),
         **h,
     )
