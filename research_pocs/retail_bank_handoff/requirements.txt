@@ -1,0 +1,9 @@
+# Retail Banking Handoff POC
+# These packages are already installed in the parent project venv.
+# Run from the agent-mesh venv or install individually.
+
+agent-framework>=1.9.0
+agent-framework-core>=1.9.0
+agent-framework-openai>=1.8.2
+agent-framework-orchestrations>=1.0.0
+python-dotenv>=1.0.0
