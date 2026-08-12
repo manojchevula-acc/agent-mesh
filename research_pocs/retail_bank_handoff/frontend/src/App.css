@@ -70,14 +70,35 @@ body {
   color: var(--text-dim);
 }
 
-.header-status {
+.header-right {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.header-status {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 12px;
   color: var(--text-dim);
 }
+
+.btn-new-session-header {
+  padding: 6px 14px;
+  background: #5b8cf8;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  white-space: nowrap;
+}
+
+.btn-new-session-header:hover { opacity: 0.85; }
 
 .status-dot {
   width: 8px;

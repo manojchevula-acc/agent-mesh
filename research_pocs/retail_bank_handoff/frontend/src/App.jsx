@@ -3,6 +3,7 @@ import ChatPanel from './components/ChatPanel.jsx'
 import ReasoningPanel from './components/ReasoningPanel.jsx'
 import AgentFlowPanel from './components/AgentFlowPanel.jsx'
 import ApprovalsPanel from './components/ApprovalsPanel.jsx'
+import HistoryPanel from './components/HistoryPanel.jsx'
 
 export const AGENT_COLORS = {
   triage_agent:   '#4f86c6',
@@ -17,32 +18,56 @@ export function agentColor(name) {
   return AGENT_COLORS[name] || '#8b90a8'
 }
 
-export default function App() {
-  const [sessionId, setSessionId]       = useState(null)
-  const [starting, setStarting]         = useState(false)
-  const [messages, setMessages]         = useState([])
-  const [reasoning, setReasoning]       = useState([])
-  const [agentFlow, setAgentFlow]       = useState([])
-  const [toolCalls, setToolCalls]       = useState([])
-  const [approvals, setApprovals]       = useState([])   // all approval requests
-  const [pendingGateId, setPendingGateId] = useState(null) // request_id of active gate
-  const [activeAgent, setActiveAgent]   = useState(null)
-  const [needsInput, setNeedsInput]     = useState(false)
-  const [done, setDone]                 = useState(false)
-  const [tab, setTab]                   = useState('reasoning')
-  const [approvalBadge, setApprovalBadge] = useState(0) // unseen approval count
+function loadHistory() {
+  try {
+    const ids = JSON.parse(localStorage.getItem('rbh_session_ids') || '[]')
+    return ids
+      .map(id => {
+        try { return JSON.parse(localStorage.getItem(`rbh_session_${id}`)) }
+        catch { return null }
+      })
+      .filter(Boolean)
+  } catch {
+    return []
+  }
+}
 
-  const esRef = useRef(null)
-  // Track the current gate ref so sendApproval can read it after state closure
+export default function App() {
+  const [sessionId, setSessionId]           = useState(null)
+  const [starting, setStarting]             = useState(false)
+  const [messages, setMessages]             = useState([])
+  const [reasoning, setReasoning]           = useState([])
+  const [agentFlow, setAgentFlow]           = useState([])
+  const [toolCalls, setToolCalls]           = useState([])
+  const [approvals, setApprovals]           = useState([])
+  const [pendingGateId, setPendingGateId]   = useState(null)
+  const [activeAgent, setActiveAgent]       = useState(null)
+  const [needsInput, setNeedsInput]         = useState(false)
+  const [done, setDone]                     = useState(false)
+  const [tab, setTab]                       = useState('reasoning')
+  const [approvalBadge, setApprovalBadge]   = useState(0)
+  const [history, setHistory]               = useState(() => loadHistory())
+
+  const esRef          = useRef(null)
   const pendingGateRef = useRef(null)
+  // Refs mirror live state so the session_done save sees fresh values
+  const messagesRef  = useRef([])
+  const reasoningRef = useRef([])
+  const agentFlowRef = useRef([])
+  const toolCallsRef = useRef([])
+  const approvalsRef = useRef([])
 
   const appendToken = useCallback((agent, text) => {
     setMessages(prev => {
       const last = prev[prev.length - 1]
+      let next
       if (last && last.role === 'agent' && last.agent === agent && last.streaming) {
-        return [...prev.slice(0, -1), { ...last, text: last.text + text }]
+        next = [...prev.slice(0, -1), { ...last, text: last.text + text }]
+      } else {
+        next = [...prev, { role: 'agent', agent, text, streaming: true, timestamp: Date.now() }]
       }
-      return [...prev, { role: 'agent', agent, text, streaming: true }]
+      messagesRef.current = next
+      return next
     })
   }, [])
 
@@ -50,8 +75,11 @@ export default function App() {
     setMessages(prev => {
       if (!prev.length) return prev
       const last = prev[prev.length - 1]
-      if (last.streaming) return [...prev.slice(0, -1), { ...last, streaming: false }]
-      return prev
+      const next = last.streaming
+        ? [...prev.slice(0, -1), { ...last, streaming: false }]
+        : prev
+      messagesRef.current = next
+      return next
     })
   }, [])
 
@@ -69,11 +97,25 @@ export default function App() {
 
       else if (ev.type === 'handoff') {
         finalizeLastMessage()
-        setAgentFlow(f => [...f, ev])
+        setAgentFlow(f => {
+          const next = [...f, ev]
+          agentFlowRef.current = next
+          return next
+        })
+        // Inject inline handoff divider into chat
+        setMessages(prev => {
+          const next = [...prev, { role: 'handoff', from: ev.from, to: ev.to, timestamp: Date.now() }]
+          messagesRef.current = next
+          return next
+        })
       }
 
       else if (ev.type === 'reasoning') {
-        setReasoning(r => [...r, ev])
+        setReasoning(r => {
+          const next = [...r, ev]
+          reasoningRef.current = next
+          return next
+        })
         setTab(t => t === 'approvals' ? t : 'reasoning')
       }
 
@@ -82,7 +124,11 @@ export default function App() {
       }
 
       else if (ev.type === 'tool_call') {
-        setToolCalls(t => [...t, ev])
+        setToolCalls(t => {
+          const next = [...t, ev]
+          toolCallsRef.current = next
+          return next
+        })
       }
 
       else if (ev.type === 'needs_input') {
@@ -94,17 +140,22 @@ export default function App() {
 
       else if (ev.type === 'needs_approval') {
         finalizeLastMessage()
-        // Add to approvals list (with decided=undefined = pending)
         const gateEntry = { ...ev, decided: undefined }
         pendingGateRef.current = gateEntry
-        setApprovals(a => [...a, gateEntry])
+        setApprovals(a => {
+          const next = [...a, gateEntry]
+          approvalsRef.current = next
+          return next
+        })
         setPendingGateId(ev.request_id)
         setNeedsInput(false)
-        // Switch to Approvals tab and bump badge
         setTab('approvals')
         setApprovalBadge(b => b + 1)
-        // Add a compact notice to chat
-        setMessages(m => [...m, { role: 'gate_notice', label: ev.label, gate: ev.gate, role_req: ev.role }])
+        setMessages(m => {
+          const next = [...m, { role: 'gate_notice', label: ev.label, gate: ev.gate, role_req: ev.role }]
+          messagesRef.current = next
+          return next
+        })
       }
 
       else if (ev.type === 'session_done') {
@@ -113,11 +164,34 @@ export default function App() {
         setNeedsInput(false)
         setPendingGateId(null)
         es.close()
+
+        // Save completed session to localStorage using ref values (always fresh)
+        const record = {
+          id: sid,
+          timestamp: Date.now(),
+          messages:  messagesRef.current,
+          reasoning: reasoningRef.current,
+          agentFlow: agentFlowRef.current,
+          toolCalls: toolCallsRef.current,
+          approvals: approvalsRef.current,
+        }
+        try {
+          localStorage.setItem(`rbh_session_${sid}`, JSON.stringify(record))
+          const ids = JSON.parse(localStorage.getItem('rbh_session_ids') || '[]')
+          if (!ids.includes(sid)) {
+            localStorage.setItem('rbh_session_ids', JSON.stringify([...ids, sid]))
+          }
+        } catch { /* storage quota or private mode */ }
+        setHistory(prev => [...prev, record])
       }
 
       else if (ev.type === 'error') {
         finalizeLastMessage()
-        setMessages(m => [...m, { role: 'error', text: ev.message }])
+        setMessages(m => {
+          const next = [...m, { role: 'error', text: ev.message }]
+          messagesRef.current = next
+          return next
+        })
         es.close()
       }
     }
@@ -140,9 +214,39 @@ export default function App() {
     }
   }
 
+  async function resetSession() {
+    // Clean up current session on the backend
+    if (sessionId) {
+      try { await fetch(`/api/session/${sessionId}`, { method: 'DELETE' }) } catch { /* ignore */ }
+    }
+    if (esRef.current) { esRef.current.close(); esRef.current = null }
+
+    // Reset all state
+    setMessages([]);  messagesRef.current  = []
+    setReasoning([]); reasoningRef.current = []
+    setAgentFlow([]); agentFlowRef.current = []
+    setToolCalls([]); toolCallsRef.current = []
+    setApprovals([]); approvalsRef.current = []
+    setPendingGateId(null)
+    pendingGateRef.current = null
+    setActiveAgent(null)
+    setNeedsInput(false)
+    setDone(false)
+    setApprovalBadge(0)
+    setTab('reasoning')
+    setSessionId(null)
+
+    // Start fresh
+    await startSession()
+  }
+
   async function sendMessage(text) {
     if (!text.trim() || !sessionId) return
-    setMessages(m => [...m, { role: 'user', text }])
+    setMessages(m => {
+      const next = [...m, { role: 'user', text, timestamp: Date.now() }]
+      messagesRef.current = next
+      return next
+    })
     setNeedsInput(false)
     await fetch(`/api/message/${sessionId}`, {
       method: 'POST',
@@ -152,10 +256,11 @@ export default function App() {
   }
 
   async function sendApproval(requestId, approved) {
-    // Mark the gate as decided in approvals list
-    setApprovals(a => a.map(apv =>
-      apv.request_id === requestId ? { ...apv, decided: approved } : apv
-    ))
+    setApprovals(a => {
+      const next = a.map(apv => apv.request_id === requestId ? { ...apv, decided: approved } : apv)
+      approvalsRef.current = next
+      return next
+    })
     setPendingGateId(null)
     pendingGateRef.current = null
     setApprovalBadge(0)
@@ -167,7 +272,15 @@ export default function App() {
     })
   }
 
-  // Clear badge when user views the approvals tab
+  function clearHistory() {
+    try {
+      const ids = JSON.parse(localStorage.getItem('rbh_session_ids') || '[]')
+      ids.forEach(id => localStorage.removeItem(`rbh_session_${id}`))
+      localStorage.removeItem('rbh_session_ids')
+    } catch { /* ignore */ }
+    setHistory([])
+  }
+
   function handleTabChange(t) {
     setTab(t)
     if (t === 'approvals') setApprovalBadge(0)
@@ -179,6 +292,8 @@ export default function App() {
 
   const pendingGate = approvals.find(a => a.request_id === pendingGateId) || null
 
+  const historyBadge = history.length > 0 ? ` (${history.length})` : ''
+
   return (
     <>
       <header className="header">
@@ -187,9 +302,16 @@ export default function App() {
           <div className="header-title">Retail Banking — Handoff POC</div>
           <div className="header-subtitle">Microsoft Agent Framework · HandoffBuilder · 6-agent mesh</div>
         </div>
-        <div className="header-status">
-          <div className={`status-dot ${sessionId && !done ? 'active' : ''}`} />
-          {sessionId ? (done ? 'Session complete' : `Active · ${activeAgent || 'waiting'}`) : 'No session'}
+        <div className="header-right">
+          <div className="header-status">
+            <div className={`status-dot ${sessionId && !done ? 'active' : ''}`} />
+            {sessionId ? (done ? 'Session complete' : `Active · ${activeAgent || 'waiting'}`) : 'No session'}
+          </div>
+          {sessionId && (
+            <button className="btn-new-session-header" onClick={resetSession}>
+              + New Session
+            </button>
+          )}
         </div>
       </header>
 
@@ -213,6 +335,7 @@ export default function App() {
             done={done}
             onSend={sendMessage}
             activeAgent={activeAgent}
+            onNewSession={resetSession}
           />
         )}
 
@@ -227,9 +350,18 @@ export default function App() {
             <button className={`panel-tab ${tab === 'flow' ? 'active' : ''}`} onClick={() => handleTabChange('flow')}>
               Flow
             </button>
+            <button className={`panel-tab ${tab === 'history' ? 'active' : ''}`} onClick={() => handleTabChange('history')}>
+              History{historyBadge}
+            </button>
           </div>
           <div className="panel-content">
-            {tab === 'reasoning' && <ReasoningPanel items={reasoning} />}
+            {tab === 'reasoning' && (
+              <ReasoningPanel
+                items={reasoning}
+                handoffCount={agentFlow.length}
+                toolCallCount={toolCalls.length}
+              />
+            )}
             {tab === 'approvals' && (
               <ApprovalsPanel
                 approvals={approvals}
@@ -239,6 +371,7 @@ export default function App() {
               />
             )}
             {tab === 'flow' && <AgentFlowPanel flow={agentFlow} toolCalls={toolCalls} />}
+            {tab === 'history' && <HistoryPanel history={history} onClear={clearHistory} />}
           </div>
         </div>
       </div>

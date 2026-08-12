@@ -2,7 +2,16 @@ import { useState, useRef, useEffect } from 'react'
 import { agentColor } from '../App.jsx'
 import './ChatPanel.css'
 
-export default function ChatPanel({ messages, needsInput, pendingGate, done, onSend, activeAgent }) {
+function formatTime(ts) {
+  if (!ts) return ''
+  const d = new Date(ts)
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mm = String(d.getMinutes()).padStart(2, '0')
+  const ss = String(d.getSeconds()).padStart(2, '0')
+  return `${hh}:${mm}:${ss}`
+}
+
+export default function ChatPanel({ messages, needsInput, pendingGate, done, onSend, activeAgent, onNewSession }) {
   const [input, setInput] = useState('')
   const bottomRef = useRef(null)
 
@@ -36,7 +45,10 @@ export default function ChatPanel({ messages, needsInput, pendingGate, done, onS
             return (
               <div key={i} className="msg-row msg-user">
                 <div className="msg-bubble msg-bubble-user">{msg.text}</div>
-                <div className="msg-author">You</div>
+                <div className="msg-meta">
+                  <span className="msg-author">You</span>
+                  {msg.timestamp && <span className="msg-ts">{formatTime(msg.timestamp)}</span>}
+                </div>
               </div>
             )
           }
@@ -52,11 +64,34 @@ export default function ChatPanel({ messages, needsInput, pendingGate, done, onS
                   {msg.text}
                   {msg.streaming && <span className="cursor-blink" />}
                 </div>
+                {msg.timestamp && (
+                  <div className="msg-meta">
+                    <span className="msg-ts">{formatTime(msg.timestamp)}</span>
+                  </div>
+                )}
               </div>
             )
           }
 
-          // Compact inline notice pointing to Approvals tab
+          if (msg.role === 'handoff') {
+            const fromColor = agentColor(msg.from)
+            const toColor   = agentColor(msg.to)
+            return (
+              <div key={i} className="handoff-divider">
+                <span className="handoff-from" style={{ color: fromColor }}>
+                  {msg.from.replace('_agent', '')}
+                </span>
+                <span className="handoff-arrow">→</span>
+                <span className="handoff-to" style={{ color: toColor }}>
+                  {msg.to.replace('_agent', '')}
+                </span>
+                {msg.timestamp && (
+                  <span className="handoff-ts">{formatTime(msg.timestamp)}</span>
+                )}
+              </div>
+            )
+          }
+
           if (msg.role === 'gate_notice') {
             return (
               <div key={i} className="gate-notice">
@@ -82,7 +117,10 @@ export default function ChatPanel({ messages, needsInput, pendingGate, done, onS
 
         {done && (
           <div className="session-done">
-            Session complete. Start a new session to continue.
+            <div className="session-done-text">Session complete.</div>
+            <button className="btn-new-session" onClick={onNewSession}>
+              Start New Session
+            </button>
           </div>
         )}
 
