@@ -1,0 +1,418 @@
+{
+  "version": 1,
+  "documents": [
+    {
+      "document": "CBUAE_Circular_2024_BSE_047_AI_Governance",
+      "file": "docs/CBUAE_Circular_2024_BSE_047_AI_Governance.pdf",
+      "pages": 8,
+      "scanned": false,
+      "figures": [
+        {
+          "page": 1,
+          "must_detect": true
+        },
+        {
+          "page": 2,
+          "must_detect": true
+        },
+        {
+          "page": 4,
+          "must_detect": true
+        },
+        {
+          "page": 6,
+          "must_detect": true
+        }
+      ],
+      "tables": [
+        {
+          "page": 1,
+          "must_detect": true
+        },
+        {
+          "page": 5,
+          "must_detect": true
+        }
+      ],
+      "headings": [
+        "CENTRAL BANK OF THE UNITED ARAB EMIRATES",
+        "SUPERVISORY CIRCULAR No. 2024/BSE/047",
+        "Regulatory Context",
+        "Article 1 - Purpose, Scope and Legal Basis",
+        "Article 2 - Governance Framework Requirements",
+        "2.1 Board and Senior Management Accountability",
+        "2.2 AI Model Inventory",
+        "Article 3 - Model Risk Management",
+        "3.1 Model Development Standards",
+        "3.2 Independent Model Validation",
+        "Article 4 - AI Risk Classification",
+        "Article 5 - Human Oversight and Control Requirements",
+        "5.1 Mandatory Human-in-the-Loop Controls",
+        "5.2 Override and Escalation",
+        "Article 6 - Explainability and Transparency",
+        "6.1 Explainability Requirements",
+        "6.2 Customer Transparency",
+        "Article 7 - Data Governance for AI Systems",
+        "7.1 Data Quality",
+        "7.2 Data Retention and Lineage",
+        "Article 8 - Regulatory Reporting and Supervisory Access",
+        "Article 9 - Transitional Provisions"
+      ],
+      "verified": true,
+      "notes": "Verified against source PDF (updated for v2 document rebuild — deduplicated figures, added trend charts)."
+    },
+    {
+      "document": "FAB_Corporate_Term_Loan_Product_Manual_v2_0",
+      "file": "docs/FAB_Corporate_Term_Loan_Product_Manual_v2_0.pdf",
+      "pages": 6,
+      "scanned": false,
+      "figures": [
+        {
+          "page": 3,
+          "must_detect": true
+        },
+        {
+          "page": 4,
+          "must_detect": true
+        },
+        {
+          "page": 5,
+          "must_detect": true
+        }
+      ],
+      "tables": [
+        {
+          "page": 1,
+          "must_detect": true
+        },
+        {
+          "page": 2,
+          "must_detect": true
+        },
+        {
+          "page": 3,
+          "must_detect": true
+        },
+        {
+          "page": 5,
+          "must_detect": true
+        }
+      ],
+      "headings": [
+        "FIRST ABU DHABI BANK",
+        "CORPORATE TERM LOAN - PRODUCT MANUAL",
+        "1. Product Overview",
+        "1.1 Product Parameters",
+        "2. Eligibility Criteria",
+        "2.1 Client Eligibility",
+        "2.2 Excluded Purposes",
+        "3. Pricing Structure",
+        "3.1 Standard Pricing Components",
+        "3.2 Pricing Floors - Reference to Credit Pricing Policy",
+        "4. Fee Schedule - Standard Terms",
+        "5. Documentation and Credit Approval",
+        "5.1 Required Documentation for Credit Approval"
+      ],
+      "verified": true,
+      "notes": "Verified against source PDF (updated for v2 document rebuild — deduplicated figures, added trend charts)."
+    },
+    {
+      "document": "FAB_Credit_Approval_Governance_Diagrams",
+      "file": "docs/FAB_Credit_Approval_Governance_Diagrams.pdf",
+      "pages": 3,
+      "scanned": false,
+      "figures": [
+        {
+          "page": 1,
+          "must_detect": true
+        },
+        {
+          "page": 2,
+          "must_detect": true
+        },
+        {
+          "page": 3,
+          "must_detect": true
+        }
+      ],
+      "tables": [
+        {
+          "page": 1,
+          "must_detect": true
+        }
+      ],
+      "headings": [
+        "Credit Governance & Escalation Analytics",
+        "1. Three Lines of Defense",
+        "2. Committee Approval Volume & Turnaround Time",
+        "3. Connected Counterparty Exposure Aggregation"
+      ],
+      "verified": true,
+      "notes": "Verified against source PDF (updated for v2 document rebuild — deduplicated figures, added trend charts)."
+    },
+    {
+      "document": "FAB_Credit_Concentration_Limits_Policy_v1_8",
+      "file": "docs/FAB_Credit_Concentration_Limits_Policy_v1_8.pdf",
+      "pages": 5,
+      "scanned": false,
+      "figures": [
+        {
+          "page": 2,
+          "must_detect": true
+        },
+        {
+          "page": 4,
+          "must_detect": true
+        },
+        {
+          "page": 5,
+          "must_detect": true
+        }
+      ],
+      "tables": [
+        {
+          "page": 1,
+          "must_detect": true
+        },
+        {
+          "page": 2,
+          "must_detect": true
+        },
+        {
+          "page": 3,
+          "must_detect": true
+        },
+        {
+          "page": 4,
+          "must_detect": true
+        }
+      ],
+      "headings": [
+        "FIRST ABU DHABI BANK",
+        "CREDIT CONCENTRATION & EXPOSURE LIMITS POLICY",
+        "1. Purpose",
+        "2. Single-Obligor Limits",
+        "2.1 Definition of Connected Counterparties",
+        "2.2 Single-Obligor Limits Table",
+        "3. Sector Concentration Limits",
+        "3.3 Real Estate - UAE: Trend Monitoring",
+        "4. Limit Monitoring and Breach Procedures"
+      ],
+      "verified": true,
+      "notes": "Verified against source PDF (updated for v2 document rebuild — deduplicated figures, added trend charts)."
+    },
+    {
+      "document": "FAB_Credit_Pricing_Policy_v2_4",
+      "file": "docs/FAB_Credit_Pricing_Policy_v2_4.pdf",
+      "pages": 11,
+      "scanned": false,
+      "figures": [
+        {
+          "page": 3,
+          "must_detect": true
+        },
+        {
+          "page": 4,
+          "must_detect": true
+        },
+        {
+          "page": 5,
+          "must_detect": true
+        },
+        {
+          "page": 8,
+          "must_detect": true
+        },
+        {
+          "page": 9,
+          "must_detect": true
+        }
+      ],
+      "tables": [
+        {
+          "page": 1,
+          "must_detect": true
+        },
+        {
+          "page": 2,
+          "must_detect": true
+        },
+        {
+          "page": 5,
+          "must_detect": true
+        },
+        {
+          "page": 5,
+          "must_detect": true
+        },
+        {
+          "page": 7,
+          "must_detect": true
+        },
+        {
+          "page": 7,
+          "must_detect": true
+        },
+        {
+          "page": 8,
+          "must_detect": true
+        },
+        {
+          "page": 9,
+          "must_detect": true
+        },
+        {
+          "page": 10,
+          "must_detect": true
+        },
+        {
+          "page": 11,
+          "must_detect": true
+        }
+      ],
+      "headings": [
+        "FIRST ABU DHABI BANK",
+        "CREDIT PRICING POLICY",
+        "1. Purpose and Scope",
+        "1.1 Definitions",
+        "2. Pricing Principles",
+        "2.1 Cost Recovery",
+        "2.2 Risk-Adjusted Profitability",
+        "2.3 Market Competitiveness",
+        "2.4 Relationship Value",
+        "3. Minimum Pricing Floors by Product",
+        "3.1 Corporate Term Loans",
+        "3.2 Revolving Credit Facilities (RCFs)",
+        "3.3 Syndicated Loans - FAB as Mandated Lead Arranger",
+        "4. Funds Transfer Pricing (FTP) Framework",
+        "4.1 FTP Rate Determination",
+        "5. Pricing Approval Authority Matrix",
+        "5.1 Standard Pricing - Within Floor Rates",
+        "6. Pricing Exceptions",
+        "6.1 Mandatory Documentation",
+        "6.2 Approval Authority for Pricing Exceptions",
+        "7. Concentration and Exposure Limits",
+        "7.1 Single Obligor Limits",
+        "8. Policy Administration and Review"
+      ],
+      "verified": true,
+      "notes": "Verified against source PDF (updated for v2 document rebuild — deduplicated figures, added trend charts)."
+    },
+    {
+      "document": "FAB_Executed_Term_Sheet_Scanned_Sample",
+      "file": "docs/FAB_Executed_Term_Sheet_Scanned_Sample.pdf",
+      "pages": 1,
+      "scanned": true,
+      "figures": [
+        {
+          "page": 1,
+          "must_detect": true,
+          "what": "Credit Committee APPROVED stamp — carries the CCC reference and date"
+        },
+        {
+          "page": 1,
+          "must_detect": false,
+          "what": "handwritten signature scribble, no legible characters",
+          "why_optional": "ImageFilter rejects it by design (degenerate/near-uniform region). It carries no retrievable content, so detecting it would be noise, not recall."
+        },
+        {
+          "page": 1,
+          "must_detect": false,
+          "what": "second handwritten signature scribble, no legible characters",
+          "why_optional": "Same as above — filtered by design."
+        }
+      ],
+      "tables": [],
+      "headings": [
+        "Corporate Banking - Executed Term Sheet (Signature Copy)",
+        "Conditions Precedent",
+        "Approvals & Authorisation"
+      ],
+      "verified": true,
+      "notes": "Verified against source PDF. CALIBRATED FOR THIS PIPELINE: (1) two of the three page-1 figures are signature scribbles that ImageFilter correctly rejects, so they are must_detect=false; (2) the 'FIRST ABU DHABI BANK' letterhead was removed from headings — on this scanned page Docling emits it as body text, not an ATX heading, and HierarchicalChunker splits on markdown headings, so it is not a heading for chunking purposes."
+    },
+    {
+      "document": "FAB_Model_Risk_Management_Framework_v3_1",
+      "file": "docs/FAB_Model_Risk_Management_Framework_v3_1.pdf",
+      "pages": 6,
+      "scanned": false,
+      "figures": [
+        {
+          "page": 2,
+          "must_detect": true
+        },
+        {
+          "page": 5,
+          "must_detect": true
+        }
+      ],
+      "tables": [
+        {
+          "page": 1,
+          "must_detect": true
+        },
+        {
+          "page": 3,
+          "must_detect": true
+        },
+        {
+          "page": 5,
+          "must_detect": true
+        }
+      ],
+      "headings": [
+        "FIRST ABU DHABI BANK",
+        "MODEL RISK MANAGEMENT FRAMEWORK",
+        "1. Framework Purpose and Scope",
+        "2. Model Risk Classification",
+        "3. Model Evidence Pack Requirements",
+        "3.1 Mandatory MEP Components - All Models",
+        "3.2 Additional MEP Components - AI/ML Pricing Models",
+        "4. Ongoing Monitoring Requirements",
+        "4.1 Performance Monitoring",
+        "5. Incident Reporting"
+      ],
+      "verified": true,
+      "notes": "Verified against source PDF (updated for v2 document rebuild — deduplicated figures, added trend charts)."
+    },
+    {
+      "document": "FAB_Portfolio_Risk_Analytics_Report_Q2_2024",
+      "file": "docs/FAB_Portfolio_Risk_Analytics_Report_Q2_2024.pdf",
+      "pages": 4,
+      "scanned": false,
+      "figures": [
+        {
+          "page": 1,
+          "must_detect": true
+        },
+        {
+          "page": 2,
+          "must_detect": true
+        },
+        {
+          "page": 3,
+          "must_detect": true
+        },
+        {
+          "page": 3,
+          "must_detect": true
+        }
+      ],
+      "tables": [
+        {
+          "page": 1,
+          "must_detect": true
+        }
+      ],
+      "headings": [
+        "FAB Portfolio Risk Analytics Report",
+        "1. Capital Adequacy Trend",
+        "2. Liquidity Position Trend",
+        "3. Asset Quality - IFRS 9 Stage Migration",
+        "4. Operating Efficiency Trend"
+      ],
+      "verified": true,
+      "notes": "Verified against source PDF (updated for v2 document rebuild — deduplicated figures, added trend charts)."
+    }
+  ]
+}

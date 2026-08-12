@@ -1,0 +1,282 @@
+{
+  "version": 1,
+  "_schema": {
+    "artifact_ref": "ORIGINATING pipeline's ref: 'sha256:<64-hex>.png' over raw PNG bytes. Kept for provenance only — this pipeline cannot resolve it.",
+    "asset_id": "THIS pipeline's asset id: sha256(normalised WEBP bytes)[:32], per utils/hashing.make_asset_id. null until `python -m eval remap` fills it.",
+    "transcription": "Human ground truth. What this pipeline's vision model is scored AGAINST.",
+    "verified": "true = a human read the source image and confirmed the transcription.",
+    "_dropped": "The source file carried a `vlm_caption` per item — the ORIGINATING pipeline's vision output. Deliberately not imported: it is a different model's answer to a different prompt, so it is neither ground truth nor a valid baseline for this pipeline. Stage 2b generates its own captions at run time."
+  },
+  "items": [
+    {
+      "artifact_ref": "sha256:ad8017074153f424868f245991e90ba89cd684b15a0b0518590173d67957dad3.png",
+      "asset_id": "7e26bcbc2b170fbe42f84ea5786935f5",
+      "document": "CBUAE_Circular_2024_BSE_047_AI_Governance",
+      "page": 1,
+      "modality": "figure",
+      "transcription": "Title: Growth in AI/ML System Deployment Across UAE LFIs (illustrative)\nY-axis label: AI/ML Systems in Production (illustrative, UAE LFI sector)\nY-axis ticks: 0, 10, 20, 30, 40, 50\nX-axis ticks: 2020, 2021, 2022, 2023, 2024E\nLegend: red circle line = HIGH-risk systems; gold square line = MEDIUM-risk systems; green triangle line = LOW-risk systems\nHIGH-risk values: 2020=3, 2021=7, 2022=14, 2023=26, 2024E=41\nMEDIUM-risk values: 2020=9, 2021=15, 2022=24, 2023=38, 2024E=52\nLOW-risk values: 2020=12, 2021=19, 2022=28, 2023=35, 2024E=44\nAnnotation (arrow to 2023 HIGH-risk point): \"HIGH-risk deployments growing fastest — the driver for this Circular\"",
+      "verified": true,
+      "notes": "Transcribed and verified against source image. Do not copy vlm_caption — that is what is being tested."
+    },
+    {
+      "artifact_ref": "sha256:9df49b85ab199550138b1398e0ae85465b5d7c6482b7f4d73e175276a15977db.png",
+      "asset_id": "effa6e815f461a664636e0418ad54ddb",
+      "document": "CBUAE_Circular_2024_BSE_047_AI_Governance",
+      "page": 2,
+      "modality": "figure",
+      "transcription": "Title: Circular 2024/BSE/047 — Key Dates & Compliance Deadlines\nHorizontal timeline, 5 markers left to right:\n1. 15-Mar-2024 — Circular Issued\n2. 1-Jul-2024 — Effective Date\n3. 30-Aug-2024 — Gap Assessment Due (60 days post-effective)\n4. 31-Dec-2024 — Tier 1 Validation Deadline\n5. 30-Jun-2025 — All Other LFIs Validation Deadline",
+      "verified": true,
+      "notes": "Transcribed and verified against source image. Do not copy vlm_caption — that is what is being tested."
+    },
+    {
+      "artifact_ref": "sha256:f8da2bedde96026a1327dfcd3359dc87852b88e11e711f079a6a2cc2c264cf70.png",
+      "asset_id": "7f7befeb90f0ae7106a4ea7c9cd1e1c9",
+      "document": "CBUAE_Circular_2024_BSE_047_AI_Governance",
+      "page": 4,
+      "modality": "figure",
+      "transcription": "Title: AI/ML Risk Classification Tiers (Article 4)\nLeft-side vertical axis text (arrow, bottom to top): Increasing regulatory scrutiny\nThree-tier pyramid, top to bottom:\nTier 1 (top, red): HIGH — Credit pricing agents · loan approval models · fraud decisioning. Below: Mandatory validation before deployment; annual re-validation\nTier 2 (middle, gold): MEDIUM — Customer segmentation · churn prediction · internal risk dashboards. Below: Required within 6 months of deployment; biennial\nTier 3 (bottom, green): LOW — Document classification · OCR · internal helpdesk chatbots. Below: Not mandated; recommended at management discretion",
+      "verified": true,
+      "notes": "Transcribed and verified against source image. Do not copy vlm_caption — that is what is being tested."
+    },
+    {
+      "artifact_ref": "sha256:31024bee1c79ee422e93ac2cd5dc93b232e0cda10708539175e54c9e24296e0a.png",
+      "asset_id": "d661bb4fcc476792a82412a1d04a34c1",
+      "document": "CBUAE_Circular_2024_BSE_047_AI_Governance",
+      "page": 6,
+      "modality": "figure",
+      "transcription": "Title: GERNAS Pricing Agent — Mandatory Human-in-the-Loop Control Flow\nSubtitle (italic): Per CBUAE Circular 2024/BSE/047, Article 5 — HIGH-risk AI/ML systems\nMain flow, left to right, 4 boxes: 1. AI Recommendation — Pricing Agent generates rate + RAROC + explanation. 2. Reviewer Access — Full inputs, reasoning, policy context (Art. 5.1.2). 3. Human Review — Floor check · policy check · independent assessment. 4. Decision — Approve / Override\nRight column, top to bottom: 5. Approved (green, no body text). 6. Override Logged — Reason required. 7. Audit Log — Reviewer ID · timestamp / 7-yr retention (Art 5.1.3)\nBottom red box (arrow from Audit Log back toward main flow): Override rate > 25% (90-day rolling) — escalate to AI Risk Officer (Art. 5.2.2)",
+      "verified": true,
+      "notes": "Transcribed and verified against source image. Do not copy vlm_caption — that is what is being tested."
+    },
+    {
+      "artifact_ref": "sha256:3bdd9cc77e28fa3792a856c076487a94d0188e873d16d84d7c586b4d3150798c.png",
+      "asset_id": "0ae3c97d5ba6713640b1e75fd9b0bf3b",
+      "document": "FAB_Corporate_Term_Loan_Product_Manual_v2_0",
+      "page": 3,
+      "modality": "figure",
+      "transcription": "Title: (implicit, section header) Reference Base Rate Trend — 3-Month EIBOR vs. SOFR (Q3-2022 to Q2-2024)\nY-axis label: Base Rate (%)\nY-axis ticks: 3.0, 3.5, 4.0, 4.5, 5.0\nX-axis ticks: Q3-22, Q4-22, Q1-23, Q2-23, Q3-23, Q4-23, Q1-24, Q2-24\nLegend: purple circle line = 3-Month EIBOR (AED); blue square line = 3-Month SOFR (USD)\nEIBOR values: 3.85, 4.25, 4.55, 4.70, 4.85, 4.95, 4.90, 4.82\nSOFR values: 3.05, 3.65, 4.35, 4.90, 5.15, 5.30, 5.28, 5.20\nAnnotation (arrow): \"Rates plateauing after rapid 2022–23 hiking cycle\"",
+      "verified": true,
+      "notes": "Transcribed and verified against source image. Do not copy vlm_caption — that is what is being tested."
+    },
+    {
+      "artifact_ref": "sha256:c10e10a2b5b6b6ce2f7884fae95cdaa6e5c6150760e79c39445451a0f162aeb8.png",
+      "asset_id": "16acba3a1688b4594156130a8ca93c2f",
+      "document": "FAB_Corporate_Term_Loan_Product_Manual_v2_0",
+      "page": 4,
+      "modality": "figure",
+      "transcription": "Y-axis label: All-In Rate Components (%)\nY-axis ticks: 0, 2, 4, 6, 8, 10\nLegend (3 stacked components): Base Rate / FTP (%) — light grey; Credit Spread — floor, 3–5yr tenor (%) — purple; Arrangement Fee (annualised, %) — dark green\nX-axis categories with total value labelled above each bar: AAA/AA — 6.95%; A — 7.25%; BBB — 7.75%; BB — 8.55%; B — 9.65%",
+      "verified": true,
+      "notes": "Transcribed and verified against source image. Do not copy vlm_caption — that is what is being tested."
+    },
+    {
+      "artifact_ref": "sha256:62341f3e8a59077e1309d2c19ec81d8e11fc53cbefdcf6487359a978645925ea.png",
+      "asset_id": "c5b483bf66371b6e04b88688904a4daa",
+      "document": "FAB_Corporate_Term_Loan_Product_Manual_v2_0",
+      "page": 5,
+      "modality": "figure",
+      "transcription": "Title: Arrangement Fee Schedule by Facility Size Band\nY-axis label: Arrangement Fee (bps of facility amount)\nY-axis ticks: 0, 10, 20, 30, 40, 50, 60\nLegend: purple bar = Standard Rate (bps); gold bar = Floor Rate (bps)\nX-axis categories and values (Standard / Floor): < AED 50M — 60 / 30; AED 50M–250M — 50 / 35; > AED 250M — 40 / 30",
+      "verified": true,
+      "notes": "Transcribed and verified against source image. Do not copy vlm_caption — that is what is being tested."
+    },
+    {
+      "artifact_ref": "sha256:3099d37363769414874b89688ebc6b6da59580f8caf074dbe16d1bbc94e7e1c5.png",
+      "asset_id": "15575630160e44727eceb303e4d7388d",
+      "document": "FAB_Credit_Approval_Governance_Diagrams",
+      "page": 1,
+      "modality": "figure",
+      "transcription": "Title: FAB Credit Risk Governance — Three Lines of Defense Model\nSubtitle (italic): Standard banking governance structure underpinning credit pricing controls\nThree columns, left to right, connected by arrows:\n1ST LINE / Business & Operations: Relationship Managers; Credit Analysts; GERNAS Pricing Agent (as a business tool); Product Management. Caption: Owns and manages risk day-to-day\n2ND LINE / Risk & Compliance Oversight: Group Risk Management; AI Risk Officer; Model Risk Management team; Credit Committees (RCC/CCC/GCC). Caption: Sets policy, monitors, challenges 1st line\n3RD LINE / Independent Assurance: Internal Audit; Independent Model Validation Team; External Auditors; CBUAE Examinations. Caption: Provides independent assurance to the Board\nBottom banner (amber): \"The GERNAS Pricing Agent sits in the 1st line as a tool — but its outputs are independently reviewed (2nd line) and periodically validated (3rd line), per CBUAE Art. 3.2 & 5.1\"",
+      "verified": true,
+      "notes": "Transcribed and verified against source image. Do not copy vlm_caption — that is what is being tested."
+    },
+    {
+      "artifact_ref": "sha256:e1fdbe002ca559eb07d4d4ea331e58d9451ff2ce5a188cb8eaa755de2a42bd00.png",
+      "asset_id": "e3ff76e12bb99b81ca31765022fdb680",
+      "document": "FAB_Credit_Approval_Governance_Diagrams",
+      "page": 2,
+      "modality": "figure",
+      "transcription": "Title: Credit Committee Approval Volume & Turnaround Time — H1 2024\nLeft Y-axis label: Approvals per Month (count), ticks 0, 5, 10, 15, 20, 25, 30\nRight Y-axis label: Average Turnaround Time (days), ticks 4.5, 5.0, 5.5, 6.0, 6.5\nX-axis: Jan-24, Feb-24, Mar-24, Apr-24, May-24, Jun-24\nLegend: dark purple bar = GCC approvals (count); light purple bar = CCC approvals (count); red line with circle marker = Avg. turnaround time (days)\nGCC values: 8, 11, 9, 14, 13, 16\nCCC values: 22, 25, 24, 29, 31, 33\nTurnaround values: 6.2, 5.8, 6.5, 5.4, 4.9, 4.3\nAnnotation (arrow): \"Turnaround improving even as approval volume grows\"",
+      "verified": true,
+      "notes": "Transcribed and verified against source image. Do not copy vlm_caption — that is what is being tested."
+    },
+    {
+      "artifact_ref": "sha256:a1fa4c66bdb6fad613b6c14c440cf0579250e11df87f6f53c808e33d2cdae4d0.png",
+      "asset_id": "ce495f96e22f41cdaa16b80cf393c649",
+      "document": "FAB_Credit_Approval_Governance_Diagrams",
+      "page": 3,
+      "modality": "figure",
+      "transcription": "Title: Connected Counterparty Structure — Illustrative Example\nSubtitle (italic): Group exposure is aggregated across all IS_SUBSIDIARY_OF-connected entities (Policy §2.1)\nTop box: Al Marjan Holdings Group Ltd. — Ultimate Parent · 20%+ voting control\nThree middle boxes (arrows from top box): Al Marjan Industrial Holdings LLC — AED 180M outstanding; Al Marjan Logistics FZE — AED 65M outstanding; Al Marjan Real Estate Dev. LLC — AED 240M outstanding\nBottom box (dashed arrows converging from the three middle boxes): Aggregated Group Exposure: AED 485M — Corporate — Investment Grade limit: AED 3.5bn (14% Tier 1) — group utilisation: 13.9%\nFooter callout box: \"Knowledge Graph traversal: Client —[IS_SUBSIDIARY_OF]→ Client (recursive, per §2.1)\" and \"AI systems must aggregate exposure across the full connected group before checking against single-obligor limits — checking only the immediate borrower under-states true exposure.\"",
+      "verified": true,
+      "notes": "Transcribed and verified against source image. Do not copy vlm_caption — that is what is being tested."
+    },
+    {
+      "artifact_ref": "sha256:e134a7892d1865a474c401bd8737c3050ea98ffee05c39e50d3ed990c1a2edc7.png",
+      "asset_id": "4f0c757386a7977294c0b42daec2c622",
+      "document": "FAB_Credit_Concentration_Limits_Policy_v1_8",
+      "page": 2,
+      "modality": "figure",
+      "transcription": "Title: Single-Obligor Concentration Limits by Counterparty Classification\nY-axis label: Maximum Exposure (AED billion), ticks 0, 1, 2, 3, 4, 5\nX-axis categories with value + %T1 label above each bar: GRE–UAE (IG) — 5.0bn (20% T1); GRE–Foreign — 2.0bn (8% T1); FI–IG — 2.5bn (10% T1); FI–Sub-IG — 0.75bn (3% T1); Corp–IG (AAA-BBB) — 3.5bn (14% T1); Corp–Sub-IG (BB) — 1.2bn (5% T1); Corp–Speculative (B-) — 0.4bn (1.6% T1)",
+      "verified": true,
+      "notes": "Transcribed and verified against source image. Do not copy vlm_caption — that is what is being tested."
+    },
+    {
+      "artifact_ref": "sha256:9c791992dcf580bfa7d115580c9f58d57f1b1da3002b14eab22789b2918a4391.png",
+      "asset_id": "79efb099b26820f009a9797baf93c127",
+      "document": "FAB_Credit_Concentration_Limits_Policy_v1_8",
+      "page": 4,
+      "modality": "figure",
+      "transcription": "X-axis label: % of Total Corporate Credit Portfolio, ticks 0, 5, 10, 15, 20, 25, 30\nY-axis (sectors, top to bottom): Real Estate — UAE, Real Estate — Intl, Construction & Infra, Oil & Gas (Upstream), Hospitality & Tourism, Retail Trade, Financial Institutions (non-bank), Technology & Telecom, Other — any single sector\nLegend (3 entries): dark green = Current utilisation — within soft limit; gold = Current utilisation — approaching soft limit; red = Current utilisation — approaching hard limit\nValues (current / soft / hard): Real Estate — UAE 18.4%/20%/25% (gold); Real Estate — Intl 6.1%/8%/12%; Construction & Infra 10.7%/12%/18%; Oil & Gas 8.9%/10%/15%; Hospitality & Tourism 3.2%/5%/8%; Retail Trade 6.4%/8%/12%; Financial Institutions 4.8%/6%/10%; Technology & Telecom 3.1%/5%/8%; Other 3.9%/5%/7%",
+      "verified": true,
+      "notes": "Transcribed and verified against source image. Do not copy vlm_caption — that is what is being tested."
+    },
+    {
+      "artifact_ref": "sha256:88c9bf9ca72e4eecc35d4809ede399229571fc10c49a8e120f783400165ec7b0.png",
+      "asset_id": "e5c3a821636bf6083c8092f23d695728",
+      "document": "FAB_Credit_Concentration_Limits_Policy_v1_8",
+      "page": 5,
+      "modality": "figure",
+      "transcription": "Title: (section header) Real Estate — UAE Sector Utilisation Trend vs. Limits (Q3-2022 to Q2-2024)\nY-axis label: % of Total Corporate Credit Portfolio, ticks 14, 16, 18, 20, 22, 24, 26\nX-axis: Q3-22, Q4-22, Q1-23, Q2-23, Q3-23, Q4-23, Q1-24, Q2-24\nLine: Real Estate — UAE utilisation (%) — red, filled area beneath\nValues: 15.8, 16.4, 16.9, 17.3, 17.8, 18.1, 18.4, 18.4\nDashed amber reference line at 20 (\"Soft limit: 20%\"); dashed red reference line at 25 (\"Hard limit: 25%\")\nAnnotation: \"Steady upward drift toward soft limit over 8 quarters\"",
+      "verified": true,
+      "notes": "Transcribed and verified against source image. Do not copy vlm_caption — that is what is being tested."
+    },
+    {
+      "artifact_ref": "sha256:b6f94baaa25690a99b81fde3d0bab649d24b4be07424c0f1f6c64ddeb1103bd4.png",
+      "asset_id": "091c0e9aa33c353fd9b133e99c9af1e0",
+      "document": "FAB_Credit_Pricing_Policy_v2_4",
+      "page": 3,
+      "modality": "figure",
+      "transcription": "Y-axis label: Spread over FTP (bps), ticks 180, 190, 200, 210 (visible range)\nX-axis: Q3-22, Q4-22, Q1-23, Q2-23, Q3-23, Q4-23, Q1-24, Q2-24\nLegend: dark purple line, circle markers = Avg. booked spread — BBB, 3–5yr (bps); dark green dashed line, square markers = Policy floor spread — BBB, 3–5yr (bps)\nBooked spread values: 215, 208, 202, 195, 190, 183, 178, 174\nFloor spread values: 175, 175, 178, 178, 180, 180, 180, 180\nOn-chart annotation text (as printed, with arrow to shaded area between lines): \"Cushion above floor has narrowed from 40bps to 14bps\"\nCaption (below chart, outside crop): \"Figure 2.1 - Average booked spread vs. policy floor spread, BBB rating, 3-5yr tenor, Q3-2022 to Q2-2024.\"",
+      "verified": true,
+      "notes": "Transcribed and verified against source image. Do not copy vlm_caption — that is what is being tested. Reviewer note: the on-chart annotation text (\"Cushion above floor has narrowed from 40bps to 14bps\") is inconsistent with the plotted series — the two lines actually cross between Q4-23 and Q1-24, and by Q2-24 the booked spread (174 bps) sits BELOW the floor spread (180 bps), a gap of -6 bps, not +14 bps above it. The annotation text is transcribed verbatim below as printed, but is flagged as a data/annotation inconsistency in the source chart for the chart author to correct."
+    },
+    {
+      "artifact_ref": "sha256:8984494b3cc7e3e95a8bfd5d209ef713447d397ac6aeda203c404e5b84a7ca9d.png",
+      "asset_id": "536185b2e7cdefc689ec3cbfe7875569",
+      "document": "FAB_Credit_Pricing_Policy_v2_4",
+      "page": 4,
+      "modality": "figure",
+      "transcription": "Colorbar label (right): RAROC (%), ticks 20.0, 17.5, 15.0, 12.5, 10.0, 7.5, 5.0, 2.5, 0.0\nRow headers (rating, top to bottom): AAA/AA, A, BBB, BB, B, CCC & below\nColumn headers (sector, left to right): Real Estate, Construction, Oil & Gas, Hospitality, Retail Trade, Financial Inst., Technology\nCell values (asterisk denotes below the 13.5% hurdle, as printed on the chart's title line elsewhere in the document):\nAAA/AA: 16.8%, 15.9%, 14.2%, 12.8%*, 15.1%, 17.2%, 18.4%\nA: 15.2%, 14.6%, 13.5%, 11.4%*, 13.9%, 15.8%, 16.9%\nBBB: 13.6%, 12.9%*, 12.1%*, 9.8%*, 12.4%*, 14.1%, 15.0%\nBB: 11.4%*, 10.6%*, 10.9%*, 7.2%*, 10.1%*, 11.8%*, 12.6%*\nB: 8.9%*, 7.8%*, 8.4%*, 4.1%*, 7.6%*, 9.0%*, 9.4%*\nCCC & below: 4.2%*, 3.5%*, 3.9%*, 1.2%*, 3.4%*, 4.0%*, 4.1%*",
+      "verified": true,
+      "notes": "Transcribed and verified against source image. Do not copy vlm_caption — that is what is being tested."
+    },
+    {
+      "artifact_ref": "sha256:f16a6b81f3a3ca6e6ba6e72c599ca4cb3714cae97f8b922078342a3a90aaa541.png",
+      "asset_id": "ca86fa9265fff689d5d3e20cf3a9727a",
+      "document": "FAB_Credit_Pricing_Policy_v2_4",
+      "page": 5,
+      "modality": "figure",
+      "transcription": "Title: Table 3.1 — Corporate Term Loan Pricing Floors (bps over FTP)\nSubtitle: Client Rating × Facility Tenor — merged header, sub-columns for tenor bucket\nColumn headers: Client Rating | ≤ 1 Year | 1–3 Years | 3–5 Years | > 5 Years | Notes\nRows: AAA/AA — 65/80/100/130 bps — Investment grade sovereign / quasi-sovereign; A — 85/105/130/165 bps — Strong investment grade corporate; BBB — 115/145/180/220 bps — Standard investment grade; BB — 165/210/260/320 bps — Sub-investment grade / leveraged; B — 240/300/370/450 bps — Speculative — senior credit approval required; CCC & below — NOT PERMITTED WITHOUT GROUP CREDIT COMMITTEE APPROVAL — See Section 6 — Pricing Exceptions\nFooter note (below table, italic): rows/header cells are merged/spanned in the source layout, a structure plain-text extraction typically flattens incorrectly",
+      "verified": true,
+      "notes": "Transcribed and verified against source image. Do not copy vlm_caption — that is what is being tested."
+    },
+    {
+      "artifact_ref": "sha256:32795c59d38ca43cbc3d8554463ac93fb65445b9e8ba25480a50ff301421d114.png",
+      "asset_id": "e3b0d370a677d229ec6a5285bb2c0872",
+      "document": "FAB_Credit_Pricing_Policy_v2_4",
+      "page": 8,
+      "modality": "figure",
+      "transcription": "Title: FTP Rate Curve by Tenor Bucket (Illustrative, Jun-2024)\nLegend: dark navy line with circle markers = Illustrative FTP Rate (Jun-2024); light purple bars = Liquidity Premium (bps/100); green bars = Tenor Premium (bps/100)\nX-axis: ≤ 3mo, 3–12mo, 1–3yr, 3–5yr, 5–7yr, > 7yr\nLeft Y-axis label: FTP Rate (%), ticks 5.0, 5.2, 5.4, 5.6, 5.8, 6.0, 6.2, 6.4, 6.6\nRight Y-axis label: Premium Components (% equiv.), ticks 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6\nNo numeric data labels are printed on the line/bars themselves — only axis ticks are numeric.",
+      "verified": true,
+      "notes": "Transcribed and verified against source image. Do not copy vlm_caption — that is what is being tested."
+    },
+    {
+      "artifact_ref": "sha256:24c50320a4c422d602442fa62026bdf9209c3bffeabf293237db32c1eea8f0b0.png",
+      "asset_id": "f94a234ff9826e9bda8319f6e1cdde41",
+      "document": "FAB_Credit_Pricing_Policy_v2_4",
+      "page": 9,
+      "modality": "figure",
+      "transcription": "Title: FAB Credit Pricing — Approval Authority Escalation Path\nSubtitle (italic): Escalation is driven by facility size and client credit rating (Policy §5.1)\nVertical flow, top to bottom, boxes connected by downward arrows:\n1. Relationship Manager + Credit Analyst — Up to AED 25M · all ratings\n2. Senior RM + Team Head — AED 25M–100M · AAA to BBB\n3. Segment Credit Head — AED 25M–100M (BB & below) or AED 100M–500M (AAA–BBB)\n4. Regional Credit Committee (RCC) — AED 100M–500M · BB and below\n5. Country Credit Committee (CCC) — AED 500M–1 billion · all ratings\n6. Group Credit Committee (GCC) — title visible, but box is visually overlapped by the amber footer banner beneath it; no additional criteria text is legible under the GCC title in this image\nFooter banner (amber, overlapping the GCC box): \"Pricing Exceptions (below-floor pricing) follow a SEPARATE escalation ladder — see §6.2\"",
+      "verified": true,
+      "notes": "Transcribed and verified against source image. Do not copy vlm_caption — that is what is being tested. Reviewer note: the source diagram has a genuine layout defect — the 'Group Credit Committee (GCC)' box (escalation level 6) is visually overlapped by the amber Pricing Exceptions banner beneath it, so no criteria text is legible under the GCC title in the rendered image. This is a rendering bug in the source chart, not a transcription gap; flagged for the chart author to fix spacing."
+    },
+    {
+      "artifact_ref": "sha256:b23919fb5bdae77e40cdc3f72118e4f53e602100eaccb9046eeb906d8b6242a7.png",
+      "asset_id": null,
+      "document": "FAB_Executed_Term_Sheet_Scanned_Sample",
+      "page": 1,
+      "modality": "figure",
+      "transcription": "No printed text, numbers, labels, axes, or legend visible. Content is a dark, irregular wavy line (ink scribble / signature-style waveform) on a plain light background — a cropped portion of a handwritten signature from the scanned document. No legible characters present.",
+      "verified": true,
+      "notes": "Transcribed and verified against source image. Do not copy vlm_caption — that is what is being tested."
+    },
+    {
+      "artifact_ref": "sha256:bee012b35885565b1430b1de0d6a3ae23289b3b651d1bd7364119e9fe90bfa5a.png",
+      "asset_id": "ee28e90c40b26ffd7350c6674234d166",
+      "document": "FAB_Executed_Term_Sheet_Scanned_Sample",
+      "page": 1,
+      "modality": "figure",
+      "transcription": "Circular stamp image. Curved text along top of outer ring: FIRST ABU DHABI BANK. Curved text along bottom of outer ring (reads upside-down/mirrored as printed): CREDIT COMMITTEE. Center text, large bold: APPROVED (a dark ink signature/scribble line crosses through this word). Below that: 28-JUN-2024. Below that, smaller: CCC REF: CCC/2024/0847 (final digit partly cropped by the stamp's border and the overlapping signature — transcribed as best legible reading, flagged low-confidence on the last digit).",
+      "verified": true,
+      "notes": "Transcribed and verified against source image. Do not copy vlm_caption — that is what is being tested."
+    },
+    {
+      "artifact_ref": "sha256:b315e240db618df385b47fa7c5d4e5bd02aaeaf64a53c8cf5b6ecd25adca479a.png",
+      "asset_id": null,
+      "document": "FAB_Executed_Term_Sheet_Scanned_Sample",
+      "page": 1,
+      "modality": "figure",
+      "transcription": "No printed text, numbers, labels, axes, or legend visible. Content is a dark wavy/sinusoidal ink line on a plain light background, with the right edge overlapped by a reddish curved shape (appears to be the edge of a stamp from elsewhere on the scanned page). No legible characters present.",
+      "verified": true,
+      "notes": "Transcribed and verified against source image. Do not copy vlm_caption — that is what is being tested."
+    },
+    {
+      "artifact_ref": "sha256:4e1e9d541e14448a747d3d7d3a7238b60373bd58a5593fadcdc657744297a64e.png",
+      "asset_id": "c7d519ab862da9cf758e16f4ac0f67a9",
+      "document": "FAB_Model_Risk_Management_Framework_v3_1",
+      "page": 2,
+      "modality": "figure",
+      "transcription": "Header text at top (italic, arrow pointing left): Board Risk & Compliance Committee owns ultimate AI governance accountability (CBUAE Art. 2.1)\nHierarchy, top to bottom:\nLevel 1: Board Risk & Compliance Committee\nLevel 2: Chief Risk Officer (CRO)\nLevel 3 (three boxes side by side): AI Risk Officer — Circular Art. 2.1.2; Model Risk Mgmt Team — MRM Framework owner; Independent Validation Team — Organisationally separate from developers (Art 3.2.1)\nLevel 4 (three boxes, one under each Level 3 box): AI Governance Policy — Board-approved annually (Art 2.1.1); AI Model Inventory — Centralised · available to CBUAE on request (Art 2.2); Model Evidence Packs — Tier 1/2 models — MRM Framework §3",
+      "verified": true,
+      "notes": "Transcribed and verified against source image. Do not copy vlm_caption — that is what is being tested."
+    },
+    {
+      "artifact_ref": "sha256:6440b66ee76e7b9dd90b8e74695dc1cd8657545b52fa69c49bee83c38f5071b5.png",
+      "asset_id": "e995a28647ece9500b943944f8f57a2f",
+      "document": "FAB_Model_Risk_Management_Framework_v3_1",
+      "page": 5,
+      "modality": "figure",
+      "transcription": "Six-panel small-multiples dashboard, 2 rows x 3 columns. No numeric data labels printed on the lines themselves; values below are read against y-axis gridlines/ticks.\nPanel 1 (Pricing Floor Breach Rate) — unit: count/mo, ticks 0.2–1.0, dashed red ref line at 1.0, X: Jan–Jun, values: 0.3, 0.2, 0.5, 0.4, 0.6, 0.3\nPanel 2 (Human Override Rate) — unit: %, ticks 14–21, dashed red ref line at 20, values: 14, 16, 18, 21, 19, 17\nPanel 3 (Recommendation Acceptance) — unit: %, ticks 60.0–77.5, dashed red ref line at 60.0, values: ~78, 74, 70, 65, 68, 71\nPanel 4 (RAG Retrieval Freshness) — unit: score, ticks 0.80–0.90, dashed red ref line at 0.80, values: ~0.91, 0.89, 0.86, 0.82, 0.85, 0.87\nPanel 5 (KG Nodes Stale > 6mo) — unit: count, ticks 1.00–3.00, dashed red ref line at 3.00, values: 1, 2, 1, 3, 2, 1\nPanel 6 (LLM p95 Latency) — unit: sec, ticks 2.0–5.0, dashed red ref line at 5.0, values: 2.1, 2.4, 3.1, 4.6, 3.8, 2.9",
+      "verified": true,
+      "notes": "Transcribed and verified against source image. Do not copy vlm_caption — that is what is being tested."
+    },
+    {
+      "artifact_ref": "sha256:574ac8d5509abf1c3bb593d7521ec2f87fd22e69b487fef2accf385e1ebde72a.png",
+      "asset_id": "313eccb4c338eb650ed381020d422970",
+      "document": "FAB_Portfolio_Risk_Analytics_Report_Q2_2024",
+      "page": 1,
+      "modality": "figure",
+      "transcription": "Section header (above figure): 1. Capital Adequacy Trend\nTitle: FAB Group Capital Adequacy Ratios — Trend (Q3-2022 to Q2-2024)\nY-axis label: Capital Ratio (%), ticks 10, 12, 14, 16, 18\nX-axis: Q3-22, Q4-22, Q1-23, Q2-23, Q3-23, Q4-23, Q1-24, Q2-24\nLegend: navy circle = Total CAR (%); purple square = Tier 1 Ratio (%); teal triangle = CET1 Ratio (%)\nTotal CAR: 16.9, 17.1, 16.7, 17.2, 17.5, 17.7, 18.0, 18.2\nTier 1: 14.1, 14.3, 13.9, 14.4, 14.7, 14.9, 15.2, 15.4\nCET1: 12.8, 13.0, 12.6, 13.1, 13.4, 13.6, 13.9, 14.1\nDashed red reference line at 10.5: \"Basel III + UAE buffer minimum Total CAR: 10.5%\"\nAnnotation (arrow): \"Steady capital build-up driven by retained earnings\"",
+      "verified": true,
+      "notes": "Transcribed and verified against source image. Do not copy vlm_caption — that is what is being tested."
+    },
+    {
+      "artifact_ref": "sha256:f2eaf24ed12c1a2577e4e5528bd28d3b538ef65ab0e656e7c02c0cae70bab57d.png",
+      "asset_id": "3f8f4451422e098108480298fef37564",
+      "document": "FAB_Portfolio_Risk_Analytics_Report_Q2_2024",
+      "page": 2,
+      "modality": "figure",
+      "transcription": "Section header (above figure): 2. Liquidity Position Trend\nTitle: FAB Group Liquidity Ratios — LCR & NSFR Trend (Q3-2022 to Q2-2024)\nY-axis label: Ratio (%), ticks 90–160\nX-axis: Q3-22, Q4-22, Q1-23, Q2-23, Q3-23, Q4-23, Q1-24, Q2-24\nLegend: blue circle = Liquidity Coverage Ratio (LCR, %); teal square = Net Stable Funding Ratio (NSFR, %)\nLCR values: 138, 142, 129, 134, 145, 151, 148, 156\nNSFR values: 112, 114, 109, 111, 116, 118, 117, 121\nDashed red reference line at 100: \"CBUAE regulatory minimum: 100%\"",
+      "verified": true,
+      "notes": "Transcribed and verified against source image. Do not copy vlm_caption — that is what is being tested."
+    },
+    {
+      "artifact_ref": "sha256:814e698c5736cff12ed65ea51db399b1e40bc689c0d7ff570069d91ea2255afd.png",
+      "asset_id": "743f07d76c65d62c2ab12ff56088595f",
+      "document": "FAB_Portfolio_Risk_Analytics_Report_Q2_2024",
+      "page": 3,
+      "modality": "figure",
+      "transcription": "Section header (above figure): 3. Asset Quality — IFRS 9 Stage Migration\nTitle: IFRS 9 Loan Stage Migration — Corporate Portfolio (Q3-2022 to Q2-2024)\nY-axis label: % of Total Corporate Portfolio, ticks 0, 20, 40, 60, 80, 100\nX-axis: Q3-22, Q4-22, Q1-23, Q2-23, Q3-23, Q4-23, Q1-24, Q2-24\nStacked area, legend (bottom to top): Stage 1 — Performing (teal); Stage 2 — Significant increase in credit risk (amber); Stage 3 — Credit-impaired (red)\nStage 1: 93.8, 93.5, 93.1, 92.4, 91.8, 91.0, 90.3, 89.7\nStage 2: 4.6, 4.8, 5.1, 5.7, 6.1, 6.7, 7.2, 7.6\nStage 3: 1.6, 1.7, 1.8, 1.9, 2.1, 2.3, 2.5, 2.7\nAnnotation (white text): \"Stage 2 share nearly doubled over 8 quarters\"\nNote: a separate figure (Operating Efficiency) also appears on this same page.",
+      "verified": true,
+      "notes": "Transcribed and verified against source image. Do not copy vlm_caption — that is what is being tested."
+    },
+    {
+      "artifact_ref": "sha256:468de113120a0d5d2508908fd804e0ae9da4760ddca8384666805f3da861ea4b.png",
+      "asset_id": "3cd501bdb0ddfcf443399d28e6040766",
+      "document": "FAB_Portfolio_Risk_Analytics_Report_Q2_2024",
+      "page": 3,
+      "modality": "figure",
+      "transcription": "Section header (above figure): 4. Operating Efficiency Trend\nTitle: Operating Efficiency — Cost-to-Income (↓ improving) vs. ROE (↑ improving)\nLeft Y-axis label: Cost-to-Income Ratio (%), ticks 36–46 (red)\nRight Y-axis label: Return on Equity (%), ticks 11–16 (teal)\nX-axis: Q3-22, Q4-22, Q1-23, Q2-23, Q3-23, Q4-23, Q1-24, Q2-24\nCost-to-Income values: 42.8, 42.1, 43.5, 41.9, 40.6, 39.8, 38.9, 38.2\nROE values: 13.1, 13.4, 12.8, 13.6, 14.0, 14.3, 14.6, 14.9\nDashed amber reference line at 13.5: \"RoE hurdle: 13.5%\"\nNote: a separate figure (IFRS 9 Stage Migration) also appears on this same page.\nCaption (below chart, outside crop): \"Figure 4.1 - Cost-to-income ratio and ROE trend, Q3-2022 to Q2-2024.\"",
+      "verified": true,
+      "notes": "Transcribed and verified against source image. Do not copy vlm_caption — that is what is being tested."
+    }
+  ]
+}
