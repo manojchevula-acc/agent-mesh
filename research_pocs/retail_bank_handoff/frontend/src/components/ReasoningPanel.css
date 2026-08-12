@@ -1,0 +1,74 @@
+.reasoning-empty {
+  color: #8b90a8;
+  font-size: 13px;
+  text-align: center;
+  margin-top: 40px;
+  line-height: 1.6;
+}
+
+.reasoning-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.reasoning-card {
+  background: #22263a;
+  border-left: 3px solid #555;
+  border-radius: 8px;
+  padding: 12px 14px;
+  animation: slideIn 0.2s ease-out;
+}
+
+@keyframes slideIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.reasoning-agent {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 10px;
+  text-transform: capitalize;
+}
+
+.reasoning-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.reasoning-seq {
+  margin-left: auto;
+  font-size: 11px;
+  color: #8b90a8;
+  font-weight: 400;
+}
+
+.reasoning-field {
+  margin-bottom: 8px;
+}
+
+.reasoning-field:last-child {
+  margin-bottom: 0;
+}
+
+.reasoning-field-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #8b90a8;
+  margin-bottom: 2px;
+}
+
+.reasoning-field-value {
+  font-size: 12.5px;
+  color: #c8cad8;
+  line-height: 1.5;
+  word-break: break-word;
+}

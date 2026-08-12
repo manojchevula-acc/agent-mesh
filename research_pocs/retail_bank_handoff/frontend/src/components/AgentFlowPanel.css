@@ -1,0 +1,128 @@
+.flow-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.flow-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: #8b90a8;
+  margin-bottom: 10px;
+}
+
+.flow-nodes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.flow-node {
+  padding: 5px 11px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid #2e3247;
+  color: #8b90a8;
+  text-transform: capitalize;
+  transition: all 0.2s;
+}
+
+.flow-node-active {
+  font-weight: 600;
+}
+
+/* Handoff path */
+.flow-path {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  font-size: 12px;
+  background: #22263a;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.flow-path-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.flow-path-agent {
+  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.flow-path-arrow {
+  color: #8b90a8;
+}
+
+.flow-path-sep {
+  color: #2e3247;
+  margin: 0 4px;
+}
+
+/* Tool calls */
+.flow-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.flow-tool-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: #22263a;
+  border-radius: 7px;
+  padding: 10px 12px;
+}
+
+.flow-tool-agent-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+
+.flow-tool-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e09a3a;
+  font-family: 'JetBrains Mono', monospace;
+  margin-bottom: 2px;
+}
+
+.flow-tool-agent {
+  font-size: 11px;
+  color: #8b90a8;
+  text-transform: capitalize;
+}
+
+.flow-tool-args {
+  margin-left: auto;
+  text-align: right;
+  font-size: 11px;
+}
+
+.flow-tool-arg {
+  color: #8b90a8;
+  font-family: 'JetBrains Mono', monospace;
+  word-break: break-all;
+}
+
+.flow-tool-arg-key {
+  color: #5b8cf8;
+}
+
+.flow-empty {
+  color: #8b90a8;
+  font-size: 13px;
+  text-align: center;
+  margin-top: 40px;
+  line-height: 1.6;
+}
