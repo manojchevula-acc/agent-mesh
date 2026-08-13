@@ -48,6 +48,10 @@ class StageResult:
     rows: list[dict[str, Any]] = field(default_factory=list)  # per-item detail
     notes: list[str] = field(default_factory=list)
     context: dict[str, Any] = field(default_factory=dict)  # models, config, k
+    # Free-form markdown appended after the table. A score tells you THAT a
+    # case failed; only the answer and the context it saw tell you WHY, which
+    # is what anyone reading the report actually needs.
+    details: list[str] = field(default_factory=list)
 
     def add(self, name: str, value: float | None, detail: str = "") -> None:
         self.metrics.append(Metric(name, value, detail))
@@ -145,6 +149,9 @@ def write(result: StageResult) -> tuple[Path, Path]:
         for row in result.rows:
             cells = [str(row.get(c, "")).replace("\n", " ").replace("|", "\\|")[:160] for c in cols]
             out.append("| " + " | ".join(cells) + " |")
+
+    if result.details:
+        out += ["", "## Failures in detail", ""] + result.details
 
     if result.notes:
         out += ["", "## Notes", ""] + [f"- {n}" for n in result.notes]

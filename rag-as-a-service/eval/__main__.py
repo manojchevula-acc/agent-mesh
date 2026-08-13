@@ -67,6 +67,8 @@ def _run_stage(name: str, args) -> report.StageResult | None:
         result = module.run(
             limit=args.limit, only=args.only, top_k=args.top_k,
             delay=args.delay, judge_model=args.judge_model, fresh=args.fresh,
+            reuse_retrieval=args.reuse_retrieval,
+            generate_top_k=args.generate_top_k,
         )
     else:
         result = module.run()
@@ -91,6 +93,15 @@ def main() -> int:
     parser.add_argument(
         "--rescore", action="store_true",
         help="stage2b: recompute scores from stored readings, no API calls",
+    )
+    parser.add_argument(
+        "--generate-top-k", type=int,
+        help="stage4: chunks actually passed to the model (<= --top-k). "
+             "Models a VLM context budget without capping retrieval.",
+    )
+    parser.add_argument(
+        "--reuse-retrieval", action="store_true",
+        help="stage4: reuse the context stage3 stored instead of retrieving again",
     )
     parser.add_argument("--delay", type=float, default=1.0, help="seconds between LLM calls")
     parser.add_argument("--dry-run", action="store_true", help="tools: show, do not write")

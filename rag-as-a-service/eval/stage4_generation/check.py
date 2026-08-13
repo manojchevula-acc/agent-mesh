@@ -22,7 +22,11 @@ sys.path.insert(0, "src")
 from gernas_rag.config.settings import get_settings  # noqa: E402
 from gernas_rag.generation.generator import ResponseGenerator  # noqa: E402
 from gernas_rag.llm.factory import get_llm  # noqa: E402
-from gernas_rag.models.retrieval import RetrieveRequest  # noqa: E402
+from gernas_rag.models.retrieval import (  # noqa: E402
+    RetrievedChunk,
+    RetrievedImage,
+    RetrieveRequest,
+)
 
 from ..common.gold import load_gold  # noqa: E402
 from ..core import report  # noqa: E402
@@ -59,6 +63,8 @@ def run(
     delay: float = 1.0,
     judge_model: str | None = None,
     fresh: bool = False,
+    reuse_retrieval: bool = False,
+    generate_top_k: int | None = None,
 ):
     settings = get_settings()
     cases = load_gold()
@@ -92,7 +98,8 @@ def run(
             "generator_vision": (
                 settings.llm.vision_model_name if settings.llm.vision_enabled else "off"
             ),
-            "final_top_k": k,
+            "retrieval_top_k": k,
+            "generate_top_k": generate_top_k or k,
             "cases": len(cases),
         },
     )
@@ -113,16 +120,90 @@ def run(
 
     result.context["judge"] = judge_name
 
-    pipeline = build_pipeline(settings)
+    # ── Optional retrieval reuse ─────────────────────────────────────
+    # Loads the context stage 3 already retrieved. Saves ~25s of local model
+    # work per case and guarantees both stages scored IDENTICAL context.
+    #
+    # Refuses on a top_k mismatch rather than silently blending: context
+    # retrieved at k=3 scored as though it were k=5 would quietly misattribute
+    # a retrieval gap to the generator.
+    reused: dict[str, dict] = {}
+    if reuse_retrieval:
+        rows = CaseStore("stage3_retrieval").rows()
+        if not rows:
+            raise RuntimeError(
+                "--reuse-retrieval needs stage 3's stored context, but none "
+                "exists. Run:  python -m eval stage3 --top-k "
+                f"{k}   then re-run this command."
+            )
+        stored_k = sorted({r.get("top_k") for r in rows})
+        if any(sk != k for sk in stored_k):
+            # Name the concrete fix. `k` defaults to settings.retrieval.final_top_k
+            # when --top-k is absent, so the usual cause is a forgotten flag
+            # rather than a deliberately different value.
+            raise RuntimeError(
+                f"--reuse-retrieval: stage 3 stored context at top_k={stored_k[0]}, "
+                f"but this run is using top_k={k}"
+                + (
+                    " (from config, because --top-k was not passed)"
+                    if top_k is None
+                    else ""
+                )
+                + f".\n  Fix:  add  --top-k {stored_k[0]}  to this command"
+                + f"\n  or:   re-run  python -m eval stage3 --top-k {k}"
+                + "\n  Note: --generate-top-k is separate — it controls how many "
+                "chunks reach the model, and does not need to match."
+            )
+        reused = {r["id"]: r for r in rows}
+        missing = [c.id for c in pending if c.id not in reused]
+        if missing:
+            # Print it NOW, not only in the report. Otherwise the first sign is
+            # a "Hybrid search complete" log line minutes into the run, and it
+            # looks like --reuse-retrieval was ignored.
+            print(
+                f"\n  NOTE: {len(missing)} of {len(pending)} case(s) have no stored "
+                f"context and will be retrieved live: {', '.join(missing[:10])}"
+                f"\n        stage 3 only stored: {', '.join(sorted(reused, key=lambda x: int(x) if x.isdigit() else 0)[:10])}"
+                f"\n        To cache every case:  python -m eval stage3 --top-k {k}\n"
+            )
+            result.notes.append(
+                f"{len(missing)} case(s) had no stored context and were "
+                f"retrieved fresh: {', '.join(missing[:10])}"
+            )
+        result.context["retrieval"] = (
+            f"reused from stage3 ({len(pending) - len(missing)}/{len(pending)} cases)"
+        )
+
+    # Build the retrieval pipeline ONLY if something actually needs retrieving.
+    # It loads BGE-M3, SigLIP-2 and the cross-encoder reranker — ~45s and a lot
+    # of memory — which is pure waste when every case is served from cache.
+    needs_pipeline = any(c.id not in reused for c in pending)
+    pipeline = build_pipeline(settings) if needs_pipeline else None
     generator = _build_generator(settings)
 
     async def _one(case) -> dict:
         """Score a single case. Raw values only — display formatting happens at
         report time, so a checkpointed row stays re-aggregatable."""
-        response = await pipeline.retrieve(
-            RetrieveRequest(query=case.question, top_k=k, include_images=True)
-        )
-        chunks, images = response.chunks, response.images
+        cached = reused.get(case.id)
+        if cached is not None:
+            chunks = [RetrievedChunk(**c) for c in cached["chunks"]]
+            images = [RetrievedImage(**i) for i in cached["images"]]
+        else:
+            response = await pipeline.retrieve(
+                RetrieveRequest(query=case.question, top_k=k, include_images=True)
+            )
+            chunks, images = response.chunks, response.images
+
+        # Retrieval depth and GENERATION depth are separate concerns. Retrieval
+        # is measured deep (did the right chunk come back at all?), while the
+        # model may only be handed the top few because of a context or vision
+        # token budget. Truncating here — after retrieval, before the prompt —
+        # reproduces that production constraint and makes its cost visible:
+        # a case that retrieves at rank 3 but is generated with 2 chunks fails
+        # for a budget reason, not a retrieval one.
+        retrieved_depth = len(chunks)
+        if generate_top_k:
+            chunks = chunks[:generate_top_k]
         answer = await generator.generate(case.question, chunks, images)
 
         det = deterministic.score(
@@ -132,8 +213,42 @@ def run(
             "id": case.id,
             "name": case.name[:30],
             "answerable": case.answerable,
+            # The ANSWER and the CONTEXT it was generated from. Two reasons,
+            # both learned the hard way on stage 2b:
+            #   1. a score says a case failed; only these say why
+            #   2. every scorer fix (three so far) otherwise costs a full
+            #      re-run at 3 API calls per case
+            "question": case.question,
+            "gold": case.expected_answer,
+            "answer": answer,
+            "chunks": [
+                {
+                    "source": c.source,
+                    "content_type": c.content_type,
+                    "page": c.page_number,
+                    "score": round(c.score, 4),
+                    "text": (c.text or "")[:400],
+                }
+                for c in chunks
+            ],
+            "images": [
+                {
+                    "asset_id": im.asset_id,
+                    "source": im.source,
+                    "page": im.page_number,
+                    "caption": (im.caption or "")[:160],
+                    "score": round(im.score, 4),
+                }
+                for im in images
+            ],
             "n_spans": len(det.spans),
             "n_subjective": sum(1 for s in det.spans if s.subjective),
+            "retrieved": retrieved_depth,
+            "generated_with": len(chunks),
+            # A gold-relevant chunk that was retrieved but truncated away is
+            # the context budget's fault, not retrieval's or the model's. Flag
+            # it so the report can separate the two.
+            "truncated": retrieved_depth - len(chunks),
             "cite_valid": det.citations.valid,
             "cite_total": det.citations.total,
             "citation_validity": det.citations.validity,
@@ -218,6 +333,49 @@ def run(
         }
         for r in sorted(rows, key=lambda x: int(x["id"]) if str(x["id"]).isdigit() else 0)
     ]
+
+    # Detail for anything that did not cleanly pass, so the report answers
+    # "why did this fail" without a second run or a JSON dig.
+    def _failed(r: dict) -> bool:
+        if r.get("error"):
+            return True
+        if not r.get("answerable"):
+            return not r.get("abstention_ok")
+        if r.get("correct") is not None and r["correct"] != 2:
+            return True
+        return bool(r.get("span_total")) and r.get("span_supported", 0) < r["span_total"]
+
+    for r in sorted(rows, key=lambda x: int(x["id"]) if str(x["id"]).isdigit() else 0):
+        if not _failed(r):
+            continue
+        verdict = (
+            "ERROR" if r.get("error")
+            else "FABRICATED" if not r.get("answerable")
+            else f"correct={r.get('correct')}  spans={r.get('span_supported')}/{r.get('span_total')}"
+        )
+        result.details += [
+            f"### `{r['id']}` {r.get('name','')} — {verdict}", "",
+            f"**Question:** {r.get('question','')}", "",
+            f"**Gold answer:** {r.get('gold') or '_(unanswerable — should decline)_'}", "",
+            f"**Generated:**\n\n```\n{(r.get('answer') or r.get('error') or '')[:1500]}\n```", "",
+            f"**Judge:** {r.get('why','—')}", "",
+            f"**Context** (retrieved {r.get('retrieved','?')}, "
+            f"passed {r.get('generated_with','?')} to the model):", "",
+            "| # | type | source | p | score | text |", "|---|---|---|---|---|---|",
+        ]
+        for n, c in enumerate(r.get("chunks") or [], 1):
+            txt = (c.get("text") or "").replace("\n", " ").replace("|", "\\|")[:110]
+            result.details.append(
+                f"| {n} | `{c.get('content_type')}` | {c.get('source','')[:26]} | "
+                f"{c.get('page')} | {c.get('score')} | {txt} |"
+            )
+        for n, im in enumerate(r.get("images") or [], 1):
+            cap = (im.get("caption") or "").replace("\n", " ").replace("|", "\\|")[:110]
+            result.details.append(
+                f"| I{n} | `image` | {im.get('source','')[:26]} | {im.get('page')} | "
+                f"{im.get('score')} | {cap} |"
+            )
+        result.details.append("")
 
     result.add("answer_correctness", mean(correctness), f"grade==2 over {len(correctness)} cases")
     result.add("span_correctness", mean(span_scores), f"per objective span, {len(span_scores)} cases")

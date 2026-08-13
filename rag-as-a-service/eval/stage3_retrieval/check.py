@@ -30,6 +30,7 @@ from gernas_rag.vectordb.factory import get_vectordb  # noqa: E402
 
 from ..common.gold import GoldCase, fact_coverage, load_gold  # noqa: E402
 from ..core import report  # noqa: E402
+from ..core.cases import CaseStore  # noqa: E402
 
 
 def build_pipeline(settings):
@@ -109,6 +110,18 @@ def run(limit: int | None = None, only: str | None = None, top_k: int | None = N
 
     pipeline = build_pipeline(settings)
 
+    # Persist the retrieved context so stage 4 can reuse it instead of
+    # retrieving the same thing again. Two benefits: stage 4 skips ~25s of
+    # local model work per case, and the "stage 3 passed but stage 4 failed =>
+    # generation problem" inference becomes literally true rather than
+    # probably true, because both stages then score the SAME context.
+    #
+    # top_k is recorded on every row. Retrieval output is meaningless without
+    # it, and silently mixing k=3 and k=5 context is the same class of bug as
+    # mixing 256px and 768px crops.
+    retrieval_store = CaseStore("stage3_retrieval")
+    retrieval_store.clear()  # a run always reflects one config, never a blend
+
     hits = 0
     reciprocal_ranks: list[float] = []
     precisions: list[float] = []
@@ -147,6 +160,16 @@ def run(limit: int | None = None, only: str | None = None, top_k: int | None = N
             )
             covered, missing = fact_coverage(case.facts, context)
             fact_recalls.append(covered / len(case.facts) if case.facts else 1.0)
+
+            retrieval_store.append(
+                case.id,
+                {
+                    "id": case.id,
+                    "top_k": k,
+                    "chunks": [c.model_dump(mode="json") for c in chunks],
+                    "images": [i.model_dump(mode="json") for i in images],
+                },
+            )
 
             result.rows.append(
                 {
