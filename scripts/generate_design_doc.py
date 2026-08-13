@@ -310,7 +310,7 @@ def build():
             ("Tool","Callable function exposed by an MCP server — takes typed arguments, returns typed results."),
             ("Resource","URI-addressed read-only data asset (document, dataset, live feed) exposed by a server."),
             ("Prompt","Reusable prompt template with named parameters, exposed by a server for agent consumption."),
-            ("Transport","Network protocol carrying MCP JSON-RPC messages: SSE (persistent GET+POST) or Streamable HTTP (stateful POST)."),
+            ("Transport","Network protocol carrying MCP JSON-RPC messages. This implementation uses Streamable HTTP — a stateful POST-based protocol where the first request returns a Mcp-Session-Id header that must accompany all subsequent calls in the same session."),
             ("JWT","JSON Web Token — compact, URL-safe signed claims container. Claims: iss (issuer), aud (audience), sub (subject), exp (expiry), roles."),
             ("RS256","RSA + SHA-256 asymmetric JWT signing. Hub signs with private key; servers verify with public key. No shared secret required."),
             ("JWKS","JSON Web Key Set — standard endpoint (/.well-known/jwks.json) publishing a service's RSA public keys for JWT verification."),
@@ -419,27 +419,29 @@ def build():
 'account status, recent orders, open issues, and renewal talking points." }\n'
 '}] }')
 
-    H2(doc,"3.6  Transport Protocols")
+    H2(doc,"3.6  Transport Protocol — Streamable HTTP")
     body(doc,
-        "Two transports carry MCP JSON-RPC messages. The choice is determined by the server's "
-        "implementation and declared in the hub registry transport field.")
+        "This implementation uses the Streamable HTTP transport exclusively. All MCP servers "
+        "expose a single POST /mcp endpoint. The agent sends all JSON-RPC messages as HTTP POST "
+        "requests, with session continuity maintained via the Mcp-Session-Id header.")
     table(doc,
-        ["Feature","SSE Transport","Streamable HTTP Transport"],
+        ["Aspect","Streamable HTTP Detail"],
         [
-            ("Endpoints",      "GET /sse (persistent) + POST /messages", "Single POST /mcp"),
-            ("Session state",  "Server-side per-connection",             "Mcp-Session-Id header on every call"),
-            ("Initialize",     "First POST after GET /sse connects",     "First POST to /mcp — returns session ID"),
-            ("Subsequent calls","POST /messages with session implicit",  "POST /mcp with Mcp-Session-Id header"),
-            ("Accept header",  "Not strictly required",                  "Must include: application/json, text/event-stream"),
-            ("Auth header",    "Bearer token on every POST",             "Bearer token on every POST"),
-            ("Best for",       "Streaming, real-time, persistent feeds", "Request/response, stateful business services"),
+            ("Endpoint",          "Single POST /mcp — all methods (initialize, tools/list, tools/call, …) use the same URL"),
+            ("Session init",      "First POST returns Mcp-Session-Id in the response header — must be sent on all subsequent requests"),
+            ("Subsequent calls",  "POST /mcp with Mcp-Session-Id: <uuid> header — server correlates to session state"),
+            ("Accept header",     "Must include both: Accept: application/json, text/event-stream  (FastMCP returns 406 if missing)"),
+            ("Authorization",     "Authorization: Bearer <per-server JWT>  present on EVERY POST — validated independently each time"),
+            ("Response format",   "JSON response body or text/event-stream depending on method and Accept negotiation"),
+            ("Session teardown",  "DELETE /mcp with Mcp-Session-Id to close cleanly; or session times out server-side"),
         ],
-        widths=[4.0,6.5,7.0])
+        widths=[4.0,13.5])
 
     callout(doc,"important","Bearer token on every call",
-        "Regardless of transport, the Authorization: Bearer <token> header must be present on "
-        "EVERY JSON-RPC request — not just the first. The MCP server's JWTVerifier validates "
-        "the token independently on each request. An expired token will be rejected mid-session.")
+        "The Authorization: Bearer <token> header must be present on EVERY JSON-RPC request — "
+        "not just the initialize handshake. The MCP server's JWTVerifier validates the token "
+        "independently on each request. An expired token will be rejected mid-session with HTTP 401, "
+        "even if the session was previously established successfully.")
 
     doc.add_page_break()
 
@@ -460,7 +462,7 @@ def build():
     table(doc,
         ["Responsibility","Detail","Implemented In"],
         [
-            ("Server Registry",        "MySQL table mcp_servers: id, endpoint, transport, capabilities, api_key, is_active",         "hub_server.py + db.py"),
+            ("Server Registry",        "MySQL table mcp_servers: id, endpoint, transport (streamable-http), capabilities, api_key, is_active","hub_server.py + db.py"),
             ("JWKS Publication",       "GET /.well-known/jwks.json — publishes RSA public key in JWK Set format for server verification","hub_server.py"),
             ("JWT Issuance",           "POST /discover mints per-server RS256 JWT: aud=server_id, exp=1h, sub=user, roles forwarded",  "hub_server.py"),
             ("LLM Routing",            "LangGraph ReAct agent selects best-matching MCP server per query using capability/skills/examples","hub_server.py"),
@@ -477,7 +479,7 @@ def build():
     numbered(doc,1,"Browser sends query via POST to Chat Server over an active SSE session.",label="User sends query:  ")
     numbered(doc,2,"Chat Server launches run_agent(query) as a background asyncio.Task.",label="Task created:  ")
     numbered(doc,3,"Agent calls POST /discover with the user's hub JWT. Hub validates, runs LLM routing, returns selected server(s) + per-server JWTs.",label="Hub discovery:  ")
-    numbered(doc,4,"Agent opens an MCP session (SSE or Streamable HTTP) to the selected server, attaching the per-server JWT on every call.",label="MCP session open:  ")
+    numbered(doc,4,"Agent opens a Streamable HTTP MCP session to the selected server. Sends initialize, receives Mcp-Session-Id, then attaches both the session ID and the per-server JWT on every subsequent call.",label="MCP session open:  ")
     numbered(doc,5,"Agent's LangGraph ReAct loop: discover tools → select tool → call tool → observe result → synthesise answer.",label="ReAct loop:  ")
     numbered(doc,6,"Final answer emitted as SSE event to browser. Saved to MySQL conversations regardless of connection state.",label="Answer streamed:  ")
 
@@ -491,7 +493,7 @@ def build():
 "  ├── GET /.well-known/jwks.json  Serve RSA public key as JWK Set\n"
 "  ├── POST /discover\n"
 "  │     ├── validate hub JWT\n"
-"  │     ├── load_hub() → server list (from cache)\n"
+"  │     ├── load_hub() → server list (from cache, transport=streamable-http)\n"
 "  │     ├── _agent_route()     LangGraph ReAct agent (new instance per request)\n"
 "  │     │     └── pick_server(id, reason) tool → best server selected\n"
 "  │     └── for each matched server:\n"
@@ -522,7 +524,7 @@ def build():
 "    id              VARCHAR(100)   NOT NULL,          -- JWT aud value; unique per server\n"
 "    name            VARCHAR(255)   NOT NULL,          -- display name (Admin UI)\n"
 "    endpoint        VARCHAR(500)   NOT NULL,          -- full MCP URL (http://host:port/path)\n"
-"    transport       VARCHAR(50)    NOT NULL DEFAULT 'sse',  -- 'sse' | 'streamable-http'\n"
+"    transport       VARCHAR(50)    NOT NULL DEFAULT 'streamable-http',  -- always 'streamable-http'\n"
 "    capability      TEXT,                             -- one-line routing hint\n"
 "    skills          JSON,                             -- e.g. ['customer','crm','360']\n"
 "    description     TEXT,                             -- detailed routing context\n"
@@ -754,8 +756,8 @@ def build():
     divider(doc); spacer(doc,4)
 
     # ── PHASE 4
-    phase_banner(doc,"4","MCP Server JWT Validation — Agent to MCP Server",
-        "Agent attaches per-server JWT to every MCP call. Server validates on every request.",
+    phase_banner(doc,"4","MCP Server JWT Validation — Agent to MCP Server (Streamable HTTP)",
+        "Agent opens a Streamable HTTP session. Per-server JWT attached and validated on every call.",
         C["phase4"])
     H3(doc,"Token Priority Chain")
     code(doc,
@@ -769,40 +771,49 @@ def build():
 
     H3(doc,"Two-Layer Middleware Architecture")
     body(doc,
-        "Two middleware layers run in sequence on every MCP HTTP request. They are "
-        "complementary — the first validates cryptographically, the second decodes claims "
-        "for RBAC without a redundant JWKS fetch:")
+        "Two middleware layers run in sequence on every Streamable HTTP request. "
+        "They are complementary — the first validates the JWT cryptographically via the hub's "
+        "JWKS endpoint; the second decodes the already-verified claims into a per-request "
+        "ContextVar for RBAC without a redundant JWKS round-trip:")
     code(doc,
-"# Layer 1 — FastMCP JWTVerifier (validates cryptographically)\n"
+"# mcp_server/server.py — middleware registration\n\n"
+"# Layer 1 — FastMCP JWTVerifier (cryptographic validation)\n"
 "from fastmcp.server.auth.providers.jwt import JWTVerifier\n"
 "verifier = JWTVerifier(\n"
-"    jwks_uri = f'{HUB_URL}/.well-known/jwks.json',\n"
+"    jwks_uri = f'{HUB_URL}/.well-known/jwks.json',  # fetches RSA public key from hub\n"
 "    issuer   = 'mcp-hub',\n"
-"    audience = os.environ['MCP_SERVER_ID']   # e.g. 'customer-server'\n"
+"    audience = os.environ['MCP_SERVER_ID']           # e.g. 'customer-server'\n"
 ")\n"
-"# Returns 401 if: signature invalid | aud mismatch | iss mismatch | token expired\n\n"
-"# Layer 2 — BearerClaimsMiddleware (decode for RBAC — NO re-verification)\n"
+"# Returns HTTP 401 if:\n"
+"#   RS256 signature invalid | aud != MCP_SERVER_ID\n"
+"#   iss != 'mcp-hub'        | token has expired\n\n"
+"# Layer 2 — BearerClaimsMiddleware (decode for RBAC — no second JWKS fetch)\n"
 "class BearerClaimsMiddleware(BaseHTTPMiddleware):\n"
 "    async def dispatch(self, request, call_next):\n"
 "        token = request.headers.get('Authorization','').removeprefix('Bearer ').strip()\n"
 "        if token:\n"
-"            # verify_signature=False: already verified by JWTVerifier above\n"
+"            # verify_signature=False is safe — JWTVerifier already validated above\n"
 "            payload = jwt.decode(token, options={'verify_signature': False})\n"
-"            roles = payload.get('roles', ['agent'])\n"
-"            _request_claims.set({'sub': payload['sub'], 'roles': roles})\n"
+"            _request_claims.set({'sub': payload['sub'],\n"
+"                                  'roles': payload.get('roles', ['agent'])})\n"
 "        return await call_next(request)")
 
-    H3(doc,"Session Initialization (Streamable HTTP)")
+    H3(doc,"Session Lifecycle — Streamable HTTP")
     code(doc,
-"# agent.py mcp_session() — streamable-http path\n"
+"# agent.py mcp_session() — Streamable HTTP\n"
 "from mcp.client.streamable_http import streamablehttp_client\n\n"
-"async with streamablehttp_client(server['endpoint'], headers=auth_headers) as (r, w, _):\n"
-"    async with ClientSession(r, w) as session:\n"
-"        await session.initialize()   # handshake → server returns Mcp-Session-Id\n"
-"        # Session ID must be included in all subsequent calls\n"
-"        # Bearer JWT is also re-attached on every call by the client library\n"
-"        tools = await session.list_tools()\n"
-"        result = await session.call_tool('customer_lookup', {'customer_id': 'C001'})")
+"async with streamablehttp_client(\n"
+"    server['endpoint'],        # e.g. https://mcp.internal:9100/mcp\n"
+"    headers=auth_headers       # Authorization: Bearer <per-server JWT>\n"
+") as (read_stream, write_stream, _):\n"
+"    async with ClientSession(read_stream, write_stream) as session:\n\n"
+"        # Step 1 — initialize  (POST /mcp)\n"
+"        #   JWTVerifier validates token; server returns Mcp-Session-Id in response header\n"
+"        await session.initialize()\n\n"
+"        # Step 2 — discover tools  (JWT + session ID sent on every call)\n"
+"        tools = await session.list_tools()\n\n"
+"        # Step 3 — call a tool  (JWT re-validated; require_role() enforced inside tool)\n"
+"        result = await session.call_tool('customer_360', {'customer_id': 'C001'})")
 
     divider(doc); spacer(doc,4)
 

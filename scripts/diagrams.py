@@ -182,14 +182,14 @@ def d1_system_overview():
 
     # ── Data / Integration ────────────────────────────────────────────────────
     mcp_nodes = [
-        (2.3,  "Server A\n:9100", "Streamable HTTP"),
-        (5.2,  "Server B\n:9200", "Streamable HTTP"),
-        (8.1,  "Server C\n:8001", "SSE"),
-        (11.0, "Server D\n:8002", "SSE"),
+        (2.3,  "Server A\n:9100"),
+        (5.2,  "Server B\n:9200"),
+        (8.1,  "Server C\n:9300"),
+        (11.0, "Server D\n:9400"),
     ]
-    for xp, lbl, tr in mcp_nodes:
+    for xp, lbl in mcp_nodes:
         _box(ax, xp, 2.10, 2.5, 1.55, lbl,
-             f"JWTVerifier · RBAC\n{tr}\nTools · Resources",
+             "JWTVerifier · RBAC\nStreamable HTTP\nTools · Resources · Prompts",
              bg=P["green"], fontsize=8, sublabel_size=6.8)
     _box(ax, 14.2, 2.10, 2.8, 1.55, "MySQL / Postgres",
          "fab_semantic schema\n16 semantic views\n14 base tables",
