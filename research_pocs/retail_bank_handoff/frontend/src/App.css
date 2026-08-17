@@ -100,6 +100,23 @@ body {
 
 .btn-new-session-header:hover { opacity: 0.85; }
 
+.btn-devui-toggle {
+  padding: 6px 14px;
+  background: transparent;
+  color: #8b90a8;
+  border: 1px solid #3a3f52;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+.btn-devui-toggle:hover {
+  color: #c9d1f5;
+  border-color: #5b8cf8;
+}
+
 .status-dot {
   width: 8px;
   height: 8px;

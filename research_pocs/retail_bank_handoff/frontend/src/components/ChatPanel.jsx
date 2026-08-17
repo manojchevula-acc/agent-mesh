@@ -92,6 +92,20 @@ export default function ChatPanel({ messages, needsInput, pendingGate, done, onS
             )
           }
 
+          if (msg.role === 'multi_intent') {
+            return (
+              <div key={i} className="chat-multi-intent">
+                <span className="multi-intent-label">Multi-Intent Queue</span>
+                {msg.pending.length === 0
+                  ? <span className="multi-intent-empty">All intents handled</span>
+                  : msg.pending.map(t => (
+                      <span key={t} className="multi-intent-chip">{t}</span>
+                    ))
+                }
+              </div>
+            )
+          }
+
           if (msg.role === 'gate_notice') {
             return (
               <div key={i} className="gate-notice">

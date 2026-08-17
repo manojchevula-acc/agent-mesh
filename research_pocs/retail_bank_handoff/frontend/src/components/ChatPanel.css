@@ -225,6 +225,38 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ── Multi-intent queue marker ── */
+.chat-multi-intent {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  justify-content: center;
+  padding: 3px 12px;
+  font-size: 11px;
+  color: #8b90a8;
+}
+
+.multi-intent-label {
+  font-weight: 600;
+  color: #8b90a8;
+  margin-right: 2px;
+}
+
+.multi-intent-chip {
+  background: #1e2235;
+  border: 1px solid #4f86c6;
+  border-radius: 4px;
+  padding: 1px 7px;
+  color: #4f86c6;
+  font-size: 11px;
+}
+
+.multi-intent-empty {
+  color: #5aaa65;
+  font-style: italic;
+}
+
 /* ── Input bar ── */
 .chat-input-bar {
   border-top: 1px solid #2e3247;

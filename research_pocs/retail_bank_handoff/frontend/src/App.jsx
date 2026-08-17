@@ -46,6 +46,7 @@ export default function App() {
   const [done, setDone]                     = useState(false)
   const [tab, setTab]                       = useState('reasoning')
   const [approvalBadge, setApprovalBadge]   = useState(0)
+  const [multiIntentQueue, setMultiIntentQueue] = useState([])
   const [history, setHistory]               = useState(() => loadHistory())
 
   const esRef          = useRef(null)
@@ -117,6 +118,15 @@ export default function App() {
           return next
         })
         setTab(t => t === 'approvals' ? t : 'reasoning')
+      }
+
+      else if (ev.type === 'multi_intent_queue') {
+        setMultiIntentQueue(ev.pending)
+        setMessages(prev => {
+          const next = [...prev, { role: 'multi_intent', agent: ev.agent, pending: ev.pending, timestamp: Date.now() }]
+          messagesRef.current = next
+          return next
+        })
       }
 
       else if (ev.type === 'token') {
@@ -233,6 +243,7 @@ export default function App() {
     setNeedsInput(false)
     setDone(false)
     setApprovalBadge(0)
+    setMultiIntentQueue([])
     setTab('reasoning')
     setSessionId(null)
 
@@ -307,6 +318,13 @@ export default function App() {
             <div className={`status-dot ${sessionId && !done ? 'active' : ''}`} />
             {sessionId ? (done ? 'Session complete' : `Active · ${activeAgent || 'waiting'}`) : 'No session'}
           </div>
+          <button
+            className="btn-devui-toggle"
+            onClick={() => window.open('http://127.0.0.1:8080', '_blank')}
+            title="Open MAF DevUI — start with: python devui_app.py"
+          >
+            ⇄ DevUI
+          </button>
           {sessionId && (
             <button className="btn-new-session-header" onClick={resetSession}>
               + New Session

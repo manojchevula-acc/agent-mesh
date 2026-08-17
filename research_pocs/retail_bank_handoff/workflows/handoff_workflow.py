@@ -5,11 +5,15 @@ from agent_framework import FileCheckpointStorage
 def _termination_condition(conversation) -> bool:
     if not conversation:
         return False
-    last_text = getattr(conversation[-1], "text", "") or ""
+    last_msg = conversation[-1]
+    # Only triage_agent should close the session — specialists must never trigger termination
+    if getattr(last_msg, "author_name", "") != "triage_agent":
+        return False
+    last_text = getattr(last_msg, "text", "") or ""
     farewell_phrases = [
         "have a great day",
+        "have a wonderful day",
         "thank you for banking",
-        "is there anything else",
         "goodbye",
         "take care",
     ]
@@ -20,24 +24,17 @@ def build_workflow(triage, account, card, loan, transfer, fraud, use_checkpoints
     """
     Pure HandoffBuilder mesh -- no orchestrator, no WorkflowBuilder.
 
-    TWO MODES — swap by commenting/uncommenting the return block at the bottom:
+     Fully open MAF handoff mesh. No add_handoff() calls means every participant
+     receives native handoff_to_<agent> tools for the other participants.
 
-    1. RESTRICTED GRAPH (commented out):
-       add_handoff() narrows which targets each agent can reach.
-         triage   -> all specialists
-         account  -> fraud (escalation) | triage (done / OOS re-route)
-         card     -> fraud (escalation) | triage (done / OOS re-route)
-         loan     -> triage (done / OOS re-route)
-         transfer -> fraud (screen failed) | triage (done / OOS re-route)
-         fraud    -> triage (done / OOS re-route)
-       Pro: enforced routing, audit-friendly, wrong routes raise ValueError.
-       Con: OOS topic needs 2 hops — specialist -> triage -> target specialist.
-
-    2. FULLY OPEN MESH (active):
-       No add_handoff() calls — every agent gets handoff_to_<X> tools for all
-       other participants. Specialists can route directly to each other in 1 hop.
-       Pro: fewer hops, simpler graph.
-       Con: LLM decides routing freely — can make mistakes; no enforced guardrails.
+    Triage identifies all requested domains from the shared MAF conversation.
+    Each specialist completes its own item, inspects the original request and
+    completed tool results to choose the next unresolved specialist, and uses a
+    native handoff. Native autonomous mode gives each specialist bounded turns to
+    publish its tool result to the shared conversation before handing off. The
+    final specialist returns to triage for one consolidated response. Routing and
+    context remain entirely in HandoffBuilder; this module adds no custom
+    orchestration.
 
     HandoffAgentExecutor injects the handoff tools automatically -- we do not
     define them manually.
@@ -56,32 +53,26 @@ def build_workflow(triage, account, card, loan, transfer, fraud, use_checkpoints
             checkpoint_storage=FileCheckpointStorage("./checkpoints"),
         )
 
-    # -------------------------------------------------------------------------
-    # MODE 1: RESTRICTED GRAPH (commented out)
-    # Each agent is limited to a specific set of handoff targets.
-    # -------------------------------------------------------------------------
-    # return (
-    #     builder
-    #     .with_start_agent(triage)
-    #     .add_handoff(triage, [account, card, loan, transfer, fraud])
-    #     .add_handoff(account, [fraud, triage])
-    #     .add_handoff(card, [fraud, triage])
-    #     .add_handoff(loan, [triage])
-    #     .add_handoff(transfer, [fraud, triage])
-    #     .add_handoff(fraud, [triage])
-    #     .build()
-    # )
-
-    # -------------------------------------------------------------------------
-    # MODE 2: FULLY OPEN MESH (active)
-    # No add_handoff() calls: every agent can hand off to every other agent.
-    # Each specialist gets handoff_to_<X> tools for all 5 peers automatically.
-    # OOS topics resolve in 1 hop (e.g. account_agent -> loan_agent directly).
-    # NOTE: agent instructions guide routing intent, but there are no hard graph
-    # constraints — the LLM picks the target freely.
-    # -------------------------------------------------------------------------
     return (
         builder
         .with_start_agent(triage)
+        .with_autonomous_mode(
+            agents=[triage, account, card, loan, transfer, fraud],
+            prompts={
+                triage.name: (
+                    "Review the shared conversation. If required customer details are still missing, restate the "
+                    "single concise request and wait for the customer. If every requested domain has a completed "
+                    "tool result, produce the consolidated customer response."
+                ),
+            },
+            turn_limits={
+                triage.name: 2,
+                account.name: 4,
+                card.name: 4,
+                loan.name: 4,
+                transfer.name: 8,
+                fraud.name: 5,
+            },
+        )
         .build()
     )

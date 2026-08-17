@@ -36,7 +36,7 @@ sys.path.insert(0, str(_here))
 
 from agent_framework import Content
 from agent_framework.orchestrations import HandoffAgentUserRequest
-from agents.agent_factory import create_chat_client, create_agents
+from agents.agent_factory import create_agents
 from workflows.handoff_workflow import build_workflow
 from approvals.approval_handler import handle_approval_request, handle_user_input_request
 
@@ -65,38 +65,49 @@ class SessionTrace:
         self.agent_path: list[str] = []
         self.tool_calls: list[dict] = []
         self._current_agent: str | None = None
+        self._pending_agent: str | None = None  # invoked but not yet printed
         self._token_buf: str = ""
         self._last_agent_printed: str | None = None
+        self._logged_tool_calls: set = set()
+
+    def _flush_pending_agent(self) -> None:
+        """Print the buffered [AGENT ACTIVE] banner on first real output."""
+        if self._pending_agent and self._pending_agent != self._last_agent_printed:
+            print(f"\n{_cyan(_bold(f'[AGENT ACTIVE: {self._pending_agent}]'))}")
+            self._last_agent_printed = self._pending_agent
+        self._pending_agent = None
 
     def on_executor_invoked(self, event) -> None:
         name = event.executor_id or "unknown"
-        # Dedupe — the framework may emit executor_invoked multiple times per turn
-        if name != self._current_agent:
-            self._current_agent = name
-            if name not in self.agent_path:
-                self.agent_path.append(name)
-            print(f"\n{_cyan(_bold(f'[AGENT ACTIVE: {name}]'))}")
+        if name == self._current_agent:
+            return  # duplicate event for the same agent, ignore
+        self._current_agent = name
+        if name not in self.agent_path:
+            self.agent_path.append(name)
+        # Buffer — only print when this agent produces actual output
+        self._pending_agent = name
 
     def on_handoff(self, event) -> None:
+        self._flush_pending_agent()
         src = getattr(event.data, "source", "?")
         tgt = getattr(event.data, "target", "?")
         print(f"\n{_magenta(_bold(f'[HANDOFF: {src}  →  {tgt}]'))}")
 
     def on_token(self, event) -> None:
         update = event.data
-        # AgentResponseUpdate carries .contents (list of Content items)
         for item in getattr(update, "contents", []):
             text = getattr(item, "text", None)
             if text:
+                self._flush_pending_agent()
                 self._token_buf += text
                 print(text, end="", flush=True)
 
     def on_agent_response(self, event) -> None:
-        # Non-streaming full AgentResponse
         response = event.data
         text = getattr(response, "text", "") or ""
         agent = event.executor_id or self._current_agent or "agent"
         if text:
+            self._flush_pending_agent()
             if self._last_agent_printed != agent:
                 print(f"\n{_bold(agent)}: ", end="")
                 self._last_agent_printed = agent
@@ -104,17 +115,22 @@ class SessionTrace:
 
     def flush_tokens(self, event) -> None:
         if self._token_buf:
-            # Token buffer was already printed char-by-char; just add newline
             print()
             self._token_buf = ""
 
     def on_tool_call_in_message(self, event) -> None:
-        # Tool calls surface inside output events as Content items with type="function_call"
         update = event.data
         for item in getattr(update, "contents", []):
             if getattr(item, "type", None) == "function_call":
-                name = getattr(item, "name", "?")
+                name = getattr(item, "name", None)
+                if not name:
+                    continue
                 args = getattr(item, "parse_arguments", lambda: {})() or {}
+                key = (name, self._current_agent)
+                if key in self._logged_tool_calls:
+                    continue
+                self._flush_pending_agent()
+                self._logged_tool_calls.add(key)
                 self.tool_calls.append({"tool": name, "agent": self._current_agent, "args": args})
                 print(f"\n  {_yellow(f'[TOOL CALL: {name}({args})]')}")
 
@@ -193,14 +209,7 @@ def _handle_approval(event) -> object:
 
 
 def _handle_user_input(event) -> object:
-    agent = event.executor_id or "agent"
     print(f"\n{SEP}")
-    for msg in event.data.agent_response.messages[-3:]:
-        text = getattr(msg, "text", "") or ""
-        name = getattr(msg, "author_name", agent) or agent
-        if text:
-            print(f"  {_bold(name)}: {text}")
-    print(SEP)
     user_input = input("  You: ").strip()
     return HandoffAgentUserRequest.create_response(user_input)
 
@@ -260,8 +269,7 @@ async def main() -> None:
     print(_dim(f"  {'Staff mode — checkpointing enabled' if use_checkpoints else 'Customer mode'}"))
     print(SEP)
 
-    chat_client = create_chat_client()
-    agents = create_agents(chat_client)
+    agents = create_agents()
     workflow = build_workflow(*agents, use_checkpoints=use_checkpoints)
 
     print("\nHow can we help you today?")

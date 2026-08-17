@@ -26,6 +26,7 @@ import asyncio
 import json
 import os
 import pathlib
+import re
 import sys
 import uuid
 
@@ -50,7 +51,7 @@ from pydantic import BaseModel
 from agent_framework import Content
 from agent_framework._types import AgentResponseUpdate
 from agent_framework.orchestrations import HandoffAgentUserRequest
-from agents.agent_factory import create_chat_client, create_agents
+from agents.agent_factory import create_agents
 from workflows.handoff_workflow import build_workflow
 
 app = FastAPI(title="Retail Bank Handoff API")
@@ -98,6 +99,21 @@ def _parse_reasoning(text: str) -> tuple[dict | None, str]:
     return reasoning, rest
 
 
+def _parse_pending_queue(text: str) -> tuple[list[str] | None, str]:
+    """Extract [PENDING: topic1, topic2] marker from agent text.
+
+    Returns (list_of_pending_topics | None, text_without_marker).
+    None means no marker was present; empty list means [PENDING:] (queue exhausted).
+    """
+    match = re.search(r'\[PENDING:\s*([^\]]*)\]', text)
+    if not match:
+        return None, text
+    raw = match.group(1).strip()
+    topics = [t.strip() for t in raw.split(',') if t.strip()] if raw else []
+    clean = (text[:match.start()].rstrip() + ' ' + text[match.end():].lstrip()).strip()
+    return topics, clean
+
+
 def _sse(payload: dict) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
@@ -128,6 +144,9 @@ async def _run_workflow_loop(session_id: str) -> None:
             reasoning, customer_text = _parse_reasoning(buf)
             if reasoning:
                 await eq.put({"type": "reasoning", "agent": agent_name, **reasoning})
+            pending_topics, customer_text = _parse_pending_queue(customer_text)
+            if pending_topics is not None:
+                await eq.put({"type": "multi_intent_queue", "agent": agent_name, "pending": pending_topics})
             if customer_text:
                 await eq.put({"type": "token", "agent": agent_name, "text": customer_text})
 
@@ -177,6 +196,9 @@ async def _run_workflow_loop(session_id: str) -> None:
                         reasoning, customer_text = _parse_reasoning(text)
                         if reasoning:
                             await eq.put({"type": "reasoning", "agent": agent, **reasoning})
+                        pending_topics, customer_text = _parse_pending_queue(customer_text)
+                        if pending_topics is not None:
+                            await eq.put({"type": "multi_intent_queue", "agent": agent, "pending": pending_topics})
                         if customer_text:
                             await eq.put({"type": "token", "agent": agent, "text": customer_text})
 
@@ -256,8 +278,7 @@ class ApproveBody(BaseModel):
 @app.post("/api/session")
 async def create_session():
     session_id = str(uuid.uuid4())
-    chat_client = create_chat_client()
-    agents = create_agents(chat_client)
+    agents = create_agents()
     workflow = build_workflow(*agents, use_checkpoints=False)
 
     sessions[session_id] = {
@@ -337,7 +358,7 @@ if __name__ == "__main__":
     import uvicorn
     print("=" * 60)
     print("  Retail Banking — FastAPI Backend")
-    print(f"  Model : {os.environ.get('GROQ_MODEL', '(not set)')}")
+    print(f"  Triage : {os.environ.get('TRIAGE_MODEL', '(not set)')} | Specialists: {os.environ.get('ACCOUNT_MODEL', '(not set)')}")
     print(f"  URL   : http://localhost:8000")
     print("  Docs  : http://localhost:8000/docs")
     print("=" * 60)
