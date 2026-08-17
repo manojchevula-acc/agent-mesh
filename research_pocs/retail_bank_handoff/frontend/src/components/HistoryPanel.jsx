@@ -1,5 +1,8 @@
 import { useState } from 'react'
-import { agentColor } from '../App.jsx'
+import { agentColor } from '../constants/agentColors.js'
+import AgentFlowPanel from './AgentFlowPanel.jsx'
+import ApprovalsPanel from './ApprovalsPanel.jsx'
+import ReasoningPanel from './ReasoningPanel.jsx'
 import './HistoryPanel.css'
 
 function formatDateTime(ts) {
@@ -51,8 +54,80 @@ function MessageReplay({ messages }) {
             </div>
           )
         }
+        if (msg.role === 'multi_intent') {
+          return (
+            <div key={i} className="hr-event hr-multi-intent">
+              <strong>Multi-Intent Queue</strong>
+              {msg.pending?.length
+                ? msg.pending.map(item => <span key={item} className="hr-chip">{item}</span>)
+                : <span>All intents handled</span>}
+            </div>
+          )
+        }
+        if (msg.role === 'gate_notice') {
+          return (
+            <div key={i} className="hr-event hr-gate-notice">
+              <strong>{msg.label}</strong>
+              <span>Requires {msg.role_req}</span>
+            </div>
+          )
+        }
+        if (msg.role === 'error') {
+          return <div key={i} className="hr-event hr-error">Error: {msg.text}</div>
+        }
         return null
       })}
+    </div>
+  )
+}
+
+function SessionSnapshot({ session }) {
+  const [snapshotTab, setSnapshotTab] = useState('chat')
+  const tabs = [
+    ['chat', 'Chat'],
+    ['reasoning', `Reasoning (${(session.reasoning || []).length})`],
+    ['flow', 'Flow'],
+    ['approvals', `Approvals (${(session.approvals || []).length})`],
+  ]
+
+  return (
+    <div className="history-snapshot">
+      <div className="history-snapshot-tabs" role="tablist" aria-label="Saved session views">
+        {tabs.map(([id, label]) => (
+          <button
+            key={id}
+            className={`history-snapshot-tab ${snapshotTab === id ? 'active' : ''}`}
+            onClick={() => setSnapshotTab(id)}
+            type="button"
+            role="tab"
+            aria-selected={snapshotTab === id}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div className="history-snapshot-content">
+        {snapshotTab === 'chat' && <MessageReplay messages={session.messages || []} />}
+        {snapshotTab === 'reasoning' && (
+          <ReasoningPanel
+            items={session.reasoning || []}
+            handoffCount={(session.agentFlow || []).length}
+            toolCallCount={(session.toolCalls || []).length}
+          />
+        )}
+        {snapshotTab === 'flow' && (
+          <AgentFlowPanel flow={session.agentFlow || []} toolCalls={session.toolCalls || []} />
+        )}
+        {snapshotTab === 'approvals' && (
+          <ApprovalsPanel
+            approvals={session.approvals || []}
+            pendingId={null}
+            onApprove={() => {}}
+            onReject={() => {}}
+          />
+        )}
+      </div>
     </div>
   )
 }
@@ -95,7 +170,7 @@ export default function HistoryPanel({ history, onClear }) {
               </div>
 
               {isOpen && (
-                <MessageReplay messages={session.messages || []} />
+                <SessionSnapshot session={session} />
               )}
             </div>
           )

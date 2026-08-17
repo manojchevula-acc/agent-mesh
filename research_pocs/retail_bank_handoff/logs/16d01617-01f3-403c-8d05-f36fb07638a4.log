@@ -1,0 +1,73 @@
+{"ts": "2026-08-13T08:29:57.309+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "SESSION_CREATED", "agents": ["triage_agent", "account_agent", "card_agent", "loan_agent", "transfer_agent", "fraud_agent"]}
+{"ts": "2026-08-13T08:29:57.313+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "USER_MESSAGE", "text": "I want to know about my account balance, loan status and card details"}
+{"ts": "2026-08-13T08:29:59.168+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "triage_agent"}
+{"ts": "2026-08-13T08:29:59.171+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "HANDOFF", "from": "triage_agent", "to": "account_agent"}
+{"ts": "2026-08-13T08:29:59.174+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "account_agent"}
+{"ts": "2026-08-13T08:29:59.174+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "card_agent"}
+{"ts": "2026-08-13T08:29:59.174+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "loan_agent"}
+{"ts": "2026-08-13T08:29:59.175+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "transfer_agent"}
+{"ts": "2026-08-13T08:29:59.175+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "fraud_agent"}
+{"ts": "2026-08-13T08:29:59.176+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "account_agent"}
+{"ts": "2026-08-13T08:29:59.176+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "card_agent"}
+{"ts": "2026-08-13T08:29:59.177+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "loan_agent"}
+{"ts": "2026-08-13T08:29:59.177+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "transfer_agent"}
+{"ts": "2026-08-13T08:29:59.177+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "fraud_agent"}
+{"ts": "2026-08-13T08:29:59.184+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "account_agent"}
+{"ts": "2026-08-13T08:29:59.825+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "TOOL_CALL", "agent": "account_agent", "tool": "get_account_balance", "args": {"account_number": "DEMO_ACC"}}
+{"ts": "2026-08-13T08:30:00.499+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_RESPONSE", "agent": "account_agent", "text": "Your account balance is Rs. 1,24,500.00, with Rs. 1,20,000.00 available. For loan status and card details, I'm going to hand you over to a specialist who can help you with that. \n\n"}
+{"ts": "2026-08-13T08:30:00.499+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "HANDOFF", "from": "account_agent", "to": "card_agent"}
+{"ts": "2026-08-13T08:30:00.556+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "triage_agent"}
+{"ts": "2026-08-13T08:30:00.556+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "card_agent"}
+{"ts": "2026-08-13T08:30:00.556+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "loan_agent"}
+{"ts": "2026-08-13T08:30:00.557+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "transfer_agent"}
+{"ts": "2026-08-13T08:30:00.557+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "fraud_agent"}
+{"ts": "2026-08-13T08:30:00.565+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "card_agent"}
+{"ts": "2026-08-13T08:30:01.006+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "HANDOFF", "from": "card_agent", "to": "loan_agent"}
+{"ts": "2026-08-13T08:30:01.073+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "triage_agent"}
+{"ts": "2026-08-13T08:30:01.074+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "account_agent"}
+{"ts": "2026-08-13T08:30:01.074+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "loan_agent"}
+{"ts": "2026-08-13T08:30:01.074+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "transfer_agent"}
+{"ts": "2026-08-13T08:30:01.075+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "fraud_agent"}
+{"ts": "2026-08-13T08:30:01.080+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "loan_agent"}
+{"ts": "2026-08-13T08:30:01.430+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "HANDOFF", "from": "loan_agent", "to": "transfer_agent"}
+{"ts": "2026-08-13T08:30:01.489+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "triage_agent"}
+{"ts": "2026-08-13T08:30:01.489+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "account_agent"}
+{"ts": "2026-08-13T08:30:01.489+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "card_agent"}
+{"ts": "2026-08-13T08:30:01.489+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "transfer_agent"}
+{"ts": "2026-08-13T08:30:01.489+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "fraud_agent"}
+{"ts": "2026-08-13T08:30:01.496+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "transfer_agent"}
+{"ts": "2026-08-13T08:30:01.890+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "HANDOFF", "from": "transfer_agent", "to": "fraud_agent"}
+{"ts": "2026-08-13T08:30:01.957+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "triage_agent"}
+{"ts": "2026-08-13T08:30:01.957+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "account_agent"}
+{"ts": "2026-08-13T08:30:01.957+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "card_agent"}
+{"ts": "2026-08-13T08:30:01.958+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "loan_agent"}
+{"ts": "2026-08-13T08:30:01.958+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "fraud_agent"}
+{"ts": "2026-08-13T08:30:02.418+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "HANDOFF", "from": "fraud_agent", "to": "triage_agent"}
+{"ts": "2026-08-13T08:30:02.474+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "triage_agent"}
+{"ts": "2026-08-13T08:30:02.475+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "account_agent"}
+{"ts": "2026-08-13T08:30:02.475+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "card_agent"}
+{"ts": "2026-08-13T08:30:02.475+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "loan_agent"}
+{"ts": "2026-08-13T08:30:02.475+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "transfer_agent"}
+{"ts": "2026-08-13T08:30:02.482+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "triage_agent"}
+{"ts": "2026-08-13T08:30:02.966+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "HANDOFF", "from": "triage_agent", "to": "card_agent"}
+{"ts": "2026-08-13T08:30:03.023+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "account_agent"}
+{"ts": "2026-08-13T08:30:03.023+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "card_agent"}
+{"ts": "2026-08-13T08:30:03.023+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "loan_agent"}
+{"ts": "2026-08-13T08:30:03.024+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "transfer_agent"}
+{"ts": "2026-08-13T08:30:03.024+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "fraud_agent"}
+{"ts": "2026-08-13T08:30:03.027+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "card_agent"}
+{"ts": "2026-08-13T08:30:03.479+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "TOOL_CALL", "agent": "card_agent", "tool": "get_card_status", "args": {"card_last4": "DEMO"}}
+{"ts": "2026-08-13T08:30:03.771+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "HANDOFF", "from": "card_agent", "to": "loan_agent"}
+{"ts": "2026-08-13T08:30:03.836+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "triage_agent"}
+{"ts": "2026-08-13T08:30:03.837+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "account_agent"}
+{"ts": "2026-08-13T08:30:03.837+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "loan_agent"}
+{"ts": "2026-08-13T08:30:03.837+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "transfer_agent"}
+{"ts": "2026-08-13T08:30:03.837+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "fraud_agent"}
+{"ts": "2026-08-13T08:30:03.842+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "loan_agent"}
+{"ts": "2026-08-13T08:30:04.271+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_RESPONSE", "agent": "loan_agent", "text": "I've handed you over to a transfer agent who can help with your loan status and card details."}
+{"ts": "2026-08-13T08:30:04.324+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "triage_agent"}
+{"ts": "2026-08-13T08:30:04.325+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "account_agent"}
+{"ts": "2026-08-13T08:30:04.325+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "card_agent"}
+{"ts": "2026-08-13T08:30:04.325+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "transfer_agent"}
+{"ts": "2026-08-13T08:30:04.325+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AGENT_ACTIVE", "agent": "fraud_agent"}
+{"ts": "2026-08-13T08:30:04.387+00:00", "session_id": "16d01617-01f3-403c-8d05-f36fb07638a4", "event": "AWAITING_USER_INPUT", "agent": "agent"}

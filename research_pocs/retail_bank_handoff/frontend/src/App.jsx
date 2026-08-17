@@ -5,19 +5,6 @@ import AgentFlowPanel from './components/AgentFlowPanel.jsx'
 import ApprovalsPanel from './components/ApprovalsPanel.jsx'
 import HistoryPanel from './components/HistoryPanel.jsx'
 
-export const AGENT_COLORS = {
-  triage_agent:   '#4f86c6',
-  account_agent:  '#5aaa65',
-  card_agent:     '#e09a3a',
-  loan_agent:     '#9b6dd6',
-  transfer_agent: '#e06353',
-  fraud_agent:    '#c9404e',
-}
-
-export function agentColor(name) {
-  return AGENT_COLORS[name] || '#8b90a8'
-}
-
 function loadHistory() {
   try {
     const ids = JSON.parse(localStorage.getItem('rbh_session_ids') || '[]')
@@ -30,6 +17,38 @@ function loadHistory() {
   } catch {
     return []
   }
+}
+
+function mergeHistory(...collections) {
+  const records = new Map()
+  collections.flat().forEach(record => {
+    if (!record?.id) return
+    const existing = records.get(record.id)
+    if (!existing || Number(record.timestamp) > Number(existing.timestamp)) {
+      records.set(record.id, record)
+    }
+  })
+  return [...records.values()].sort((a, b) => Number(a.timestamp) - Number(b.timestamp))
+}
+
+function persistLocalHistory(records) {
+  try {
+    const previousIds = JSON.parse(localStorage.getItem('rbh_session_ids') || '[]')
+    const nextIds = records.map(record => record.id)
+    previousIds.filter(id => !nextIds.includes(id)).forEach(id => localStorage.removeItem(`rbh_session_${id}`))
+    records.forEach(record => localStorage.setItem(`rbh_session_${record.id}`, JSON.stringify(record)))
+    localStorage.setItem('rbh_session_ids', JSON.stringify(nextIds))
+  } catch { /* storage quota or private mode */ }
+}
+
+async function persistServerHistory(record) {
+  try {
+    await fetch(`/api/session-history/${record.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(record),
+    })
+  } catch { /* local history remains available offline */ }
 }
 
 export default function App() {
@@ -185,14 +204,12 @@ export default function App() {
           toolCalls: toolCallsRef.current,
           approvals: approvalsRef.current,
         }
-        try {
-          localStorage.setItem(`rbh_session_${sid}`, JSON.stringify(record))
-          const ids = JSON.parse(localStorage.getItem('rbh_session_ids') || '[]')
-          if (!ids.includes(sid)) {
-            localStorage.setItem('rbh_session_ids', JSON.stringify([...ids, sid]))
-          }
-        } catch { /* storage quota or private mode */ }
-        setHistory(prev => [...prev, record])
+        setHistory(prev => {
+          const next = mergeHistory(prev, [record])
+          persistLocalHistory(next)
+          return next
+        })
+        persistServerHistory(record)
       }
 
       else if (ev.type === 'error') {
@@ -283,13 +300,10 @@ export default function App() {
     })
   }
 
-  function clearHistory() {
-    try {
-      const ids = JSON.parse(localStorage.getItem('rbh_session_ids') || '[]')
-      ids.forEach(id => localStorage.removeItem(`rbh_session_${id}`))
-      localStorage.removeItem('rbh_session_ids')
-    } catch { /* ignore */ }
+  async function clearHistory() {
+    persistLocalHistory([])
     setHistory([])
+    try { await fetch('/api/session-history', { method: 'DELETE' }) } catch { /* local clear still succeeds */ }
   }
 
   function handleTabChange(t) {
@@ -298,7 +312,32 @@ export default function App() {
   }
 
   useEffect(() => {
-    return () => { if (esRef.current) esRef.current.close() }
+    let mounted = true
+    const localRecords = loadHistory()
+
+    async function synchronizeHistory() {
+      try {
+        const response = await fetch('/api/session-history')
+        if (!response.ok) return
+        const { records: serverRecords = [] } = await response.json()
+        const merged = mergeHistory(localRecords, serverRecords)
+        persistLocalHistory(merged)
+        if (mounted) setHistory(current => mergeHistory(current, merged))
+
+        const serverById = new Map(serverRecords.map(record => [record.id, record]))
+        const recordsToUpload = localRecords.filter(record => {
+          const serverRecord = serverById.get(record.id)
+          return !serverRecord || Number(record.timestamp) > Number(serverRecord.timestamp)
+        })
+        await Promise.all(recordsToUpload.map(persistServerHistory))
+      } catch { /* retain local history when server is unavailable */ }
+    }
+
+    synchronizeHistory()
+    return () => {
+      mounted = false
+      if (esRef.current) esRef.current.close()
+    }
   }, [])
 
   const pendingGate = approvals.find(a => a.request_id === pendingGateId) || null

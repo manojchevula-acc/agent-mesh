@@ -1,0 +1,1 @@
+{"ts": "2026-08-13T09:41:53.045+00:00", "session_id": "4d4a5bae-0e88-4368-8907-116ab4e306cf", "event": "SESSION_CREATED", "agents": ["triage_agent", "account_agent", "card_agent", "loan_agent", "transfer_agent", "fraud_agent"]}

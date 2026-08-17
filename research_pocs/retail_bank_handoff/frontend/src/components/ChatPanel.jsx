@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { agentColor } from '../App.jsx'
+import { agentColor } from '../constants/agentColors.js'
 import './ChatPanel.css'
 
 function formatTime(ts) {

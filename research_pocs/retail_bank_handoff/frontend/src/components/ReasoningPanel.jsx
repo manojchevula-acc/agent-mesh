@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { agentColor } from '../App.jsx'
+import { agentColor } from '../constants/agentColors.js'
 import './ReasoningPanel.css'
 
 const FIELD_LABELS = {

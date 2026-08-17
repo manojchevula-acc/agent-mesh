@@ -569,9 +569,17 @@ Messages are Python-pickled and base64-encoded. The `agent_session.state.in_memo
 {"event": "SESSION_DONE",     "session_id": "...", "timestamp": "..."}
 ```
 
-### Browser History (localStorage)
+### Durable UI History
 
-Completed sessions are saved by React to `localStorage["rbh_session_<uuid>"]`. The `HistoryPanel` reads these for offline replay. Data includes the full message thread, agent path string, and session stats.
+Completed sessions are saved immediately by React to `localStorage["rbh_session_<uuid>"]`
+for offline replay. The same full snapshot is upserted through `/api/session-history`
+into `history/<uuid>.json`, so completed conversations survive backend restarts and
+can be restored when browser storage is empty.
+
+On UI startup, browser and server records are merged by session ID. The record with
+the latest timestamp wins, records remain sorted chronologically, and browser-only
+records are uploaded to seed the server store. If the server is unavailable, local
+history continues to work. Clearing History removes both browser and server copies.
 
 ---
 

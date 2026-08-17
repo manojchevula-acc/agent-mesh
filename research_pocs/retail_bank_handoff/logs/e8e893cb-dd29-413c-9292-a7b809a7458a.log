@@ -1,0 +1,39 @@
+{"ts": "2026-08-13T08:26:45.710+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "SESSION_CREATED", "agents": ["triage_agent", "account_agent", "card_agent", "loan_agent", "transfer_agent", "fraud_agent"]}
+{"ts": "2026-08-13T08:26:45.717+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "USER_MESSAGE", "text": "I want to know about my account balance, loan status and card details"}
+{"ts": "2026-08-13T08:26:48.528+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_ACTIVE", "agent": "triage_agent"}
+{"ts": "2026-08-13T08:26:48.531+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "HANDOFF", "from": "triage_agent", "to": "account_agent"}
+{"ts": "2026-08-13T08:26:48.532+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_ACTIVE", "agent": "account_agent"}
+{"ts": "2026-08-13T08:26:48.533+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_ACTIVE", "agent": "card_agent"}
+{"ts": "2026-08-13T08:26:48.533+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_ACTIVE", "agent": "loan_agent"}
+{"ts": "2026-08-13T08:26:48.533+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_ACTIVE", "agent": "transfer_agent"}
+{"ts": "2026-08-13T08:26:48.534+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_ACTIVE", "agent": "fraud_agent"}
+{"ts": "2026-08-13T08:26:48.535+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_ACTIVE", "agent": "account_agent"}
+{"ts": "2026-08-13T08:26:48.536+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_ACTIVE", "agent": "card_agent"}
+{"ts": "2026-08-13T08:26:48.536+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_ACTIVE", "agent": "loan_agent"}
+{"ts": "2026-08-13T08:26:48.536+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_ACTIVE", "agent": "transfer_agent"}
+{"ts": "2026-08-13T08:26:48.536+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_ACTIVE", "agent": "fraud_agent"}
+{"ts": "2026-08-13T08:26:48.541+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_ACTIVE", "agent": "account_agent"}
+{"ts": "2026-08-13T08:26:49.054+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "TOOL_CALL", "agent": "account_agent", "tool": "get_account_balance", "args": {"account_number": "DEMO_ACC"}}
+{"ts": "2026-08-13T08:26:49.679+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_RESPONSE", "agent": "account_agent", "text": "Your current account balance is Rs. 1,24,500.00 with an available balance of Rs. 1,20,000.00. \n\n"}
+{"ts": "2026-08-13T08:26:49.680+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "HANDOFF", "from": "account_agent", "to": "loan_agent"}
+{"ts": "2026-08-13T08:26:49.735+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_ACTIVE", "agent": "triage_agent"}
+{"ts": "2026-08-13T08:26:49.735+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_ACTIVE", "agent": "card_agent"}
+{"ts": "2026-08-13T08:26:49.735+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_ACTIVE", "agent": "loan_agent"}
+{"ts": "2026-08-13T08:26:49.735+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_ACTIVE", "agent": "transfer_agent"}
+{"ts": "2026-08-13T08:26:49.736+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_ACTIVE", "agent": "fraud_agent"}
+{"ts": "2026-08-13T08:26:49.744+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_ACTIVE", "agent": "loan_agent"}
+{"ts": "2026-08-13T08:26:50.368+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_RESPONSE", "agent": "loan_agent", "text": "Regarding the loan, the status of your loan application LN-2024-001 is: In Progress.\n\nLastly, for your card, your card number XXXX-XXXX-XXXX-1234 is active. \n\n"}
+{"ts": "2026-08-13T08:26:50.369+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "HANDOFF", "from": "loan_agent", "to": "account_agent"}
+{"ts": "2026-08-13T08:26:50.424+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_ACTIVE", "agent": "triage_agent"}
+{"ts": "2026-08-13T08:26:50.425+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_ACTIVE", "agent": "account_agent"}
+{"ts": "2026-08-13T08:26:50.425+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_ACTIVE", "agent": "card_agent"}
+{"ts": "2026-08-13T08:26:50.426+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_ACTIVE", "agent": "transfer_agent"}
+{"ts": "2026-08-13T08:26:50.426+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_ACTIVE", "agent": "fraud_agent"}
+{"ts": "2026-08-13T08:26:50.435+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_ACTIVE", "agent": "account_agent"}
+{"ts": "2026-08-13T08:26:51.224+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_RESPONSE", "agent": "account_agent", "text": "If you have any further questions, please ask."}
+{"ts": "2026-08-13T08:26:51.277+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_ACTIVE", "agent": "triage_agent"}
+{"ts": "2026-08-13T08:26:51.277+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_ACTIVE", "agent": "card_agent"}
+{"ts": "2026-08-13T08:26:51.278+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_ACTIVE", "agent": "loan_agent"}
+{"ts": "2026-08-13T08:26:51.278+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_ACTIVE", "agent": "transfer_agent"}
+{"ts": "2026-08-13T08:26:51.278+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AGENT_ACTIVE", "agent": "fraud_agent"}
+{"ts": "2026-08-13T08:26:51.340+00:00", "session_id": "e8e893cb-dd29-413c-9292-a7b809a7458a", "event": "AWAITING_USER_INPUT", "agent": "agent"}

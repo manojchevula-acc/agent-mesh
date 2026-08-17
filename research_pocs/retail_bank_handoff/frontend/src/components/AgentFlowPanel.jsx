@@ -1,4 +1,4 @@
-import { agentColor } from '../App.jsx'
+import { agentColor } from '../constants/agentColors.js'
 import './AgentFlowPanel.css'
 
 export default function AgentFlowPanel({ flow, toolCalls }) {

@@ -1,0 +1,17 @@
+{"ts": "2026-08-13T10:27:30.767+00:00", "session_id": "a6419795-4dcc-4107-b6ec-127cb9228a25", "event": "SESSION_CREATED", "agents": ["triage_agent", "account_agent", "card_agent", "loan_agent", "transfer_agent", "fraud_agent"]}
+{"ts": "2026-08-13T10:27:40.436+00:00", "session_id": "a6419795-4dcc-4107-b6ec-127cb9228a25", "event": "USER_MESSAGE", "text": "I want to know about my account details,  loan details and card details.."}
+{"ts": "2026-08-13T10:27:40.837+00:00", "session_id": "a6419795-4dcc-4107-b6ec-127cb9228a25", "event": "AGENT_ACTIVE", "agent": "triage_agent"}
+{"ts": "2026-08-13T10:27:40.840+00:00", "session_id": "a6419795-4dcc-4107-b6ec-127cb9228a25", "event": "HANDOFF", "from": "triage_agent", "to": "account_agent"}
+{"ts": "2026-08-13T10:27:40.844+00:00", "session_id": "a6419795-4dcc-4107-b6ec-127cb9228a25", "event": "AGENT_ACTIVE", "agent": "account_agent"}
+{"ts": "2026-08-13T10:27:40.844+00:00", "session_id": "a6419795-4dcc-4107-b6ec-127cb9228a25", "event": "AGENT_ACTIVE", "agent": "card_agent"}
+{"ts": "2026-08-13T10:27:40.845+00:00", "session_id": "a6419795-4dcc-4107-b6ec-127cb9228a25", "event": "AGENT_ACTIVE", "agent": "loan_agent"}
+{"ts": "2026-08-13T10:27:40.845+00:00", "session_id": "a6419795-4dcc-4107-b6ec-127cb9228a25", "event": "AGENT_ACTIVE", "agent": "transfer_agent"}
+{"ts": "2026-08-13T10:27:40.845+00:00", "session_id": "a6419795-4dcc-4107-b6ec-127cb9228a25", "event": "AGENT_ACTIVE", "agent": "fraud_agent"}
+{"ts": "2026-08-13T10:27:40.847+00:00", "session_id": "a6419795-4dcc-4107-b6ec-127cb9228a25", "event": "AGENT_ACTIVE", "agent": "account_agent"}
+{"ts": "2026-08-13T10:27:40.847+00:00", "session_id": "a6419795-4dcc-4107-b6ec-127cb9228a25", "event": "AGENT_ACTIVE", "agent": "card_agent"}
+{"ts": "2026-08-13T10:27:40.847+00:00", "session_id": "a6419795-4dcc-4107-b6ec-127cb9228a25", "event": "AGENT_ACTIVE", "agent": "loan_agent"}
+{"ts": "2026-08-13T10:27:40.848+00:00", "session_id": "a6419795-4dcc-4107-b6ec-127cb9228a25", "event": "AGENT_ACTIVE", "agent": "transfer_agent"}
+{"ts": "2026-08-13T10:27:40.848+00:00", "session_id": "a6419795-4dcc-4107-b6ec-127cb9228a25", "event": "AGENT_ACTIVE", "agent": "fraud_agent"}
+{"ts": "2026-08-13T10:27:40.857+00:00", "session_id": "a6419795-4dcc-4107-b6ec-127cb9228a25", "event": "AGENT_ACTIVE", "agent": "account_agent"}
+{"ts": "2026-08-13T10:27:41.335+00:00", "session_id": "a6419795-4dcc-4107-b6ec-127cb9228a25", "event": "ERROR", "message": "(\"<class 'agent_framework_openai._chat_completion_client.OpenAIChatCompletionClient'> service failed to complete the prompt: Failed to call a function. Please adjust your prompt. See 'failed_generation' for more details.\", APIError(\"Failed to call a function. Please adjust your prompt. See 'failed_generation' for more details.\"))"}
+{"ts": "2026-08-13T10:27:41.394+00:00", "session_id": "a6419795-4dcc-4107-b6ec-127cb9228a25", "event": "ERROR", "message": "(\"<class 'agent_framework_openai._chat_completion_client.OpenAIChatCompletionClient'> service failed to complete the prompt: Failed to call a function. Please adjust your prompt. See 'failed_generation' for more details.\", APIError(\"Failed to call a function. Please adjust your prompt. See 'failed_generation' for more details.\"))"}

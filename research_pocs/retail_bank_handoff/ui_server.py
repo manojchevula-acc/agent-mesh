@@ -10,6 +10,9 @@ Endpoints:
   POST   /api/message/{session_id}     Send user message
   POST   /api/approve/{session_id}     HITL approve / reject
   DELETE /api/session/{session_id}     Clean up session
+    GET    /api/session-history          List completed session snapshots
+    PUT    /api/session-history/{id}     Persist a completed session snapshot
+    DELETE /api/session-history          Clear completed session snapshots
 
 Run:
     cd research_pocs/retail_bank_handoff
@@ -46,12 +49,13 @@ sys.path.insert(0, str(_here))
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agent_framework import Content
 from agent_framework._types import AgentResponseUpdate
 from agent_framework.orchestrations import HandoffAgentUserRequest
 from agents.agent_factory import create_agents
+from history_store import SessionHistoryStore
 from workflows.handoff_workflow import build_workflow
 
 app = FastAPI(title="Retail Bank Handoff API")
@@ -65,6 +69,7 @@ app.add_middleware(
 
 # ── Session registry ────────────────────────────────────────────────────────────
 sessions: dict[str, dict] = {}
+history_store = SessionHistoryStore()
 
 APPROVAL_GATES = {
     "fraud_screen_transfer":  {"gate": 1, "role": "Fraud Analyst",   "label": "Gate 1 — Fraud Screen Review"},
@@ -273,6 +278,16 @@ class ApproveBody(BaseModel):
     approved: bool
 
 
+class SessionHistoryRecord(BaseModel):
+    id: str
+    timestamp: int | float
+    messages: list[dict] = Field(default_factory=list)
+    reasoning: list[dict] = Field(default_factory=list)
+    agentFlow: list[dict] = Field(default_factory=list)
+    toolCalls: list[dict] = Field(default_factory=list)
+    approvals: list[dict] = Field(default_factory=list)
+
+
 # ── API routes ────────────────────────────────────────────────────────────────────
 
 @app.post("/api/session")
@@ -349,6 +364,28 @@ async def delete_session(session_id: str):
     sess = sessions.pop(session_id)
     if sess["task"] and not sess["task"].done():
         sess["task"].cancel()
+    return {"ok": True}
+
+
+@app.get("/api/session-history")
+async def list_session_history():
+    return {"records": history_store.list_records()}
+
+
+@app.put("/api/session-history/{session_id}")
+async def upsert_session_history(session_id: str, body: SessionHistoryRecord):
+    if session_id != body.id:
+        raise HTTPException(status_code=400, detail="Session ID does not match history record ID")
+    try:
+        record = history_store.upsert(body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "record": record}
+
+
+@app.delete("/api/session-history")
+async def clear_session_history():
+    history_store.clear()
     return {"ok": True}
 
 
