@@ -131,6 +131,46 @@ def get_jwks_url() -> str:
     return os.environ.get("HUB_SERVER_URL", "http://localhost:8090") + "/.well-known/jwks.json"
 
 
+def build_hub_jwt_verifier():
+    """Return a FastMCP JWTVerifier for validating agent RS256 tokens at the hub.
+
+    This applies the same JWTVerifier pattern that MCP servers use to the hub's
+    own FastAPI endpoints:
+
+        MCP servers:  JWTVerifier(jwks_uri=hub/.well-known/jwks.json, aud=server_id)
+        Hub (new):    JWTVerifier(jwks_uri=hub/.well-known/jwks.json)  ← no audience
+
+    The hub validates its own RS256 tokens by fetching its own JWKS endpoint.
+    This is safe because:
+      • /.well-known/jwks.json is public (no auth required)
+      • JWTVerifier fetches JWKS lazily on the first call (hub is running by then)
+      • Keys are cached inside JWTVerifier — one JWKS fetch per cache window
+
+    No audience is configured: hub-issued agent login tokens do not carry an
+    audience claim. Per-server tokens (aud=server_id) are validated by each
+    MCP server's own JWTVerifier, not at the hub.
+
+    Returns None when:
+      • AUTH_ENABLED=false  (auth disabled; all requests pass)
+      • fastmcp.server.auth not available  (older FastMCP build)
+    """
+    if not AUTH_ENABLED:
+        return None
+    try:
+        from fastmcp.server.auth.providers.jwt import JWTVerifier  # type: ignore
+    except ImportError:
+        return None
+
+    hub_url = os.environ.get("HUB_SERVER_URL", "http://localhost:8090")
+    issuer  = os.environ.get("HUB_JWT_ISSUER",  _HUB_ISSUER)
+
+    return JWTVerifier(
+        jwks_uri=f"{hub_url}/.well-known/jwks.json",
+        issuer=issuer,
+        # audience intentionally omitted — hub login tokens have no aud claim
+    )
+
+
 def _jwt_alg(token: str) -> str:
     """Return the algorithm from a JWT header without verifying the signature."""
     if jwt is None or not token:

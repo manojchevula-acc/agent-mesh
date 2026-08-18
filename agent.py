@@ -496,13 +496,13 @@ def _decode_jwt_claims(token: str) -> dict:
 # =============================================================================
 # The hub issues RS256 JWTs to the agent (login response) and per-server
 # tokens (discover response). Before using any of these, the agent verifies
-# the RS256 signature against the hub's public key from /.well-known/jwks.json.
+# the RS256 signature via FastMCP JWTVerifier — the same library and JWKS
+# endpoint that MCP servers use to verify the agent's outbound tokens:
 #
-# This mirrors exactly what MCP servers do for the tokens the AGENT sends them:
-#   MCP servers  →  verify agent→MCP tokens via GET /.well-known/jwks.json
-#   Agent (here) →  verify hub→agent tokens via GET /.well-known/jwks.json
+#   MCP servers  →  JWTVerifier validates agent→MCP tokens via JWKS
+#   Agent (here) →  JWTVerifier validates hub→agent tokens via JWKS
 #
-# Both sides verify via the SAME JWKS endpoint. Same key, same algorithm.
+# Both directions use the same hub JWKS endpoint and the same JWTVerifier.
 #
 # Failure tiers — by design:
 #   HARD (always raise):
@@ -514,171 +514,128 @@ def _decode_jwt_claims(token: str) -> dict:
 #   SOFT (log WARNING + proceed with unverified decode):
 #     - JWKS endpoint unreachable → hub may be starting up; TLS covers transit
 #       (hard-failing here would block agents on every hub restart — bad trade-off)
-#
-# Key rotation: increment HUB_JWT_KID on the hub → restart hub. The PyJWKClient
-# cache refreshes automatically on the next call with the new kid.
 # =============================================================================
 
-_jwks_client = None   # module-level PyJWKClient, lazily initialised
+_hub_jwt_verifier = None   # FastMCP JWTVerifier, lazily initialised
 
 
-def _jwks():
-    """Return the module-level cached PyJWKClient for the hub JWKS endpoint.
+def _get_hub_jwt_verifier():
+    """Return the module-level FastMCP JWTVerifier for hub JWKS token verification.
 
-    Created once on first call; keys are cached locally for 5 minutes before
-    re-fetching. This avoids an HTTP round-trip on every token verification.
+    Created once on first call; the JWTVerifier internally caches the fetched
+    JWKS keys so only one network round-trip is needed per cache window.
 
     JWKS endpoint called:
-        GET http://localhost:8090/.well-known/jwks.json
+        GET http://localhost:8090/.well-known/jwks.json   (env: HUB_SERVER_URL)
 
-    Example JWKS response:
-        {
-          "keys": [{
-            "kty": "RSA",
-            "kid": "hub-rsa-1",      ← matched against JWT header "kid"
-            "use": "sig",
-            "alg": "RS256",
-            "n":   "0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2...",   ← RSA modulus
-            "e":   "AQAB"                                          ← RSA exponent
-          }]
-        }
-
-    Returns None when PyJWT ≥2.4 is not installed; callers fall back to an
+    Returns None when fastmcp is not installed; callers fall back to an
     unverified decode (logged as WARNING).
     """
-    global _jwks_client
-    if _jwks_client is None:
+    global _hub_jwt_verifier
+    if _hub_jwt_verifier is None:
         try:
-            from jwt import PyJWKClient as _PyJWKClient  # PyJWT ≥2.4
-            _jwks_client = _PyJWKClient(
-                f"{HUB_SERVER_URL}/.well-known/jwks.json",
-                cache_keys=True,
-                lifespan=300,   # re-fetch JWKS every 5 minutes
+            from fastmcp.server.auth.providers.jwt import JWTVerifier  # type: ignore
+            _hub_jwt_verifier = JWTVerifier(
+                jwks_uri=f"{HUB_SERVER_URL}/.well-known/jwks.json",
+                issuer=os.environ.get("HUB_JWT_ISSUER", "fab-mcp-hub"),
+                # No audience: hub login tokens have no aud claim.
+                # Per-server token audience is checked manually in _verify_hub_token().
             )
         except Exception:
-            pass   # PyJWT not installed or wrong version
-    return _jwks_client
+            pass   # fastmcp not installed
+    return _hub_jwt_verifier
 
 
 async def _verify_hub_token(token: str, *, audience: str | None = None) -> dict:
-    """[DIRECTION 2 — INBOUND VERIFICATION] Verify an RS256 JWT from the hub via JWKS.
+    """[DIRECTION 2 — INBOUND VERIFICATION] Verify an RS256 JWT from the hub via JWTVerifier.
 
-    Implements the standard 6-step JWKS verification flow:
+    Uses FastMCP JWTVerifier — the same library used by MCP servers to validate
+    tokens the agent sends *them* — to verify tokens the hub sends *back*:
 
-        Step 1 — Read JWT header, extract kid and alg
-                 Example header:  {"alg": "RS256", "typ": "JWT", "kid": "hub-rsa-1"}
+        MCP servers  →  JWTVerifier validates agent→MCP tokens
+        Agent (here) →  JWTVerifier validates hub→agent tokens
 
-        Step 2 — Fetch JWKS from the hub's public endpoint (or return cached keys)
-                 GET http://localhost:8090/.well-known/jwks.json
+    JWTVerifier workflow:
+        1. Fetch hub JWKS: GET http://localhost:8090/.well-known/jwks.json  (cached)
+        2. Match key by kid header claim  →  RSA public key
+        3. Verify RS256 signature
+        4. Validate iss == "fab-mcp-hub" and exp > now
+        (steps 1-4 inside JWTVerifier.verify_token())
 
-        Step 3 — Find the JWK whose kid matches the JWT header kid
-                 kid="hub-rsa-1"  →  selects the matching key object in the JWKS array
-
-        Step 4 — Convert the JWK (n, e, kty=RSA) into an RSA public key object
-                 cryptography.hazmat RSAPublicKey built from modulus + exponent
-
-        Steps 1-4 are performed by:
-            signing_key = PyJWKClient.get_signing_key_from_jwt(token)
-
-        Step 5 — Verify RS256 signature with the RSA public key
-                 jwt.decode(..., signing_key.key, algorithms=["RS256"])
-
-        Step 6 — Validate claims
-                 iss  — must equal "fab-mcp-hub"       (env: HUB_JWT_ISSUER)
-                 aud  — must equal audience arg         (per-server tokens only)
-                 exp  — must be in the future           (always enforced)
-                 nbf  — must be in the past             (enforced by PyJWT when present)
-
-        Both steps 5-6 are performed by jwt.decode().
+        5. Unverified decode to read full claims dict
+           (safe — JWTVerifier already validated the token)
+        6. Manual audience check for per-server tokens (audience arg)
 
     Called by:
-        _get_hub_token()  → verifies the hub login JWT   (Step 2a, no audience)
-        run_agent()       → verifies each server token   (Step 2b, audience=server_id)
+        _get_hub_token()  → hub login JWT    (Step 2a, no audience check)
+        run_agent()       → per-server JWTs  (Step 2b, audience=server_id)
 
-    Example — hub login JWT payload (Step 2a, audience=None):
-        {
-          "sub":   "agent",
-          "roles": ["agent"],
-          "iss":   "fab-mcp-hub",
-          "iat":   1785857461,
-          "nbf":   1785857461,
-          "exp":   1785943861        ← 8 hours from iat
-        }
+    Example — hub login JWT payload (Step 2a):
+        {"sub":"agent","roles":["agent"],"iss":"fab-mcp-hub","exp":...}
 
-    Example — per-server JWT payload (Step 2b, audience="fab-customer-server"):
-        {
-          "sub":   "agent",
-          "roles": ["agent"],
-          "iss":   "fab-mcp-hub",
-          "aud":   "fab-customer-server",   ← must match audience arg exactly
-          "iat":   1785857461,
-          "nbf":   1785857461,
-          "exp":   1785861061               ← 1 hour from iat
-        }
+    Example — per-server JWT payload (Step 2b):
+        {"sub":"agent","roles":["agent"],"iss":"fab-mcp-hub",
+         "aud":"fab-customer-server","exp":...}
 
-    Returns:
-        Verified claims dict identical to the payload examples above.
-
-    Hard failures (always re-raise — never use this token):
-        jwt.exceptions.ExpiredSignatureError    exp is in the past; re-authenticate
-        jwt.exceptions.InvalidSignatureError    RSA signature mismatch; possible forgery
-        jwt.exceptions.InvalidAudienceError     aud ≠ audience arg; wrong server token
-        jwt.exceptions.InvalidIssuerError       iss ≠ "fab-mcp-hub"; wrong issuer
+    Hard failures (always re-raise — caller discards the token):
+        jwt.exceptions.ExpiredSignatureError    exp is in the past
+        jwt.exceptions.InvalidSignatureError    RS256 sig mismatch; possible forgery
+        jwt.exceptions.InvalidAudienceError     aud ≠ audience arg
+        jwt.exceptions.InvalidIssuerError       iss ≠ "fab-mcp-hub"
 
     Soft failure (log WARNING + return unverified claims):
-        Any other exception (network error, hub not yet started, PyJWKClientError)
-        → JWKS temporarily unavailable; TLS covers transit integrity in the meantime
+        Any other exception — JWKS temporarily unreachable (hub restarting, network
+        blip). Hard-failing here would block agents on every hub restart.
     """
     import jwt as _jwt  # PyJWT
 
-    client = _jwks()
-    if client is None:
-        # PyJWT / PyJWKClient not installed — unverified decode for observability
-        print("[auth] WARNING: PyJWKClient unavailable — RS256 signature not verified")
+    verifier = _get_hub_jwt_verifier()
+    if verifier is None:
+        # fastmcp not installed — fall back to unverified decode
+        print("[auth] WARNING: JWTVerifier unavailable — RS256 signature not verified")
         return _jwt.decode(token, options={"verify_signature": False})
 
     try:
-        # Steps 1-4: read JWT header → fetch JWKS → match kid → build RSA public key.
-        # get_signing_key_from_jwt() is synchronous (may do an HTTP fetch on cache miss).
-        # Run in a thread executor to avoid blocking the asyncio event loop.
-        #
-        # Internally PyJWKClient does:
-        #   jwt_header = jwt.get_unverified_header(token)
-        #   kid = jwt_header["kid"]                    # e.g. "hub-rsa-1"
-        #   alg = jwt_header["alg"]                    # "RS256"
-        #   jwks  = GET /.well-known/jwks.json  (or cache)
-        #   jwk   = next(k for k in jwks["keys"] if k["kid"] == kid)
-        #   key   = RSAPublicKey(n=jwk["n"], e=jwk["e"])
-        signing_key = await asyncio.to_thread(client.get_signing_key_from_jwt, token)
+        # JWTVerifier fetches JWKS, verifies RS256 sig + iss + exp.
+        # No audience is configured in the verifier — we check aud manually below.
+        await verifier.verify_token(token)
 
-        # Step 5 + 6: verify RS256 signature, then validate claims.
-        # PyJWT checks: signature (step 5), iss, exp, nbf (if present), aud (step 6).
-        # nbf (not-before) is validated automatically when the claim exists in the token.
-        issuer = os.environ.get("HUB_JWT_ISSUER", "fab-mcp-hub")
-        decode_kwargs: dict = {"algorithms": ["RS256"], "issuer": issuer}
+        # Safe unverified decode: JWTVerifier has already validated the token.
+        # We only need the claims dict (sub, roles, aud, iss, …) for RBAC / routing.
+        payload = _jwt.decode(token, options={"verify_signature": False})
+
+        # Manual audience check — JWTVerifier has no audience configured because
+        # hub login tokens have no aud; per-server tokens have aud=server_id.
         if audience:
-            decode_kwargs["audience"] = audience          # Step 2b: aud=server_id enforced
-        else:
-            decode_kwargs["options"] = {"verify_aud": False}   # Step 2a: hub login, no aud
+            tok_aud = payload.get("aud")
+            # PyJWT may return aud as str or list depending on the token.
+            matched = (
+                (isinstance(tok_aud, list) and audience in tok_aud)
+                or tok_aud == audience
+            )
+            if not matched:
+                raise _jwt.exceptions.InvalidAudienceError(
+                    f"Expected aud={audience!r}, token has aud={tok_aud!r}"
+                )
 
-        payload = _jwt.decode(token, signing_key.key, **decode_kwargs)
         return payload
 
     # ── Hard failures — explicit security violations ──────────────────────────
-    except _jwt.exceptions.ExpiredSignatureError:
-        raise   # exp is in the past; caller must re-authenticate
     except (
+        _jwt.exceptions.ExpiredSignatureError,
         _jwt.exceptions.InvalidSignatureError,
         _jwt.exceptions.InvalidAudienceError,
         _jwt.exceptions.InvalidIssuerError,
+        _jwt.exceptions.DecodeError,
     ):
-        raise   # cryptographic mismatch — never use this token
+        raise   # cryptographic mismatch — caller must not use this token
 
-    # ── Soft failure — connectivity / parsing issue ───────────────────────────
+    # ── Soft failure — connectivity / temporary issue ─────────────────────────
     except Exception as exc:
         print(
-            f"[auth] WARNING: JWKS fetch failed ({type(exc).__name__}: {exc}) "
-            "— proceeding without RS256 signature verification"
+            f"[auth] WARNING: JWTVerifier could not verify hub token "
+            f"({type(exc).__name__}: {exc}) "
+            "— proceeding with unverified decode"
         )
         return _jwt.decode(token, options={"verify_signature": False})
 

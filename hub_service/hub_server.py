@@ -80,7 +80,8 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from auth import AUTH_ENABLED, AUTH_PROVIDER, generate_server_token, get_jwks, verify_token
+from auth import (AUTH_ENABLED, AUTH_PROVIDER, build_hub_jwt_verifier,
+                  generate_server_token, get_jwks, verify_token)
 from db import get_engine  # hub_service/db.py
 from observability import get_events, log_event
 
@@ -202,14 +203,67 @@ async def _startup():
 
 _bearer = HTTPBearer(auto_error=False)
 
+# FastMCP JWTVerifier for hub-side RS256 token validation.
+# Validates agent tokens at /discover and other protected endpoints — the same
+# JWTVerifier pattern MCP servers use, applied to the hub's own FastAPI routes.
+# The hub validates its own issued tokens by fetching its own JWKS endpoint.
+_HUB_JWT_VERIFIER = build_hub_jwt_verifier()
 
-def _require_auth(
+
+async def _require_auth(
     request: Request,
     creds: HTTPAuthorizationCredentials | None = Security(_bearer),
 ) -> dict:
-    """Validate Bearer token, log the auth event, return claims dict."""
+    """Validate Bearer token via JWTVerifier (RS256) or verify_token (HS256/API key).
+
+    RS256 path (agent tokens issued by hub /auth/login and /discover):
+        FastMCP JWTVerifier fetches the hub's own JWKS endpoint and verifies the
+        RS256 signature, issuer, and expiry — the same flow MCP servers use.
+        Claims are extracted via an unverified decode (safe: JWTVerifier validated).
+
+    HS256 / API-key path (chat UI tokens, static API keys):
+        Falls through to the existing verify_token() for backward compatibility.
+    """
+    import jwt as _jwt
+
     token = creds.credentials if creds else ""
-    valid, claims = verify_token(token)
+    valid  = False
+    claims: dict = {}
+
+    # ── Determine algorithm without verifying signature ───────────────────────
+    alg = ""
+    if token:
+        try:
+            alg = _jwt.get_unverified_header(token).get("alg", "")
+        except Exception:
+            pass
+
+    # ── RS256 → FastMCP JWTVerifier (hub self-validation via own JWKS) ────────
+    if alg == "RS256" and _HUB_JWT_VERIFIER is not None:
+        try:
+            await _HUB_JWT_VERIFIER.verify_token(token)
+            # JWTVerifier validated RS256 sig + iss + exp.
+            # Unverified decode to read full claims dict (safe — already validated).
+            payload = _jwt.decode(token, options={"verify_signature": False})
+            roles = payload.get("roles", ["agent"])
+            if isinstance(roles, str):
+                roles = [roles]
+            claims = {
+                "sub":     payload.get("sub", "unknown"),
+                "roles":   roles,
+                "iss":     payload.get("iss"),
+                "aud":     payload.get("aud"),
+                "_source": "jwt",
+            }
+            valid = True
+        except Exception as _exc:
+            valid  = False
+            claims = {"_error": str(_exc)}
+
+    else:
+        # ── HS256 / API key / fallback → existing verify_token() ─────────────
+        valid, claims = verify_token(token)
+
     log_event(
         "auth",
         valid=valid,
