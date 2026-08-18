@@ -29,8 +29,9 @@ Resources (3):
 
 Authentication:
     Tokens are RS256 JWTs issued by the hub, audience = MCP_SERVER_ID.
-    FastMCP JWTVerifier validates tokens; BearerClaimsMiddleware extracts
-    claims into a ContextVar for per-tool RBAC via require_role().
+    FastMCP JWTVerifier validates tokens (RS256 via hub JWKS endpoint).
+    ClaimsExtractorMiddleware reads the validated claims into a ContextVar
+    for per-tool RBAC via require_role() — no second JWKS call.
 
 Run as a network service (streamable HTTP):
     MCP_SERVER_ID=fab-pricing-server MCP_TRANSPORT=http \\

@@ -260,7 +260,7 @@ The agent participates in authentication in **two directions** and uses the **sa
 │           Hub validates JWT (RS256 sig + iss + exp + role=agent)                │
 │                                                                                  │
 │  Step 1c  Agent ──Bearer <server JWT, aud=server_id>──► MCP Server POST /mcp   │
-│           MCP validates via FastMCP JWTVerifier + BearerClaimsMiddleware (JWKS) │
+│           MCP validates via FastMCP JWTVerifier (RS256 + hub JWKS)              │
 │                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────┘
 
@@ -290,8 +290,8 @@ OBSERVABILITY: _decode_jwt_claims() — verify_signature=False decode for loggin
 **MCP Server side** (`datalayer-as-service/mcp_server/auth.py`):
 
 ```
-Incoming JWT (from agent) → FastMCP JWTVerifier (primary, 401 on fail)
-                          → BearerClaimsMiddleware (defense-in-depth, own JWKS verify)
+Incoming JWT (from agent) → FastMCP JWTVerifier  (hub JWKS; 401 on fail)
+                          → ClaimsExtractorMiddleware  (unverified decode; no JWKS call)
                           → _request_claims ContextVar
                           → require_role() inside tool function
 ```
@@ -636,7 +636,7 @@ All servers are configured with `mcp.http_app(middleware=claims_middleware())` �
 | Endpoint path | `/mcp/` |
 | Underlying protocol | HTTP POST with chunked response |
 | FastMCP server config | `mcp.http_app()` (default = streamable-HTTP) |
-| Auth middleware | FastMCP `JWTVerifier` + `BearerClaimsMiddleware` (all 5 servers) |
+| Auth middleware | FastMCP `JWTVerifier` (hub JWKS) + `ClaimsExtractorMiddleware` (all 5 servers) |
 
 > **Note:** SSE transport (`/sse`) was removed from the demo servers in v2.1. The MCP Python client SDK had a TaskGroup protocol incompatibility with FastMCP's SSE implementation that caused connection errors. All servers now use streamable-HTTP.
 
@@ -829,36 +829,62 @@ Wired into FastAPI via `_require_auth` dependency on protected endpoints (`/serv
 
 ### 13.3 MCP Server Auth (`datalayer-as-service/mcp_server/auth.py`)
 
-All MCP servers validate incoming RS256 JWTs issued by the hub. Two auth paths:
+All 5 MCP servers use the same single-layer auth pattern:
 
-**Path A — FAB data servers** (`customer_server.py`, `pricing_server.py`, `server.py`):
+```
+Agent ──[Bearer RS256 JWT]──► FastMCP JWTVerifier  ←── hub JWKS endpoint
+                                    │  (validates sig + aud + iss + exp)
+                                    ▼
+                              ClaimsExtractorMiddleware
+                                    │  (unverified decode → _request_claims ContextVar)
+                                    ▼
+                              require_role()  →  tool function  →  MySQL / compute
+```
 
-| Layer | Component | Role |
-|-------|-----------|------|
-| Primary | FastMCP `JWTVerifier` (via `build_jwt_verifier()`) | Validates RS256 sig + `aud=MCP_SERVER_ID` |
-| Secondary | `BearerClaimsMiddleware` | Independent JWKS re-verification; populates `_request_claims` ContextVar |
-| RBAC | `require_role()` inside each tool | Reads claims from ContextVar |
+**FastMCP `JWTVerifier`** (via `build_jwt_verifier()`) is the **sole cryptographic gatekeeper**:
 
-**Path B — streamable-HTTP demo servers** (`calc_server.py`, `weather_server.py`, `data_server.py`):
+```python
+auth = JWTVerifier(
+    jwks_uri = "http://localhost:8090/.well-known/jwks.json",  # hub's JWKS
+    issuer   = "fab-mcp-hub",
+    audience = "fab-pricing-server",   # = MCP_SERVER_ID env var
+)
+mcp = FastMCP(name="...", auth=auth)
+```
 
-Same dual-middleware pattern as Path A (migrated from SSE in v2.1):
+It contacts the hub's JWKS endpoint, fetches the RSA public key, and verifies every incoming RS256 JWT before any middleware or tool function executes.
 
-| Layer | Component | Role |
-|-------|-----------|------|
-| Primary | FastMCP `JWTVerifier` (via `build_jwt_verifier()`) | Validates RS256 sig + `aud=MCP_SERVER_ID` |
-| Secondary | `BearerClaimsMiddleware` (via `claims_middleware()`) | Independent JWKS re-verification; populates `_request_claims` ContextVar |
-| RBAC | `require_role()` inside each tool | Reads claims from ContextVar |
+**`ClaimsExtractorMiddleware`** (via `claims_middleware()`) runs after `JWTVerifier` and does **not** re-verify the token or call the JWKS endpoint. It performs an unverified `jwt.decode()` to read the already-validated claims (sub, roles, aud) into a `ContextVar` so `require_role()` and `audit_log()` work inside tool functions without touching their signatures.
+
+This is the exact pattern shown in the FastMCP documentation:
+
+```python
+# MCP server
+auth = JWTVerifier(jwks_uri="...", issuer="...", audience="...")
+mcp  = FastMCP(name="...", auth=auth)
+app  = mcp.http_app(middleware=claims_middleware())
+
+# Agent / client
+client = Client("http://127.0.0.1:9200/mcp", auth=server_token)
+async with client:
+    result = await client.call_tool("pricing_recommendation", {...})
+```
+
+| Layer | Component | Network call? | Role |
+|-------|-----------|--------------|------|
+| Primary | FastMCP `JWTVerifier` | Yes — hub JWKS (cached) | RS256 sig + aud + iss + exp |
+| Claims | `ClaimsExtractorMiddleware` | **No** | Unverified decode → ContextVar for RBAC |
+| RBAC | `require_role()` inside tool | No | Reads claims, raises `PermissionError` |
+| Audit | `audit_log()` inside tool | No | Structured log: sub, roles, args_keys |
 
 | Env variable | Default | Purpose |
 |-------------|---------|---------|
 | `MCP_AUTH_ENABLED` | `true` | `false` disables all token checks (dev mode) |
 | `MCP_SERVER_ID` | *(empty)* | Audience claim enforced by `JWTVerifier` |
-| `HUB_JWKS_URL` | hub + `/.well-known/jwks.json` | JWKS endpoint for RS256 key fetch |
-| `HUB_JWT_ISSUER` | `fab-mcp-hub` | Issuer enforced during verification |
+| `HUB_SERVER_URL` | `http://localhost:8090` | Hub base URL; JWKS at `{HUB_SERVER_URL}/.well-known/jwks.json` |
+| `MCP_JWT_ISSUER` | `fab-mcp-hub` | Issuer enforced during verification |
 
-Token failure tiers:
-- JWKS signature / audience / issuer mismatch → **hard 401** (hard fail)
-- JWKS endpoint unreachable → **WARNING + soft fail** (request proceeds unverified; defense-in-depth only)
+Token failure: signature / audience / issuer mismatch or expired → **hard 401** (FastMCP JWTVerifier).
 
 ### 13.4 Local JWT Workflow
 

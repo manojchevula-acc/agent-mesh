@@ -319,9 +319,10 @@ async def _get_hub_token() -> str:
 #  │    → Passes if all checks pass                       │
 #  └─────────────────────────────────────────────────────┘
 #
-#  Step 4 — BearerClaimsMiddleware extracts claims for per-tool RBAC
+#  Step 4 — ClaimsExtractorMiddleware extracts claims for per-tool RBAC
 #  ┌─────────────────────────────────────────────────────┐
-#  │  BearerClaimsMiddleware decodes the validated token  │
+#  │  ClaimsExtractorMiddleware decodes the validated     │
+#  │  token (unverified — JWTVerifier already did that)  │
 #  │  and stores claims in a ContextVar:                 │
 #  │    {"sub":"agent","roles":["agent"],"aud":"fab-customer-server"} │
 #  │                                                      │
@@ -387,7 +388,7 @@ async def mcp_session(server: dict):
                                      ← This is the normal production path.
         2. server["api_key"]       — opaque static key from MySQL mcp_servers table
                                      (set via Admin UI → Key button). Used by the
-                                     legacy BearerAuthMiddleware on older servers.
+                                     accepted by servers without JWTVerifier.
         3. MCP_API_KEY env var     — shared static fallback; used when neither of
                                      the above is set (e.g. dev environments where
                                      all servers share one key).
