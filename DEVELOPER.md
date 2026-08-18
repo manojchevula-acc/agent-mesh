@@ -323,10 +323,10 @@ _here = pathlib.Path(__file__).resolve().parent
 load_dotenv(_here.parent.parent / ".env")          # root .env (MCP auth keys)
 load_dotenv(_here.parent / ".env", override=True)  # datalayer-as-service/.env (MySQL creds)
 
-from mcp_server.auth import mcp_middleware, MCP_AUTH_ENABLED
+from mcp_server.auth import build_jwt_verifier, claims_middleware, MCP_AUTH_ENABLED
 ```
 
-If this loading happens after the import, `MCP_API_KEY` is empty and the server enters open dev mode (warning emitted). **Always keep the dotenv block before the auth import.**
+If this loading happens after the import, `MCP_SERVER_ID` is empty and `JWTVerifier` will be constructed without an audience claim. **Always keep the dotenv block before the auth import.**
 
 #### Adding per-tool RBAC
 
@@ -648,11 +648,14 @@ except ImportError:
 
 import uvicorn
 from fastmcp import FastMCP
-from mcp_server.auth import mcp_middleware, MCP_AUTH_ENABLED
+from mcp_server.auth import build_jwt_verifier, claims_middleware, MCP_AUTH_ENABLED
 from mcp_server.tools import query_my_domain   # your DB query function
 
+# FastMCP JWTVerifier validates RS256 tokens from the hub (hub JWKS endpoint).
+# claims_middleware() extracts the validated claims into a ContextVar for require_role().
 mcp = FastMCP(name="My Domain MCP Server",
-              instructions="Describe what this server does for the LLM router.")
+              instructions="Describe what this server does for the LLM router.",
+              auth=build_jwt_verifier())
 
 @mcp.tool()
 def my_tool(param: str = "") -> str:
@@ -661,7 +664,7 @@ def my_tool(param: str = "") -> str:
 
 if __name__ == "__main__":
     port = int(os.getenv("MCP_PORT", "8005"))
-    app = mcp.streamable_http_app(middleware=mcp_middleware())
+    app = mcp.http_app(middleware=claims_middleware())
     uvicorn.run(app, host=os.getenv("MCP_HOST", "127.0.0.1"), port=port, log_level="warning")
 ```
 
@@ -716,7 +719,7 @@ try:
     _ld(_pl.Path(__file__).resolve().parent / ".env", override=True)
 except ImportError:
     pass
-from mcp_server.auth import mcp_middleware  # reads env at import time
+from mcp_server.auth import build_jwt_verifier, claims_middleware  # reads env at import time
 ```
 
 ### `python hub_service/auth.py` fails with `RuntimeError: Set JWT_SECRET`

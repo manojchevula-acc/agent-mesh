@@ -20,7 +20,7 @@ Hub Server ── mints RS256 per-server JWTs (aud=server_id)
     │  Bearer RS256-JWT  (aud=<server_id>)
     ▼
 MCP Server ── FastMCP JWTVerifier: RS256 via GET /.well-known/jwks.json
-              BearerClaimsMiddleware: RS256 via JWKS (defense-in-depth)
+              ClaimsExtractorMiddleware: unverified decode → _request_claims ContextVar
 ```
 
 ### Path B — Agent Standalone (RS256 end-to-end)
@@ -42,10 +42,10 @@ Agent ── _verify_hub_token(audience=server_id): RS256 + aud verified via JWK
     │  Bearer RS256-JWT  (aud=<server_id>) — one token per matched server
     ▼
 MCP Server ── FastMCP JWTVerifier: RS256 via GET /.well-known/jwks.json
-              BearerClaimsMiddleware: RS256 via JWKS (defense-in-depth)
+              ClaimsExtractorMiddleware: unverified decode → _request_claims ContextVar
 ```
 
-**JWKS endpoint** — used by all four verifiers:  `GET http://localhost:8090/.well-known/jwks.json`
+**JWKS endpoint** — used by agent and MCP JWTVerifier:  `GET http://localhost:8090/.well-known/jwks.json`
 
 ---
 
@@ -64,7 +64,7 @@ MCP Server ── FastMCP JWTVerifier: RS256 via GET /.well-known/jwks.json
 | `_verify_hub_token()` (Step 2a) | `agent.py` | Hub login JWT received from hub | Hard raise → login rejected |
 | `_verify_hub_token(aud=id)` (Step 2b) | `agent.py` | Per-server JWTs received from /discover | Hard raise → server skipped |
 | `FastMCP JWTVerifier` | `mcp_server/auth.py` `build_jwt_verifier()` | Per-server JWT sent by agent | 401 → request rejected |
-| `BearerClaimsMiddleware` | `mcp_server/auth.py` | Same per-server JWT (defense-in-depth) | Hard 401 on crypto fail; soft warn on JWKS outage |
+| `ClaimsExtractorMiddleware` | `mcp_server/auth.py` | Same per-server JWT (already validated by JWTVerifier) | Unverified decode only — extracts sub/roles/aud into ContextVar |
 
 ---
 
@@ -208,7 +208,7 @@ streamablehttp_client("http://127.0.0.1:9100/mcp",
 
 POST /mcp  {"method": "initialize", …}   Authorization: Bearer <per-server-jwt>
   → JWTVerifier: fetch JWKS, verify RS256 signature, check iss+aud+exp  → PASS
-  → BearerClaimsMiddleware: decode claims → store in ContextVar
+  → ClaimsExtractorMiddleware: unverified decode → store claims in ContextVar
   → MCP handshake: {"result": {"protocolVersion": "…", "capabilities": {…}}}
 
 POST /mcp  {"method": "tools/list",  …}   Authorization: Bearer <per-server-jwt>
@@ -217,18 +217,18 @@ POST /mcp  {"method": "tools/list",  …}   Authorization: Bearer <per-server-jw
 
 POST /mcp  {"method": "tools/call", "params": {"name": "customer_360", "arguments": {"customer_id": "CUST001"}}}
                                               Authorization: Bearer <per-server-jwt>
-  → JWTVerifier: RS256 via JWKS → PASS                        ← primary gatekeeper
-  → BearerClaimsMiddleware: RS256 via JWKS (defense-in-depth) ← independent re-verify
-       Hard fail → 401 on signature/aud/iss mismatch
-       Soft fail → warn + unverified decode if JWKS unreachable
+  → JWTVerifier: RS256 via JWKS → PASS          ← sole cryptographic gatekeeper
+       401 on any failure: invalid sig / wrong aud / wrong iss / expired
+  → ClaimsExtractorMiddleware: unverified decode (safe — JWTVerifier already validated)
        Sets ContextVar: {"sub":"agent","roles":["agent"],"aud":"fab-customer-server"}
+       No JWKS call. No PyJWKClient. Zero network round-trips.
   → require_role("admin","agent") → PASS  (caller has "agent" role)
   → audit_log("customer_360", …) → prints structured log with agent identity
   → query_customer_360("CUST001") → MySQL query with MYSQL_USER/PASSWORD (not the JWT)
   → Response: JSON customer data
 ```
 
-The JWT is validated on **every HTTP request** by two independent verifiers. FastMCP does not
+The JWT is validated on **every HTTP request** by FastMCP JWTVerifier. FastMCP does not
 maintain a session-level trust state; each request must carry and pass the token independently.
 
 **Step 7 — Key security property: audience scoping prevents cross-server replay**
@@ -436,47 +436,56 @@ The per-server token has `"aud": "fab-customer-server"` — it will be **rejecte
 
 ## 5. MCP Server Authentication
 
-MCP servers validate RS256 tokens using the hub's JWKS endpoint via **two independent verifiers**:
+All 5 MCP servers use a single-layer auth stack: **FastMCP `JWTVerifier`** as the sole
+cryptographic gatekeeper, followed by **`ClaimsExtractorMiddleware`** for RBAC claims only.
 
-### 5.1 FastMCP JWTVerifier (primary gatekeeper)
+### 5.1 FastMCP JWTVerifier (sole cryptographic gatekeeper)
 
 Registered in `build_jwt_verifier()` (`datalayer-as-service/mcp_server/auth.py`) and wired into
 `FastMCP(auth=build_jwt_verifier())`. FastMCP intercepts **every HTTP request** before any tool
-function runs and validates the Bearer token:
+function runs and validates the Bearer token against the hub's JWKS endpoint:
 
 ```python
-JWTVerifier(
+from fastmcp.server.auth.providers.jwt import JWTVerifier
+
+auth = JWTVerifier(
     jwks_uri = "http://localhost:8090/.well-known/jwks.json",
     issuer   = "fab-mcp-hub",
-    audience = "fab-customer-server",   # set via MCP_SERVER_ID env var
+    audience = "fab-customer-server",   # = MCP_SERVER_ID env var
 )
+mcp = FastMCP(name="FAB Customer Intelligence MCP Server", auth=auth)
 ```
 
-Returns 401 if signature, iss, aud, or exp checks fail.
+Returns 401 if the RS256 signature, `iss`, `aud`, or `exp` checks fail. This is the only layer
+that contacts the hub's JWKS endpoint and verifies the token cryptographically.
 
-### 5.2 BearerClaimsMiddleware (defense-in-depth + RBAC claims)
+### 5.2 ClaimsExtractorMiddleware (RBAC claims — no re-verification)
 
-Runs **after** JWTVerifier in the middleware stack. It performs its **own independent JWKS
-verification** using a module-level cached `PyJWKClient` (keys refreshed every 5 minutes):
-
-```
-Hard fail (→ 401) : InvalidSignatureError / InvalidAudienceError / InvalidIssuerError /
-                    ExpiredSignatureError — token is cryptographically invalid.
-Soft fail (→ warn): JWKS endpoint unreachable (network blip / hub restart).
-                    Falls back to unverified decode; JWTVerifier is the upstream gatekeeper.
-```
-
-After verifying, it extracts claims into a `ContextVar` for per-tool RBAC:
+Runs **after** `JWTVerifier`. By the time a request reaches this middleware, `JWTVerifier` has
+already validated the token. This middleware does **not** call the JWKS endpoint or re-verify
+the signature. It performs an unverified `jwt.decode()` solely to read the payload claims
+and store them in a `ContextVar`:
 
 ```python
+# Unverified decode — safe because JWTVerifier (upstream) has already
+# validated the RS256 signature, aud, iss, and exp.
+payload = jwt.decode(token, options={"verify_signature": False})
 _request_claims.set({"sub": "agent", "roles": ["agent"], "aud": "fab-customer-server"})
 ```
 
-Tool functions read this via `require_role("admin", "agent")` and `audit_log()`.
+Tool functions read this via `require_role("admin", "agent")` and `audit_log()` — without
+any change to tool function signatures.
 
-**Why two verifiers?** JWTVerifier may be absent on older FastMCP builds (returns `None` from
-`build_jwt_verifier()`). BearerClaimsMiddleware's independent check ensures no token bypasses
-RS256 validation even if JWTVerifier is not present.
+**No JWKS call. No `PyJWKClient`. Zero network round-trips per tool call.**
+
+This is the exact pattern shown in the FastMCP documentation:
+
+```python
+# Agent / client connects with bearer token
+client = Client("http://127.0.0.1:9200/mcp", auth=server_token)
+async with client:
+    result = await client.call_tool("pricing_recommendation", {"customer_id": "CUST001"})
+```
 
 **Admin UI probe tokens:** The Admin UI **Test** and **Tools** buttons use this same RS256 JWT
 flow. The hub mints a short-lived token (`sub=hub-admin-probe`, `roles=[admin]`, `aud=<server_id>`,
@@ -696,7 +705,7 @@ Get-Content logs\hub.log -Wait | ForEach-Object {
 | `hub_service/observability.py` | Structured log sink (stdout + hub.log + MySQL) |
 | `hub_service/hub_server.py` | Hub API, admin UI, RBAC middleware |
 | `chat_service/chat_server.py` | Chat UI, user auth, per-chat trace storage |
-| `datalayer-as-service/mcp_server/auth.py` | MCP-side JWT verify + BearerClaimsMiddleware |
+| `datalayer-as-service/mcp_server/auth.py` | `build_jwt_verifier()` (JWTVerifier factory) + `ClaimsExtractorMiddleware` + RBAC helpers |
 | `hub_service/.keys/private.pem` | RSA private key (hub signs tokens — never share) |
 | `hub_service/.keys/public.pem` | RSA public key (matches JWKS) |
 | `logs/hub.log` | Persistent hub event log (JSONL) |

@@ -266,7 +266,8 @@ The agent participates in authentication in **two directions** and uses the **sa
 
 ┌─ DIRECTION 2: INBOUND VERIFICATION ─────────────────────────────────────────────┐
 │  The agent verifies tokens it RECEIVES from the hub before using them.           │
-│  Uses the same JWKS endpoint and PyJWKClient as MCP servers.                     │
+│  Uses the same hub JWKS endpoint. Agent uses PyJWKClient; MCP servers use         │
+│  FastMCP JWTVerifier (no PyJWKClient on MCP side).                               │
 │                                                                                  │
 │  Step 2a  Hub ──access_token──► _get_hub_token()                                │
 │           _verify_hub_token(token)                                               │

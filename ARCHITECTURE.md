@@ -44,7 +44,7 @@
   ┌──────────────────────────────────────────────────────────────────────┐
   │                    MCP Servers                                       │
   │                                                                      │
-  │  Demo servers (SSE, BearerAuthMiddleware):                           │
+  │  Demo servers (streamable-HTTP, FastMCP JWTVerifier):                │
   │    weather_server.py  :8001   calc_server.py  :8002                  │
   │    data_server.py     :8003                                          │
   │                                                                      │
@@ -113,11 +113,10 @@ GET http://localhost:8090/.well-known/jwks.json
                                                                verify iss ✓
                                                                verify exp ✓
                                                                → 401 if ANY fail
-                                                             BearerClaimsMiddleware
-                                                             (defense-in-depth):
-                                                               RS256 via JWKS ✓
-                                                               hard 401 on crypto fail
-                                                               soft warn on JWKS outage
+                                                             ClaimsExtractorMiddleware:
+                                                               unverified decode ✓
+                                                               (JWTVerifier already
+                                                                validated the token)
                                                                → _request_claims ContextVar
                                                              Tool function:
                                                                require_role("agent") ✓
@@ -263,10 +262,11 @@ The agent's `mcp_session()` context manager abstracts two transports:
 
 | Transport | Protocol | Used by | Session state |
 |-----------|----------|---------|--------------|
-| SSE | GET /sse (persistent) + POST /messages | Demo servers (calc, weather, data) | Server-side per connection |
-| Streamable HTTP | POST /mcp (stateful) | FAB data servers (customer, pricing) | `Mcp-Session-Id` header |
+| Streamable HTTP | POST /mcp (stateful) | All 5 servers — demo (calc, weather, data) + FAB (customer, pricing) | `Mcp-Session-Id` header |
 
-Both transports send the Bearer JWT on **every JSON-RPC call**, not just the initial handshake.
+The Bearer JWT is sent on **every JSON-RPC call** (initialize, tools/list, tools/call), not just the initial handshake. FastMCP validates it on each request independently.
+
+> **Note:** SSE transport (`/sse`) was removed in v2.1 — all servers now use streamable-HTTP at `/mcp/`.
 
 Streamable-HTTP requires an `initialize` handshake first; the session ID returned must be included in all subsequent calls. The `Accept: application/json, text/event-stream` header is required — FastMCP returns 406 if either MIME type is absent.
 
@@ -335,8 +335,8 @@ MCP tools query the **semantic views** (not raw tables). This isolates the tool 
 | Credential isolation | Each layer uses its own credential; none are forwarded across boundaries |
 | Brute-force resistance | Login rate-limited per username (10 attempts / 15 min); PBKDF2-SHA256 (200,000 iterations) |
 | Agent-side inbound verification | `_verify_hub_token()` in `agent.py` verifies hub login JWT (Step 2a) and each per-server JWT (Step 2b) via JWKS before use — catches forged tokens before MCP connection |
-| MCP defense-in-depth | `BearerClaimsMiddleware` independently verifies RS256 via JWKS in addition to `JWTVerifier`; safe even if `JWTVerifier` is absent |
-| JWKS key caching | `PyJWKClient(cache_keys=True, lifespan=300)` — shared module-level client; avoids per-request HTTP fetch; keys refreshed every 5 minutes |
+| MCP token validation | FastMCP `JWTVerifier` is the sole cryptographic gatekeeper — RS256 via hub JWKS; rejects 401 on any failure |
+| MCP claims extraction | `ClaimsExtractorMiddleware` performs unverified decode (no second JWKS call) to populate `_request_claims` ContextVar for RBAC |
 | Dev-mode flag | `MCP_AUTH_ENABLED=false` completely disables MCP auth — only for local dev |
 | Dev fallback risk | `_verify_jwt()` grants admin when no token + no `MCP_SERVER_ID` — never deploy without `MCP_SERVER_ID` set |
 | .env isolation | `datalayer-as-service/.env` contains real secrets; `.gitignore` must exclude it |

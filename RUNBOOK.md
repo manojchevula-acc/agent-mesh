@@ -532,9 +532,9 @@ fab-mcp-hub-simple/
 │   ├── .env                      ← MySQL credentials (MCP_SERVER_ID empty = use MCP_API_KEY env)
 │   ├── tool_credentials.db       ← SQLite: per-tool external service credentials (auto-created)
 │   └── mcp_server/
-│       ├── auth.py               ← MCP auth: BearerAuthMiddleware, per-server DB key support
-│       │                            MCP_SERVER_ID set → loads key from MySQL mcp_servers.api_key
-│       │                            Fallback → MCP_API_KEY env var
+│       ├── auth.py               ← MCP auth: build_jwt_verifier() (FastMCP JWTVerifier factory)
+│       │                            ClaimsExtractorMiddleware (unverified decode → RBAC ContextVar)
+│       │                            require_role(), audit_log(), get_agent_context()
 │       ├── tool_registry.py      ← SQLite credential store for external tools
 │       ├── external_service.py   ← Mock external services (port 8010): credit, FX, sanctions
 │       ├── server.py             ← FAB Pricing MCP server (port 9200)
