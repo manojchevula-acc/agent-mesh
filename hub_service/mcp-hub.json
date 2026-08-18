@@ -6,8 +6,8 @@
     {
       "id": "weather-server",
       "name": "Weather Information Service",
-      "endpoint": "http://localhost:8001/sse",
-      "transport": "sse",
+      "endpoint": "http://localhost:8001/mcp/",
+      "transport": "streamable-http",
       "capability": "Real-time weather and climate data",
       "skills": [
         "current conditions",
@@ -22,13 +22,13 @@
         "What is the weather in London?",
         "Get me a 5-day forecast for Tokyo"
       ],
-      "start_cmd": "MCP_SERVER_ID=weather-server python datalayer-as-service/mcp_server/weather_server.py 8001"
+      "start_cmd": "MCP_SERVER_ID=weather-server python datalayer-as-service/mcp_server/weather_server.py 8001  # streamable-HTTP /mcp/"
     },
     {
       "id": "calculator-server",
       "name": "Mathematical Calculator Service",
-      "endpoint": "http://localhost:8002/sse",
-      "transport": "sse",
+      "endpoint": "http://localhost:8002/mcp/",
+      "transport": "streamable-http",
       "capability": "Mathematical computation and unit conversion",
       "skills": [
         "arithmetic",
@@ -43,13 +43,13 @@
         "Calculate 15 factorial",
         "Convert 100 km to miles"
       ],
-      "start_cmd": "MCP_SERVER_ID=calculator-server python datalayer-as-service/mcp_server/calc_server.py 8002"
+      "start_cmd": "MCP_SERVER_ID=calculator-server python datalayer-as-service/mcp_server/calc_server.py 8002  # streamable-HTTP /mcp/"
     },
     {
       "id": "data-server",
       "name": "Reference Data Lookup Service",
-      "endpoint": "http://localhost:8003/sse",
-      "transport": "sse",
+      "endpoint": "http://localhost:8003/mcp/",
+      "transport": "streamable-http",
       "capability": "Geographic and currency reference data",
       "skills": [
         "country info",
@@ -64,7 +64,7 @@
         "What is the capital of Japan?",
         "What currency does Brazil use?"
       ],
-      "start_cmd": "MCP_SERVER_ID=data-server python datalayer-as-service/mcp_server/data_server.py 8003"
+      "start_cmd": "MCP_SERVER_ID=data-server python datalayer-as-service/mcp_server/data_server.py 8003  # streamable-HTTP /mcp/"
     },
     {
       "id": "fab-customer-server",
@@ -106,10 +106,15 @@
         "operational cost impact",
         "new customer pricing"
       ],
-      "description": "FAB pricing engine layer. Answers questions about HOW to price a deal — pricing recommendations, step-by-step price builds, competitor offer comparisons, segment benchmarks, operational cost impact, and policy compliance checks. Use for any query referencing a deal ID (DEAL...) or pricing/compliance analysis.",
+      "description": "FAB pricing engine layer. Answers questions about HOW to price a deal — pricing recommendations, step-by-step price builds, competitor offer comparisons, segment benchmarks, operational cost impact, and policy compliance checks. Use for any query referencing a deal ID (DEAL...) or pricing/compliance analysis. Also handles pricing queries for specific customers (CUST...) — e.g. 'analyze pricing for CUST001'.",
       "examples": [
+        "Give me a comprehensive pricing analysis for CUST001 and DEAL003",
+        "Review all policy exceptions for CUST002 and recommend actions",
+        "Build a competitor pricing strategy for CUST003 on DEAL007",
+        "Walk me through the step-by-step price build for DEAL040",
         "Which deals are non-compliant and why?",
-        "Explain step-by-step how the price was built for DEAL040"
+        "What are the pricing benchmarks for the Corporate segment?",
+        "What pricing should we offer CUST002?"
       ],
       "start_cmd": "cd datalayer-as-service && MCP_SERVER_ID=fab-pricing-server MCP_TRANSPORT=http MCP_HOST=127.0.0.1 MCP_PORT=9200 python -m mcp_server.pricing_server"
     }

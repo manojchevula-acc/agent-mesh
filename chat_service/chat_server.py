@@ -55,6 +55,20 @@ from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import agent as fab_agent
+import warnings as _chat_warnings
+# Suppress FastAPI on_event deprecation — refactor to lifespan deferred.
+_chat_warnings.filterwarnings("ignore", message="on_event is deprecated")
+
+# Hub observability bridge — forward key MCP lifecycle events to hub_events table + /api/logs.
+# hub_service is on sys.path (project root inserted above), so the import works across services.
+try:
+    from hub_service.observability import log_event as _hub_log_event
+    _HUB_OBSERVABLE_EVENTS: frozenset = frozenset({
+        "mcp_connecting", "mcp_connected", "mcp_capabilities", "mcp_prompt_used", "error",
+    })
+except Exception:
+    _hub_log_event = None           # type: ignore[assignment]
+    _HUB_OBSERVABLE_EVENTS = frozenset()
 
 app = FastAPI(title="FAB MCP Hub Chat UI", version="4.0.0")
 
@@ -1034,10 +1048,18 @@ mark{background:rgba(249,115,22,.3);color:var(--ac);border-radius:2px;padding:0 
         <div class="dash-section">
           <h3>Quick Queries</h3>
           <div class="quick-grid">
-            <button class="quick-btn" onclick="quickQuery('Show margin analysis for CUST001')">📈 Margin analysis CUST001</button>
-            <button class="quick-btn" onclick="quickQuery('List all active deals')">📋 List all deals</button>
+            <!-- Pricing prompts (5-step / 4-step structured workflows) -->
+            <button class="quick-btn" onclick="quickQuery('Give me a comprehensive pricing analysis for CUST001 and DEAL003')">🧮 Full pricing analysis CUST001</button>
+            <button class="quick-btn" onclick="quickQuery('Review all policy exceptions for CUST002 and recommend actions')">📋 Policy exception review CUST002</button>
+            <button class="quick-btn" onclick="quickQuery('Build a competitor pricing strategy for CUST003 on DEAL007')">⚔️ Competitor strategy CUST003</button>
+            <!-- Pricing tools -->
+            <button class="quick-btn" onclick="quickQuery('Walk me through the step-by-step price build for DEAL040')">🔍 Price build trace DEAL040</button>
+            <button class="quick-btn" onclick="quickQuery('Which deals are non-compliant and why?')">⚠️ Non-compliant deals</button>
+            <button class="quick-btn" onclick="quickQuery('What are the pricing benchmarks for the Corporate segment?')">📊 Corporate segment benchmarks</button>
+            <!-- Customer intelligence -->
+            <button class="quick-btn" onclick="quickQuery('Show me the 360 profile for CUST001')">👤 360 profile CUST001</button>
+            <!-- System / discovery -->
             <button class="quick-btn" onclick="quickQuery('What MCP servers are available?')">🔧 Available servers</button>
-            <button class="quick-btn" onclick="quickQuery('Show system health status')">💚 System health</button>
           </div>
         </div>
       </div>
@@ -3537,6 +3559,17 @@ async def chat_stream(req: ChatRequest, authorization: str = Header(default=""))
         _save_trace_event(session_id, msg_index, event.get("type", ""), json.dumps(event))
         _chat_log(event.get("type", "event"), session_id=session_id, msg_index=msg_index,
                   **{k: v for k, v in event.items() if k != "type"})
+        # Bridge key MCP lifecycle events to hub observability → ring buffer + hub_events + /api/logs
+        if _hub_log_event and event.get("type") in _HUB_OBSERVABLE_EVENTS:
+            try:
+                _hub_log_event(
+                    event["type"],
+                    session_id=session_id,
+                    sub=username,
+                    **{k: v for k, v in event.items() if k != "type"},
+                )
+            except Exception:
+                pass
 
     async def run_task() -> None:
         try:

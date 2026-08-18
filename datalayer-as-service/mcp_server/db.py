@@ -35,9 +35,14 @@ logger = logging.getLogger(__name__)
 # Load .env once when this module is imported
 load_dotenv()
 
+_engine: Engine | None = None
+
 
 def get_engine() -> Engine:
-    """Build a SQLAlchemy engine using MCP service credentials (MYSQL_USER / MYSQL_PASSWORD).
+    """Return (or create) the shared SQLAlchemy engine using MCP service credentials.
+
+    The engine is created once and cached for the process lifetime.
+    SQLAlchemy's connection pool handles concurrent requests safely.
 
     Service-layer contract:
     - Credentials come exclusively from environment variables (service identity).
@@ -48,6 +53,10 @@ def get_engine() -> Engine:
     Raises:
         RuntimeError: if MYSQL_USER or MYSQL_PASSWORD is not set in .env
     """
+    global _engine
+    if _engine is not None:
+        return _engine
+
     host     = os.getenv("MYSQL_HOST", "127.0.0.1")
     port     = int(os.getenv("MYSQL_PORT", "3306"))
     user     = os.getenv("MYSQL_USER", "")
@@ -63,23 +72,6 @@ def get_engine() -> Engine:
         f"mysql+pymysql://{quote_plus(user)}:{quote_plus(password)}"
         f"@{host}:{port}/{database}?charset=utf8mb4"
     )
-
-    engine = create_engine(url, echo=False, pool_pre_ping=True, pool_recycle=1800)
-
-    # Log with agent context when called from within a request (for audit trail).
-    agent_sub = "unknown"
-    try:
-        from mcp_server.auth import get_agent_context as _gac
-        agent_sub = _gac().get("sub", "unknown")
-    except ImportError:
-        try:
-            from auth import get_agent_context as _gac
-            agent_sub = _gac().get("sub", "unknown")
-        except ImportError:
-            pass
-
-    logger.info(
-        "DB engine created | service_user=%s | host=%s:%d | db=%s | agent_sub=%s",
-        user, host, port, database, agent_sub,
-    )
-    return engine
+    _engine = create_engine(url, echo=False, pool_pre_ping=True, pool_recycle=1800)
+    logger.info("MCP DB engine → %s:%d / %s (user=%s)", host, port, database, user)
+    return _engine

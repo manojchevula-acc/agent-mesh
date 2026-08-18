@@ -25,11 +25,10 @@ Run as a network service (streamable HTTP):
     MCP_TRANSPORT=http MCP_HOST=127.0.0.1 MCP_PORT=9100 python -m mcp_server.server
 """
 
-import logging
 import json
+import logging
 import os
 import pathlib
-from typing import Any
 
 import httpx
 
@@ -44,7 +43,7 @@ except ImportError:
     pass
 
 from fastmcp import FastMCP
-from mcp_server.auth import require_role, audit_log
+from mcp_server.auth import build_jwt_verifier, claims_middleware, MCP_AUTH_ENABLED, require_role, audit_log
 
 try:
     from mcp_server.tool_registry import get_tool_credentials, seed_dev_credentials as _seed_dev_credentials
@@ -55,6 +54,7 @@ except ImportError:
     _TOOL_REGISTRY_AVAILABLE = False
 
 from mcp_server.tools import (
+    _to_json,
     query_customer_360,
     query_pricing_recommendation,
     query_profitability_summary,
@@ -109,13 +109,10 @@ mcp = FastMCP(
         "pricing trace, competitor comparison, margin, profitability, RWA, "
         "segment benchmarks, operations cost, relationship discount, win/loss "
         "and policy exceptions. Pass an empty string to a filter to retrieve "
-        "capped data (max 100 rows)."
+        "capped data (max 15 rows)."
     ),
+    auth=build_jwt_verifier(),
 )
-
-
-def _to_json(data: list[dict[str, Any]]) -> str:
-    return json.dumps(data, indent=2, default=str)
 
 
 # ---------------------------------------------------------------------------
@@ -454,21 +451,20 @@ def sanctions_screen(customer_id: str, customer_name: str = "",
 # Entry point
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    import uvicorn
     transport = os.getenv("MCP_TRANSPORT", "stdio").lower()
     if transport in ("http", "streamable-http"):
-        import uvicorn
-        from mcp_server.auth import BearerAuthMiddleware, MCP_AUTH_ENABLED, _MCP_DEV_MODE_ACTIVE
-        host = os.getenv("MCP_HOST", "127.0.0.1")
-        port = int(os.getenv("MCP_PORT", "9100"))
-        auth_info = "open-dev" if _MCP_DEV_MODE_ACTIVE else ("enabled" if MCP_AUTH_ENABLED else "disabled")
+        host      = os.getenv("MCP_HOST", "127.0.0.1")
+        port      = int(os.getenv("MCP_PORT", "9100"))
+        server_id = os.getenv("MCP_SERVER_ID", "fab-combined-server")
+        auth_msg  = f"JWTVerifier (aud={server_id})" if MCP_AUTH_ENABLED else "disabled"
         logger.info(
-            "Starting FAB Pricing MCP Server (streamable HTTP) on %s:%s | auth=%s",
-            host, port, auth_info,
+            "Starting FAB Pricing Recommendation MCP Server on %s:%s  auth=%s",
+            host, port, auth_msg,
         )
-        _app = mcp.http_app()
-        if MCP_AUTH_ENABLED:
-            _app.add_middleware(BearerAuthMiddleware)
-        uvicorn.run(_app, host=host, port=port, log_level="warning")
+        # claims_middleware() extracts JWT claims into ContextVar for require_role()
+        app = mcp.http_app(middleware=claims_middleware())
+        uvicorn.run(app, host=host, port=port, log_level="warning")
     else:
         logger.info("Starting FAB Pricing Recommendation MCP Server (stdio) ...")
         mcp.run()

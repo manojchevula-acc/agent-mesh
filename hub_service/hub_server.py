@@ -69,6 +69,12 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
+import warnings as _warnings
+# Suppress LangGraph v1.x deprecation: fires at call site, not import time.
+# Migration to langchain.agents not applicable — langchain package not installed.
+_warnings.filterwarnings("ignore", message="create_react_agent")
+# Suppress FastAPI on_event deprecation — refactor to lifespan deferred.
+_warnings.filterwarnings("ignore", message="on_event is deprecated")
 from langgraph.prebuilt import create_react_agent
 from pydantic import BaseModel
 from sqlalchemy import text
@@ -371,6 +377,59 @@ def _make_routing_tools(decision: dict) -> list:
     return [pick_server]
 
 
+def _keyword_route(servers: list[dict], intent: str) -> tuple[list[str], str]:
+    """Deterministic keyword fallback when the LLM router is unavailable.
+
+    Scoring (additive):
+      • base  — 1 pt per 4+ char intent word found anywhere in the server's
+                 id, capability, description, skills, or examples corpus
+      • bonus — +1 pt per intent word that also appears in the server's ID tokens
+                 (the server ID is the most authoritative domain signal; a word
+                 like "pricing" in "fab-pricing-server" should outweigh the same
+                 word buried in another server's description)
+
+    Returns the highest-scoring server's ID or [] (caller falls through to the
+    first-server default).
+
+    Examples with default server registry:
+        "analyze pricing for CUST001" → fab-pricing-server  ("pricing" in ID +2, corpus +1)
+        "360 profile for CUST001"     → fab-customer-server ("profile" + "cust001" in corpus)
+        "calculate factorial of 15"   → calculator-server   ("calculate" in ID)
+        "weather in Dubai"            → weather-server      ("weather" in ID)
+        "currency in Japan"           → data-server         ("currency" in description)
+    """
+    q_words = {w for w in intent.lower().split() if len(w) >= 4}
+    if not q_words:
+        return [], "keyword: query too short"
+
+    best_id    = ""
+    best_score = 0
+    for server in servers:
+        sid      = server["id"]
+        id_words = set(sid.replace("-", " ").lower().split())
+
+        # Full corpus: id + all metadata fields (lowercase for matching)
+        corpus = " ".join([
+            sid.replace("-", " "),
+            server.get("capability", ""),
+            server.get("description", ""),
+            " ".join(server.get("skills", [])),
+            " ".join(server.get("examples", [])),
+        ]).lower()
+
+        base  = sum(1 for w in q_words if w in corpus)
+        bonus = sum(1 for w in q_words if w in id_words)   # extra weight for ID match
+        score = base + bonus
+
+        if score > best_score:
+            best_score = score
+            best_id    = sid
+
+    if not best_id:
+        return [], "keyword: no match"
+    return [best_id], f"keyword match (score={best_score})"
+
+
 def _build_server_context(servers: list[dict]) -> str:
     """Format server list for inline injection into the routing message."""
     parts = []
@@ -468,7 +527,7 @@ async def route_to_server(hub: dict, intent: str) -> tuple[list[dict], str, str]
         try:
             server_ids, reason = await _agent_route(servers, intent)
         except Exception as e:
-            print(f"[hub]  WARNING: agent routing failed ({e}) — fallback to first server")
+            print(f"[hub]  WARNING: agent routing failed ({e}) — keyword fallback")
             server_ids, reason = [], "agent routing failed"
 
         matched = [server_by_id[sid] for sid in server_ids if sid in server_by_id]
@@ -483,7 +542,17 @@ async def route_to_server(hub: dict, intent: str) -> tuple[list[dict], str, str]
             )
             return matched, method, reason
 
-        print(f"[hub]  WARNING: {server_ids!r} not in registry — defaulting to first server")
+        # ── LLM failed or returned unknown IDs — keyword fallback ────────────
+        kw_ids, kw_reason = _keyword_route(servers, intent)
+        kw_matched = [server_by_id[sid] for sid in kw_ids if sid in server_by_id]
+        if kw_matched:
+            method = "keyword"
+            print(f"[hub]  keyword  : {kw_ids!r} — {kw_reason}")
+            log_event("routing", method=method, server_ids=[s["id"] for s in kw_matched],
+                      reason=kw_reason, intent=intent[:120])
+            return kw_matched, method, kw_reason
+
+        print(f"[hub]  WARNING: {server_ids!r} no keyword match — defaulting to first server")
         if servers:
             log_event("routing", method="agent", server_ids=[servers[0]["id"]], reason="defaulted to first server", intent=intent[:120])
             return [servers[0]], "agent", "defaulted to first server"

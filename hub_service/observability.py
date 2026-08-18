@@ -7,10 +7,22 @@ Accessible via GET /api/logs.
 
 Event types
 -----------
-auth      — every Bearer-token check (valid/invalid, sub, roles, endpoint)
-request   — every HTTP request (method, path, status, latency_ms)
-routing   — each routing decision (method, server_ids, reason, intent)
-error     — caught runtime errors
+Hub-native (logged directly by hub_server.py):
+  auth             — every Bearer-token check (valid/invalid, sub, roles, endpoint)
+  request          — every HTTP request (method, path, status, latency_ms)
+  routing          — each routing decision (method, server_ids, reason, intent)
+  admin            — server CRUD, key rotation, credential operations
+  error            — caught runtime errors
+
+Agent-lifecycle (bridged from chat_server.py on_event → _hub_log_event):
+  mcp_connecting   — agent starting to connect to an MCP server
+  mcp_connected    — agent successfully connected; tool/prompt/resource counts
+  mcp_capabilities — MCP server prompts and resources discovered (server_id, prompts[], resources[])
+  mcp_prompt_used  — structured prompt matched and applied (prompt_name, prompt_args, message_count)
+  error            — agent-side errors forwarded to hub observability
+
+All agent-lifecycle events include session_id and sub (user identity) for correlation
+with chat_traces records.
 """
 from __future__ import annotations
 
@@ -21,6 +33,11 @@ import pathlib
 import threading
 import time
 from typing import Any
+
+try:
+    from sqlalchemy import text as _sa_text
+except ImportError:  # pragma: no cover
+    _sa_text = None  # type: ignore[assignment]
 
 MAX_EVENTS: int = 500
 
@@ -78,11 +95,13 @@ def _get_db_engine():
     if _db_engine is not None:
         return _db_engine
     try:
-        from db import get_engine          # hub_service/db.py — already on sys.path
-        from sqlalchemy import text
+        try:
+            from db import get_engine           # hub_service/db.py on sys.path (hub_server.py context)
+        except ImportError:
+            from hub_service.db import get_engine   # project root on sys.path (chat_server.py context)
         eng = get_engine()
         with eng.begin() as conn:
-            conn.execute(text("""
+            conn.execute(_sa_text("""
                 CREATE TABLE IF NOT EXISTS hub_events (
                     id         BIGINT AUTO_INCREMENT PRIMARY KEY,
                     ts         DOUBLE       NOT NULL,
@@ -111,10 +130,9 @@ def log_event(event_type: str, **data: Any) -> None:
     try:
         eng = _get_db_engine()
         if eng:
-            from sqlalchemy import text
             with eng.begin() as conn:
                 conn.execute(
-                    text("INSERT INTO hub_events (ts, type, data) VALUES (:ts, :type, :data)"),
+                    _sa_text("INSERT INTO hub_events (ts, type, data) VALUES (:ts, :type, :data)"),
                     {"ts": entry["ts"], "type": event_type,
                      "data": json.dumps(entry, default=str)},
                 )
@@ -130,7 +148,6 @@ def get_events(n: int = 100, event_type: str | None = None) -> list[dict]:
     try:
         eng = _get_db_engine()
         if eng:
-            from sqlalchemy import text
             if event_type:
                 sql = ("SELECT data FROM hub_events WHERE type = :type "
                        "ORDER BY ts DESC LIMIT :n")
@@ -139,7 +156,7 @@ def get_events(n: int = 100, event_type: str | None = None) -> list[dict]:
                 sql = "SELECT data FROM hub_events ORDER BY ts DESC LIMIT :n"
                 params = {"n": min(n, 5000)}
             with eng.connect() as conn:
-                rows = conn.execute(text(sql), params).fetchall()
+                rows = conn.execute(_sa_text(sql), params).fetchall()
             events: list[dict] = []
             # The SQL query uses ORDER BY ts DESC so MySQL can use the idx_he_ts
             # index and stop at LIMIT without scanning the full table. reversed()

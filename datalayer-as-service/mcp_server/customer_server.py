@@ -29,11 +29,9 @@ Run as a network service (streamable HTTP):
         MCP_HOST=127.0.0.1 MCP_PORT=9100 python -m mcp_server.customer_server
 """
 
-import json
 import logging
 import os
 import pathlib
-from typing import Any
 
 # Load .env before importing auth — auth.py reads env vars at module level.
 try:
@@ -50,6 +48,7 @@ from fastmcp import FastMCP
 from mcp_server.auth import build_jwt_verifier, claims_middleware, MCP_AUTH_ENABLED, require_role, audit_log
 
 from mcp_server.tools import (
+    _to_json,
     query_customer_360,
     query_profitability_summary,
     query_margin_analysis,
@@ -81,10 +80,6 @@ mcp = FastMCP(
     ),
     auth=build_jwt_verifier(),
 )
-
-
-def _to_json(data: list[dict[str, Any]]) -> str:
-    return json.dumps(data, indent=2, default=str)
 
 
 # ---------------------------------------------------------------------------

@@ -17,14 +17,22 @@ except ImportError:
 import uvicorn
 from fastmcp import FastMCP
 
+import logging
+
 try:
-    from auth import mcp_middleware, MCP_AUTH_ENABLED, require_role, audit_log
+    from auth import build_jwt_verifier, claims_middleware, MCP_AUTH_ENABLED, require_role, audit_log
 except ImportError:
-    from mcp_server.auth import mcp_middleware, MCP_AUTH_ENABLED, require_role, audit_log
+    from mcp_server.auth import build_jwt_verifier, claims_middleware, MCP_AUTH_ENABLED, require_role, audit_log
 
-PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8001
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+                    datefmt="%Y-%m-%d %H:%M:%S")
+_logger = logging.getLogger(__name__)
 
-mcp = FastMCP("Weather Information Service")
+PORT      = int(sys.argv[1]) if len(sys.argv) > 1 else 8001
+SERVER_ID = os.environ.get("MCP_SERVER_ID", "weather-server")
+HOST      = os.environ.get("MCP_HOST", "0.0.0.0")
+
+mcp = FastMCP("Weather Information Service", auth=build_jwt_verifier())
 
 MOCK_WEATHER = {
     "london":   {"temp": 15, "condition": "Cloudy with light rain", "humidity": 78, "wind": "12 km/h SW"},
@@ -116,9 +124,7 @@ def get_historical_weather(city: str, date: str) -> str:
     )
 
 if __name__ == "__main__":
-    auth_msg = f"enabled ({os.environ.get('MCP_AUTH_PROVIDER', 'local')} provider)" if MCP_AUTH_ENABLED else "disabled"
-    print(f"Starting Weather MCP Server on port {PORT}...")
-    print(f"SSE endpoint : http://localhost:{PORT}/sse")
-    print(f"Auth         : {auth_msg}")
-    app = mcp.http_app(transport="sse", middleware=mcp_middleware())
-    uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="warning")
+    auth_label = f"JWTVerifier (aud={SERVER_ID})" if MCP_AUTH_ENABLED else "disabled"
+    _logger.info("Starting Weather Information MCP Server on %s:%d  auth=%s", HOST, PORT, auth_label)
+    app = mcp.http_app(middleware=claims_middleware())
+    uvicorn.run(app, host=HOST, port=PORT, log_level="warning")

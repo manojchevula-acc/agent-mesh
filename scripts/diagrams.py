@@ -160,15 +160,15 @@ def d1_system_overview():
 
     # ── Presentation ─────────────────────────────────────────────────────────
     _box(ax, 5.0, 8.82, 3.8, 0.70, "Chat UI  (SPA)",
-         "Query · SSE stream · Conversation history", bg=P["dkblue"])
+         "Query · Streaming response · Conversation history", bg=P["dkblue"])
     _box(ax, 11.2, 8.82, 3.8, 0.70, "Admin UI  (SPA)",
          "Server registry · Logs · Health · CRUD", bg=P["dkblue"])
 
     # ── Application ──────────────────────────────────────────────────────────
     _box(ax, 4.0, 6.82, 3.4, 1.60, "Chat Server  :8080",
-         "User auth (PBKDF2) · Rate limiting\nSSE streaming · Background tasks\nConversation persistence",
+         "User auth (PBKDF2) · Rate limiting\nResponse streaming · Background tasks\nConversation persistence",
          bg=P["teal"], fontsize=8.5, sublabel_size=7)
-    _box(ax, 12.0, 6.82, 3.4, 1.60, "MCP Hub Server  :8090",
+    _box(ax, 11.5, 6.82, 3.4, 1.60, "MCP Hub Server  :8090",
          "Server registry · JWT issuance\nLLM routing · Admin REST API\nJWKS publication · Observability",
          bg=P["navy"], fontsize=8.5, sublabel_size=7)
 
@@ -176,8 +176,8 @@ def d1_system_overview():
     _box(ax, 7.8, 4.54, 4.4, 1.55, "Agent Orchestrator",
          "POST /discover · mcp_session()\nLangGraph ReAct loop\nTool loading · astream_events",
          bg=P["purple"], fontsize=8.5, sublabel_size=7)
-    _box(ax, 13.5, 4.54, 3.6, 1.55, "Database  (MySQL)",
-         "mcp_servers — registry\nhub_events — event log\nconversations · users",
+    _box(ax, 14.7, 6.82, 2.2, 1.55, "Database  (MySQL)",
+         "mcp_servers · hub_events\nconversations · users",
          bg="#5C3D11", fontsize=8.5, sublabel_size=7)
 
     # ── Data / Integration ────────────────────────────────────────────────────
@@ -196,14 +196,14 @@ def d1_system_overview():
          bg="#5C3D11", fontsize=8.5, sublabel_size=7)
 
     # ── Arrows ───────────────────────────────────────────────────────────────
-    _arrow(ax, 5.0, 8.47, 4.3, 7.62, "SSE + POST /messages", color=P["teal"])
+    _arrow(ax, 5.0, 8.47, 4.3, 7.62, "HTTP (streaming)", color=P["teal"])
     _arrow(ax, 11.2, 8.47, 11.8, 7.62, "REST (hub JWT)", color=P["navy"])
     _arrow(ax, 5.5, 6.02, 6.8, 5.31, "run_agent()", color=P["purple"])
-    _arrow(ax, 12.0, 6.02, 13.2, 5.31, "SQL registry", color="#5C3D11")
+    _arrow(ax, 13.2, 6.82, 13.6, 6.82, "SQL", color="#5C3D11")
     _arrow(ax, 9.1, 5.31, 10.7, 6.02, "POST /discover (hub JWT)", color=P["navy"])
     for xp in [2.3, 5.2, 8.1, 11.0]:
         _arrow(ax, 7.8, 3.77, xp, 2.87,
-               "MCP + JWT" if xp == 5.2 else "", color=P["green"])
+               "MCP+JWT", color=P["green"])
     _arrow(ax, 11.0, 2.87, 12.7, 2.0, "SQL (own creds)", color="#5C3D11", fontsize=6.5)
 
     # ── Legend ───────────────────────────────────────────────────────────────
@@ -444,7 +444,7 @@ def d2_auth_flow():
         note="Parameterised query · server's own DB credentials")
     msg(18.6, 15.0, 2.2, "Result rows", P["ph5"], dashed=True)
     msg(15.0, 11.5, 1.8, "Tool result JSON", P["ph5"], dashed=True)
-    msg(11.5, 4.7, 1.4, "Final answer (SSE stream)", P["ph5"], dashed=True)
+    msg(11.5, 4.7, 1.4, "Final answer (streamed)", P["ph5"], dashed=True)
     msg(4.7, 1.7, 1.0, "Rendered in browser", P["ph5"], dashed=True)
 
     # ── Phase legend ──────────────────────────────────────────────────────────
@@ -835,8 +835,8 @@ def d6_rbac():
 
     # ── Happy path convergence ────────────────────────────────────────────────
     # All PASS boxes drop to audit_log via connector on the right
-    for pass_y in [7.85, 6.55, 5.25]:
-        _arrow(ax, RIGHT_X, pass_y - 0.36, RIGHT_X, 3.2, color=P["green"])
+    for pass_y, dx in zip([7.85, 6.55, 5.25], [-0.05, 0.0, 0.05]):
+        _arrow(ax, RIGHT_X + dx, pass_y - 0.36, RIGHT_X + dx, 3.2, color=P["green"])
     # Horizontal into audit_log
     _arrow(ax, RIGHT_X, 3.2, CX + 3.0, 3.2, color=P["green"])
 
@@ -861,23 +861,340 @@ def d6_rbac():
 
 
 # ============================================================================
+# D7 — End-to-End Request Flow (sequence with HTTP contracts)
+# ============================================================================
+def d7_request_flow():
+    """Sequence diagram: browser query → chat → agent → hub → MCP → MySQL → answer."""
+    fig, ax = plt.subplots(figsize=(24, 16))
+    ax.set_xlim(0, 24)
+    ax.set_ylim(0, 16)
+    ax.axis("off")
+    ax.set_facecolor("#F9FAFB")
+    fig.patch.set_facecolor("#F9FAFB")
+
+    ax.text(12, 15.55,
+            "End-to-End Request Flow — HTTP Contracts, Headers & Payloads",
+            ha="center", va="center", fontsize=13, fontweight="bold",
+            color=P["navy"], fontfamily=FONT)
+
+    # Participants: (label, x_center, color)
+    parts = [
+        ("Browser",      1.5,  P["dkblue"]),
+        ("Chat\nServer", 5.0,  P["teal"]),
+        ("Agent",        8.5,  P["purple"]),
+        ("Hub\nServer",  12.0, P["navy"]),
+        ("MCP\nServer",  16.0, P["green"]),
+        ("MySQL",        20.5, "#5C3D11"),
+    ]
+
+    # Participant boxes + lifelines
+    for name, x, color in parts:
+        box = FancyBboxPatch((x - 1.3, 14.7), 2.6, 0.75,
+                             boxstyle="round,pad=0.05,rounding_size=0.08",
+                             linewidth=0.8, edgecolor="#FFFFFF",
+                             facecolor=color, zorder=4)
+        ax.add_patch(box)
+        ax.text(x, 15.08, name, ha="center", va="center",
+                fontsize=9, fontweight="bold", color="white",
+                fontfamily=FONT, zorder=5)
+        ax.plot([x, x], [14.7, 0.4], color="#CCCCCC", lw=0.8,
+                linestyle="--", zorder=1)
+
+    def arrow(y, x1, x2, label, sub="", ret=False):
+        """Draw a horizontal message arrow between participants."""
+        col = P["navy"] if not ret else "#888888"
+        lw  = 1.4 if not ret else 1.1
+        ls  = "solid" if not ret else (0, (4, 2))
+        ax.annotate("", xy=(x2, y), xytext=(x1, y),
+                    arrowprops=dict(arrowstyle="->", color=col, lw=lw,
+                                   linestyle=ls,
+                                   connectionstyle="arc3,rad=0.0"),
+                    zorder=5)
+        mx = (x1 + x2) / 2
+        ax.text(mx, y + 0.14, label, ha="center", va="bottom",
+                fontsize=7.2, color=col, fontfamily=FONT,
+                fontweight="bold" if not ret else "normal", zorder=6)
+        if sub:
+            ax.text(mx, y - 0.10, sub, ha="center", va="top",
+                    fontsize=6.5, color="#777777", fontfamily=FONT, zorder=6)
+
+    # Step numbers on left margin
+    def step_num(y, n):
+        ax.text(0.15, y, str(n), ha="center", va="center",
+                fontsize=8, fontweight="bold", color=P["midgrey"],
+                fontfamily=FONT,
+                bbox=dict(boxstyle="circle,pad=0.18", fc="#E5E7EB", ec="#9CA3AF", lw=0.6))
+
+    # Steps (y, x_from, x_to, label, sublabel, is_return)
+    steps = [
+        # 1 — browser → chat
+        (13.7, 1.5, 5.0,
+         "POST /messages",
+         'Header: Cookie: session=<hub_jwt>    Body: {"query": "customer C007 loyalty status?"}',
+         False),
+        # 2 — chat → agent
+        (12.7, 5.0, 8.5,
+         "run_agent(query, session_id)",
+         "asyncio.Task created before SSE generator — survives browser disconnect",
+         False),
+        # 3 — agent → hub
+        (11.7, 8.5, 12.0,
+         "POST /discover",
+         'Authorization: Bearer <hub_jwt>    Content-Type: application/json    {"intent": "..."}',
+         False),
+        # 4 — hub → mysql (internal registry lookup)
+        (10.7, 12.0, 20.5,
+         "SELECT id, endpoint, transport, capability, skills, description, examples, api_key",
+         "FROM mcp_servers WHERE is_active = 1    (60-second in-process cache; bust via POST /api/hub/refresh)",
+         False),
+        # 5 — mysql → hub (return)
+        (9.9, 20.5, 12.0,
+         "mcp_servers rows",
+         "id · endpoint · transport · capability · skills · description · examples · is_active",
+         True),
+        # 6 — hub → agent (discover response)
+        (9.1, 12.0, 8.5,
+         '200 OK    {"servers": [{config + "server_token": "<RS256 JWT>"}], "method": "agent", "intent": "..."}',
+         "server_token: aud=server_id · sub=caller · roles=forwarded · exp=now+3600",
+         True),
+        # 7 — agent → mcp (initialize)
+        (8.1, 8.5, 16.0,
+         "POST /mcp    {initialize, protocolVersion, capabilities}",
+         "Authorization: Bearer <server_jwt>    Accept: application/json, text/event-stream    JSON-RPC 2.0",
+         False),
+        # 8 — mcp → agent (session id)
+        (7.2, 16.0, 8.5,
+         "200 OK    Mcp-Session-Id: <uuid>    {serverInfo, capabilities}",
+         "JWTVerifier: sig ✓ · iss=fab-mcp-hub ✓ · aud=fab-customer-server ✓ · exp ✓",
+         True),
+        # 9 — agent → mcp (list tools)
+        (6.4, 8.5, 16.0,
+         "POST /mcp    {tools/list}",
+         "Mcp-Session-Id: <uuid>    Authorization: Bearer <server_jwt> (re-validated on every call)",
+         False),
+        # 10 — agent → mcp (tools/call)
+        (5.5, 8.5, 16.0,
+         'POST /mcp    {"method":"tools/call","params":{"name":"customer_360","arguments":{"customer_id":"C007"}}}',
+         "Mcp-Session-Id: <uuid>    require_role('agent') ✓    audit_log(tool, args_keys) ✓",
+         False),
+        # 11 — mcp → mysql (query)
+        (4.6, 16.0, 20.5,
+         "SELECT * FROM customer_360_view WHERE id = %s",
+         "Parameterised query · MYSQL_USER/MYSQL_PASSWORD (MCP server's own credentials, never forwarded)",
+         False),
+        # 12 — mysql → mcp (return)
+        (3.8, 20.5, 16.0,
+         "Result rows from semantic view",
+         "16 semantic views · 14 base tables    Schema isolates tool API from raw table structure",
+         True),
+        # 13 — mcp → agent (tool result)
+        (2.9, 16.0, 8.5,
+         '{"result": {"content": [{"type":"text","text":"{customer data JSON}"}]}}',
+         "BearerClaimsMiddleware decoded claims; audit log written; no PII values logged",
+         True),
+        # 14 — agent → chat (final answer)
+        (1.9, 8.5, 5.0,
+         "Synthesized final answer",
+         "LangGraph ReAct: OBSERVE result → THINK → final answer text",
+         True),
+        # 15 — chat → browser (stream)
+        (1.1, 5.0, 1.5,
+         "Streamed response to browser",
+         "Saved to MySQL conversations · GET /poll re-attaches on reconnect",
+         True),
+    ]
+
+    for i, (y, x1, x2, label, sub, ret) in enumerate(steps):
+        step_num(y, i + 1)
+        arrow(y, x1, x2, label, sub, ret)
+
+    # Legend
+    leg_items = [
+        (P["navy"], "solid", "Forward call (request)"),
+        ("#888888", "dashed", "Return (response)"),
+    ]
+    lx, ly = 0.4, 0.15
+    for col, ls, lbl in leg_items:
+        ax.annotate("", xy=(lx + 0.9, ly), xytext=(lx, ly),
+                    arrowprops=dict(arrowstyle="->", color=col, lw=1.2,
+                                   linestyle=(0, (4, 2)) if ls == "dashed" else "solid"))
+        ax.text(lx + 1.05, ly, lbl, va="center", fontsize=8,
+                color="#555555", fontfamily=FONT)
+        lx += 4.5
+
+    return _save(fig, "07_request_flow", dpi=200)
+
+
+# ============================================================================
+# D8 — Database Schema (hub tables)
+# ============================================================================
+def d8_db_schema():
+    """mcp_servers and hub_events table schemas with column annotations."""
+    fig, ax = plt.subplots(figsize=(19, 12))
+    ax.set_xlim(0, 19)
+    ax.set_ylim(0, 12)
+    ax.axis("off")
+    ax.set_facecolor("#F9FAFB")
+    fig.patch.set_facecolor("#F9FAFB")
+
+    ax.text(9.5, 11.55,
+            "Hub Database Schema — MySQL: fab_semantic",
+            ha="center", va="center", fontsize=13, fontweight="bold",
+            color=P["navy"], fontfamily=FONT)
+
+    def db_table(left, top, width, title, hdr_bg, cols):
+        """Draw a DB table box. cols: list of (name, type_str, note_str)."""
+        rh = 0.44
+        total_rows = 1 + len(cols)
+        total_h = total_rows * rh
+
+        # Header bar
+        hdr = FancyBboxPatch((left, top - rh), width, rh,
+                             boxstyle="round,pad=0.03,rounding_size=0.08",
+                             linewidth=1.0, edgecolor="#888888",
+                             facecolor=hdr_bg, zorder=3)
+        ax.add_patch(hdr)
+        ax.text(left + width / 2, top - rh / 2, title,
+                ha="center", va="center", fontsize=10,
+                fontweight="bold", color="white", fontfamily=FONT, zorder=4)
+
+        # Column rows
+        for i, (cname, ctype, cnote) in enumerate(cols):
+            yr = top - (i + 1) * rh
+            bg = "#F0F4FF" if i % 2 == 0 else "#FFFFFF"
+            rect = FancyBboxPatch((left, yr - rh), width, rh,
+                                  boxstyle="square,pad=0.0",
+                                  linewidth=0.4, edgecolor="#D1D5DB",
+                                  facecolor=bg, zorder=2)
+            ax.add_patch(rect)
+            is_pk = "(PK)" in cnote
+            name_col = left + 0.15
+            type_col = left + width * 0.42
+            note_col = left + width * 0.65
+
+            pk_prefix = "[PK] " if is_pk else "      "
+            ax.text(name_col, yr - rh / 2, pk_prefix + cname,
+                    ha="left", va="center", fontsize=8.2,
+                    color=P["navy"] if is_pk else "#374151",
+                    fontfamily=FONT, fontweight="bold" if is_pk else "normal", zorder=3)
+            ax.text(type_col, yr - rh / 2, ctype,
+                    ha="left", va="center", fontsize=7.5,
+                    color="#6B7280", fontfamily=FONT, fontstyle="italic", zorder=3)
+            ax.text(note_col, yr - rh / 2, cnote,
+                    ha="left", va="center", fontsize=7.2,
+                    color="#374151", fontfamily=FONT, zorder=3)
+
+        # Outer border
+        bdr = FancyBboxPatch((left, top - total_h), width, total_h,
+                             boxstyle="round,pad=0.03,rounding_size=0.08",
+                             linewidth=1.5, edgecolor="#9CA3AF",
+                             facecolor="none", zorder=5)
+        ax.add_patch(bdr)
+        return top - total_h
+
+    # ── mcp_servers ──────────────────────────────────────────────────────────
+    mcp_cols = [
+        ("id",              "VARCHAR(100)",  "(PK) Unique server ID, e.g. fab-customer-server"),
+        ("name",            "VARCHAR(255)",  "Display name for Admin UI and logs"),
+        ("endpoint",        "VARCHAR(500)",  "Streamable HTTP URL — POST /mcp target"),
+        ("transport",       "VARCHAR(50)",   "streamable-http (FAB) or sse (demo servers)"),
+        ("capability",      "TEXT",          "Natural-language summary — fed to LLM routing prompt"),
+        ("skills",          "JSON",          "Array of skill tags matched by routing agent"),
+        ("description",     "TEXT",          "Extended description included in routing context"),
+        ("examples",        "JSON",          "Array of sample queries this server handles well"),
+        ("start_cmd",       "TEXT",          "Local dev startup hint (informational only)"),
+        ("api_key",         "VARCHAR(1000)", "Optional Bearer token — overrides hub JWT when set"),
+        ("api_key_expires", "TIMESTAMP",     "api_key expiry  (NULL = never expires)"),
+        ("is_active",       "TINYINT(1)",    "1=discoverable  0=disabled, excluded from /discover"),
+        ("created_at",      "TIMESTAMP",     "Auto-set on INSERT"),
+        ("updated_at",      "TIMESTAMP",     "Auto-updated ON UPDATE — tracks last admin edit"),
+    ]
+    mcp_bottom = db_table(0.3, 11.0, 9.8,
+                          "mcp_servers", P["navy"], mcp_cols)
+    ax.text(0.3, mcp_bottom - 0.12,
+            "Seeded from hub_service/mcp-hub.json via seed_hub_db.py (UPSERT — safe to re-run).\n"
+            "Managed via Admin UI or REST: POST/PUT/DELETE /api/hub/servers/*  ·  is_active=0 disables without deleting.",
+            ha="left", va="top", fontsize=7.3, color="#555555",
+            fontfamily=FONT, fontstyle="italic")
+
+    # ── hub_events ───────────────────────────────────────────────────────────
+    evt_cols = [
+        ("id",         "BIGINT",       "(PK) AUTO_INCREMENT primary key"),
+        ("ts",         "DOUBLE",       "Unix timestamp (float) — indexed for time queries"),
+        ("type",       "VARCHAR(64)",  "auth · request · routing · request_detail · admin · error"),
+        ("data",       "JSON",         "Type-specific payload — see table below"),
+        ("created_at", "TIMESTAMP",    "Auto-set on INSERT (wall-clock, UTC)"),
+    ]
+    evt_bottom = db_table(10.5, 11.0, 8.2,
+                          "hub_events", P["teal"], evt_cols)
+    ax.text(10.5, evt_bottom - 0.12,
+            "Indexes: idx_type(type) · idx_ts(ts)    Permanent MySQL skip on first write failure.",
+            ha="left", va="top", fontsize=7.3, color="#555555",
+            fontfamily=FONT, fontstyle="italic")
+
+    # hub_events.data fields detail
+    detail_top = evt_bottom - 0.72
+    ax.text(10.5, detail_top + 0.06,
+            "hub_events.data (JSON) — fields by event type:",
+            ha="left", va="bottom", fontsize=8.5, fontweight="bold",
+            color=P["teal"], fontfamily=FONT)
+
+    data_rows = [
+        ("auth",           "valid · sub · roles · token_type · iss · provider · endpoint · method"),
+        ("request",        "method · path · status · latency_ms"),
+        ("routing",        "method(agent|first_match) · server_ids · reason · intent · sub"),
+        ("request_detail", "full req/resp headers + body · auth_sub · auth_roles (verbose trace)"),
+        ("admin",          "action(create|update|delete_server) · server_id · changed_by"),
+        ("error",          "message · traceback"),
+    ]
+    rh2 = 0.40
+    for i, (etype, fields) in enumerate(data_rows):
+        yr = detail_top - i * rh2
+        bg = "#E8F5F5" if i % 2 == 0 else "#FFFFFF"
+        rect = FancyBboxPatch((10.5, yr - rh2), 8.2, rh2,
+                              boxstyle="square,pad=0.0",
+                              linewidth=0.4, edgecolor="#B2D8D8",
+                              facecolor=bg, zorder=2)
+        ax.add_patch(rect)
+        ax.text(10.65, yr - rh2 / 2, etype,
+                ha="left", va="center", fontsize=8,
+                color=P["teal"], fontfamily=FONT, fontweight="bold", zorder=3)
+        ax.text(12.1, yr - rh2 / 2, fields,
+                ha="left", va="center", fontsize=7.3,
+                color="#374151", fontfamily=FONT, zorder=3)
+
+    # Note about fab_semantic
+    ax.text(9.5, 0.35,
+            "Note: MySQL fab_semantic (business data — 14 base tables, 16 semantic views) "
+            "is managed by the MCP data-layer servers, not the hub.",
+            ha="center", va="center", fontsize=7.8,
+            color="#6B7280", fontfamily=FONT, fontstyle="italic")
+
+    return _save(fig, "08_db_schema", dpi=200)
+
+
+# ============================================================================
 # Run all diagrams
 # ============================================================================
 def generate_all():
     paths = {}
     print("Generating architecture diagrams (v2)...")
     paths["system"]      = d1_system_overview()
-    print(f"  [1/6] {paths['system'].name}")
+    print(f"  [1/8] {paths['system'].name}")
     paths["auth"]        = d2_auth_flow()
-    print(f"  [2/6] {paths['auth'].name}")
+    print(f"  [2/8] {paths['auth'].name}")
     paths["jwt"]         = d3_jwt_lifecycle()
-    print(f"  [3/6] {paths['jwt'].name}")
+    print(f"  [3/8] {paths['jwt'].name}")
     paths["lifecycle"]   = d4_server_lifecycle()
-    print(f"  [4/6] {paths['lifecycle'].name}")
+    print(f"  [4/8] {paths['lifecycle'].name}")
     paths["credentials"] = d5_credential_isolation()
-    print(f"  [5/6] {paths['credentials'].name}")
+    print(f"  [5/8] {paths['credentials'].name}")
     paths["rbac"]        = d6_rbac()
-    print(f"  [6/6] {paths['rbac'].name}")
+    print(f"  [6/8] {paths['rbac'].name}")
+    paths["flow"]        = d7_request_flow()
+    print(f"  [7/8] {paths['flow'].name}")
+    paths["schema"]      = d8_db_schema()
+    print(f"  [8/8] {paths['schema'].name}")
     return paths
 
 

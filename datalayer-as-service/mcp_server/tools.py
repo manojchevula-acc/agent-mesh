@@ -13,6 +13,7 @@ Design rules (all tools follow these):
     tool always returns something.
 """
 
+import json
 import logging
 from typing import Any
 
@@ -65,6 +66,11 @@ def _query_view(view: str, filters: dict[str, str | None], extra_where: str | No
     sql = f"SELECT * FROM fab_semantic.{view} {where} LIMIT {MAX_ROWS}"
     logger.info("query %s | filters=%s", view, {k: v for k, v in params.items()})
     return _run_query(sql, params)
+
+
+def _to_json(data: list[dict[str, Any]]) -> str:
+    """Serialize query results to an indented JSON string (shared by all MCP servers)."""
+    return json.dumps(data, indent=2, default=str)
 
 
 # ---------------------------------------------------------------------------
@@ -183,13 +189,10 @@ def query_compare_fab_vs_competitor(customer_id: str = "", deal_id: str = "") ->
 
 def query_cross_sell_opportunity(customer_segment: str = "", industry: str = "") -> list[dict[str, Any]]:
     """Active cross-sell product recommendations by customer segment and industry."""
-    filters: dict[str, str | None] = {
-        k: v or None for k, v in {
-            "customer_segment": customer_segment,
-            "industry": industry,
-        }.items()
-    }
-    return _query_view("cross_sell_opportunity", filters)
+    return _query_view("cross_sell_opportunity", {
+        "customer_segment": customer_segment,
+        "industry": industry,
+    })
 
 
 def query_credit_rating_events(customer_id: str = "") -> list[dict[str, Any]]:

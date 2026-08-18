@@ -133,6 +133,11 @@ start_demo "Data Server       (data_server.py)"    "datalayer-as-service/mcp_ser
 start_datalayer "mcp_server.customer_server" 9100 "FAB Customer Intelligence (customer_server.py)" "fab-customer-server"
 start_datalayer "mcp_server.pricing_server"  9200 "FAB Pricing Engine        (pricing_server.py)"  "fab-pricing-server"
 
+# Reseed hub DB from mcp-hub.json so routing picks up any endpoint/transport changes.
+echo "Reseeding hub DB from mcp-hub.json..."
+"$PY" "$ROOT/scripts/seed_hub_db.py" 2>&1 | tail -3
+echo ""
+
 # Hub Server — REST routing/discovery API on port 8090 (REQUIRED before agent.py)
 export HUB_SERVER_URL=http://localhost:8090
 HUB_PORT=8090 "$PY" "$ROOT/hub_service/hub_server.py" &
@@ -150,9 +155,9 @@ sleep 2
 
 echo ""
 echo "All servers started.  Endpoints:"
-echo "  Weather:                   http://localhost:8001/sse       [SSE]"
-echo "  Calculator:                http://localhost:8002/sse       [SSE]"
-echo "  Data Lookup:               http://localhost:8003/sse       [SSE]"
+echo "  Weather:                   http://localhost:8001/mcp/      [streamable-HTTP]"
+echo "  Calculator:                http://localhost:8002/mcp/      [streamable-HTTP]"
+echo "  Data Lookup:               http://localhost:8003/mcp/      [streamable-HTTP]"
 echo "  FAB Customer Intelligence: http://127.0.0.1:9100/mcp/     [streamable-HTTP]"
 echo "  FAB Pricing Engine:        http://127.0.0.1:9200/mcp/     [streamable-HTTP]"
 echo "  Hub Server:                http://localhost:8090/health    [REST API]"
@@ -170,9 +175,13 @@ echo "  # Customer Intelligence (port 9100)"
 echo "  python agent.py \"Show me the 360 profile for CUST001\""
 echo "  python agent.py \"What is CUST002's profitability and win rate?\""
 echo ""
-echo "  # Pricing Engine (port 9200)"
+echo "  # Pricing Engine (port 9200) — prompts, tools, and resources"
+echo "  python agent.py \"Give me a comprehensive pricing analysis for CUST001 and DEAL003\""
+echo "  python agent.py \"Review all policy exceptions for CUST002 and recommend actions\""
+echo "  python agent.py \"Build a competitor pricing strategy for CUST003 on DEAL007\""
+echo "  python agent.py \"Walk me through the step-by-step price build for DEAL040\""
 echo "  python agent.py \"Which deals are non-compliant and why?\""
-echo "  python agent.py \"Explain step-by-step how the price was built for DEAL040\""
+echo "  python agent.py \"What are the pricing benchmarks for the Corporate segment?\""
 echo ""
 echo "  # Both servers — multi-server fan-out + synthesis"
 echo "  python agent.py \"Give me a comprehensive analysis of CUST001\""

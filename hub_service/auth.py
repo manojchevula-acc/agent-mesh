@@ -227,6 +227,31 @@ def generate_server_token(
     )
 
 
+def _jwt_error_result(exc: Exception) -> tuple[bool, dict]:
+    """Map a PyJWT exception to a typed error result."""
+    err_type = type(exc).__name__
+    if "Expired" in err_type:
+        return False, {"_error": "token_expired"}
+    if "Invalid" in err_type or "Decode" in err_type:
+        return False, {"_error": "token_invalid"}
+    return False, {"_error": "verify_error"}
+
+
+def _normalize_claims(payload: dict) -> dict:
+    """Normalize JWT payload into a consistent claims dict."""
+    roles = payload.get("roles", ["agent"])
+    if isinstance(roles, str):
+        roles = [roles]
+    return {
+        "sub":       payload.get("sub", "unknown"),
+        "roles":     roles,
+        "iss":       payload.get("iss"),
+        "aud":       payload.get("aud"),
+        "server_id": payload.get("server_id"),
+        "_source":   "jwt",
+    }
+
+
 def _verify_jwt_rs256(token: str, expected_audience: str | None = None, expected_issuer: str | None = None) -> tuple[bool, dict]:
     if jwt is None:
         return False, {"_error": "jwt_unavailable"}
@@ -241,24 +266,9 @@ def _verify_jwt_rs256(token: str, expected_audience: str | None = None, expected
         else:
             kwargs["options"] = {"verify_aud": False}
         payload = jwt.decode(token, _load_public_key(), **kwargs)
-        roles = payload.get("roles", ["agent"])
-        if isinstance(roles, str):
-            roles = roles.split()
-        return True, {
-            "sub": payload.get("sub", "unknown"),
-            "roles": roles,
-            "iss": payload.get("iss"),
-            "aud": payload.get("aud"),
-            "server_id": payload.get("server_id"),
-            "_source": "jwt",
-        }
+        return True, _normalize_claims(payload)
     except Exception as exc:  # pragma: no cover - exercised at runtime
-        err_type = type(exc).__name__
-        if "Expired" in err_type:
-            return False, {"_error": "token_expired"}
-        if "Invalid" in err_type or "Decode" in err_type:
-            return False, {"_error": "token_invalid"}
-        return False, {"_error": "verify_error"}
+        return _jwt_error_result(exc)
 
 
 def _verify_jwt_local(token: str, expected_audience: str | None = None, expected_issuer: str | None = None) -> tuple[bool, dict]:
@@ -274,32 +284,15 @@ def _verify_jwt_local(token: str, expected_audience: str | None = None, expected
         else:
             kwargs["options"] = {"verify_aud": False}
         payload = jwt.decode(token, _JWT_SECRET, **kwargs)
-        roles = payload.get("roles", ["agent"])
-        if isinstance(roles, str):
-            roles = [roles]
-        return True, {
-            "sub": payload.get("sub", "unknown"),
-            "roles": roles,
-            "iss": payload.get("iss"),
-            "aud": payload.get("aud"),
-            "server_id": payload.get("server_id"),
-            "_source": "jwt",
-        }
+        return True, _normalize_claims(payload)
     except Exception as exc:  # pragma: no cover - exercised at runtime
-        err_type = type(exc).__name__
-        if "Expired" in err_type:
-            return False, {"_error": "token_expired"}
-        if "Invalid" in err_type or "Decode" in err_type:
-            return False, {"_error": "token_invalid"}
-        return False, {"_error": "verify_error"}
+        return _jwt_error_result(exc)
 
 
 def _verify_azure(token: str) -> tuple[bool, dict]:
     if not _AZURE_TENANT or not _AZURE_AUDIENCE:
         raise RuntimeError("Azure auth requires AZURE_TENANT_ID and AZURE_CLIENT_ID env vars.")
-    try:
-        from jwt import PyJWKClient
-    except ImportError:
+    if jwt is None or PyJWKClient is None:
         raise RuntimeError("pip install 'PyJWT[cryptography]' to enable Azure auth")
     try:
         jwks_uri = f"https://login.microsoftonline.com/{_AZURE_TENANT}/discovery/v2.0/keys"

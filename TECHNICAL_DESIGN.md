@@ -81,11 +81,11 @@ Eight concurrent processes make up the running system:
 ┌────────────────────────────────────────────────────────┐
 │              MCP Servers (5 total)                     │
 │                                                        │
-│  Demo servers (FastMCP SSE):                           │
+│  Demo servers (FastMCP streamable-HTTP):               │
 │  ┌─────────────────────────────────────────────────┐  │
-│  │  weather_server.py  :8001  /sse                 │  │
-│  │  calc_server.py     :8002  /sse                 │  │
-│  │  data_server.py     :8003  /sse                 │  │
+│  │  weather_server.py  :8001  /mcp/                │  │
+│  │  calc_server.py     :8002  /mcp/                │  │
+│  │  data_server.py     :8003  /mcp/                │  │
 │  └─────────────────────────────────────────────────┘  │
 │                                                        │
 │  FAB Data Layer (FastMCP streamable-HTTP):             │
@@ -200,7 +200,7 @@ CREATE TABLE mcp_servers (
     id           VARCHAR(100)  NOT NULL,   -- stable identifier (e.g. "weather-server")
     name         VARCHAR(255)  NOT NULL,   -- human-readable display name
     endpoint     VARCHAR(500)  NOT NULL,   -- full URL of the MCP server
-    transport    VARCHAR(50)   NOT NULL DEFAULT 'sse',  -- "sse" | "streamable-http"
+    transport    VARCHAR(50)   NOT NULL DEFAULT 'streamable-http',  -- "streamable-http" (all servers)
     capability   TEXT,                    -- domain label for fast routing signal (e.g. "FAB banking deal pricing and compliance")
     skills       JSON,                    -- list of specific operations; matched against query intent
     description  TEXT,                    -- full-context description shown to LLM routing agent
@@ -218,8 +218,8 @@ CREATE TABLE mcp_servers (
 | Field | Used by | Purpose |
 |-------|---------|---------|
 | `id` | hub_server.py routing + events | Server identifier in routing response and all events |
-| `endpoint` | agent.py mcp_session() | URL passed to sse_client / streamablehttp_client |
-| `transport` | agent.py mcp_session() | Selects which MCP transport client to use |
+| `endpoint` | agent.py mcp_session() | URL passed to streamablehttp_client |
+| `transport` | agent.py mcp_session() | Always `streamable-http` — all servers use /mcp/ |
 | `capability` | `_build_server_context()` → routing message | Single-sentence domain label — primary routing signal; matched first |
 | `skills` | `_build_server_context()` → routing message | Specific operations the server handles; used for precise intent matching |
 | `description` | `_build_server_context()` → routing message | Full context paragraph; used to resolve ambiguity between servers |
@@ -235,9 +235,9 @@ CREATE TABLE mcp_servers (
 
 | id | Port | Transport | Capability |
 |----|------|-----------|------------|
-| weather-server | 8001 | sse | Real-time weather and climate data |
-| calculator-server | 8002 | sse | Mathematical computation and unit conversion |
-| data-server | 8003 | sse | Geographic and currency reference data |
+| weather-server | 8001 | streamable-http | Real-time weather and climate data |
+| calculator-server | 8002 | streamable-http | Mathematical computation and unit conversion |
+| data-server | 8003 | streamable-http | Geographic and currency reference data |
 | fab-customer-server | 9100 | streamable-http | FAB banking customer intelligence |
 | fab-pricing-server | 9200 | streamable-http | FAB banking deal pricing and compliance |
 
@@ -245,15 +245,109 @@ CREATE TABLE mcp_servers (
 
 ## 5. Component: agent.py
 
+### 5.0 Authentication Architecture
+
+The agent participates in authentication in **two directions** and uses the **same JWKS endpoint**
+(`GET /.well-known/jwks.json`) that MCP servers use.
+
+```
+┌─ DIRECTION 1: OUTBOUND ─────────────────────────────────────────────────────────┐
+│                                                                                  │
+│  Step 1a  Agent ──username+password──► POST /auth/login                         │
+│           Hub validates credentials (PBKDF2) → mints RS256 JWT (exp=8h)         │
+│                                                                                  │
+│  Step 1b  Agent ──Bearer <hub JWT>──► POST /discover                            │
+│           Hub validates JWT (RS256 sig + iss + exp + role=agent)                │
+│                                                                                  │
+│  Step 1c  Agent ──Bearer <server JWT, aud=server_id>──► MCP Server POST /mcp   │
+│           MCP validates via FastMCP JWTVerifier + BearerClaimsMiddleware (JWKS) │
+│                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────┘
+
+┌─ DIRECTION 2: INBOUND VERIFICATION ─────────────────────────────────────────────┐
+│  The agent verifies tokens it RECEIVES from the hub before using them.           │
+│  Uses the same JWKS endpoint and PyJWKClient as MCP servers.                     │
+│                                                                                  │
+│  Step 2a  Hub ──access_token──► _get_hub_token()                                │
+│           _verify_hub_token(token)                                               │
+│           • PyJWKClient fetches /.well-known/jwks.json (cached 5 min)           │
+│           • Checks: RS256 sig · iss=fab-mcp-hub · exp                           │
+│           • Hard fail (raise) → token NOT cached; login rejected                 │
+│           • Soft fail (JWKS down) → warning; token cached anyway                │
+│                                                                                  │
+│  Step 2b  Hub ──server_token[]──► run_agent()  (after POST /discover)           │
+│           _verify_hub_token(token, audience=server_id)                           │
+│           • Checks: RS256 sig · iss · aud=server_id · exp                       │
+│           • Hard fail (raise) → that server is SKIPPED entirely                 │
+│           • Soft fail (JWKS down) → warning; MCP server validates as fallback   │
+│                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────┘
+
+OBSERVABILITY: _decode_jwt_claims() — verify_signature=False decode for logging/UI only.
+               Never used for access-control; clearly labelled in code.
+```
+
+**MCP Server side** (`datalayer-as-service/mcp_server/auth.py`):
+
+```
+Incoming JWT (from agent) → FastMCP JWTVerifier (primary, 401 on fail)
+                          → BearerClaimsMiddleware (defense-in-depth, own JWKS verify)
+                          → _request_claims ContextVar
+                          → require_role() inside tool function
+```
+
 ### 5.1 Function Reference
+
+#### Authentication helpers (all in `agent.py`)
+
+| Function | Signature | Direction | Purpose |
+|----------|-----------|-----------|---------|
+| `_get_hub_token` | `async _get_hub_token() -> str` | OUTBOUND (1a) | POST /auth/login → hub JWT; caches result; calls `_verify_hub_token` on the returned token (Step 2a). |
+| `_verify_hub_token` | `async _verify_hub_token(token, *, audience) -> dict` | INBOUND (2a/2b) | Verifies an RS256 JWT from the hub via `/.well-known/jwks.json`. Hard-raises on signature/aud/iss/exp mismatch. Soft-warns on JWKS outage. |
+| `_jwks` | `_jwks() -> PyJWKClient \| None` | — | Lazy-init module-level `PyJWKClient` (keys cached 5 min). Shared across all `_verify_hub_token` calls. |
+| `_decode_jwt_claims` | `_decode_jwt_claims(token) -> dict` | OBSERVABILITY ONLY | Unverified `verify_signature=False` decode for logging and chat UI display only. Never used for access-control. |
+| `_auth_headers` | `_auth_headers(key) -> dict` | OUTBOUND (1b/1c) | Returns `{"Authorization": "Bearer <key>"}` when key is set; empty dict otherwise. |
+
+#### Orchestration helpers
 
 | Function | Signature | Purpose |
 |----------|-----------|---------|
-| `_auth_headers` | `_auth_headers(key) -> dict` | Returns `{"Authorization": "Bearer <key>"}` when key is set; empty dict otherwise. |
 | `mcp_session` | `async mcp_session(server)` | Async context manager. Inspects `server["transport"]` and opens `sse_client` or `streamablehttp_client` with auth headers. Yields an initialized `ClientSession`. |
 | `_fmt` | `_fmt(obj, limit=200) -> str` | Compact one-line JSON repr of an object, truncated to `limit` chars. Used for terminal log lines. |
-| `_run_on_server` | `async _run_on_server(server, query, on_event) -> str` | Connects to one MCP server, discovers tools live, runs a ReAct loop, returns the answer string. Called in parallel by `run_agent` for multi-server queries. |
-| `run_agent` | `async run_agent(query, on_event=None) -> str` | Orchestrates the full flow: POST /discover → for each matched server: mcp_session → load_mcp_tools → create_react_agent → astream_events. Single-server: direct await. Multi-server: asyncio.gather for parallel execution. |
+| `_fetch_mcp_context` | `async _fetch_mcp_context(session, query, server_id, on_event) -> (prompt_messages, resource_context)` | Discovers prompts + resources via the live MCP session. Matches the query to a prompt template by keyword; extracts CUST/DEAL IDs from the query; reads static reference resources automatically. Returns structured messages + context text. |
+| `_run_on_server` | `async _run_on_server(server, query, on_event) -> str` | Connects to one MCP server, discovers tools + prompts + resources (via `_fetch_mcp_context`), runs a ReAct loop with enriched context, returns the answer string. |
+| `run_agent` | `async run_agent(query, on_event=None) -> str` | Orchestrates the full flow: POST /discover → JWKS-verify each server token (Step 2b) → for each valid server: mcp_session → load_mcp_tools → `_fetch_mcp_context` → create_react_agent → astream_events. |
+
+#### MCP Prompt + Resource integration (`_fetch_mcp_context`)
+
+```
+MCP ClientSession (already open)
+        │
+        ├─ session.list_prompts()  → catalogue of prompt templates on this server
+        │                            e.g. analyze_deal_pricing(customer_id, deal_id?)
+        │
+        ├─ keyword match + ID extraction (regex: CUST\d+, DEAL\d+)
+        │    "exception" / "policy"    → review_policy_exceptions
+        │    "competitor" / "compare"  → pricing_competitor_strategy
+        │    "pricing" / "recommend"   → analyze_deal_pricing  (default)
+        │
+        ├─ session.get_prompt(name, {customer_id, deal_id})
+        │    → PromptMessage list (role=user, content=structured analysis task)
+        │    → converted to HumanMessage / AIMessage for LangGraph
+        │
+        ├─ session.list_resources() → catalogue of addressable reference docs
+        │    pricing://policy/rules           (static policy text)
+        │    pricing://guide/competitor-actions (MATCH/COUNTER/ESCALATE/REJECT guide)
+        │    pricing://benchmarks/segments     (live DB table)
+        │
+        └─ session.read_resource(uri) for each URI containing "policy" / "guide"
+             → text appended to system_prompt as reference documentation
+             → dynamic resources (benchmarks) are NOT auto-read to avoid latency
+
+Result used in create_react_agent():
+   prompt=system_prompt + resource_context   ← reference docs injected here
+   initial_messages=prompt_messages           ← structured task (or raw query fallback)
+```
 
 ### 5.2 Routing Design (hub_server.py)
 
@@ -375,13 +469,13 @@ The SPA JavaScript listens to the EventSource and renders each event type differ
 
 ### 7.1 Demo Servers (datalayer-as-service/mcp_server/)
 
-All three use `fastmcp` with SSE transport. They serve mock/static data and do not require a database.
+All three use `fastmcp` with **streamable-HTTP** transport (`mcp.http_app()`). They serve mock/static data and do not require a database.
 
 | File | Port | Endpoint | Tools |
 |------|------|----------|-------|
-| `datalayer-as-service/mcp_server/weather_server.py` | 8001 | `http://localhost:8001/sse` | get_weather, get_forecast, get_historical_weather |
-| `datalayer-as-service/mcp_server/calc_server.py` | 8002 | `http://localhost:8002/sse` | calculate, statistics, convert_units |
-| `datalayer-as-service/mcp_server/data_server.py` | 8003 | `http://localhost:8003/sse` | get_country_info, get_currency_rate, get_timezone |
+| `datalayer-as-service/mcp_server/weather_server.py` | 8001 | `http://localhost:8001/mcp/` | get_weather, get_forecast, get_historical_weather |
+| `datalayer-as-service/mcp_server/calc_server.py` | 8002 | `http://localhost:8002/mcp/` | calculate, statistics, convert_units |
+| `datalayer-as-service/mcp_server/data_server.py` | 8003 | `http://localhost:8003/mcp/` | get_country_info, get_currency_rate, get_timezone |
 
 Start command:
 ```bash
@@ -428,6 +522,22 @@ MCP_TRANSPORT=http MCP_HOST=127.0.0.1 MCP_PORT=9100 python -m mcp_server.custome
 | `non_compliant_deals` | Deals that breach minimum margin or policy rules |
 | `compare_fab_vs_competitor` | Side-by-side deal economics: FAB pricing vs competitor offer |
 
+**Prompts** — structured analysis workflow templates (MCP `prompts/list` + `prompts/get`):
+
+| Prompt | Args | Description |
+|--------|------|-------------|
+| `analyze_deal_pricing` | `customer_id`, `deal_id?` | 5-step workflow: recommendation → trace → competitor → policy exceptions → summary |
+| `review_policy_exceptions` | `customer_id?` | 4-step compliance audit: list non-compliant → exception details → risk ranking → actions |
+| `pricing_competitor_strategy` | `customer_id?`, `deal_id?` | 5-step competitive response: gap analysis → benchmark → discount → ops cost → strategy |
+
+**Resources** — reference documents addressable by URI (MCP `resources/list` + `resources/read`):
+
+| URI | Type | Description |
+|-----|------|-------------|
+| `pricing://policy/rules` | Static text | FAB pricing policy: margin floors, discount caps, approval thresholds |
+| `pricing://guide/competitor-actions` | Static text | MATCH/COUNTER/ESCALATE/REJECT decision criteria and `competitor_gap_bps` interpretation |
+| `pricing://benchmarks/segments` | Dynamic (DB) | Live markdown table from `fab_semantic.segment_pricing_benchmark` |
+
 Start command:
 ```bash
 cd datalayer-as-service
@@ -435,27 +545,29 @@ MCP_TRANSPORT=http MCP_HOST=127.0.0.1 MCP_PORT=9200 python -m mcp_server.pricing
 ```
 
 **Shared modules:**
-- `tools.py` — All MySQL query functions, shared by both servers
-- `db.py` — SQLAlchemy engine + PyMySQL connection pool, reads credentials from `.env`
+- `tools.py` — All MySQL query functions + `_to_json()` serialiser, shared by all three servers
+- `db.py` — SQLAlchemy engine singleton (`_engine` cached at module level); builds once on first call, reused across all tool calls. Reads `MYSQL_USER/PASSWORD` from `.env`. Never uses the agent JWT.
 
 ---
 
 ## 8. Event System
 
-All events are Python dicts emitted via the `on_event` async callback. In the chat UI flow, `on_event` puts events into the `asyncio.Queue` for SSE delivery to the browser. When agent.py is used programmatically (e.g., test_agent.py), `on_event` can be None and no events are emitted.
+All events are Python dicts emitted via the `on_event` async callback. In the chat UI flow, `on_event` puts events into the `asyncio.Queue` for SSE delivery to the browser and saves them to the `chat_traces` MySQL table. Selected MCP lifecycle events are **also bridged to hub observability** — forwarded to `log_event()`, written to the `hub_events` table, and served by `GET /api/logs`. Events marked **→ /api/logs** below appear there. When agent.py is used programmatically (e.g., test_agent.py), `on_event` can be None and no events are emitted.
 
 ### 8.1 Event Reference (in order of emission)
 
 | Event type | Emitted by | Key fields | Notes |
 |------------|------------|------------|-------|
 | `hub_loaded` | `run_agent` | `hub_name`, `server_ids` | First event of every request |
-| `routing` | `run_agent` | `method`, `reason`, `server_id`, `server_ids` | `method` is `"agent"` or `"first_match"`. `server_ids` is the full list; `server_id` is the primary (first) for UI backwards compat |
-| `mcp_connecting` | `run_agent` | `server_id`, `endpoint` | Emitted before the MCP transport is opened |
-| `mcp_connected` | `run_agent` | `server_id`, `tool_count`, `tool_names` | Emitted after load_mcp_tools() returns |
-| `tool_call` | `run_agent` | `server_id`, `tool_name`, `args` | Emitted on each `on_tool_start` astream event |
-| `tool_result` | `run_agent` | `server_id`, `tool_name`, `result` | Emitted on each `on_tool_end` astream event |
+| `routing` | `run_agent` | `method`, `reason`, `server_id`, `server_ids` | `method` is `"agent"`, `"keyword"`, or `"first_match"`. `"keyword"` means LLM was unavailable and `_keyword_route()` matched by word score. `server_ids` is the full list; `server_id` is the primary (first) for UI |
+| `mcp_connecting` | `run_agent` | `server_id`, `endpoint` | Before MCP transport opens. **→ /api/logs** |
+| `mcp_connected` | `_run_on_server` | `server_id`, `tool_count`, `tool_names`, `prompt_count`, `has_resources` | After tools + capabilities discovered. **→ /api/logs** |
+| `mcp_capabilities` | `_fetch_mcp_context` | `server_id`, `prompts[]`, `resources[]` | Emitted when server exposes ≥1 prompt/resource. **→ /api/logs** |
+| `mcp_prompt_used` | `_fetch_mcp_context` | `server_id`, `prompt_name`, `prompt_args`, `message_count` | Structured prompt matched and applied. **→ /api/logs** |
+| `tool_call` | `_run_on_server` | `server_id`, `tool_name`, `args` | Emitted on each `on_tool_start` astream event |
+| `tool_result` | `_run_on_server` | `server_id`, `tool_name`, `result` | Emitted on each `on_tool_end` astream event |
 | `final_answer` | `run_agent` | `content` | The complete answer string. Last content event. |
-| `error` | `run_agent` | `message` | Replaces final_answer on failure. Stream still closes cleanly. |
+| `error` | `run_agent` | `message` | Agent failure. Stream still closes cleanly. **→ /api/logs** |
 
 ### 8.2 SSE Wire Format
 
@@ -512,19 +624,21 @@ chat_server.py          run_agent()                hub_server.py :8090       tar
 
 ## 10. Transport Protocols
 
-The `mcp_session()` async context manager in agent.py handles both transports transparently based on the `transport` field returned in the hub `/discover` response.
+All five MCP servers use **streamable-HTTP** transport. The `mcp_session()` async context manager in agent.py uses `streamablehttp_client` for all connections.
 
-### 10.1 Comparison
+### 10.1 Transport
 
-| Aspect | SSE (Server-Sent Events) | streamable-HTTP |
-|--------|--------------------------|-----------------|
-| MCP clients used | `mcp.client.sse.sse_client` | `mcp.client.streamable_http.streamablehttp_client` |
-| Endpoint path | `/sse` | `/mcp/` |
-| Underlying protocol | HTTP long-poll (server pushes) | HTTP POST with chunked response |
-| Used by | Demo servers (8001-8003) | FAB data layer servers (9100, 9200) |
-| FastMCP server config | `transport="sse"` | `transport="streamable-http"` |
-| Connection setup | Persistent SSE channel | Per-request HTTP |
-| Best for | Long-lived connections, demos | Stateless service endpoints |
+All servers are configured with `mcp.http_app(middleware=claims_middleware())` — no `transport=` argument, which defaults to streamable-HTTP.
+
+| Aspect | Value (all servers) |
+|--------|---------------------|
+| MCP client | `mcp.client.streamable_http.streamablehttp_client` |
+| Endpoint path | `/mcp/` |
+| Underlying protocol | HTTP POST with chunked response |
+| FastMCP server config | `mcp.http_app()` (default = streamable-HTTP) |
+| Auth middleware | FastMCP `JWTVerifier` + `BearerClaimsMiddleware` (all 5 servers) |
+
+> **Note:** SSE transport (`/sse`) was removed from the demo servers in v2.1. The MCP Python client SDK had a TaskGroup protocol incompatibility with FastMCP's SSE implementation that caused connection errors. All servers now use streamable-HTTP.
 
 ### 10.2 MCP Protocol Sequence (same for both transports)
 
@@ -640,26 +754,43 @@ fab_semantic schema (16 views)
                          ┌── enabled? ─┤
                          │ YES         │ NO
                          ▼             ▼
-              ┌──────────────────┐   Return [servers[0]]
-              │  LLM routing     │   method="first_match"
-              │  ReAct agent     │
-              │  (per-request)   │
-              │  pick_server ×N  │   N = 1 for focused query
-              └──────────────────┘   N > 1 for multi-domain
-                         │
-              agent calls pick_server() 1–N times
-                         │
-              ┌── any valid ids? ─┐
-              │ YES               │ NO
-              ▼                   ▼
-     Return matched          Return [servers[0]]
-     servers list            method="agent"
-     method="agent"          (fallback, logs warning)
+              ┌──────────────────┐  ┌─────────────────────────┐
+              │  LLM routing     │  │  _keyword_route()        │
+              │  ReAct agent     │  │  score servers by word   │
+              │  (per-request)   │  │  match (≥4 chars) vs     │
+              │  pick_server ×N  │  │  id/cap/desc/skills/ex   │
+              └──────────────────┘  └─────────────────────────┘
+                         │                      │
+              agent calls pick_server()    best-score server
+                         │                      │
+              ┌── any valid ids? ─┐             │
+              │ YES               │ NO          │
+              ▼                   ▼             ▼
+     Return matched     ┌────────────────────────────┐
+     servers list       │  _keyword_route() fallback  │
+     method="agent"     │  score servers by word match│
+                        └────────────────────────────┘
+                                   │
+                        ┌── match found? ──┐
+                        │ YES              │ NO
+                        ▼                  ▼
+              Return best match    Return [servers[0]]
+              method="keyword"     method="agent"
+                                   (logs WARNING)
 ```
+
+**`_keyword_route()` algorithm** (`hub_server.py`):
+1. Splits intent into words ≥4 characters (noise-filters short words)
+2. Builds a corpus string per server: `id + capability + description + skills + examples`
+3. Scores each server by count of query words found in its corpus
+4. Returns the highest-scoring server ID (ties: first wins)
+
+This ensures correct routing even when Ollama is unreachable or LLM routing is disabled.
 
 **Routing performance:**
 - LLM agent: 200–800ms round-trip to Ollama llama3.2:3b; every step logged via `astream_events`
-- LLM disabled (`HUB_LLM_ENABLED=false`): < 1ms, returns first registered server
+- LLM failed / disabled + keyword match: < 1ms; logs `[hub] keyword: ...`
+- LLM failed + no keyword match: < 1ms, returns `servers[0]` (logs WARNING)
 - Multi-server result: `agent.py` runs `asyncio.gather` for parallel tool loops
 
 ---
@@ -690,26 +821,44 @@ Wired into FastAPI via `_require_auth` dependency on protected endpoints (`/serv
 
 **Open dev mode:** `AUTH_ENABLED=true` but neither `HUB_API_KEY` nor `JWT_SECRET` set → all requests pass. Prevents accidental lockout during initial setup.
 
+**Internal helpers** (not part of public API):
+- `_normalize_claims(payload)` — converts JWT payload to consistent `{sub, roles, iss, aud, server_id, _source}` dict; used by both RS256 and HS256 paths
+- `_jwt_error_result(exc)` — maps PyJWT exception to `(False, {"_error": ...})` tuple; shared by both verify paths
+
 **Token generation:** `python hub_service/auth.py --sub agent --hours 24`
 
 ### 13.3 MCP Server Auth (`datalayer-as-service/mcp_server/auth.py`)
 
-Starlette `BearerAuthMiddleware` injected into all five MCP servers via `mcp_middleware()`.
+All MCP servers validate incoming RS256 JWTs issued by the hub. Two auth paths:
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `MCP_AUTH_ENABLED` | `false` | `true` enables token validation on all MCP servers |
-| `MCP_AUTH_PROVIDER` | `local` | `local` or `azure` |
-| `MCP_API_KEY` | *(empty)* | Bearer token agent sends (static key or JWT value) |
-| `MCP_JWT_SECRET` | *(empty)* | HS256 signing secret (local JWT) |
-| `MCP_AZURE_TENANT_ID` | *(empty)* | Tenant UUID (azure) |
-| `MCP_AZURE_CLIENT_ID` | *(empty)* | Token audience (azure) |
+**Path A — FAB data servers** (`customer_server.py`, `pricing_server.py`, `server.py`):
 
-**Token generation:** `python datalayer-as-service/mcp_server/auth.py --sub agent --hours 24`
+| Layer | Component | Role |
+|-------|-----------|------|
+| Primary | FastMCP `JWTVerifier` (via `build_jwt_verifier()`) | Validates RS256 sig + `aud=MCP_SERVER_ID` |
+| Secondary | `BearerClaimsMiddleware` | Independent JWKS re-verification; populates `_request_claims` ContextVar |
+| RBAC | `require_role()` inside each tool | Reads claims from ContextVar |
 
-**`mcp_middleware()` zero-argument factory:** Reads all config from env vars. Returns `[]` when `MCP_AUTH_ENABLED=false`. All 5 MCP servers call this instead of the old `bearer_middleware(api_key)`.
+**Path B — streamable-HTTP demo servers** (`calc_server.py`, `weather_server.py`, `data_server.py`):
 
-**`bearer_middleware(api_key)` kept for backward compatibility:** If `MCP_AUTH_ENABLED` is set in env, that flag wins regardless of `api_key`.
+Same dual-middleware pattern as Path A (migrated from SSE in v2.1):
+
+| Layer | Component | Role |
+|-------|-----------|------|
+| Primary | FastMCP `JWTVerifier` (via `build_jwt_verifier()`) | Validates RS256 sig + `aud=MCP_SERVER_ID` |
+| Secondary | `BearerClaimsMiddleware` (via `claims_middleware()`) | Independent JWKS re-verification; populates `_request_claims` ContextVar |
+| RBAC | `require_role()` inside each tool | Reads claims from ContextVar |
+
+| Env variable | Default | Purpose |
+|-------------|---------|---------|
+| `MCP_AUTH_ENABLED` | `true` | `false` disables all token checks (dev mode) |
+| `MCP_SERVER_ID` | *(empty)* | Audience claim enforced by `JWTVerifier` |
+| `HUB_JWKS_URL` | hub + `/.well-known/jwks.json` | JWKS endpoint for RS256 key fetch |
+| `HUB_JWT_ISSUER` | `fab-mcp-hub` | Issuer enforced during verification |
+
+Token failure tiers:
+- JWKS signature / audience / issuer mismatch → **hard 401** (hard fail)
+- JWKS endpoint unreachable → **WARNING + soft fail** (request proceeds unverified; defense-in-depth only)
 
 ### 13.4 Local JWT Workflow
 
@@ -738,6 +887,54 @@ Azure RS256 validation uses PyJWKClient to fetch JWKS from `https://login.micros
 ### 13.6 Authorization Model
 
 Authorization in the Simple Hub is binary: a valid token grants access to all endpoints and all MCP tools. Per-tool or per-resource authorization is a Full Hub concern (out of scope here). In Azure, RBAC via Entra ID app roles can be layered on top of authentication at a later stage.
+
+---
+
+## 14. Sample Queries and MCP Capability Map
+
+The table below lists the eight "Quick Queries" surfaced in the Chat UI dashboard and on the `start_servers.sh` CLI banner. Each query is designed to exercise a specific MCP capability so a demo audience can see the full feature set without typing free-form questions.
+
+### 14.1 Quick Query Catalogue
+
+| # | Query | Target Server | MCP Capability Used | Notes |
+|---|-------|--------------|---------------------|-------|
+| 1 | `Give me a comprehensive pricing analysis for CUST001 and DEAL003` | `fab-pricing-server` | **Prompt** — `analyze_deal_pricing(CUST001, DEAL003)` | 5-step structured workflow: recommendation → price trace → competitor gap → compliance → summary |
+| 2 | `Review all policy exceptions for CUST002 and recommend actions` | `fab-pricing-server` | **Prompt** — `review_policy_exceptions(CUST002)` | 4-step compliance audit: list exceptions → deal details → risk ranking → escalation actions |
+| 3 | `Build a competitor pricing strategy for CUST003 on DEAL007` | `fab-pricing-server` | **Prompt** — `pricing_competitor_strategy(CUST003, DEAL007)` | 5-step competitive response: gap analysis → segment benchmark → discount headroom → ops cost → strategy |
+| 4 | `Walk me through the step-by-step price build for DEAL040` | `fab-pricing-server` | **Tool** — `pricing_trace(customer_id, DEAL040)` | Exposes every component: base rate → credit spread → RWA → ops margin → approved price |
+| 5 | `Which deals are non-compliant and why?` | `fab-pricing-server` | **Tool** — `non_compliant_deals(customer_id)` | Admin-scoped tool; returns all deals breaching margin floors or discount caps with policy rule references |
+| 6 | `What are the pricing benchmarks for the Corporate segment?` | `fab-pricing-server` | **Tool** — `segment_pricing_benchmark(Corporate, …)` + **Resource** — `pricing://benchmarks/segments` | Tool returns live DB data; resource is loaded as reference context for the LLM |
+| 7 | `Show me the 360 profile for CUST001` | `fab-customer-server` | **Tool** — `customer_360(CUST001)` | Customer intelligence: profile, profitability, RWA, win/loss, credit rating events |
+| 8 | `What MCP servers are available?` | Hub server | **Hub REST API** — `GET /discover?intent=…` | Routes to hub; returns registry of all active MCP servers and their capabilities |
+
+### 14.2 MCP Capability Coverage
+
+| MCP Feature | Queries that exercise it | Description |
+|-------------|--------------------------|-------------|
+| **Prompts** | 1, 2, 3 | Pre-defined multi-step workflows registered by the MCP server; `_fetch_mcp_context()` loads them as system messages before the tool-call loop |
+| **Resources** | 1, 2, 3, 6 | Static or dynamic reference data (`pricing://policy/rules`, `pricing://guide/competitor-actions`, `pricing://benchmarks/segments`) injected as resource context |
+| **Tools** | 1–7 | All 9 pricing tools and 9 customer tools; discovered at runtime via `load_mcp_tools(session)` |
+| **Multi-step agent loop** | 1, 2, 3, 7 | LangGraph `create_react_agent` chains multiple tool calls to build a complete answer |
+| **Multi-server fan-out** | — | Queries referencing both CUST and DEAL concepts may route to both servers; synthesis merges results |
+
+### 14.3 How Prompts and Resources Are Used
+
+When `use_context=True` (the default), `_fetch_mcp_context()` in `agent.py` does the following before the tool-call loop:
+
+1. **Lists prompts** — calls `session.list_prompts()` on the target MCP server.
+2. **Selects the best prompt** — picks the prompt whose name best matches the query intent (e.g., `"analysis"` → `analyze_deal_pricing`).
+3. **Gets prompt messages** — calls `session.get_prompt(name, arguments={...})` with customer/deal IDs extracted from the query.
+4. **Lists resources** — calls `session.list_resources()`.
+5. **Reads each resource** — calls `session.read_resource(uri)` for each registered resource URI.
+6. **Injects into context** — prompt messages become the first `HumanMessage` entries; resource text is appended to the system-level context string passed to `create_react_agent`.
+
+This means queries 1–3 automatically receive a structured, multi-step instruction set from the server itself — the LLM does not have to infer the analysis workflow from the query alone.
+
+Pass `--no-context` to `agent.py` to skip prompts and resources and use tools only:
+
+```bash
+python agent.py --no-context "Give me a comprehensive pricing analysis for CUST001"
+```
 
 ---
 
@@ -832,9 +1029,9 @@ fab-mcp-hub-simple/
 ├── datalayer-as-service/     ← Demo + FAB banking data layer (MySQL-backed for FAB servers)
 │   ├── mcp_server/
 │   │   │   ├── auth.py            ← MCP server auth: MCP_AUTH_ENABLED/MCP_AUTH_PROVIDER, local JWT + Azure stub
-│   │   ├── weather_server.py  ← Demo — port 8001, SSE, mock weather for 10 cities
-│   │   ├── calc_server.py     ← Demo — port 8002, SSE, math / statistics / unit conversion
-│   │   ├── data_server.py     ← Demo — port 8003, SSE, countries / currencies / timezones
+│   │   ├── weather_server.py  ← Demo — port 8001, streamable-HTTP /mcp/, mock weather for 10 cities
+│   │   ├── calc_server.py     ← Demo — port 8002, streamable-HTTP /mcp/, math / statistics / unit conversion
+│   │   ├── data_server.py     ← Demo — port 8003, streamable-HTTP /mcp/, countries / currencies / timezones
 │   │   ├── customer_server.py ← port 9100, streamable-HTTP, 9 customer intelligence tools
 │   │   ├── pricing_server.py  ← port 9200, streamable-HTTP, 9 pricing engine tools
 │   │   ├── tools.py           ← MySQL query functions shared by both servers

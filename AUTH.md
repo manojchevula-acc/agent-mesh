@@ -2,33 +2,69 @@
 
 ## Architecture Overview
 
+Two independent paths authenticate against the hub. Both share the same RS256 key pair and JWKS endpoint.
+
+### Path A — Browser / Chat UI (HS256 → RS256)
+
 ```
-Browser / Agent
-    │
+Browser
     │  POST /api/auth/login  (username + password)
     ▼
-Chat Server (HS256 JWT, iss=fab-chat, JWT_SECRET)
-    │
-    │  POST /chat/stream     (Bearer HS256-JWT)
+Chat Server ── mints HS256 JWT (iss=fab-chat, JWT_SECRET)
+    │  POST /chat/stream  (Bearer HS256-JWT)
     ▼
-Hub Server — verifies HS256 via JWT_SECRET
-    │
-    │  POST /discover        (Bearer HS256-JWT)
+Hub Server ── verifies HS256 via JWT_SECRET
+    │  POST /discover  (Bearer HS256-JWT)
     ▼
-Hub Server — selects MCP servers, mints RS256 per-server JWTs
-    │
-    │  tool call             (Bearer RS256-JWT, aud=<server_id>)
+Hub Server ── mints RS256 per-server JWTs (aud=server_id)
+    │  Bearer RS256-JWT  (aud=<server_id>)
     ▼
-MCP Server — FastMCP JWTVerifier validates RS256 via JWKS
+MCP Server ── FastMCP JWTVerifier: RS256 via GET /.well-known/jwks.json
+              BearerClaimsMiddleware: RS256 via JWKS (defense-in-depth)
 ```
 
-Three token types flow through the system:
+### Path B — Agent Standalone (RS256 end-to-end)
+
+```
+Agent
+    │  POST /auth/login  (username + password)
+    ▼
+Hub Server ── mints RS256 hub JWT  (iss=fab-mcp-hub, exp=8h)
+    │  ◄── access_token  [INBOUND VERIFICATION Step 2a]
+    ▼
+Agent ── _verify_hub_token(): RS256 sig + iss verified via JWKS
+    │  POST /discover  (Bearer RS256 hub JWT)
+    ▼
+Hub Server ── mints RS256 per-server JWTs  (aud=server_id, exp=1h)
+    │  ◄── server_token[]  [INBOUND VERIFICATION Step 2b]
+    ▼
+Agent ── _verify_hub_token(audience=server_id): RS256 + aud verified via JWKS
+    │  Bearer RS256-JWT  (aud=<server_id>) — one token per matched server
+    ▼
+MCP Server ── FastMCP JWTVerifier: RS256 via GET /.well-known/jwks.json
+              BearerClaimsMiddleware: RS256 via JWKS (defense-in-depth)
+```
+
+**JWKS endpoint** — used by all four verifiers:  `GET http://localhost:8090/.well-known/jwks.json`
+
+---
+
+### Token types
 
 | Token | Algorithm | Signed by | Validated by | Audience |
 |-------|-----------|-----------|--------------|----------|
 | Chat session JWT | HS256 | Chat server (`JWT_SECRET`) | Hub server (`JWT_SECRET`) | none (skipped) |
-| Hub admin JWT | RS256 | Hub server (RSA private key) | Hub server (RSA public key) | none |
-| Per-server JWT | RS256 | Hub server (RSA private key) | MCP server (JWKS endpoint) | `<server_id>` |
+| Hub login JWT (agent) | RS256 | Hub server (RSA private key) | Agent `_verify_hub_token()` via JWKS | none |
+| Per-server JWT | RS256 | Hub server (RSA private key) | Agent `_verify_hub_token()` via JWKS **then** MCP `JWTVerifier` via JWKS | `<server_id>` |
+
+### JWKS verification points — who verifies what
+
+| Verifier | Location | Tokens verified | On failure |
+|---|---|---|---|
+| `_verify_hub_token()` (Step 2a) | `agent.py` | Hub login JWT received from hub | Hard raise → login rejected |
+| `_verify_hub_token(aud=id)` (Step 2b) | `agent.py` | Per-server JWTs received from /discover | Hard raise → server skipped |
+| `FastMCP JWTVerifier` | `mcp_server/auth.py` `build_jwt_verifier()` | Per-server JWT sent by agent | 401 → request rejected |
+| `BearerClaimsMiddleware` | `mcp_server/auth.py` | Same per-server JWT (defense-in-depth) | Hard 401 on crypto fail; soft warn on JWKS outage |
 
 ---
 
@@ -103,7 +139,7 @@ mcp = FastMCP(name="FAB Customer Intelligence MCP Server",
 FastMCP wraps every incoming HTTP request — before any tool function runs — and
 validates the Bearer token against the JWKS endpoint.
 
-**Step 4 — Agent logs in to the hub (once per process)**
+**Step 4 — Agent logs in to the hub (once per process) + verifies the returned JWT**
 
 ```
 POST http://localhost:8090/auth/login
@@ -115,10 +151,20 @@ Hub:  verify credentials → sign RS256 JWT with private.pem
 Response: {"access_token": "eyJhbGciOiJSUzI1NiIsImtpZCI6Imh1Yi1yc2EtMSJ9…"}
 ```
 
-This is the `_get_hub_token()` call in `agent.py`. The token is cached in
-`_hub_token_cache` for the process lifetime (not a per-request login).
+This is the `_get_hub_token()` call in `agent.py`. **Immediately after receiving the token,
+the agent runs `_verify_hub_token()` (Step 2a — INBOUND VERIFICATION):**
 
-**Step 5 — Agent calls /discover to route the query and get per-server JWTs**
+```python
+# agent.py — _get_hub_token()
+claims = await _verify_hub_token(token)
+# PyJWKClient fetches GET /.well-known/jwks.json, verifies RS256 signature + iss + exp.
+# Hard failure (signature/issuer mismatch) → raise; token is NOT cached.
+# Soft failure (JWKS unreachable)          → warning logged; token cached anyway.
+```
+
+Only after passing JWKS verification is the token cached in `_hub_token_cache`.
+
+**Step 5 — Agent calls /discover and verifies each returned server token**
 
 ```
 POST http://localhost:8090/discover
@@ -139,8 +185,20 @@ Response: [{
 }]
 ```
 
-The per-server JWT is **different** from the hub JWT — it has `aud="fab-customer-server"`
-so the target server can reject tokens issued for any other server.
+The per-server JWT has `aud="fab-customer-server"` so the target server can reject tokens
+issued for any other server. **Before using it, the agent runs `_verify_hub_token()` again
+(Step 2b — INBOUND VERIFICATION):**
+
+```python
+# agent.py — run_agent(), after POST /discover
+for _srv in servers:
+    _claims = await _verify_hub_token(_server_token, audience=_srv_id)
+    # Verifies RS256 signature + iss + aud=server_id + exp via JWKS.
+    # Hard failure → server is SKIPPED entirely (token cannot be trusted).
+    # Soft failure → JWKS unreachable; warning logged; token used anyway.
+```
+
+Tampered or forged server tokens are caught here before the MCP connection is even opened.
 
 **Step 6 — Agent opens an MCP session with the per-server JWT (the `mcp_session()` call)**
 
@@ -159,15 +217,18 @@ POST /mcp  {"method": "tools/list",  …}   Authorization: Bearer <per-server-jw
 
 POST /mcp  {"method": "tools/call", "params": {"name": "customer_360", "arguments": {"customer_id": "CUST001"}}}
                                               Authorization: Bearer <per-server-jwt>
-  → JWTVerifier: validate again → PASS
-  → BearerClaimsMiddleware: claims = {"sub":"agent","roles":["agent"],"aud":"fab-customer-server"}
+  → JWTVerifier: RS256 via JWKS → PASS                        ← primary gatekeeper
+  → BearerClaimsMiddleware: RS256 via JWKS (defense-in-depth) ← independent re-verify
+       Hard fail → 401 on signature/aud/iss mismatch
+       Soft fail → warn + unverified decode if JWKS unreachable
+       Sets ContextVar: {"sub":"agent","roles":["agent"],"aud":"fab-customer-server"}
   → require_role("admin","agent") → PASS  (caller has "agent" role)
   → audit_log("customer_360", …) → prints structured log with agent identity
   → query_customer_360("CUST001") → MySQL query with MYSQL_USER/PASSWORD (not the JWT)
   → Response: JSON customer data
 ```
 
-The JWT is validated on **every HTTP request** — not just on connection. FastMCP does not
+The JWT is validated on **every HTTP request** by two independent verifiers. FastMCP does not
 maintain a session-level trust state; each request must carry and pass the token independently.
 
 **Step 7 — Key security property: audience scoping prevents cross-server replay**
@@ -375,9 +436,51 @@ The per-server token has `"aud": "fab-customer-server"` — it will be **rejecte
 
 ## 5. MCP Server Authentication
 
-MCP servers validate RS256 tokens using the hub's JWKS endpoint.
+MCP servers validate RS256 tokens using the hub's JWKS endpoint via **two independent verifiers**:
 
-**Admin UI probe tokens:** The Admin UI **Test** and **Tools** buttons also use this RS256 JWT flow. When you click either button, the hub mints a short-lived token (`sub=hub-admin-probe`, `roles=[admin]`, `aud=<server_id>`, 1-hour lifetime) and sends it as the Bearer token to the MCP server. This is the same validation path the agent uses — no separate "admin key" is needed.
+### 5.1 FastMCP JWTVerifier (primary gatekeeper)
+
+Registered in `build_jwt_verifier()` (`datalayer-as-service/mcp_server/auth.py`) and wired into
+`FastMCP(auth=build_jwt_verifier())`. FastMCP intercepts **every HTTP request** before any tool
+function runs and validates the Bearer token:
+
+```python
+JWTVerifier(
+    jwks_uri = "http://localhost:8090/.well-known/jwks.json",
+    issuer   = "fab-mcp-hub",
+    audience = "fab-customer-server",   # set via MCP_SERVER_ID env var
+)
+```
+
+Returns 401 if signature, iss, aud, or exp checks fail.
+
+### 5.2 BearerClaimsMiddleware (defense-in-depth + RBAC claims)
+
+Runs **after** JWTVerifier in the middleware stack. It performs its **own independent JWKS
+verification** using a module-level cached `PyJWKClient` (keys refreshed every 5 minutes):
+
+```
+Hard fail (→ 401) : InvalidSignatureError / InvalidAudienceError / InvalidIssuerError /
+                    ExpiredSignatureError — token is cryptographically invalid.
+Soft fail (→ warn): JWKS endpoint unreachable (network blip / hub restart).
+                    Falls back to unverified decode; JWTVerifier is the upstream gatekeeper.
+```
+
+After verifying, it extracts claims into a `ContextVar` for per-tool RBAC:
+
+```python
+_request_claims.set({"sub": "agent", "roles": ["agent"], "aud": "fab-customer-server"})
+```
+
+Tool functions read this via `require_role("admin", "agent")` and `audit_log()`.
+
+**Why two verifiers?** JWTVerifier may be absent on older FastMCP builds (returns `None` from
+`build_jwt_verifier()`). BearerClaimsMiddleware's independent check ensures no token bypasses
+RS256 validation even if JWTVerifier is not present.
+
+**Admin UI probe tokens:** The Admin UI **Test** and **Tools** buttons use this same RS256 JWT
+flow. The hub mints a short-lived token (`sub=hub-admin-probe`, `roles=[admin]`, `aud=<server_id>`,
+1-hour lifetime). No separate "admin key" is needed.
 
 **JWKS endpoint:**
 ```
@@ -421,7 +524,65 @@ print(json.dumps(payload, indent=2))
 
 ---
 
-## 6. Static API Key (fallback)
+## 6. Agent-Side JWKS Verification (Inbound)
+
+The agent verifies **tokens it receives from the hub** before using them — this is the INBOUND
+direction, mirroring what MCP servers do for tokens the agent sends *them*. Both sides use the
+same JWKS endpoint and the same RS256 algorithm.
+
+### Step 2a — Hub Login Response (`_get_hub_token()`)
+
+```
+POST /auth/login  →  Hub returns access_token
+                         │
+                         ▼  INBOUND VERIFICATION
+                    _verify_hub_token(token)
+                    ├── PyJWKClient fetches /.well-known/jwks.json
+                    ├── Verifies RS256 signature (kid=hub-rsa-1)
+                    ├── Checks: iss == "fab-mcp-hub"
+                    ├── Checks: exp > now
+                    ├── Hard fail → raise; token NOT cached; login rejected
+                    └── Soft fail (JWKS unreachable) → warning; token cached
+```
+
+### Step 2b — /discover Server Tokens (`run_agent()`)
+
+```
+POST /discover  →  Hub returns [{server_token, id, endpoint, …}, …]
+                         │  (for each server)
+                         ▼  INBOUND VERIFICATION
+                    _verify_hub_token(token, audience=server_id)
+                    ├── PyJWKClient fetches /.well-known/jwks.json (cached)
+                    ├── Verifies RS256 signature
+                    ├── Checks: iss == "fab-mcp-hub"
+                    ├── Checks: aud == server_id  (audience must match exactly)
+                    ├── Checks: exp > now
+                    ├── Hard fail → server SKIPPED; no MCP connection attempted
+                    └── Soft fail (JWKS unreachable) → warning; token used anyway
+```
+
+### Failure behaviour
+
+| Condition | Failure tier | Result |
+|---|---|---|
+| RS256 signature mismatch | Hard | `InvalidSignatureError` raised; rejected |
+| `aud` does not match `server_id` | Hard | `InvalidAudienceError` raised; server skipped |
+| `iss` does not match `fab-mcp-hub` | Hard | `InvalidIssuerError` raised; rejected |
+| Token expired | Hard | `ExpiredSignatureError` raised; rejected |
+| JWKS endpoint unreachable | Soft | Warning logged; token used (MCP server validates again) |
+| PyJWT not installed | Soft | Warning logged; unverified decode (dev only) |
+
+### Why verify tokens the agent receives?
+
+The agent already trusts the hub (it authenticated to it). The JWKS check adds defense-in-depth:
+
+- Detects a MITM attack that substitutes a forged JWT in the hub's response.
+- Catches mis-issued tokens (wrong aud, expired) before a TCP connection is opened to the MCP server.
+- Mirrors exactly what MCP servers do — both sides use the same `PyJWKClient` + JWKS endpoint.
+
+---
+
+## 7. Static API Key (fallback)
 
 The `HUB_API_KEY` in `.env` is a pre-shared static bearer token accepted by the hub.
 

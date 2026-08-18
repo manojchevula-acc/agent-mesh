@@ -1,1259 +1,1367 @@
 """
-scripts/generate_design_doc.py
---------------------------------
+scripts/generate_design_doc.py  —  v4  (complete redesign)
+------------------------------------------------------------
 Generates notes/MCP_Hub_Design_Document.docx
-Run:  python scripts/generate_design_doc.py
+
+Design principles:
+  - 6 focused sections (not 14): Overview, Auth, Authz, Hub, MCP, Ops
+  - Minimal template: 2 accent colours, 3 callout types, no phase banners
+  - One diagram anchors each section; code illustrates, does not define
+  - Consistent section format: lead paragraph → visual → key details
 """
 
-import datetime, io
+import datetime
 from pathlib import Path
 
 from docx import Document
-from docx.shared import Pt, RGBColor, Cm, Inches
+from docx.shared import Pt, RGBColor, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
-import diagrams as D   # generates PNGs and returns paths
+import diagrams as D
 
 OUT  = Path(__file__).parent.parent / "notes" / "MCP_Hub_Design_Document.docx"
-DIAG = Path(__file__).parent / "diagrams_out"
 
 # ---------------------------------------------------------------------------
-# Colour palette
+# Palette — deliberately minimal: 2 primaries + 2 accents + neutrals
 # ---------------------------------------------------------------------------
 C = {
-    "navy":    "1F3864", "blue":   "2672C4", "dkblue":  "1B4F8A",
-    "teal":    "006B6B", "green":  "1E6B30", "ltgreen": "E7F3EC",
-    "amber":   "7D4200", "ltamber":"FFF3CD", "red":     "9B1C1C",
-    "ltred":   "FDECEA", "purple": "4B0082", "ltpurple":"F3E8FF",
-    "grey":    "404040", "ltgrey": "F5F5F5", "white":   "FFFFFF",
-    "ltblue":  "DDEAF7", "alt":    "EFF4FC",
-    "phase1":  "1B4F8A", "phase2": "006B6B", "phase3":  "4B0082",
-    "phase4":  "1E6B30", "phase5": "7D4200",
+    "navy":   "1F3864",   # H1, table headers, emphasis
+    "blue":   "2563EB",   # H2 accent, code border, bullet markers
+    "dk":     "1A3F80",   # H1 underline rule, cover rule
+    "grey":   "374151",   # body text
+    "mgrey":  "6B7280",   # muted / captions / footer
+    "lgrey":  "F3F4F6",   # code bg, table alt rows, note bg
+    "white":  "FFFFFF",
+    "amber":  "B45309",   # warning accent text
+    "ltamb":  "FFFBEB",   # warning background
+    "purple": "5B21B6",   # security accent text
+    "ltpur":  "F5F3FF",   # security background
+    "ltblue": "EFF6FF",   # note background
+    "bdr":    "D1D5DB",   # light border
 }
 
-def rgb(h): h=h.lstrip("#"); return RGBColor(int(h[0:2],16),int(h[2:4],16),int(h[4:6],16))
+
+def rgb(h):
+    h = h.lstrip("#")
+    return RGBColor(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+
 
 # ---------------------------------------------------------------------------
-# XML / layout helpers
+# Low-level XML helpers
 # ---------------------------------------------------------------------------
 
 def _cell_bg(cell, hex_color):
-    tc=cell._tc; tcPr=tc.get_or_add_tcPr()
-    for o in tcPr.findall(qn("w:shd")): tcPr.remove(o)
-    shd=OxmlElement("w:shd"); shd.set(qn("w:val"),"clear")
-    shd.set(qn("w:color"),"auto"); shd.set(qn("w:fill"),hex_color.upper())
+    tc = cell._tc
+    tcPr = tc.get_or_add_tcPr()
+    for o in tcPr.findall(qn("w:shd")):
+        tcPr.remove(o)
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:color"), "auto")
+    shd.set(qn("w:fill"), hex_color.upper())
     tcPr.append(shd)
 
-def _cell_borders(cell, color="CCCCCC", sz="4"):
-    tc=cell._tc; tcPr=tc.get_or_add_tcPr()
-    tcB=OxmlElement("w:tcBorders")
-    for e in ("top","left","bottom","right"):
-        t=OxmlElement(f"w:{e}"); t.set(qn("w:val"),"single")
-        t.set(qn("w:sz"),sz); t.set(qn("w:space"),"0")
-        t.set(qn("w:color"),color); tcB.append(t)
+
+def _cell_borders(cell, color="D1D5DB", sz="4"):
+    tc = cell._tc
+    tcPr = tc.get_or_add_tcPr()
+    tcB = OxmlElement("w:tcBorders")
+    for side in ("top", "left", "bottom", "right"):
+        t = OxmlElement(f"w:{side}")
+        t.set(qn("w:val"), "single")
+        t.set(qn("w:sz"), sz)
+        t.set(qn("w:space"), "0")
+        t.set(qn("w:color"), color)
+        tcB.append(t)
     tcPr.append(tcB)
 
-def _para_border_bottom(p, color="2672C4", sz="12"):
-    pPr=p._p.get_or_add_pPr(); pBdr=OxmlElement("w:pBdr")
-    bot=OxmlElement("w:bottom"); bot.set(qn("w:val"),"single")
-    bot.set(qn("w:sz"),sz); bot.set(qn("w:space"),"1")
-    bot.set(qn("w:color"),color); pBdr.append(bot); pPr.append(pBdr)
+
+def _para_border_bottom(p, color="2563EB", sz="12"):
+    pPr = p._p.get_or_add_pPr()
+    pBdr = OxmlElement("w:pBdr")
+    bot = OxmlElement("w:bottom")
+    bot.set(qn("w:val"), "single")
+    bot.set(qn("w:sz"), sz)
+    bot.set(qn("w:space"), "1")
+    bot.set(qn("w:color"), color)
+    pBdr.append(bot)
+    pPr.append(pBdr)
+
 
 def _run(para, text, bold=False, italic=False, size=11,
-         color="404040", font="Calibri", underline=False):
-    r=para.add_run(text); r.bold=bold; r.italic=italic; r.underline=underline
-    r.font.name=font; r.font.size=Pt(size); r.font.color.rgb=rgb(color)
+         color="374151", font="Calibri", underline=False):
+    r = para.add_run(text)
+    r.bold = bold
+    r.italic = italic
+    r.underline = underline
+    r.font.name = font
+    r.font.size = Pt(size)
+    r.font.color.rgb = rgb(color)
     return r
 
+
+def _set_page_margins(doc, t=2.0, b=2.0, l=2.0, r=2.0):
+    sec = doc.sections[0]
+    sec.top_margin    = Cm(t)
+    sec.bottom_margin = Cm(b)
+    sec.left_margin   = Cm(l)
+    sec.right_margin  = Cm(r)
+
+
 # ---------------------------------------------------------------------------
-# Typography helpers
+# Typography — clean 3-level hierarchy
 # ---------------------------------------------------------------------------
 
 def H1(doc, text):
-    p=doc.add_paragraph(); p.paragraph_format.space_before=Pt(22)
-    p.paragraph_format.space_after=Pt(6); _para_border_bottom(p)
-    _run(p, text, bold=True, size=18, color="1F3864"); return p
+    """Major section — navy 18 pt bold + thick blue underline."""
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(24)
+    p.paragraph_format.space_after  = Pt(8)
+    _para_border_bottom(p, C["dk"], "16")
+    _run(p, text, bold=True, size=18, color=C["navy"])
+    return p
+
 
 def H2(doc, text):
-    p=doc.add_paragraph(); p.paragraph_format.space_before=Pt(14)
-    p.paragraph_format.space_after=Pt(4)
-    _run(p, text, bold=True, size=13, color="2672C4"); return p
+    """Sub-section — blue 13 pt bold."""
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(16)
+    p.paragraph_format.space_after  = Pt(4)
+    _run(p, text, bold=True, size=13, color=C["blue"])
+    return p
+
 
 def H3(doc, text):
-    p=doc.add_paragraph(); p.paragraph_format.space_before=Pt(9)
-    p.paragraph_format.space_after=Pt(2)
-    _run(p, text, bold=True, size=11, color="1F3864"); return p
+    """Tertiary — navy 11.5 pt bold."""
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(8)
+    p.paragraph_format.space_after  = Pt(3)
+    _run(p, text, bold=True, size=11.5, color=C["navy"])
+    return p
 
-def body(doc, text, indent=0):
-    p=doc.add_paragraph(); p.paragraph_format.space_after=Pt(6)
-    p.paragraph_format.left_indent=Cm(indent)
-    _run(p, text, size=11, color="333333"); return p
 
-def bullet(doc, text, level=0, label=None, label_color="1F3864"):
-    p=doc.add_paragraph(); p.paragraph_format.space_after=Pt(4)
-    p.paragraph_format.left_indent=Cm(0.75+level*0.65)
-    p.paragraph_format.first_line_indent=Cm(-0.4)
-    mark="▪" if level else "●"
-    _run(p, f"{mark}  ", bold=True, size=10, color="2672C4")
-    if label: _run(p, label, bold=True, size=11, color=label_color)
-    _run(p, text, size=11, color="333333"); return p
+def lead(doc, text):
+    """Intro paragraph — sets context for a section."""
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after  = Pt(10)
+    _run(p, text, size=11, color=C["grey"])
+    return p
 
-def numbered(doc, n, text, label=None):
-    p=doc.add_paragraph(); p.paragraph_format.space_after=Pt(5)
-    p.paragraph_format.left_indent=Cm(0.9)
-    p.paragraph_format.first_line_indent=Cm(-0.6)
-    _run(p, f"{n}.  ", bold=True, size=11, color="2672C4")
-    if label: _run(p, label, bold=True, size=11, color="1F3864")
-    _run(p, text, size=11, color="333333"); return p
 
-def code(doc, text):
-    tbl=doc.add_table(rows=1,cols=1); tbl.alignment=WD_TABLE_ALIGNMENT.LEFT
-    cell=tbl.cell(0,0); _cell_bg(cell,"F0F0F0"); _cell_borders(cell,"AAAAAA","4")
-    p=cell.paragraphs[0]; p.paragraph_format.space_before=Pt(5)
-    p.paragraph_format.space_after=Pt(5); p.paragraph_format.left_indent=Cm(0.25)
-    r=p.add_run(text); r.font.name="Courier New"; r.font.size=Pt(8.5)
-    r.font.color.rgb=rgb("1A1A2E"); doc.add_paragraph(); return tbl
+def body(doc, text):
+    p = doc.add_paragraph()
+    p.paragraph_format.space_after = Pt(6)
+    _run(p, text, size=11, color=C["grey"])
+    return p
+
+
+def bullet(doc, text, label=None, level=0):
+    p = doc.add_paragraph()
+    p.paragraph_format.space_after       = Pt(3)
+    p.paragraph_format.left_indent       = Cm(0.5 + level * 0.5)
+    p.paragraph_format.first_line_indent = Cm(-0.4)
+    mark = "▸" if level else "•"
+    _run(p, f"{mark}  ", bold=True, size=10.5, color=C["blue"])
+    if label:
+        _run(p, label, bold=True, size=11, color=C["navy"])
+    _run(p, text, size=11, color=C["grey"])
+    return p
+
+
+def code(doc, text, caption=None):
+    """Code block — Consolas 8.5 pt on light grey with blue left accent."""
+    tbl = doc.add_table(rows=1, cols=1)
+    tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
+    cell = tbl.cell(0, 0)
+    _cell_bg(cell, C["lgrey"])
+    # blue left bar, light borders on other sides
+    tc = cell._tc
+    tcPr = tc.get_or_add_tcPr()
+    tcB = OxmlElement("w:tcBorders")
+    for side, clr, sz in [
+        ("left",   C["blue"],  "20"),
+        ("top",    C["bdr"],   "4"),
+        ("bottom", C["bdr"],   "4"),
+        ("right",  C["bdr"],   "4"),
+    ]:
+        t = OxmlElement(f"w:{side}")
+        t.set(qn("w:val"), "single")
+        t.set(qn("w:sz"), sz)
+        t.set(qn("w:space"), "0")
+        t.set(qn("w:color"), clr)
+        tcB.append(t)
+    tcPr.append(tcB)
+    p = cell.paragraphs[0]
+    p.paragraph_format.space_before = Pt(6)
+    p.paragraph_format.space_after  = Pt(6)
+    p.paragraph_format.left_indent  = Cm(0.35)
+    r = p.add_run(text)
+    r.font.name  = "Consolas"
+    r.font.size  = Pt(8.5)
+    r.font.color.rgb = rgb("1E293B")
+    if caption:
+        cp = doc.add_paragraph()
+        cp.paragraph_format.space_before = Pt(2)
+        cp.paragraph_format.space_after  = Pt(8)
+        cp.paragraph_format.left_indent  = Cm(0.35)
+        _run(cp, caption, italic=True, size=9, color=C["mgrey"])
+    else:
+        sp = doc.add_paragraph()
+        sp.paragraph_format.space_after = Pt(6)
+    return tbl
+
 
 def callout(doc, kind, title, text):
+    """Callout — 3 kinds only: note (blue), warning (amber), security (purple)."""
     cfg = {
-        "note":       ("DDEAF7","1B4F8A","INFO",      "1B4F8A"),
-        "warning":    ("FDECEA","9B1C1C","WARNING",    "9B1C1C"),
-        "example":    ("E7F3EC","1E6B30","EXAMPLE",    "1E6B30"),
-        "definition": ("F3E8FF","4B0082","DEFINITION", "4B0082"),
-        "important":  ("FFF3CD","7D4200","IMPORTANT",  "7D4200"),
-        "security":   ("FDECEA","9B1C1C","SECURITY",   "9B1C1C"),
+        "note":     (C["ltblue"], C["blue"],   "NOTE"),
+        "warning":  (C["ltamb"],  C["amber"],  "WARNING"),
+        "security": (C["ltpur"],  C["purple"], "SECURITY"),
     }
-    bg,bdr,lbl,lc = cfg.get(kind, cfg["note"])
-    tbl=doc.add_table(rows=1,cols=1); tbl.alignment=WD_TABLE_ALIGNMENT.LEFT
-    cell=tbl.cell(0,0); _cell_bg(cell,bg)
-    tc=cell._tc; tcPr=tc.get_or_add_tcPr()
-    tcB=OxmlElement("w:tcBorders")
-    for e,clr,sz in [("left",bdr,"24"),("top",bdr,"4"),("bottom",bdr,"4"),("right","FFFFFF","4")]:
-        t=OxmlElement(f"w:{e}"); t.set(qn("w:val"),"single")
-        t.set(qn("w:sz"),sz); t.set(qn("w:space"),"0")
-        t.set(qn("w:color"),clr); tcB.append(t)
+    bg, accent, lbl = cfg.get(kind, cfg["note"])
+    tbl = doc.add_table(rows=1, cols=1)
+    tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
+    cell = tbl.cell(0, 0)
+    _cell_bg(cell, bg)
+    tc = cell._tc
+    tcPr = tc.get_or_add_tcPr()
+    tcB = OxmlElement("w:tcBorders")
+    for side, clr, sz in [
+        ("left",   accent,    "20"),
+        ("top",    C["bdr"],  "4"),
+        ("bottom", C["bdr"],  "4"),
+        ("right",  C["bdr"],  "4"),
+    ]:
+        t = OxmlElement(f"w:{side}")
+        t.set(qn("w:val"), "single")
+        t.set(qn("w:sz"), sz)
+        t.set(qn("w:space"), "0")
+        t.set(qn("w:color"), clr)
+        tcB.append(t)
     tcPr.append(tcB)
-    p=cell.paragraphs[0]; p.paragraph_format.space_before=Pt(3)
-    p.paragraph_format.space_after=Pt(3); p.paragraph_format.left_indent=Cm(0.25)
-    r1=p.add_run(f"{lbl}"); r1.bold=True; r1.font.name="Calibri"
-    r1.font.size=Pt(8.5); r1.font.color.rgb=rgb(lc)
+    p = cell.paragraphs[0]
+    p.paragraph_format.space_before = Pt(5)
+    p.paragraph_format.space_after  = Pt(5)
+    p.paragraph_format.left_indent  = Cm(0.35)
+    r1 = p.add_run(lbl)
+    r1.bold = True
+    r1.font.name = "Calibri"
+    r1.font.size = Pt(8.5)
+    r1.font.color.rgb = rgb(accent)
     if title:
-        r2=p.add_run(f"  —  {title}\n"); r2.bold=True; r2.font.name="Calibri"
-        r2.font.size=Pt(10); r2.font.color.rgb=rgb(lc)
-    else: p.add_run("\n")
-    r3=p.add_run(text); r3.font.name="Calibri"; r3.font.size=Pt(10)
-    r3.font.color.rgb=rgb("333333"); doc.add_paragraph(); return tbl
+        r2 = p.add_run(f"  —  {title}\n")
+        r2.bold = True
+        r2.font.name = "Calibri"
+        r2.font.size = Pt(10)
+        r2.font.color.rgb = rgb(accent)
+    r3 = p.add_run(text)
+    r3.font.name = "Calibri"
+    r3.font.size = Pt(10)
+    r3.font.color.rgb = rgb(C["grey"])
+    sp = doc.add_paragraph()
+    sp.paragraph_format.space_after = Pt(4)
+    return tbl
 
-def table(doc, headers, rows, widths=None):
-    tbl=doc.add_table(rows=1+len(rows),cols=len(headers))
-    tbl.alignment=WD_TABLE_ALIGNMENT.LEFT; tbl.style="Table Grid"
-    hr=tbl.rows[0]
-    for i,h in enumerate(headers):
-        c=hr.cells[i]; _cell_bg(c,"1F3864")
-        p=c.paragraphs[0]; p.alignment=WD_ALIGN_PARAGRAPH.CENTER
-        r=p.add_run(h); r.bold=True; r.font.name="Calibri"
-        r.font.size=Pt(9.5); r.font.color.rgb=rgb("FFFFFF")
-    for ri,row in enumerate(rows):
-        bg="EFF4FC" if ri%2==1 else "FFFFFF"
-        dr=tbl.rows[ri+1]
-        for ci,val in enumerate(row):
-            c=dr.cells[ci]; _cell_bg(c,bg); _cell_borders(c,"CCCCCC","4")
-            p=c.paragraphs[0]
-            if isinstance(val,dict):
-                _run(p,val["text"],bold=val.get("bold",False),size=9.5,
-                     color=val.get("color","333333"))
-            else:
-                _run(p,str(val),size=9.5,color="333333")
+
+def table(doc, headers, rows, widths=None, stripe=True):
+    """Data table — navy header, clean thin borders, alternating row shading."""
+    cols = len(headers)
+    tbl = doc.add_table(rows=1 + len(rows), cols=cols)
+    tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
+    tbl.style = "Table Grid"
+
+    # Header row
+    hrow = tbl.rows[0]
+    for i, h in enumerate(headers):
+        cell = hrow.cells[i]
+        _cell_bg(cell, C["navy"])
+        p = cell.paragraphs[0]
+        p.paragraph_format.space_before = Pt(4)
+        p.paragraph_format.space_after  = Pt(4)
+        p.paragraph_format.left_indent  = Cm(0.15)
+        _run(p, h, bold=True, size=9.5, color=C["white"])
+
+    # Data rows
+    for ri, row in enumerate(rows):
+        tr = tbl.rows[ri + 1]
+        bg = C["lgrey"] if (stripe and ri % 2 == 0) else C["white"]
+        for ci, val in enumerate(row):
+            cell = tr.cells[ci]
+            _cell_bg(cell, bg)
+            _cell_borders(cell, C["bdr"], "4")
+            p = cell.paragraphs[0]
+            p.paragraph_format.space_before = Pt(3)
+            p.paragraph_format.space_after  = Pt(3)
+            p.paragraph_format.left_indent  = Cm(0.15)
+            _run(p, str(val), size=9.5, color=C["grey"])
+
     if widths:
-        for row in tbl.rows:
-            for i,w in enumerate(widths):
-                if i<len(row.cells): row.cells[i].width=Cm(w)
-    doc.add_paragraph(); return tbl
+        for i, w in enumerate(widths):
+            for row in tbl.rows:
+                row.cells[i].width = Cm(w)
+
+    sp = doc.add_paragraph()
+    sp.paragraph_format.space_after = Pt(6)
+    return tbl
+
 
 def img(doc, path, width_cm=16.0, caption=None):
-    doc.add_picture(str(path), width=Cm(width_cm))
-    doc.paragraphs[-1].alignment=WD_ALIGN_PARAGRAPH.CENTER
+    if not path or not Path(str(path)).exists():
+        return
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.space_before = Pt(6)
+    p.paragraph_format.space_after  = Pt(2)
+    r = p.add_run()
+    r.add_picture(str(path), width=Cm(width_cm))
     if caption:
-        cp=doc.add_paragraph(); cp.alignment=WD_ALIGN_PARAGRAPH.CENTER
-        cp.paragraph_format.space_before=Pt(2); cp.paragraph_format.space_after=Pt(10)
-        _run(cp, caption, italic=True, size=9, color="777777")
+        cp = doc.add_paragraph()
+        cp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        cp.paragraph_format.space_before = Pt(2)
+        cp.paragraph_format.space_after  = Pt(12)
+        _run(cp, caption, italic=True, size=9, color=C["mgrey"])
+    return p
 
-def phase_banner(doc, num, title, desc, color):
-    tbl=doc.add_table(rows=1,cols=2); tbl.alignment=WD_TABLE_ALIGNMENT.LEFT
-    nc=tbl.cell(0,0); _cell_bg(nc,color)
-    p1=nc.paragraphs[0]; p1.alignment=WD_ALIGN_PARAGRAPH.CENTER
-    r=p1.add_run(f"PHASE\n{num}"); r.bold=True; r.font.name="Calibri"
-    r.font.size=Pt(14); r.font.color.rgb=rgb("FFFFFF")
-    nc.width=Cm(2.2)
-    tc=tbl.cell(0,1); _cell_bg(tc,"DDEAF7")
-    p2=tc.paragraphs[0]
-    r2=p2.add_run(title+"\n"); r2.bold=True; r2.font.name="Calibri"
-    r2.font.size=Pt(12); r2.font.color.rgb=rgb("1F3864")
-    r3=p2.add_run(desc); r3.font.name="Calibri"
-    r3.font.size=Pt(10); r3.font.color.rgb=rgb("444444")
-    doc.add_paragraph(); return tbl
 
-def spacer(doc,pt=8):
-    p=doc.add_paragraph(); p.paragraph_format.space_before=Pt(pt); return p
+def spacer(doc, pts=8):
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after  = Pt(pts)
+    return p
+
 
 def divider(doc):
-    p=doc.add_paragraph(); p.paragraph_format.space_before=Pt(4)
-    p.paragraph_format.space_after=Pt(4); _para_border_bottom(p,"DDEAF7","6")
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(8)
+    p.paragraph_format.space_after  = Pt(8)
+    _para_border_bottom(p, C["bdr"], "4")
+    return p
 
-# ============================================================================
-# BUILD
-# ============================================================================
 
-def build():
-    # Generate all diagrams first
-    print("Generating diagrams...")
-    paths = D.generate_all()
-    print("Building document...")
+# ---------------------------------------------------------------------------
+# Cover page
+# ---------------------------------------------------------------------------
 
-    doc=Document()
-    for s in doc.sections:
-        s.top_margin=Cm(2.2); s.bottom_margin=Cm(2.2)
-        s.left_margin=Cm(2.8); s.right_margin=Cm(2.8)
-    doc.styles["Normal"].font.name="Calibri"
-    doc.styles["Normal"].font.size=Pt(11)
+def _cover(doc):
+    spacer(doc, 60)
 
-    # ===========================================================================
-    # COVER
-    # ===========================================================================
-    spacer(doc, 36)
+    t1 = doc.add_paragraph()
+    t1.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _run(t1, "MCP Hub", bold=True, size=38, color=C["navy"])
 
-    cover_bar=doc.add_table(rows=1,cols=1)
-    _cell_bg(cover_bar.cell(0,0),"1F3864")
-    p=cover_bar.cell(0,0).paragraphs[0]
-    p.paragraph_format.space_before=Pt(6); p.paragraph_format.space_after=Pt(6)
-    r=p.add_run("  MCP Hub — Solution Design Document")
-    r.bold=True; r.font.name="Calibri"; r.font.size=Pt(26); r.font.color.rgb=rgb("FFFFFF")
+    t2 = doc.add_paragraph()
+    t2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    t2.paragraph_format.space_after = Pt(4)
+    _run(t2, "Solution Design Document", bold=False, size=20, color=C["blue"])
 
-    spacer(doc,10)
-    s1=doc.add_paragraph(); _run(s1,"Model Context Protocol Hub",bold=True,size=16,color="2672C4")
-    s2=doc.add_paragraph()
-    _run(s2,
-        "Architecture, Authentication, Authorization, Governance & Standards\n"
-        "A comprehensive implementation guide for engineering teams.",
-        size=12, color="555555")
+    rule = doc.add_paragraph()
+    rule.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    rule.paragraph_format.space_before = Pt(0)
+    rule.paragraph_format.space_after  = Pt(16)
+    _para_border_bottom(rule, C["dk"], "24")
 
-    spacer(doc,16)
-    meta=doc.add_table(rows=4,cols=2)
-    for ri,(k,v) in enumerate([
-        ("Version",  "2.0"),
-        ("Date",     datetime.date.today().strftime("%B %d, %Y")),
-        ("Audience", "Solution Architects · Security Engineers · Backend Developers"),
-        ("Status",   "Internal — For Implementation"),
-    ]):
-        _cell_bg(meta.rows[ri].cells[0],"DDEAF7")
-        _cell_bg(meta.rows[ri].cells[1],"FFFFFF")
-        _cell_borders(meta.rows[ri].cells[0],"DDEAF7","4")
-        _cell_borders(meta.rows[ri].cells[1],"DDEAF7","4")
-        _run(meta.rows[ri].cells[0].paragraphs[0],k,bold=True,size=10,color="1F3864")
-        _run(meta.rows[ri].cells[1].paragraphs[0],v,size=10,color="333333")
+    # Metadata table — centred
+    meta_tbl = doc.add_table(rows=4, cols=2)
+    meta_tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+    data = [
+        ("Version",    "4.0"),
+        ("Status",     "CONFIDENTIAL — Client Distribution"),
+        ("Date",       datetime.date.today().strftime("%B %d, %Y")),
+        ("Covers",     "Architecture · Authentication · Authorization · Operations"),
+    ]
+    for ri, (lbl, val) in enumerate(data):
+        lc = meta_tbl.rows[ri].cells[0]
+        vc = meta_tbl.rows[ri].cells[1]
+        _cell_bg(lc, C["navy"])
+        _cell_bg(vc, C["lgrey"])
+        pl = lc.paragraphs[0]
+        pv = vc.paragraphs[0]
+        for p in (pl, pv):
+            p.paragraph_format.space_before = Pt(4)
+            p.paragraph_format.space_after  = Pt(4)
+            p.paragraph_format.left_indent  = Cm(0.2)
+        _run(pl, lbl, bold=True, size=10, color=C["white"])
+        _run(pv, val, size=10.5, color=C["grey"])
+    meta_tbl.columns[0].width = Cm(3.0)
+    meta_tbl.columns[1].width = Cm(13.0)
 
+
+# ---------------------------------------------------------------------------
+# Executive Summary
+# ---------------------------------------------------------------------------
+
+def _exec_summary(doc):
     doc.add_page_break()
+    H1(doc, "Executive Summary")
 
-    # ===========================================================================
-    # 1 · INTRODUCTION
-    # ===========================================================================
-    H1(doc,"1.  Introduction & Purpose")
     body(doc,
-        "Organisations deploying AI agents at scale face a core challenge: how do agents "
-        "discover which backend service to call, authenticate securely, and operate within "
-        "defined policy boundaries — without each agent needing bespoke integration code?")
-    body(doc,
-        "The MCP Hub solves this by acting as a single control plane. It maintains a live "
-        "registry of all MCP-compliant backend servers, runs intelligent LLM-powered routing "
-        "to match queries to the right server, issues cryptographically scoped security "
-        "tokens, and enforces role-based access policy — all transparently, so MCP servers "
-        "focus purely on their business logic.")
+         "The MCP Hub is a zero-trust control plane for AI agent-to-service authentication. "
+         "It provides a single gateway that centralises server discovery, cryptographic "
+         "authentication, intelligent routing, and structured audit — eliminating bespoke "
+         "per-agent integration code across all backend services.")
 
-    H2(doc,"1.1  Design Goals")
+    body(doc,
+         "An agent presents a signed hub JWT to POST /discover. The hub validates it, runs "
+         "an LLM-guided routing step to select the best-fit MCP server, and mints a "
+         "short-lived scoped token for it. The agent calls the MCP server directly over "
+         "Streamable HTTP using that token — the hub is not in the data path for tool calls.")
+
+    spacer(doc, 4)
     table(doc,
-        ["Goal","Description","Mechanism"],
-        [
-            ("Zero-trust auth",     "Every boundary is independently authenticated; no implicit trust","RS256 JWT per boundary"),
-            ("Credential isolation","No credential crosses a layer boundary",                         "Separate token per layer"),
-            ("Dynamic discovery",   "Agents discover tools at runtime, not compile-time",            "tools/list on every session"),
-            ("Intelligent routing", "Best-fit server selected per query, not hardcoded",             "LangGraph ReAct routing agent"),
-            ("Auditability",        "Every auth, routing, and tool call logged with caller identity","4-way observability fan-out"),
-            ("Governance",          "Servers enabled/disabled without agent code changes",           "Registry is_active flag"),
-        ],
-        widths=[3.5,7.0,6.0])
+          ["Design Decision", "Rationale"],
+          [
+              ("RS256 asymmetric JWT signing",
+               "Private key stays in the hub. MCP servers receive only the public key and can "
+               "verify tokens — but cannot forge them. A compromised MCP server cannot impersonate the hub."),
+              ("Per-server audience scoping (aud = server_id)",
+               "Each JWT is bound to one server. A stolen token is unusable on any other server. "
+               "Blast radius = 1 server × 1 hour."),
+              ("Multi-provider auth (local / Azure AD)",
+               "Local mode: RS256 hub tokens, HS256 chat tokens, or static API key. "
+               "Azure mode: Entra ID OIDC — no local keys required. Switch via AUTH_PROVIDER env var."),
+              ("LangGraph ReAct routing agent",
+               "New instance per /discover request prevents concurrent state collision. "
+               "LLM selects best server by capability; falls back to first active server if unavailable."),
+              ("4-way observability fan-out",
+               "Every event written to in-memory deque, stdout, JSONL file, and MySQL simultaneously. "
+               "MySQL failure permanently disables that sink — other three remain active."),
+          ],
+          widths=[5.5, 10.5])
 
-    H2(doc,"1.2  Scope")
-    bullet(doc,"Hub architecture — components, request lifecycle, routing")
-    bullet(doc,"MCP protocol fundamentals — tools, resources, prompts, transports")
-    bullet(doc,"Server registration, lifecycle management, and governance")
-    bullet(doc,"End-to-end authentication across five phases with implementation examples")
-    bullet(doc,"Authorization framework — hub RBAC, server JWT scoping, per-tool RBAC")
-    bullet(doc,"Observability, audit logging, and security best practices")
 
+# ---------------------------------------------------------------------------
+# Table of Contents
+# ---------------------------------------------------------------------------
+
+def _toc(doc):
     doc.add_page_break()
+    H1(doc, "Table of Contents")
+    spacer(doc, 4)
 
-    # ===========================================================================
-    # 2 · GLOSSARY
-    # ===========================================================================
-    H1(doc,"2.  Glossary of Key Terms")
-    body(doc,"All MCP-specific and security terms used in this document are defined below.")
+    entries = [
+        ("1",   "System Architecture",                      True),
+        ("1.1", "Architecture Overview",                    False),
+        ("1.2", "Component Roles",                          False),
+        ("1.3", "Layer Communication Reference",            False),
+        ("2",   "Authentication",                           True),
+        ("2.1", "Auth Provider Configuration",              False),
+        ("2.2", "Token Verification Flow",                  False),
+        ("2.3", "JWT Token Lifecycle & Key Infrastructure", False),
+        ("2.4", "Server Discovery & Token Scoping",         False),
+        ("2.5", "MCP Server JWT Validation",                False),
+        ("3",   "Authorization",                            True),
+        ("3.1", "Role Model",                               False),
+        ("3.2", "Per-Tool RBAC Enforcement",                False),
+        ("3.3", "Credential Isolation",                     False),
+        ("4",   "Hub Service",                              True),
+        ("4.1", "Server Registry",                          False),
+        ("4.2", "LLM-Based Routing",                        False),
+        ("4.3", "Observability & Audit",                    False),
+        ("4.4", "Discovery API & Event Model",              False),
+        ("5",   "MCP Integration",                          True),
+        ("5.1", "Streamable HTTP Transport",                False),
+        ("5.2", "Chat Service Integration",                 False),
+        ("6",   "Operations & Deployment",                  True),
+        ("6.1", "Environment Variables",                    False),
+        ("6.2", "Production Readiness Checklist",           False),
+        ("6.3", "Security Reference",                       False),
+        ("6.4", "Key Files Reference",                      False),
+    ]
 
-    table(doc,
-        ["Term","Definition"],
-        [
-            ("MCP","Model Context Protocol — open standard for AI agents to discover and invoke backend capabilities (tools, resources, prompts)."),
-            ("MCP Hub","Central gateway: server registry, JWT issuance, LLM routing, policy enforcement, and observability."),
-            ("MCP Server","Backend service implementing the MCP protocol. Exposes tools, resources, and/or prompts."),
-            ("Tool","Callable function exposed by an MCP server — takes typed arguments, returns typed results."),
-            ("Resource","URI-addressed read-only data asset (document, dataset, live feed) exposed by a server."),
-            ("Prompt","Reusable prompt template with named parameters, exposed by a server for agent consumption."),
-            ("Transport","Network protocol carrying MCP JSON-RPC messages. This implementation uses Streamable HTTP — a stateful POST-based protocol where the first request returns a Mcp-Session-Id header that must accompany all subsequent calls in the same session."),
-            ("JWT","JSON Web Token — compact, URL-safe signed claims container. Claims: iss (issuer), aud (audience), sub (subject), exp (expiry), roles."),
-            ("RS256","RSA + SHA-256 asymmetric JWT signing. Hub signs with private key; servers verify with public key. No shared secret required."),
-            ("JWKS","JSON Web Key Set — standard endpoint (/.well-known/jwks.json) publishing a service's RSA public keys for JWT verification."),
-            ("aud (audience)","JWT claim specifying the intended recipient. A server rejects any token whose aud does not exactly match its own ID."),
-            ("iss (issuer)","JWT claim identifying who created the token. Recipients verify this matches the expected hub identity string."),
-            ("sub (subject)","JWT claim identifying the principal (user) on whose behalf the token was issued."),
-            ("RBAC","Role-Based Access Control — restrict operations based on roles in the caller's JWT, not their individual identity."),
-            ("PBKDF2","Password-Based Key Derivation Function 2 — slow hash (200k iterations) for password storage; resists offline brute-force."),
-            ("JWTVerifier","FastMCP built-in middleware that validates RS256 tokens (sig, aud, iss, exp) on every MCP request; returns 401 on failure."),
-            ("BearerClaimsMiddleware","Custom middleware that decodes the already-verified JWT into a ContextVar for per-tool RBAC without a second JWKS fetch."),
-            ("require_role()","Tool-level RBAC function — reads claims ContextVar, raises PermissionError (→403) if caller lacks required role."),
-            ("ReAct Agent","Reasoning+Acting LLM loop (LangGraph): THINK about query → CALL pick_server tool → OBSERVE result → route."),
-            ("Semantic View","Pre-joined DB view abstracting raw tables from tool logic — decouples schema from tool API."),
-            ("ContextVar","Python asyncio context variable — isolated per-request state for async code; used to pass JWT claims to tool functions."),
-        ],
-        widths=[4.0,13.0])
+    tbl = doc.add_table(rows=len(entries), cols=2)
+    tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
+    for ri, (num, title, is_h1) in enumerate(entries):
+        lc = tbl.rows[ri].cells[0]
+        rc = tbl.rows[ri].cells[1]
+        bg = C["lgrey"] if is_h1 else C["white"]
+        _cell_bg(lc, bg)
+        _cell_bg(rc, bg)
+        for cell in (lc, rc):
+            _cell_borders(cell, C["bdr"], "2")
+        p1 = lc.paragraphs[0]
+        p2 = rc.paragraphs[0]
+        for p in (p1, p2):
+            p.paragraph_format.space_before = Pt(4 if is_h1 else 2)
+            p.paragraph_format.space_after  = Pt(4 if is_h1 else 2)
+            p.paragraph_format.left_indent  = Cm(0.1 if is_h1 else 0.5)
+        sz  = 10 if is_h1 else 9.5
+        clr = C["navy"] if is_h1 else C["grey"]
+        _run(p1, num,   bold=is_h1, size=sz, color=clr)
+        _run(p2, title, bold=is_h1, size=sz, color=clr)
+    tbl.columns[0].width = Cm(1.6)
+    tbl.columns[1].width = Cm(14.4)
 
+
+# ---------------------------------------------------------------------------
+# 1. System Architecture
+# ---------------------------------------------------------------------------
+
+def _s1(doc, paths):
     doc.add_page_break()
+    H1(doc, "1.  System Architecture")
+    lead(doc,
+         "The MCP Hub sits between AI agents and backend services. It handles authentication, "
+         "server discovery, and routing so that agents can use any registered MCP server "
+         "without knowing its endpoint, credentials, or capabilities in advance.")
 
-    # ===========================================================================
-    # 3 · MCP PROTOCOL FUNDAMENTALS
-    # ===========================================================================
-    H1(doc,"3.  MCP Protocol Fundamentals")
+    H2(doc, "1.1  Architecture Overview")
+    img(doc, paths.get("system"), width_cm=16.0,
+        caption="Figure 1 — System Overview: Layers, Components, and Data Flows")
 
-    H2(doc,"3.1  Protocol Overview")
-    body(doc,
-        "MCP defines a JSON-RPC 2.0 interface for AI agents to interact with backend services. "
-        "The agent is the client; backend services implement the server interface. "
-        "All messages are JSON-RPC envelopes carrying one of the defined MCP method names.")
-    body(doc,
-        "The protocol lifecycle has three phases: (1) initialize — negotiate capabilities and "
-        "receive a session ID; (2) operate — discover and call tools, read resources, fetch "
-        "prompts; (3) terminate — close the session.")
-
-    code(doc,
-"-- JSON-RPC envelope structure\n"
-'{ "jsonrpc": "2.0", "id": 1, "method": "tools/call",\n'
-'  "params": { "name": "customer_lookup", "arguments": { "customer_id": "C001" } } }\n\n'
-"-- Response\n"
-'{ "jsonrpc": "2.0", "id": 1,\n'
-'  "result": { "content": [{ "type": "text", "text": "{name: Alice, plan: Gold}" }] } }')
-
-    H2(doc,"3.2  Capability Types")
+    H2(doc, "1.2  Component Roles")
     table(doc,
-        ["Capability","MCP Methods","Direction","Best For"],
-        [
-            ("Tools",    "tools/list  ·  tools/call",                    "Agent → Server", "Actions, computations, DB queries, API calls — anything with arguments"),
-            ("Resources","resources/list  ·  resources/read  ·  resources/subscribe","Agent → Server","Read-only reference data: policies, catalogues, config, static lookups"),
-            ("Prompts",  "prompts/list  ·  prompts/get",                 "Agent → Server","Reusable prompt templates with parameters; centralised prompt management"),
-        ],
-        widths=[3.2,5.8,3.0,6.5])
+          ["Component", "Role", "Port"],
+          [
+              ("Chat UI (SPA)",      "Browser query interface — submits queries, displays streaming responses",       "—"),
+              ("Admin UI (SPA)",     "Hub management — server registry, event logs, health, CRUD",                  "—"),
+              ("Chat Server",        "User auth (PBKDF2-SHA256); session management; response streaming to browser", "8080"),
+              ("MCP Hub Server",     "Server registry, JWT issuance, LLM routing, JWKS, event logging",            "8090"),
+              ("Agent Orchestrator", "LangGraph ReAct loop; calls /discover, opens MCP sessions, invokes tools",    "—"),
+              ("MCP Servers",        "FastMCP servers exposing domain tools over Streamable HTTP with JWT auth",     "9100+"),
+              ("MySQL",              "Registry (mcp_servers), events (hub_events), conversations, users",           "3306"),
+          ],
+          widths=[4.0, 10.0, 2.0])
 
-    H2(doc,"3.3  Tools — Detail")
-    body(doc,
-        "Tools are the primary interaction mechanism. Each tool has a name, description, "
-        "inputSchema (JSON Schema defining accepted parameters), and optionally an outputSchema. "
-        "The agent calls tools/list to discover available tools, then tools/call to invoke them.")
-    code(doc,
-"-- tools/list response (excerpt)\n"
-'[\n'
-'  {\n'
-'    "name":        "order_summary",\n'
-'    "description": "Return the N most recent orders for a given customer.",\n'
-'    "inputSchema": {\n'
-'      "type": "object",\n'
-'      "properties": {\n'
-'        "customer_id": { "type": "string",  "description": "Customer identifier" },\n'
-'        "limit":        { "type": "integer", "description": "Max orders (default 10)" }\n'
-'      },\n'
-'      "required": ["customer_id"]\n'
-'    },\n'
-'    "outputSchema": { "type": "array", "items": { "type": "object" } }\n'
-'  }\n'
-']')
+    callout(doc, "note", "Transport Protocol",
+            "All agent-to-MCP-server communication uses Streamable HTTP (POST /mcp). "
+            "Every request carries an Authorization: Bearer <token> header — not just the initial handshake. "
+            "The session is tracked via an Mcp-Session-Id header returned during initialize.")
 
-    H2(doc,"3.4  Resources — Detail")
+    H2(doc, "1.3  Layer Communication Reference")
     body(doc,
-        "Resources are identified by URI and are read-only. No computation arguments are "
-        "accepted — if arguments are needed, use a Tool instead. "
-        "Servers may support resource subscriptions (push notifications when a resource changes).")
+         "Each boundary in the stack has a fixed HTTP contract. The table below lists the "
+         "method, mandatory headers, request body shape, and response shape for every layer "
+         "transition. No credential or header passes through more than one boundary.")
+
     table(doc,
-        ["URI Scheme","Use Case","Example URI"],
-        [
-            ("docs://",   "Policy, governance, markdown documents",    "docs://pricing-policy/current"),
-            ("data://",   "Catalogue records, reference tables",        "data://product-catalogue/v3"),
-            ("config://", "Feature flags, runtime configuration",       "config://feature-flags/prod"),
-            ("feed://",   "Live data streams, market rates",            "feed://fx-rates/usd-gbp"),
-        ],
-        widths=[3.0,7.0,7.5])
+          ["Boundary", "Method & URL", "Request", "Response"],
+          [
+              ("Browser → Chat Server",
+               "POST /login",
+               'Body: {"username":"alice","password":"..."}\nContent-Type: application/json',
+               '{"access_token":"<hub JWT>","token_type":"bearer","sub":"alice","roles":["agent"]}\nSets HttpOnly cookie: session=<token>'),
+              ("Browser → Chat Server",
+               "POST /messages",
+               'Cookie: session=<hub JWT>\nBody: {"query":"..."}\nContent-Type: application/json',
+               '200 OK (task created); events streamed via GET /sse or polled via GET /poll'),
+              ("Agent → Hub Server",
+               "POST /auth/login",
+               'Body: {"username":"...","password":"..."}\nContent-Type: application/json',
+               '{"access_token":"<RS256 JWT>","token_type":"bearer","sub":"...","roles":[...]}'),
+              ("Agent → Hub Server",
+               "POST /discover",
+               'Authorization: Bearer <hub JWT>\nContent-Type: application/json\nBody: {"intent":"customer C007 loyalty status"}',
+               '{"servers":[{config + "server_token":"<RS256 JWT aud=server_id>"}],"method":"agent","reason":"...","hub_metadata":{...},"auth_meta":{...}}'),
+              ("Agent → MCP Server",
+               "POST /mcp  (initialize)",
+               'Authorization: Bearer <server JWT>\nAccept: application/json, text/event-stream\nContent-Type: application/json\nBody: JSON-RPC initialize',
+               'Header: Mcp-Session-Id: <uuid>\nBody: {"result":{"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"..."}}}'),
+              ("Agent → MCP Server",
+               "POST /mcp  (tools/call)",
+               'Authorization: Bearer <server JWT>\nMcp-Session-Id: <uuid>\nBody: JSON-RPC tools/call with name + arguments',
+               '{"result":{"content":[{"type":"text","text":"{...result JSON...}"}]}}'),
+              ("MCP Server → MySQL",
+               "SQL query (SQLAlchemy)",
+               'Credentials: MYSQL_USER / MYSQL_PASSWORD\nParameterised query against semantic view',
+               'Result rows from customer_360_view, pricing_view, etc.'),
+          ],
+          widths=[2.8, 3.4, 5.6, 4.2])
 
-    H2(doc,"3.5  Prompts — Detail")
-    body(doc,
-        "Prompts let the server own and version prompt templates. The agent fetches and renders "
-        "a prompt with supplied arguments. This allows prompt improvements to roll out without "
-        "redeploying agent code.")
-    code(doc,
-"-- prompts/get request\n"
-'{ "method": "prompts/get",\n'
-'  "params": { "name": "customer_briefing",\n'
-'              "arguments": { "customer_id": "C001", "tone": "professional" } } }\n\n'
-"-- Response\n"
-'{ "messages": [{\n'
-'    "role": "user",\n'
-'    "content": { "type": "text",\n'
-'      "text": "Prepare a professional meeting brief for customer C001. Include: '\
-'account status, recent orders, open issues, and renewal talking points." }\n'
-'}] }')
+    callout(doc, "note", "Credential isolation at every boundary",
+            "Authorization: Bearer in the agent→MCP request carries the per-server JWT — "
+            "not the hub JWT or any MySQL credential. "
+            "MYSQL_USER/MYSQL_PASSWORD are never forwarded beyond the MCP server process boundary.")
 
-    H2(doc,"3.6  Transport Protocol — Streamable HTTP")
-    body(doc,
-        "This implementation uses the Streamable HTTP transport exclusively. All MCP servers "
-        "expose a single POST /mcp endpoint. The agent sends all JSON-RPC messages as HTTP POST "
-        "requests, with session continuity maintained via the Mcp-Session-Id header.")
-    table(doc,
-        ["Aspect","Streamable HTTP Detail"],
-        [
-            ("Endpoint",          "Single POST /mcp — all methods (initialize, tools/list, tools/call, …) use the same URL"),
-            ("Session init",      "First POST returns Mcp-Session-Id in the response header — must be sent on all subsequent requests"),
-            ("Subsequent calls",  "POST /mcp with Mcp-Session-Id: <uuid> header — server correlates to session state"),
-            ("Accept header",     "Must include both: Accept: application/json, text/event-stream  (FastMCP returns 406 if missing)"),
-            ("Authorization",     "Authorization: Bearer <per-server JWT>  present on EVERY POST — validated independently each time"),
-            ("Response format",   "JSON response body or text/event-stream depending on method and Accept negotiation"),
-            ("Session teardown",  "DELETE /mcp with Mcp-Session-Id to close cleanly; or session times out server-side"),
-        ],
-        widths=[4.0,13.5])
 
-    callout(doc,"important","Bearer token on every call",
-        "The Authorization: Bearer <token> header must be present on EVERY JSON-RPC request — "
-        "not just the initialize handshake. The MCP server's JWTVerifier validates the token "
-        "independently on each request. An expired token will be rejected mid-session with HTTP 401, "
-        "even if the session was previously established successfully.")
+# ---------------------------------------------------------------------------
+# 2. Authentication
+# ---------------------------------------------------------------------------
 
+def _s2(doc, paths):
     doc.add_page_break()
+    H1(doc, "2.  Authentication")
+    lead(doc,
+         "Authentication is centralised in hub_service/auth.py. "
+         "It supports multiple providers (local RS256/HS256, Azure AD/Entra ID, static API key) "
+         "and enforces a strict verification priority chain on every hub API call.")
 
-    # ===========================================================================
-    # 4 · HUB ARCHITECTURE
-    # ===========================================================================
-    H1(doc,"4.  MCP Hub Architecture")
+    img(doc, paths.get("auth"), width_cm=16.0,
+        caption="Figure 2 — End-to-End Authentication Flow")
 
-    H2(doc,"4.1  System Architecture Overview")
+    H2(doc, "2.1  Auth Provider Configuration")
     body(doc,
-        "The diagram below shows all system components across four layers: "
-        "presentation (browser), application (chat server + hub server), "
-        "orchestration (agent), and integration (MCP servers + database).")
-    img(doc, paths["system"], width_cm=16.5,
-        caption="Figure 1 — System Architecture Overview")
-
-    H2(doc,"4.2  Hub Responsibilities")
-    table(doc,
-        ["Responsibility","Detail","Implemented In"],
-        [
-            ("Server Registry",        "MySQL table mcp_servers: id, endpoint, transport (streamable-http), capabilities, api_key, is_active","hub_server.py + db.py"),
-            ("JWKS Publication",       "GET /.well-known/jwks.json — publishes RSA public key in JWK Set format for server verification","hub_server.py"),
-            ("JWT Issuance",           "POST /discover mints per-server RS256 JWT: aud=server_id, exp=1h, sub=user, roles forwarded",  "hub_server.py"),
-            ("LLM Routing",            "LangGraph ReAct agent selects best-matching MCP server per query using capability/skills/examples","hub_server.py"),
-            ("Registry Cache",         "In-process 60s cache of mcp_servers; POST /api/hub/refresh for immediate invalidation",       "hub_server.py load_hub()"),
-            ("Admin REST API",         "CRUD for servers, user management, event log query (admin role required)",                     "hub_server.py /api/hub/*"),
-            ("Admin UI",               "Browser SPA: server list, tool probe, key copy, event log viewer",                           "hub_server.py (inline HTML)"),
-            ("Observability",          "log_event() fans out to memory + stdout + JSONL file + MySQL hub_events",                     "observability.py"),
-            ("Hub RBAC",               "_classify_token() validates hub JWT + checks roles against endpoint requirement",             "hub_server.py"),
-        ],
-        widths=[4.0,9.5,4.0])
-
-    H2(doc,"4.3  Request Lifecycle")
-    body(doc,"Every agent query follows this six-step lifecycle:")
-    numbered(doc,1,"Browser sends query via POST to Chat Server over an active SSE session.",label="User sends query:  ")
-    numbered(doc,2,"Chat Server launches run_agent(query) as a background asyncio.Task.",label="Task created:  ")
-    numbered(doc,3,"Agent calls POST /discover with the user's hub JWT. Hub validates, runs LLM routing, returns selected server(s) + per-server JWTs.",label="Hub discovery:  ")
-    numbered(doc,4,"Agent opens a Streamable HTTP MCP session to the selected server. Sends initialize, receives Mcp-Session-Id, then attaches both the session ID and the per-server JWT on every subsequent call.",label="MCP session open:  ")
-    numbered(doc,5,"Agent's LangGraph ReAct loop: discover tools → select tool → call tool → observe result → synthesise answer.",label="ReAct loop:  ")
-    numbered(doc,6,"Final answer emitted as SSE event to browser. Saved to MySQL conversations regardless of connection state.",label="Answer streamed:  ")
-
-    H2(doc,"4.4  Hub Internal Components")
-    code(doc,
-"hub_server.py  (FastAPI application)\n"
-"  │\n"
-"  ├── _startup()               Load RSA keys; create DB tables; ensure api_key column exists\n"
-"  ├── load_hub()               MySQL registry query with 60s in-process cache\n"
-"  ├── _classify_token()        Validate hub JWT: RS256 sig · iss · aud · exp · RBAC role check\n"
-"  ├── GET /.well-known/jwks.json  Serve RSA public key as JWK Set\n"
-"  ├── POST /discover\n"
-"  │     ├── validate hub JWT\n"
-"  │     ├── load_hub() → server list (from cache, transport=streamable-http)\n"
-"  │     ├── _agent_route()     LangGraph ReAct agent (new instance per request)\n"
-"  │     │     └── pick_server(id, reason) tool → best server selected\n"
-"  │     └── for each matched server:\n"
-"  │           mint RS256 JWT (aud=server_id, exp=1h) using private.pem\n"
-"  ├── GET /servers             Return active server list (auth: agent|admin)\n"
-"  └── /api/hub/*              Admin CRUD: add / edit / disable / delete / probe / refresh\n"
-"\n"
-"db.py\n"
-"  └── get_engine()  SQLAlchemy engine — pool_pre_ping + pool_recycle=1800s (MySQL timeout guard)\n"
-"\n"
-"observability.py\n"
-"  └── log_event()   4-way fan-out: deque(500) + stdout + logs/hub.log (JSONL) + hub_events table")
-
-    doc.add_page_break()
-
-    # ===========================================================================
-    # 5 · SERVER REGISTRATION
-    # ===========================================================================
-    H1(doc,"5.  Server Registration & Governance")
-
-    H2(doc,"5.1  Registry Schema")
-    body(doc,
-        "Every MCP server participating in the hub ecosystem must be registered "
-        "in the mcp_servers table. This table is the authoritative source of truth "
-        "for routing, JWT audience validation, and admin UI display.")
-    code(doc,
-"CREATE TABLE mcp_servers (\n"
-"    id              VARCHAR(100)   NOT NULL,          -- JWT aud value; unique per server\n"
-"    name            VARCHAR(255)   NOT NULL,          -- display name (Admin UI)\n"
-"    endpoint        VARCHAR(500)   NOT NULL,          -- full MCP URL (http://host:port/path)\n"
-"    transport       VARCHAR(50)    NOT NULL DEFAULT 'streamable-http',  -- always 'streamable-http'\n"
-"    capability      TEXT,                             -- one-line routing hint\n"
-"    skills          JSON,                             -- e.g. ['customer','crm','360']\n"
-"    description     TEXT,                             -- detailed routing context\n"
-"    examples        JSON,                             -- sample queries for routing\n"
-"    start_cmd       TEXT,                             -- how to start the server locally\n"
-"    api_key         VARCHAR(1000)  DEFAULT NULL,      -- static fallback Bearer token\n"
-"    api_key_expires TIMESTAMP      DEFAULT NULL,      -- NULL = never\n"
-"    is_active       TINYINT(1)     NOT NULL DEFAULT 1,-- 0=disabled; excluded from routing\n"
-"    created_at      TIMESTAMP      NOT NULL DEFAULT CURRENT_TIMESTAMP,\n"
-"    updated_at      TIMESTAMP      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,\n"
-"    PRIMARY KEY (id)\n"
-") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;")
-
-    H2(doc,"5.2  Registration Methods")
-    numbered(doc,1,
-        "mcp-hub.json seed file — declarative JSON list seeded via python scripts/seed_hub_db.py. "
-        "Uses INSERT ... ON DUPLICATE KEY UPDATE — safe to re-run. "
-        "Best for bootstrapping a known set of servers.",
-        label="JSON seed script:  ")
-    numbered(doc,2,
-        "POST /api/hub/servers (Admin UI or REST) — add servers at runtime. "
-        "Requires admin JWT. Suitable for CI/CD pipelines that register new services on deploy.",
-        label="REST API:  ")
-    numbered(doc,3,
-        "PUT /api/hub/servers/{id} — update any field of an existing registration. "
-        "Changes appear within 60 seconds (or immediately after POST /api/hub/refresh).",
-        label="Update:  ")
-
-    callout(doc,"warning","Re-seed re-activates disabled servers",
-        "The seed UPSERT sets is_active=1 unconditionally. If you manually disabled a server "
-        "via the Admin UI and then re-seed, it will be re-activated. "
-        "To prevent this: remove the server from mcp-hub.json, or set is_active=0 after seeding.")
-
-    H2(doc,"5.3  Server Lifecycle")
-    img(doc, paths["lifecycle"], width_cm=16.0,
-        caption="Figure 2 — Server Registration & Lifecycle State Machine")
-
-    H2(doc,"5.4  Admin Operations")
-    table(doc,
-        ["Operation","Endpoint","Auth","Behaviour"],
-        [
-            ("Add server",    "POST /api/hub/servers",           "admin", "Insert registry row; active immediately after cache refresh"),
-            ("Edit server",   "PUT /api/hub/servers/{id}",       "admin", "Update any field; change visible within 60s"),
-            ("Disable",       "PATCH /api/hub/servers/{id}",     "admin", "Set is_active=0; excluded from all routing"),
-            ("Probe server",  "POST /api/hub/servers/{id}/probe","admin", "Hub mints test JWT → calls tools/list → verifies auth working"),
-            ("Refresh cache", "POST /api/hub/refresh",           "admin", "Bust 60s cache immediately; next /discover reads fresh DB"),
-            ("View logs",     "GET /api/logs",                   "admin", "Return last N events from MySQL hub_events (or in-memory)"),
-            ("Delete server", "DELETE /api/hub/servers/{id}",    "admin", "Remove row permanently; irreversible"),
-        ],
-        widths=[3.0,5.5,2.0,7.0])
-
-    callout(doc,"note","Probe admin JWT",
-        "When the Admin UI probes a server, the hub mints a temporary JWT (aud=server_id) "
-        "and calls tools/list. If auth is misconfigured on the MCP server, the probe "
-        "returns an error and surfaces it in the Admin UI — useful for debugging JWT config.")
-
-    doc.add_page_break()
-
-    # ===========================================================================
-    # 6 · AUTHENTICATION — END TO END
-    # ===========================================================================
-    H1(doc,"6.  Authentication Architecture — End to End")
-    body(doc,
-        "Authentication in the MCP Hub follows a layered, zero-trust model. "
-        "Every boundary between components is independently authenticated using a "
-        "different credential type. Compromise of one layer does not give access to another.")
-
-    callout(doc,"security","Core Security Principle — Credential Isolation",
-        "Hub JWT           → accepted at hub API; never sent to MCP servers\n"
-        "Per-server JWT    → accepted at MCP server; never forwarded to DB or external APIs\n"
-        "DB credentials    → used inside MCP server only; never sent to agent or hub\n"
-        "External API keys → used inside MCP server only; never sent to agent or hub\n\n"
-        "Each layer owns exactly one credential type and validates it independently.")
-
-    H2(doc,"6.0  Authentication Overview Diagram")
-    img(doc, paths["auth"], width_cm=17.5,
-        caption="Figure 3 — End-to-End Authentication Swimlane (Five Phases)")
-
-    H2(doc,"6.0b  RSA Key Infrastructure")
-    img(doc, paths["jwt"], width_cm=16.5,
-        caption="Figure 4 — JWT Token Lifecycle & RSA Key Infrastructure")
-    body(doc,
-        "The hub generates a 2048-bit RSA key pair on first startup. The private key signs "
-        "all JWTs and never leaves the hub process. The public key is published as a JWK Set "
-        "at the well-known JWKS endpoint. MCP servers fetch and cache this on startup, "
-        "then use it to verify every incoming Bearer token without contacting the hub again.")
-
-    code(doc,
-"# Hub startup — key generation (hub_server.py _startup())\n"
-"from cryptography.hazmat.primitives.asymmetric import rsa\n"
-"from cryptography.hazmat.primitives import serialization\n\n"
-"private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)\n"
-"private_pem = private_key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())\n"
-"public_pem  = private_key.public_key().public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)\n"
-"Path('hub_service/.keys/private.pem').write_bytes(private_pem)\n"
-"Path('hub_service/.keys/public.pem').write_bytes(public_pem)\n\n"
-"# JWKS endpoint — served to all MCP servers\n"
-"# GET /.well-known/jwks.json\n"
-'{ "keys": [{ "kty":"RSA", "use":"sig", "alg":"RS256",\n'
-'             "n":"<base64url modulus>", "e":"AQAB" }] }')
-
-    divider(doc); spacer(doc,4)
-
-    # ── PHASE 1
-    phase_banner(doc,"1","User Login — Browser to Chat Server",
-        "User submits credentials. Chat server verifies PBKDF2 hash. Issues hub JWT as session cookie.",
-        C["phase1"])
-    body(doc,
-        "The chat server maintains a user table seeded from the CHAT_USERS environment variable. "
-        "Passwords are stored as PBKDF2-SHA256 hashes with a unique random salt per user. "
-        "On successful login, a hub JWT (8-hour expiry) is returned as an HttpOnly cookie.")
-    code(doc,
-"-- Step 1: Browser\n"
-'POST /login  Body: { "username": "alice", "password": "s3cret!" }\n\n'
-"-- Step 2: Chat server — hash verification\n"
-"stored = 'pbkdf2:sha256:200000:<16-byte-salt>:<hex-digest>'\n"
-"salt, expected = parse_stored_hash(stored)\n"
-"derived = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 200_000)\n"
-"if not hmac.compare_digest(derived, expected):  →  401 Unauthorized\n\n"
-"-- Step 3: Mint hub JWT (RS256)\n"
-'payload = { "sub": "alice", "roles": ["agent"],\n'
-'            "iss": "mcp-hub", "aud": "mcp-hub", "exp": now + 28800 }\n'
-'token = jwt.encode(payload, private_key, algorithm="RS256")\n\n'
-"-- Step 4: Return token\n"
-"Set-Cookie: session=<token>; HttpOnly; SameSite=Strict; Secure")
+         "Two top-level flags in hub_service/auth.py govern all auth behaviour. "
+         "AUTH_PROVIDER selects the trust anchor. AUTH_ENABLED can disable all checks "
+         "for local development only — never set false in production.")
 
     table(doc,
-        ["Control","Implementation","Attack Mitigated"],
-        [
-            ("PBKDF2-SHA256",   "200,000 iterations + unique 16-byte salt per user",       "Offline brute-force · Rainbow tables"),
-            ("Rate limiting",   "10 failed attempts per username in 15-min window → 423",  "Online brute-force"),
-            ("HttpOnly cookie", "Browser JS cannot read the token",                         "XSS token theft"),
-            ("SameSite=Strict", "Cookie not sent on cross-origin requests",                 "CSRF attacks"),
-            ("Constant-time compare","hmac.compare_digest() prevents timing oracle",        "Timing side-channel"),
-        ],
-        widths=[4.0,6.5,6.0])
+          ["AUTH_PROVIDER", "Trust Anchor", "Tokens Accepted", "When to Use"],
+          [
+              ("local (default)", "Hub RSA private key",
+               "RS256 JWT (hub-minted) · HS256 JWT (JWT_SECRET) · static HUB_API_KEY",
+               "Self-hosted; no external identity provider"),
+              ("azure",           "Azure AD / Entra ID JWKS",
+               "Microsoft-issued OIDC tokens (RS256)",
+               "Enterprise; existing Azure AD tenant"),
+              ("(disabled)",      "None — AUTH_ENABLED=false",
+               "All requests pass as anonymous admin",
+               "Local dev only — never staging/production"),
+          ],
+          widths=[2.8, 3.5, 6.2, 3.5])
 
-    divider(doc); spacer(doc,4)
+    code(doc,
+"# hub_service/auth.py — loaded at module import\n"
+"AUTH_ENABLED  = os.environ.get('AUTH_ENABLED', 'true').lower() in ('1','true','yes')\n"
+"AUTH_PROVIDER = os.environ.get('AUTH_PROVIDER', 'local')  # 'local' | 'azure'\n\n"
+"# local provider\n"
+"HUB_API_KEY  = os.environ.get('HUB_API_KEY', '')    # static pre-shared key\n"
+"JWT_SECRET   = os.environ.get('JWT_SECRET', '')     # HS256 shared secret\n"
+"# azure provider\n"
+"AZURE_TENANT_ID = os.environ.get('AZURE_TENANT_ID', '')\n"
+"AZURE_CLIENT_ID = os.environ.get('AZURE_CLIENT_ID', '')")
 
-    # ── PHASE 2
-    phase_banner(doc,"2","Hub API Authentication — Agent to Hub Server",
-        "Every hub API call requires a valid hub JWT. Hub validates locally — no DB round-trip.",
-        C["phase2"])
+    H2(doc, "2.2  Token Verification Flow")
     body(doc,
-        "The hub validates hub JWTs using its own RSA public key, loaded from public.pem at "
-        "startup. The _classify_token() function decodes and verifies the token, then checks "
-        "the caller's roles against the endpoint's required role.")
+         "verify_token() implements a strict priority chain. Steps are tried in order "
+         "and the first match wins. Algorithm routing (Step 3) reads the JWT header "
+         "without signature verification to detect RS256 vs HS256 before choosing the path.")
+
     code(doc,
-"-- Agent calls hub\n"
-"POST /discover\n"
-"Authorization: Bearer eyJhbGciOiJSUzI1NiJ9...\n\n"
-"-- hub_server.py _classify_token()\n"
-"decoded = jwt.decode(\n"
-"    token, public_key,\n"
-"    algorithms=['RS256'],\n"
-"    issuer='mcp-hub',\n"
-"    audience='mcp-hub'\n"
-")  # raises on bad sig / expired / wrong iss or aud → 401\n\n"
-"-- RBAC check\n"
-"required = endpoint_roles['/discover']   # = {'agent', 'admin'}\n"
-"caller   = set(decoded['roles'])         # = {'agent'}\n"
-"if not caller & required:  →  403 Forbidden\n"
-"# else: proceed — decoded['sub'] and decoded['roles'] used for per-server JWT minting")
+"# verify_token() priority chain — hub_service/auth.py\n\n"
+"Step 0  AUTH_ENABLED = false      → pass, claims = {sub: anonymous, roles: [admin]}\n"
+"Step 1  AUTH_PROVIDER = azure     → _verify_azure()        # OIDC via Microsoft JWKS\n"
+"Step 2  token == HUB_API_KEY      → pass, claims = {sub: api-key-user, roles: [...]}\n"
+"Step 3  JWT header alg = RS256    → _verify_jwt_rs256()    # sig · iss · aud · exp\n"
+"Step 4  JWT_SECRET is configured  → _verify_jwt_local()    # HS256 sig · exp\n"
+"Step 5  RS256 last resort         → _verify_jwt_rs256()    # unknown alg, try anyway\n"
+"Step 6  _DEV_MODE_ACTIVE          → pass, claims = {sub: dev, roles: [admin]}\n"
+"Step 7  No match                  → 401 Unauthorized")
 
-    table(doc,
-        ["Hub Role","Permitted Endpoints","Typical Holder"],
-        [
-            ("admin",    "All: /discover · /servers · /health · /api/hub/* (CRUD)",  "Operator / admin login"),
-            ("agent",    "POST /discover · GET /servers · GET /health",               "Agent/orchestrator process"),
-            ("readonly", "GET /servers · GET /health only",                           "Monitoring / audit consumer"),
-        ],
-        widths=[3.0,9.5,5.0])
+    callout(doc, "warning", "Dev Mode — Exact Activation Conditions",
+            "_DEV_MODE_ACTIVE fires only when ALL four hold simultaneously:\n"
+            "  1.  AUTH_ENABLED = true\n"
+            "  2.  AUTH_PROVIDER = local\n"
+            "  3.  HUB_API_KEY is not set\n"
+            "  4.  JWT_SECRET is not set\n\n"
+            "Hub emits a ⚠ startup WARNING. Setting JWT_SECRET is the minimum to exit dev mode.\n"
+            "RSA key files are auto-generated on startup but do NOT by themselves exit dev mode.")
 
-    divider(doc); spacer(doc,4)
+    H2(doc, "2.3  JWT Token Lifecycle & Key Infrastructure")
+    img(doc, paths.get("jwt"), width_cm=16.0,
+        caption="Figure 3 — JWT Token Lifecycle & RSA Key Infrastructure")
 
-    # ── PHASE 3
-    phase_banner(doc,"3","Server Discovery & JWT Minting — POST /discover",
-        "Hub runs LLM routing to select the best MCP server, then mints a scoped RS256 JWT for it.",
-        C["phase3"])
-    H3(doc,"LLM Routing Implementation")
     body(doc,
-        "A fresh LangGraph ReAct agent is instantiated for each /discover call. "
-        "The agent receives all active servers' capability, skills, description, and examples "
-        "in its system prompt, then reasons about which server best fits the user's query.")
-    callout(doc,"important","New agent instance per request",
-        "LangGraph ReAct agents hold internal message state. A shared instance across "
-        "concurrent requests would interleave messages and produce wrong routing decisions. "
-        "A new instance costs ~1ms and is always safe. Never reuse a routing agent across requests.")
-    code(doc,
-"# hub_server.py _agent_route()\n"
-"def _agent_route(query: str, servers: list[dict]) -> list[str]:\n"
-"    tool = _make_routing_tool(servers)          # stateless tool wrapping pick_server logic\n"
-"    agent = create_react_agent(llm, [tool])     # NEW instance per call\n"
-"    result = agent.invoke({\n"
-"        'messages': [('user', build_routing_prompt(query, servers))]\n"
-"    })\n"
-"    return extract_selected_ids(result)         # list of server IDs to mint JWTs for\n\n"
-"# Routing prompt injects:\n"
-"#   - User query\n"
-"#   - For each server: id, capability, skills, description, examples\n"
-"# LLM reasons: THINK → CALL pick_server(id, reason) → OBSERVE\n"
-"# Fallback: if LLM unavailable → return first registered server")
+         "The hub generates a 2048-bit RSA key pair on first startup "
+         "(hub_service/.keys/private.pem and public.pem). "
+         "The private key signs all tokens and never leaves the hub process. "
+         "The public key is published at GET /.well-known/jwks.json with a kid (Key ID) "
+         "header that enables key rotation without downtime.")
 
-    H3(doc,"Per-Server JWT Minting")
     code(doc,
-"# For each server selected by routing agent:\n"
-"import jwt as pyjwt\n"
-"import time\n\n"
+"# JWKS endpoint — GET /.well-known/jwks.json\n"
+'{ "keys": [{ "kty":"RSA", "kid":"hub-rsa-1", "use":"sig", "alg":"RS256",\n'
+'             "n":"<base64url modulus>", "e":"AQAB" }] }\n\n'
+"# Token minting CLI — development and testing\n"
+"python hub_service/auth.py --sub agent --roles agent --hours 24\n"
+"python hub_service/auth.py --sub admin --roles admin,agent --hours 8\n\n"
+"# Key rotation: update HUB_JWT_KID → restart hub → wait 1h for old tokens to expire")
+
+    H2(doc, "2.4  Server Discovery & Token Scoping")
+    body(doc,
+         "When an agent calls POST /discover, the hub validates the caller's hub JWT, "
+         "runs LLM-based routing to select the best-fit server, then mints a separate "
+         "short-lived JWT for each matched server. Each token is bound exclusively to its target:")
+
+    code(doc,
+"# hub_service/auth.py generate_server_token()\n"
 "payload = {\n"
-"    'iss':   'mcp-hub',          # must match MCP_JWT_ISSUER env on MCP server\n"
-"    'aud':   server['id'],       # SCOPED: only this server can accept this token\n"
-"    'sub':   hub_claims['sub'],  # forwarded from hub JWT (the user's identity)\n"
-"    'roles': hub_claims['roles'],# forwarded (never elevated)\n"
-"    'iat':   int(time.time()),\n"
-"    'exp':   int(time.time()) + 3600   # 1 hour — shorter than 8h user session\n"
-"}\n"
-"private_key = Path('hub_service/.keys/private.pem').read_bytes()\n"
-"server_token = pyjwt.encode(payload, private_key, algorithm='RS256')\n\n"
-"# Returned in /discover response:\n"
-"# { servers: [{ ...server_config, server_token: '<JWT>' }], method: 'agent', intent: '...' }")
+"    'iss':       'fab-mcp-hub',    # must match MCP_JWT_ISSUER on MCP server\n"
+"    'aud':       server_id,        # only this server accepts this token\n"
+"    'sub':       caller_sub,       # forwarded from hub JWT — never elevated\n"
+"    'roles':     caller_roles,     # forwarded from hub JWT — never elevated\n"
+"    'server_id': server_id,        # additional claim for MCP server filtering\n"
+"    'exp':       now + 3600,       # 1 hour — shorter than hub session (8h)\n"
+"}")
 
-    callout(doc,"security","Why audience-scoped tokens?",
-        "Each JWT carries aud = server_id. Server B rejects a token intended for Server A "
-        "because the aud claim doesn't match. This means:\n"
-        "  * A token intercepted in transit to Server A cannot be replayed against any other server\n"
-        "  * Blast radius of a token compromise = 1 server x 1 hour\n"
-        "  * Revocation is implicit — the token expires within 1 hour")
+    callout(doc, "security", "Why Per-Server Audience Scoping",
+            "Each JWT carries aud = server_id. Server B rejects a token intended for Server A "
+            "because the audience claim does not match.\n"
+            "Blast radius of any single token compromise: 1 server × 1 hour.\n"
+            "A single token valid on all servers would create unlimited cross-service blast radius.")
 
-    divider(doc); spacer(doc,4)
-
-    # ── PHASE 4
-    phase_banner(doc,"4","MCP Server JWT Validation — Agent to MCP Server (Streamable HTTP)",
-        "Agent opens a Streamable HTTP session. Per-server JWT attached and validated on every call.",
-        C["phase4"])
-    H3(doc,"Token Priority Chain")
-    code(doc,
-"# agent.py mcp_session() — token resolution\n"
-"token = (\n"
-"    server.get('server_token')     # 1st: per-server JWT from /discover  ← PREFERRED\n"
-"    or server.get('api_key')       # 2nd: static key from registry DB\n"
-"    or os.environ.get('MCP_API_KEY')  # 3rd: global env fallback\n"
-")\n"
-"auth_headers = {'Authorization': f'Bearer {token}'} if token else {}")
-
-    H3(doc,"Two-Layer Middleware Architecture")
+    H2(doc, "2.5  MCP Server JWT Validation")
     body(doc,
-        "Two middleware layers run in sequence on every Streamable HTTP request. "
-        "They are complementary — the first validates the JWT cryptographically via the hub's "
-        "JWKS endpoint; the second decodes the already-verified claims into a per-request "
-        "ContextVar for RBAC without a redundant JWKS round-trip:")
+         "MCP servers run two middleware layers in sequence on every Streamable HTTP request. "
+         "FastMCP's JWTVerifier handles cryptographic validation; "
+         "BearerClaimsMiddleware decodes the already-verified claims into a per-request ContextVar "
+         "for RBAC — without a second JWKS round-trip.")
+
     code(doc,
-"# mcp_server/server.py — middleware registration\n\n"
+"# mcp_server/server.py — middleware registration (order matters)\n\n"
 "# Layer 1 — FastMCP JWTVerifier (cryptographic validation)\n"
-"from fastmcp.server.auth.providers.jwt import JWTVerifier\n"
 "verifier = JWTVerifier(\n"
-"    jwks_uri = f'{HUB_URL}/.well-known/jwks.json',  # fetches RSA public key from hub\n"
-"    issuer   = 'mcp-hub',\n"
-"    audience = os.environ['MCP_SERVER_ID']           # e.g. 'customer-server'\n"
-")\n"
-"# Returns HTTP 401 if:\n"
-"#   RS256 signature invalid | aud != MCP_SERVER_ID\n"
-"#   iss != 'mcp-hub'        | token has expired\n\n"
-"# Layer 2 — BearerClaimsMiddleware (decode for RBAC — no second JWKS fetch)\n"
+"    jwks_uri = f'{HUB_URL}/.well-known/jwks.json',   # fetches RSA public key from hub\n"
+"    issuer   = os.environ['MCP_JWT_ISSUER'],          # must match HUB_JWT_ISSUER\n"
+"    audience = os.environ['MCP_SERVER_ID']            # must match aud in token\n"
+")  # returns HTTP 401 on: invalid sig | wrong aud | wrong iss | expired\n\n"
+"# Layer 2 — BearerClaimsMiddleware (decode for RBAC — no 2nd JWKS call)\n"
 "class BearerClaimsMiddleware(BaseHTTPMiddleware):\n"
 "    async def dispatch(self, request, call_next):\n"
 "        token = request.headers.get('Authorization','').removeprefix('Bearer ').strip()\n"
-"        if token:\n"
-"            # verify_signature=False is safe — JWTVerifier already validated above\n"
-"            payload = jwt.decode(token, options={'verify_signature': False})\n"
-"            _request_claims.set({'sub': payload['sub'],\n"
-"                                  'roles': payload.get('roles', ['agent'])})\n"
+"        payload = jwt.decode(token, options={'verify_signature': False})\n"
+"        _request_claims.set({'sub': payload['sub'], 'roles': payload.get('roles',[])})\n"
 "        return await call_next(request)")
 
-    H3(doc,"Session Lifecycle — Streamable HTTP")
+
+# ---------------------------------------------------------------------------
+# 3. Authorization
+# ---------------------------------------------------------------------------
+
+def _s3(doc, paths):
+    doc.add_page_break()
+    H1(doc, "3.  Authorization")
+    lead(doc,
+         "Authorization operates at two levels: hub-side RBAC (role checked on every hub API call) "
+         "and per-tool RBAC inside each MCP server (role enforced before any business logic executes).")
+
+    H2(doc, "3.1  Role Model")
+    table(doc,
+          ["Role", "Hub Access", "MCP Tool Access", "Typical Holder"],
+          [
+              ("admin",
+               "All endpoints — /discover · /servers · /health · /api/hub/* (full CRUD)",
+               "All tools — bypasses role checks (admin is implicit in require_role)",
+               "Operator / admin login"),
+              ("agent",
+               "POST /discover · GET /servers · GET /health",
+               "Tools annotated require_role('agent') or require_role('agent','admin')",
+               "AI agent / orchestrator process"),
+              ("readonly",
+               "GET /servers · GET /health only",
+               "Read-only tools only",
+               "Monitoring system / audit consumer"),
+          ],
+          widths=[2.0, 5.0, 5.0, 4.0])
+
+    callout(doc, "note", "Role Forwarding — No Elevation",
+            "Roles from the hub JWT are copied unchanged into every per-server JWT — never elevated. "
+            "An agent presenting an 'agent' hub token always gets 'agent' server tokens. "
+            "The hub cannot be tricked into issuing elevated server tokens.")
+
+    H2(doc, "3.2  Per-Tool RBAC Enforcement")
+    body(doc,
+         "Every tool function calls require_role() as its first statement — before any I/O, "
+         "database access, or input validation. Claims come from BearerClaimsMiddleware via ContextVar.")
+
     code(doc,
-"# agent.py mcp_session() — Streamable HTTP\n"
-"from mcp.client.streamable_http import streamablehttp_client\n\n"
-"async with streamablehttp_client(\n"
-"    server['endpoint'],        # e.g. https://mcp.internal:9100/mcp\n"
-"    headers=auth_headers       # Authorization: Bearer <per-server JWT>\n"
-") as (read_stream, write_stream, _):\n"
-"    async with ClientSession(read_stream, write_stream) as session:\n\n"
-"        # Step 1 — initialize  (POST /mcp)\n"
-"        #   JWTVerifier validates token; server returns Mcp-Session-Id in response header\n"
-"        await session.initialize()\n\n"
-"        # Step 2 — discover tools  (JWT + session ID sent on every call)\n"
-"        tools = await session.list_tools()\n\n"
-"        # Step 3 — call a tool  (JWT re-validated; require_role() enforced inside tool)\n"
-"        result = await session.call_tool('customer_360', {'customer_id': 'C001'})")
-
-    divider(doc); spacer(doc,4)
-
-    # ── PHASE 5
-    phase_banner(doc,"5","Per-Tool RBAC — Inside MCP Server Tool Functions",
-        "Each tool enforces its own role check before any business logic executes.",
-        C["phase5"])
-    img(doc, paths["rbac"], width_cm=15.0,
-        caption="Figure 5 — Per-Tool RBAC Decision Flow")
-
-    H3(doc,"Implementation Pattern")
-    code(doc,
-"# mcp_server/auth.py\n"
-"_request_claims: ContextVar[dict] = ContextVar('mcp_request_claims', default={})\n\n"
-"def require_role(*roles: str) -> None:\n"
-"    claims = _request_claims.get()\n"
-"    if not claims:                          # empty = open dev mode (no auth)\n"
-"        return\n"
-"    user_roles = claims.get('roles', [])\n"
-"    if 'admin' in user_roles:               # admin bypasses all checks\n"
-"        return\n"
-"    if not any(r in user_roles for r in roles):\n"
-"        raise PermissionError(\n"
-"            f'Role required: {list(roles)}, caller has {user_roles}'\n"
-"        )  # → FastMCP serialises as JSON-RPC error, HTTP 403\n\n"
-"def audit_log(tool: str, args: dict | None = None, service: str = 'mysql') -> None:\n"
-"    claims = _request_claims.get()\n"
-"    print(json.dumps({\n"
-"        'ts':      round(time.time(), 3),\n"
-"        'type':    'tool_audit',\n"
-"        'tool':    tool,\n"
-"        'service': service,\n"
-"        'sub':     claims.get('sub', 'unknown'),\n"
-"        'roles':   claims.get('roles', []),\n"
-"        'args_keys': sorted(args.keys()) if args else [],  # keys only — NO values (PII)\n"
-"    }))")
-
-    H3(doc,"Standard Tool Template")
-    code(doc,
+"# Standard tool pattern — mcp_server/tools.py\n"
 "@mcp.tool()\n"
 "def customer_360(customer_id: str) -> dict:\n"
-"    \"\"\"\n"
-"    Retrieve a full 360-degree customer profile.\n"
-"    Returns: account status, segment, recent orders, open issues.\n"
-"    Requires: 'agent' or 'admin' role.\n"
-"    \"\"\"\n"
-"    # 1. RBAC — MUST be first; before any I/O\n"
-"    require_role('agent', 'admin')\n\n"
-"    # 2. Audit — MUST be before data access; logs keys NOT values\n"
-"    audit_log('customer_360', args={'customer_id': customer_id}, service='mysql')\n\n"
-"    # 3. Input validation\n"
+"    require_role('agent', 'admin')               # 1st: before any I/O\n"
+"    audit_log('customer_360',                    # 2nd: logs keys NOT values (PII)\n"
+"              args={'customer_id': customer_id})\n"
 "    if not customer_id or len(customer_id) > 50:\n"
-"        raise ValueError('customer_id must be 1-50 characters')\n\n"
-"    # 4. Business logic — parameterised query; own DB credentials\n"
+"        raise ValueError('customer_id: 1-50 chars')\n"
 "    return db.query_one(\n"
-"        'SELECT * FROM customer_360_view WHERE id = %s',  # semantic view, not raw table\n"
-"        (customer_id,)   # parameterised — never string-format with user input\n"
+"        'SELECT * FROM customer_360_view WHERE id = %s',\n"
+"        (customer_id,)    # parameterised query — never string-format user input\n"
 "    )")
 
-    table(doc,
-        ["Step","What","Why"],
-        [
-            ("1 — require_role()","Check caller's roles from ContextVar", "No business logic runs without auth check; exception exits cleanly"),
-            ("2 — audit_log()",  "Log tool name, service, sub, roles, args_keys (not values)","Immutable audit trail; PII-safe"),
-            ("3 — validate input","Check types, lengths, allowed values",  "Prevent injection; fail fast with clear error"),
-            ("4 — query semantic view","SELECT from pre-joined view, not raw table","Decouples tool API from schema; prevents accidental joins"),
-        ],
-        widths=[4.0,6.0,7.5])
+    img(doc, paths.get("rbac"), width_cm=14.5,
+        caption="Figure 4 — Per-Tool RBAC Decision Flow")
 
-    doc.add_page_break()
-
-    # ===========================================================================
-    # 7 · CREDENTIAL ISOLATION
-    # ===========================================================================
-    H1(doc,"7.  Credential Isolation Model")
-    img(doc, paths["credentials"], width_cm=16.5,
-        caption="Figure 6 — Credential Isolation Across All Boundaries")
+    H2(doc, "3.3  Credential Isolation")
+    img(doc, paths.get("credentials"), width_cm=16.0,
+        caption="Figure 5 — Credential Isolation: No Credential Crosses a Layer Boundary")
 
     table(doc,
-        ["Boundary","Credential Used","Issued By","Expiry","Never Forwarded To"],
-        [
-            ("Browser → Chat Server",    "Username + PBKDF2 password",          "DBA / env config", "Per request",  "Anything beyond chat server"),
-            ("Chat Server → Browser",    "Hub JWT (RS256, aud=hub, 8h)",         "Hub Server",       "8 hours",      "MCP servers, database"),
-            ("Agent → Hub API",          "Hub JWT (RS256, aud=hub, 8h)",         "Hub Server",       "8 hours",      "MCP servers, database"),
-            ("Hub → MCP Server",         "Per-server JWT (RS256, aud=srv, 1h)",  "Hub Server",       "1 hour",       "Other MCP servers, database"),
-            ("Agent → MCP Server",       "Per-server JWT (RS256, aud=srv, 1h)",  "Hub Server",       "1 hour",       "Other MCP servers, database"),
-            ("MCP Server → Database",    "MYSQL_USER + MYSQL_PASSWORD",          "DBA / .env",       "Connection pool","Agent, hub, browser"),
-            ("MCP Server → External API","MCP_TOOL_KEY",                         ".env file",        "Never expires", "Agent, hub, browser"),
-        ],
-        widths=[4.5,4.5,2.8,2.0,4.2])
+          ["Layer", "Credential Used", "Valid Scope", "Never Forwarded To"],
+          [
+              ("Browser → Chat Server",
+               "Hub JWT (8h, HttpOnly cookie)",
+               "Chat server session only",
+               "MCP servers · MySQL · external APIs"),
+              ("Agent → Hub",
+               "Hub JWT (8h, Authorization header)",
+               "/discover · /servers · /health",
+               "MCP servers · MySQL · external APIs"),
+              ("Agent → MCP Server",
+               "Per-server JWT (1h, aud = server_id)",
+               "Single MCP server only",
+               "Hub · MySQL · other MCP servers"),
+              ("MCP Server → MySQL",
+               "MYSQL_USER / MYSQL_PASSWORD",
+               "DB queries inside MCP server",
+               "Agent · Hub · browser"),
+              ("MCP Server → External APIs",
+               "MCP_TOOL_KEY (env var)",
+               "Tool-specific HTTP calls",
+               "Agent · Hub · browser"),
+          ],
+          widths=[3.5, 4.0, 3.5, 5.0])
 
+
+# ---------------------------------------------------------------------------
+# 4. Hub Service
+# ---------------------------------------------------------------------------
+
+def _s4(doc, paths):
     doc.add_page_break()
+    H1(doc, "4.  Hub Service")
+    lead(doc,
+         "The hub (hub_service/hub_server.py) is the operational core. "
+         "It owns the server registry, issues JWTs, routes discovery requests via an LLM agent, "
+         "and records every event to four simultaneous sinks.")
 
-    # ===========================================================================
-    # 8 · AUTHORIZATION
-    # ===========================================================================
-    H1(doc,"8.  Authorization Framework")
+    H2(doc, "4.1  Server Registry")
     body(doc,
-        "Authorization operates at three independent levels. Passing one level does not "
-        "bypass the others — all three must pass for a tool call to succeed.")
+         "The registry is a MySQL table (mcp_servers) seeded from mcp-hub.json via seed_hub_db.py. "
+         "Servers can be added, edited, disabled, or probed through the admin UI or REST API. "
+         "A 60-second in-process cache minimises MySQL round-trips; "
+         "POST /api/hub/refresh busts it immediately.")
 
-    H2(doc,"8.1  Three-Level Authorization Model")
+    code(doc,
+"# hub_service/mcp-hub.json — declarative source (seeded into MySQL)\n"
+'{\n'
+'  "servers": [{\n'
+'    "id":          "fab-customer-server",\n'
+'    "endpoint":    "http://mcp-customer:9100/mcp",\n'
+'    "transport":   "streamable-http",\n'
+'    "capability":  "customer data — 360 view, order history, loyalty",\n'
+'    "skills":      ["customer lookup", "order history", "loyalty points"],\n'
+'    "is_active":   true\n'
+'  }]\n'
+'}')
+
     table(doc,
-        ["Level","Enforced In","Mechanism","Granularity"],
-        [
-            ("Hub RBAC",     "hub_server.py _classify_token()", "roles in hub JWT vs endpoint requirement",    "Per HTTP endpoint"),
-            ("Server JWT",   "MCP server JWTVerifier",          "aud · iss · exp · RS256 signature",          "Per server (wrong aud = 401)"),
-            ("Tool RBAC",    "Tool function require_role()",     "roles in per-server JWT via ContextVar",     "Per tool function"),
-        ],
-        widths=[3.5,5.0,6.0,4.0])
+          ["Endpoint", "Auth", "Purpose"],
+          [
+              ("GET  /health",               "Public",        "Service status, hub metadata, registered server count"),
+              ("GET  /.well-known/jwks.json","Public",        "RSA public key in JWK Set format for MCP server verification"),
+              ("POST /auth/login",           "Public",        "username+password → RS256 JWT (8h); entry point for agent auth"),
+              ("POST /discover",             "agent | admin", "LLM routing → server selection → per-server JWT minting"),
+              ("GET  /servers",              "agent | admin", "Full active server list with capabilities and skills"),
+              ("GET  /api/logs",             "admin",         "Structured event log — MySQL primary, in-memory fallback"),
+              ("POST /api/hub/refresh",      "admin",         "Bust 60-second registry cache immediately"),
+              ("CRUD /api/hub/servers/*",    "admin",         "Add, edit, enable/disable, delete, probe server entries"),
+          ],
+          widths=[4.2, 2.4, 9.4])
 
-    H2(doc,"8.2  Role Design Guidelines")
-    bullet(doc,"Define roles at the business capability level (e.g. 'pricing-analyst'), not technical level ('db-read').",label="Meaningful roles:  ")
-    bullet(doc,"Use narrow roles for sensitive operations — prefer 'write:pricing' over broad 'admin' for non-operators.",label="Least privilege:  ")
-    bullet(doc,"admin role bypasses ALL tool-level checks — reserve for operators only, not agents.",label="Admin guard:  ")
-    bullet(doc,"Forward only the roles the user holds in the hub JWT — never elevate in the per-server JWT.",label="No elevation:  ")
-    bullet(doc,"Audit every require_role() decision (pass or fail) for compliance traceability.",label="Audit all decisions:  ")
-    bullet(doc,"If a token has no claims (empty ContextVar), tool executes without checks — dev mode only. NEVER in production.",label="Dev mode risk:  ",label_color="9B1C1C")
-
-    H2(doc,"8.3  Scope Extension (Advanced Pattern)")
+    H2(doc, "4.2  LLM-Based Routing")
     body(doc,
-        "For finer-grained control beyond roles, extend the JWT payload with a scopes "
-        "claim (analogous to OAuth 2.0 scopes). Add a require_scope() function alongside "
-        "require_role() for data-level access control.")
+         "Every POST /discover creates a fresh LangGraph ReAct agent instance. "
+         "The agent receives all active servers' capability, skills, description, and examples, "
+         "then reasons about which server best fits the query. "
+         "A new instance per request is required — sharing one across concurrent calls corrupts internal message state.")
+
     code(doc,
-"# Extended JWT payload\n"
-'{ "sub": "alice", "roles": ["agent"],\n'
-'  "scopes": ["read:customer", "read:pricing"],   # ← scope extension\n'
-'  "aud": "customer-server", "exp": now + 3600 }\n\n'
-"# Tool enforcement\n"
-"def order_create(customer_id: str, amount: float) -> dict:\n"
-"    require_role('agent')            # role check\n"
-"    require_scope('write:orders')    # scope check — more granular\n"
-"    audit_log('order_create', args={'customer_id': customer_id})\n"
-"    ...")
-
-    doc.add_page_break()
-
-    # ===========================================================================
-    # 9 · TOOLS, RESOURCES & PROMPTS
-    # ===========================================================================
-    H1(doc,"9.  Tools, Resources & Prompts — Standards")
-
-    H2(doc,"9.1  Tool Design Standards")
-    table(doc,
-        ["Standard","Requirement","Anti-Pattern"],
-        [
-            ("Naming",          "snake_case noun_verb (customer_lookup, order_create)",     "Generic: 'query', 'execute', 'run'"),
-            ("Description",     "First sentence = what a user would ask (for LLM routing)","Vague: 'Does stuff with orders'"),
-            ("inputSchema",     "Every parameter typed + described; required fields explicit","Missing schema; no descriptions"),
-            ("require_role()",  "First statement — before any I/O",                        "After business logic — auth bypass on exception"),
-            ("audit_log()",     "Immediately after require_role() — before data access",    "Skipped; or after DB call"),
-            ("SQL queries",     "Parameterised only; query semantic views not raw tables", "f-string SQL with user input"),
-            ("Output",          "Consistent typed schema; Pydantic or TypedDict",          "Untyped dict; changes per code path"),
-            ("Error handling",  "Raise specific exceptions (ValueError, PermissionError)","Silent except: pass; or raw Exception"),
-            ("Single responsibility","One tool = one action",                              "Mode parameter that branches behaviour"),
-            ("Input caps",      "Server-side max (e.g. limit <= 100) regardless of caller","Trust caller-provided limits"),
-        ],
-        widths=[3.5,6.5,7.5])
-
-    H2(doc,"9.2  Resource Standards")
-    bullet(doc,"Use URI templates (RFC 6570) for parameterised resources: data://orders/{order_id}",label="URIs:  ")
-    bullet(doc,"Declare mimeType on every resource (text/markdown, application/json, text/csv).",label="MIME type:  ")
-    bullet(doc,"Resources must be read-only. If computation or arguments are needed, use a Tool.",label="Read-only:  ")
-    bullet(doc,"Support resources/subscribe for data that changes frequently (rates, status).",label="Subscriptions:  ")
-
-    H2(doc,"9.3  Prompt Standards")
-    bullet(doc,"Version prompts — include version in the prompt name: customer_briefing_v2.",label="Versioning:  ")
-    bullet(doc,"Declare all arguments with required flag and description.",label="Arguments:  ")
-    bullet(doc,"Test prompts against the target LLM — prompt effectiveness is model-dependent.",label="Testing:  ")
-    bullet(doc,"Use prompts for complex multi-step reasoning where template structure is stable.",label="Use case:  ")
-
-    doc.add_page_break()
-
-    # ===========================================================================
-    # 10 · OBSERVABILITY
-    # ===========================================================================
-    H1(doc,"10.  Observability & Audit Trail")
-
-    H2(doc,"10.1  Four-Way Event Fan-Out")
-    body(doc,
-        "Every log_event() call in the hub fans out to four independent sinks. No single "
-        "sink failure blocks the others — degraded observability is always preferred over "
-        "dropped requests.")
-    code(doc,
-"# hub_service/observability.py\n"
-"def log_event(event_type: str, **data) -> None:\n"
-"    entry = {'ts': round(time.time(), 3), 'type': event_type, **data}\n\n"
-"    # Sink 1: in-memory ring buffer (maxlen=500) — GET /api/logs fast path\n"
-"    with _lock: _buffer.append(entry)\n\n"
-"    # Sink 2: stdout (print) — docker logs / console\n"
-"    print(json.dumps(entry, default=str))\n\n"
-"    # Sink 3: JSONL file (line-buffered) — logs/hub.log\n"
-"    #   opened ONCE at module import time (not per-event) → no per-call fd overhead\n"
-"    _write_log(entry)\n\n"
-"    # Sink 4: MySQL hub_events table\n"
-"    #   _db_failed = True permanently after first failure (no retry flood)\n"
-"    #   restart hub to re-enable MySQL logging after DB recovers\n"
-"    if not _db_failed:\n"
-"        _write_db(entry)")
-
-    H2(doc,"10.2  Event Reference")
-    table(doc,
-        ["Event Type","When","Key Fields","Example Use"],
-        [
-            ("auth",       "Every JWT validation",        "ts · sub · roles · path · valid · _error",     "Detect auth failures; trace identity per request"),
-            ("request",    "Every HTTP request",          "ts · method · path · status · latency_ms",     "Performance monitoring; error rate alerting"),
-            ("routing",    "Every /discover call",        "ts · method · server_id · reason · intent",    "Understand which servers are selected and why"),
-            ("tool_audit", "Before each tool executes",   "ts · tool · service · sub · roles · args_keys","Compliance — who called what and when (PII-safe)"),
-            ("error",      "Unhandled exceptions",        "ts · message · traceback · path",              "Debug production issues; set up error alerting"),
-        ],
-        widths=[3.0,4.0,6.0,5.5])
-
-    callout(doc,"warning","PII in audit logs",
-        "audit_log() records args_keys (parameter names) but NOT argument values. "
-        "For example: args_keys=['customer_id'] not args_values=['C001']. "
-        "This gives traceability without exposing customer data in log streams. "
-        "Never log raw tool argument values — they will contain PII.")
-
-    H2(doc,"10.3  Log Retention & Query")
-    bullet(doc,"GET /api/logs?n=100 — returns last N events (MySQL first, in-memory fallback).",label="API:  ")
-    bullet(doc,"logs/hub.log — JSONL; survives restarts; pipe to jq, grep, or ELK/Splunk.",label="File:  ")
-    bullet(doc,"hub_events table — indexed on (type, ts); use for compliance queries and dashboards.",label="Database:  ")
-    bullet(doc,"MySQL sink disabled permanently on first failure; restart hub to re-enable after DB recovers.",label="Resilience:  ")
-
-    doc.add_page_break()
-
-    # ===========================================================================
-    # 11 · SECURITY BEST PRACTICES
-    # ===========================================================================
-    H1(doc,"11.  Security Best Practices")
-
-    H2(doc,"11.1  Credential Management")
-    bullet(doc,"Store all secrets in environment variables or a secrets manager (Vault, AWS Secrets Manager).",label="Storage:  ")
-    bullet(doc,"Add .env and all .pem key files to .gitignore BEFORE the first git commit.",label="Git:  ")
-    bullet(doc,"Rotate RSA key pair annually or on any suspected compromise; update hub + wait for MCP servers to refresh JWKS cache.",label="Key rotation:  ")
-    bullet(doc,"Use a separate MySQL user per MCP server with minimum permissions (SELECT-only for read servers).",label="DB users:  ")
-    bullet(doc,"Never log credential values — log only sub, roles, path from decoded claims.",label="Log hygiene:  ")
-
-    H2(doc,"11.2  Token Security")
-    bullet(doc,"Use RS256 (asymmetric) always — never HS256 (HMAC shared secret) in multi-server deployments.",label="Algorithm:  ")
-    bullet(doc,"Always set aud on per-server tokens. Never issue tokens with no audience.",label="Audience:  ")
-    bullet(doc,"Keep MCP token expiry short (1 hour). Refresh by calling /discover again.",label="Expiry:  ")
-    bullet(doc,"Validate exp, iss, aud, and signature on every request — no shortcuts.",label="Validation:  ")
-    bullet(doc,"Never log full JWT values — they are Bearer credentials. Log sub and roles from decoded payload only.",label="No logging tokens:  ")
-
-    H2(doc,"11.3  Network Security")
-    bullet(doc,"All inter-service communication must use TLS (HTTPS) in production.",label="TLS:  ")
-    bullet(doc,"JWKS endpoint must be HTTPS — public key served over plain HTTP can be MITM'd.",label="JWKS:  ")
-    bullet(doc,"MCP server endpoints should not be publicly reachable — hub network access only.",label="Isolation:  ")
-    bullet(doc,"Use a reverse proxy (nginx / Caddy / AWS ALB) for TLS termination + rate limiting.",label="Proxy:  ")
-
-    H2(doc,"11.4  Security Properties Summary")
-    table(doc,
-        ["Property","Implementation","Threat Mitigated"],
-        [
-            ("Token forgery prevention",     "RS256 asymmetric — private key never leaves hub",           "Forged tokens rejected at signature verification"),
-            ("Cross-server token replay",    "Per-server aud claim; servers reject wrong audience",       "Stolen token unusable on any other server"),
-            ("Token theft window",           "1-hour MCP token expiry; re-minted on next /discover",     "Short window limits damage from interception"),
-            ("Credential isolation",         "Each layer uses its own credential type",                   "One credential compromise doesn't cascade"),
-            ("Brute-force resistance",       "PBKDF2-SHA256 (200k iter) + per-username rate limiting",   "Offline dictionary and online brute-force attacks"),
-            ("Accidental open access",       "MCP_AUTH_ENABLED=true by default; must explicitly disable","Dev config leaking into staging/production"),
-            ("Secret file in git",           ".gitignore covers .env + private.pem + public.pem",        "Credential exposure in version control history"),
-            ("PII in logs",                  "audit_log() logs args_keys not values",                    "Customer data not in log streams or SIEM"),
-            ("Dev mode implicit admin",       "Only when MCP_SERVER_ID not set AND no token provided",    "Restricted to environments with no MCP_SERVER_ID set"),
-        ],
-        widths=[5.0,6.0,6.5])
-
-    doc.add_page_break()
-
-    # ===========================================================================
-    # 12 · PATTERNS & ANTI-PATTERNS
-    # ===========================================================================
-    H1(doc,"12.  Standard Patterns & Anti-Patterns")
-
-    H2(doc,"12.1  Recommended Patterns")
-    H3(doc,"Pattern 1 — New Routing Agent Per /discover Request")
-    body(doc,"Always create a fresh LangGraph ReAct routing agent per request. Never share agent instances across concurrent calls.")
-    code(doc,
-"# CORRECT — new instance per call\n"
+"# hub_server.py — routing\n"
 "def _agent_route(query, servers):\n"
-"    agent = create_react_agent(llm, [_make_routing_tool(servers)])  # fresh\n"
-"    return agent.invoke({'messages': [('user', prompt)]})\n\n"
-"# WRONG — shared instance corrupts concurrent requests\n"
-"_SHARED_AGENT = create_react_agent(llm, [tool])  # module-level singleton — DON'T DO THIS")
+"    tool  = _make_routing_tool(servers)               # stateless pick_server tool\n"
+"    agent = create_react_agent(llm, [tool])           # fresh instance per request\n"
+"    result = agent.invoke({\n"
+"        'messages': [('user', routing_prompt(query, servers))]\n"
+"    })                                                # LLM: THINK → CALL pick_server → OBSERVE\n"
+"    return extract_selected_ids(result)")
 
-    H3(doc,"Pattern 2 — Background Task Decoupled from SSE Lifetime")
+    callout(doc, "note", "Routing Fallback",
+            "If the LLM is unavailable (timeout, model not loaded, network error), "
+            "the hub falls back to returning the first active server in the registry. "
+            "Monitor routing.method='fallback' events in GET /api/logs to detect LLM availability issues.")
+
+    H2(doc, "4.3  Observability & Audit")
     body(doc,
-        "Create the agent asyncio.Task before opening the SSE generator. "
-        "If the browser disconnects, the generator closes but the Task continues — "
-        "the final answer is always saved to MySQL.")
-    code(doc,
-"# chat_server.py\n"
-"async def stream_response(query, session_id):\n"
-"    queue = asyncio.Queue()\n"
-"    task  = asyncio.create_task(run_agent(query, queue.put))  # created BEFORE generator\n"
-"    _bg_tasks[session_id] = task\n"
-"    try:\n"
-"        async for event in generate_sse(queue):   # browser reads this\n"
-"            yield event\n"
-"    finally:\n"
-"        pass  # Task outlives generator; saves answer to DB regardless")
+         "Every log_event() call fans out to four sinks simultaneously. "
+         "MySQL is permanently disabled after the first failure — "
+         "retrying on every event call would add latency to every HTTP request.")
 
-    H3(doc,"Pattern 3 — Semantic View Isolation for Tools")
-    body(doc,"Tools query semantic views, not raw tables. Schema changes require only view updates; tool code is unchanged.")
-    code(doc,
-"-- Raw tables (tools NEVER query directly)\n"
-"customers, orders, addresses, preferences, credit_ratings ...\n\n"
-"-- Semantic view (what tools query)\n"
-"CREATE VIEW customer_360_view AS\n"
-"  SELECT c.id, c.name, c.segment, c.status,\n"
-"         COUNT(o.id) AS order_count, MAX(o.date) AS last_order\n"
-"  FROM customers c LEFT JOIN orders o ON o.customer_id = c.id\n"
-"  GROUP BY c.id;")
-
-    H3(doc,"Pattern 4 — Registry Cache with Manual Invalidation")
-    body(doc,"Cache the server registry for 60s; expose a flush endpoint for immediate admin changes.")
-    code(doc,
-"_hub_cache: dict | None = None\n"
-"_hub_cache_ts: float = 0\n"
-"HUB_CACHE_TTL = 60  # seconds\n\n"
-"def load_hub() -> list[dict]:\n"
-"    global _hub_cache, _hub_cache_ts\n"
-"    if _hub_cache and (time.time() - _hub_cache_ts) < HUB_CACHE_TTL:\n"
-"        return _hub_cache\n"
-"    _hub_cache = db_load_active_servers()\n"
-"    _hub_cache_ts = time.time()\n"
-"    return _hub_cache\n\n"
-"# POST /api/hub/refresh\n"
-"def refresh():\n"
-"    global _hub_cache\n"
-"    _hub_cache = None  # bust immediately")
-
-    H2(doc,"12.2  Anti-Patterns to Avoid")
     table(doc,
-        ["Anti-Pattern","Risk","Correct Approach"],
-        [
-            ("HS256 shared secret across servers",  "Compromised server leaks key for all",              "RS256 — public key only on servers"),
-            ("Single token for all servers",         "Full blast radius on token theft",                  "Per-server aud-scoped JWTs from /discover"),
-            ("require_role() after I/O",             "Data accessed before auth check; partial leaks",   "require_role() as FIRST statement"),
-            ("String-formatted SQL",                 "SQL injection via tool arguments",                  "Parameterised queries / ORM only"),
-            ("Logging full JWT value",               "Bearer tokens in logs = instant credential leak",   "Log sub + roles from decoded claims only"),
-            ("Logging tool arg values",              "PII (customer data) in log streams",                "Log args_keys (parameter names) only"),
-            ("Shared routing agent instance",        "Concurrent state corruption → wrong routing",       "New agent instance per /discover call"),
-            ("MCP_AUTH_ENABLED=false in staging",    "Unauthenticated callers get admin access",          "Always true; disable only for local dev"),
-            ("Committing .env or .pem to git",       "Credential in git history — forever exposed",       ".gitignore before first commit; verify with git diff --cached"),
-            ("No server-side input caps",            "Caller requests limit=999999; OOM or DB overload",  "Always cap server-side regardless of caller"),
-            ("Silently swallowing exceptions",       "Auth failures hidden; broken audit trail",          "Log and re-raise; return typed error responses"),
-        ],
-        widths=[5.0,5.0,7.5])
+          ["Sink", "Access", "Failure Behaviour"],
+          [
+              ("In-memory deque (500 entries)", "GET /api/logs",         "Never fails — oldest entries evicted"),
+              ("stdout",                        "docker logs / console", "Never fails"),
+              ("logs/hub.log (JSONL)",          "tail / log aggregator", "Silently skips if directory not writable"),
+              ("MySQL hub_events",              "GET /api/logs primary", "Permanently disabled on first error; restart hub to re-enable"),
+          ],
+          widths=[4.8, 3.5, 7.7])
+
+    table(doc,
+          ["Event Type", "When Emitted", "Key data Fields"],
+          [
+              ("auth",           "Every token check",       "valid · sub · roles · token_type · iss · provider · endpoint · method"),
+              ("request",        "Every HTTP request",      "method · path · status · latency_ms"),
+              ("routing",        "Server selection",         "method(agent|first_match) · server_ids · reason · intent · sub"),
+              ("request_detail", "POST /discover handler",  "Full req/resp headers + body · auth_sub · auth_roles (verbose trace)"),
+              ("admin",          "Server CRUD actions",     "action(create|update|delete_server) · server_id · changed_by"),
+              ("error",          "Runtime exceptions",      "message · traceback"),
+          ],
+          widths=[2.5, 3.5, 10.0])
+
+    H2(doc, "4.4  Discovery API & Event Model")
+    body(doc,
+         "Section 4.4 provides the complete data model: the mcp_servers registry schema, "
+         "the hub_events audit table, the POST /discover request and response contracts, "
+         "and an explanation of how each layer connects through the hub.")
+
+    img(doc, paths.get("schema"), width_cm=16.0,
+        caption="Figure 7 — Hub Database Schema: mcp_servers and hub_events tables")
+
+    H3(doc, "mcp_servers — Registry Table Schema")
+    body(doc,
+         "The mcp_servers table is the single source of truth for all registered backends. "
+         "It is seeded from hub_service/mcp-hub.json via scripts/seed_hub_db.py (UPSERT — safe to re-run). "
+         "All fields except id, name, and endpoint have safe defaults; "
+         "is_active=0 disables a server without deleting it.")
+
+    table(doc,
+          ["Column", "Type", "Purpose"],
+          [
+              ("id",              "VARCHAR(100)  PK",   "Unique server identifier. Used as JWT aud claim and MCP_SERVER_ID."),
+              ("name",            "VARCHAR(255)",        "Human-readable display name shown in Admin UI and logs."),
+              ("endpoint",        "VARCHAR(500)",        "Full HTTP URL for POST /mcp calls, e.g. http://mcp-customer:9100/mcp."),
+              ("transport",       "VARCHAR(50)",         "'streamable-http' (FAB data servers) or 'sse' (demo servers). Controls which MCP client is used."),
+              ("capability",      "TEXT",                "Natural-language summary of server capabilities. Included verbatim in the LLM routing prompt."),
+              ("skills",          "JSON  (array)",       "Array of skill tags (e.g. ['customer lookup', 'order history']). Used by routing agent for semantic matching."),
+              ("description",     "TEXT",                "Extended description providing additional routing context for edge cases."),
+              ("examples",        "JSON  (array)",       "Array of sample query strings this server handles well. Helps LLM routing identify intent."),
+              ("start_cmd",       "TEXT",                "Local development startup command. Informational only — not used at runtime."),
+              ("api_key",         "VARCHAR(1000)",       "Optional static Bearer token. When set, overrides hub-minted JWT for agent→MCP authentication."),
+              ("api_key_expires", "TIMESTAMP",           "Expiry for api_key. NULL means the key never expires. Hub does not enforce this — checked manually."),
+              ("is_active",       "TINYINT(1)",          "1 = included in /discover responses. 0 = disabled and excluded, but row is retained for history."),
+              ("created_at",      "TIMESTAMP",           "Auto-set on INSERT. Tracks when the server was registered."),
+              ("updated_at",      "TIMESTAMP  ON UPDATE","Auto-updated on every change. Tracks last admin edit."),
+          ],
+          widths=[2.8, 2.6, 10.6])
+
+    callout(doc, "note", "Changelog table",
+            "Every CREATE / UPDATE / DELETE action on mcp_servers is also recorded in "
+            "mcp_server_changelog (server_id · action · changed_by · before_state JSON · after_state JSON). "
+            "This provides a full audit trail of registry changes without overwriting the live row.")
+
+    H3(doc, "POST /discover — Request & Response")
+    body(doc,
+         "POST /discover is the primary integration point. "
+         "It accepts a natural-language intent, routes it to the best-fit server, "
+         "and returns a scoped JWT alongside all connection details the agent needs.")
+
+    code(doc,
+"# POST /discover — request body (Pydantic DiscoverRequest)\n"
+'{ "intent": "what is the loyalty score for customer C007?" }\n\n'
+"# Required headers\n"
+"Authorization: Bearer <hub JWT>    # RS256, exp=8h, iss=fab-mcp-hub\n"
+"Content-Type: application/json\n\n"
+"# Response body (DiscoverResponse) — key fields\n"
+"{\n"
+'  "servers": [\n'
+"    {\n"
+'      "id":           "fab-customer-server",\n'
+'      "name":         "FAB Customer Intelligence MCP Server",\n'
+'      "endpoint":     "http://mcp-customer:9100/mcp",\n'
+'      "transport":    "streamable-http",\n'
+'      "capability":   "customer 360 data, order history, loyalty score",\n'
+'      "skills":       ["customer lookup", "loyalty points", "order history"],\n'
+'      "server_token": "<RS256 JWT — aud=fab-customer-server, exp=now+3600>"\n'
+"    }\n"
+"  ],\n"
+'  "method":   "agent",          // "agent" = LLM routed | "first_match" = LLM unavailable\n'
+'  "reason":   "Server handles customer 360 and loyalty queries",\n'
+'  "hub_metadata": { "hub_name":"FAB MCP Hub", "version":"3.0", "server_count":2 },\n'
+'  "auth_meta":    { "sub":"alice", "roles":["agent"], "token_type":"jwt", "exp":1720000000 }\n'
+"}")
+
+    H3(doc, "hub_events — Audit Table Schema")
+    body(doc,
+         "Every hub operation — authentication, routing, HTTP request, admin action, error — "
+         "is written to hub_events as a structured JSON row. "
+         "The data column stores the full event dict so any event type can be queried by field name "
+         "using MySQL JSON path expressions (e.g. data->>'$.sub').")
+
+    table(doc,
+          ["Column", "Type", "Purpose"],
+          [
+              ("id",         "BIGINT  AUTO_INCREMENT  PK", "Monotonically increasing event ID."),
+              ("ts",         "DOUBLE  (indexed)",           "Unix timestamp as float. Indexed (idx_ts) for range queries."),
+              ("type",       "VARCHAR(64)  (indexed)",      "Event category — auth · request · routing · request_detail · admin · error. Indexed (idx_type)."),
+              ("data",       "JSON",                        "Full event payload. Fields vary by type (see table below)."),
+              ("created_at", "TIMESTAMP",                   "Wall-clock insert time. ts is always populated; created_at is the DB default."),
+          ],
+          widths=[2.8, 3.4, 9.8])
+
+    table(doc,
+          ["Event Type", "data Fields", "Notes"],
+          [
+              ("auth",
+               "valid · sub · roles · token_type · iss · provider · endpoint · method · bearer_token",
+               "Logged on every hub API call. token_type: jwt | apikey | dev."),
+              ("request",
+               "method · path · status · latency_ms",
+               "Logged by _RequestLogMiddleware for every HTTP request."),
+              ("routing",
+               "method · server_ids · reason · intent (capped 120 chars) · sub",
+               "method=agent (LLM) or first_match (fallback). server_ids is a list."),
+              ("request_detail",
+               "endpoint · request_headers · request_body · response_status · response_headers · response_body · auth_sub · auth_roles",
+               "Verbose trace of /discover. Useful for debugging routing decisions."),
+              ("admin",
+               "action · server_id · changed_by",
+               "Written on every server create/update/delete. action: create_server | update_server | delete_server."),
+              ("error",
+               "message · traceback",
+               "Unhandled exceptions. Traceback is truncated if too long."),
+          ],
+          widths=[2.8, 7.2, 6.0])
+
+    callout(doc, "warning", "tool_audit events — hub vs. MCP side",
+            "tool_audit events (tool name, args_keys, sub, roles) are written by audit_log() "
+            "in datalayer-as-service/mcp_server/auth.py — inside the MCP server process, "
+            "not the hub. They are NOT written to hub_events. "
+            "They appear in the MCP server's stdout only. "
+            "To centralise MCP-side audit, configure log shipping from the MCP server container.")
+
+
+# ---------------------------------------------------------------------------
+# 5. MCP Integration
+# ---------------------------------------------------------------------------
+
+def _s5(doc, paths):
+    doc.add_page_break()
+    H1(doc, "5.  MCP Integration")
+    lead(doc,
+         "MCP servers expose domain tools over Streamable HTTP. "
+         "The agent opens a session, attaches a scoped JWT on every request, "
+         "and executes tool calls inside a LangGraph ReAct loop.")
+
+    img(doc, paths.get("flow"), width_cm=16.0,
+        caption="Figure 8 — End-to-End Request Flow: HTTP Contracts, Headers & Payloads at Each Layer Boundary")
+
+    img(doc, paths.get("lifecycle"), width_cm=15.0,
+        caption="Figure 9 — MCP Server Lifecycle: States and Transitions")
+
+    H2(doc, "5.1  Streamable HTTP Transport")
+    body(doc,
+         "Streamable HTTP (POST /mcp) is the only MCP transport used in this stack. "
+         "The agent negotiates a session ID during initialize and attaches it — along with "
+         "the Authorization header — to every subsequent call.")
+
+    code(doc,
+"# agent.py mcp_session() — Streamable HTTP\n"
+"async with streamablehttp_client(\n"
+"    server['endpoint'],                    # e.g. http://mcp-customer:9100/mcp\n"
+"    headers={'Authorization': f'Bearer {server_token}'}\n"
+") as (read, write, _):\n"
+"    async with ClientSession(read, write) as session:\n"
+"        await session.initialize()         # POST /mcp → returns Mcp-Session-Id header\n"
+"        tools  = await session.list_tools()\n"
+"        result = await session.call_tool('customer_360', {'customer_id': 'C001'})")
+
+    table(doc,
+          ["Header", "Required", "Value / Notes"],
+          [
+              ("Content-Type",   "Yes", "application/json"),
+              ("Accept",         "Yes", "application/json, text/event-stream — both MIME types required; FastMCP returns 406 if either is missing"),
+              ("Authorization",  "Yes", "Bearer <per-server JWT> — present on EVERY request, not just initialize"),
+              ("Mcp-Session-Id", "After initialize", "UUID returned in initialize response header; must be included on tools/list and tools/call"),
+          ],
+          widths=[3.2, 2.0, 10.8])
+
+    H3(doc, "MCP JSON-RPC 2.0 Message Format")
+    body(doc,
+         "The Streamable HTTP transport carries MCP's JSON-RPC 2.0 protocol. "
+         "There are three message types in the agent lifecycle: initialize (mandatory first call), "
+         "tools/list (optional capability discovery), and tools/call (tool execution).")
+
+    code(doc,
+"# 1. initialize — mandatory first call on every new session\n"
+'# POST /mcp   Authorization: Bearer <server JWT>   Accept: application/json, text/event-stream\n'
+'{ "jsonrpc":"2.0", "id":"probe-init", "method":"initialize",\n'
+'  "params": { "protocolVersion":"2024-11-05", "capabilities":{},\n'
+'              "clientInfo": {"name":"mcp-client","version":"0.1"} } }\n\n'
+"# Response — 200 OK + header  Mcp-Session-Id: <uuid>\n"
+'{ "jsonrpc":"2.0", "result": {\n'
+'    "protocolVersion":"2024-11-05", "capabilities": {"tools":{},"resources":{},"prompts":{}},\n'
+'    "serverInfo": {"name":"FAB Customer Intelligence MCP Server","version":"1.0"}\n'
+'  }, "id":"probe-init" }')
+
+    code(doc,
+"# 2. tools/list — discover available tools (optional; agent.py always calls this)\n"
+'# POST /mcp   Mcp-Session-Id: <uuid>   Authorization: Bearer <server JWT>\n'
+'{ "jsonrpc":"2.0", "id":2, "method":"tools/list", "params":{} }\n\n'
+"# 3. tools/call — execute a tool\n"
+'# POST /mcp   Mcp-Session-Id: <uuid>   Authorization: Bearer <server JWT>\n'
+'{ "jsonrpc":"2.0", "id":"call-customer_360", "method":"tools/call",\n'
+'  "params": { "name":"customer_360", "arguments": {"customer_id":"C007"} } }\n\n'
+"# Response\n"
+'{ "jsonrpc":"2.0",\n'
+'  "result": { "content": [{"type":"text","text":"{\\"customer_id\\":\\"C007\\",...}"}] },\n'
+'  "id":"call-customer_360" }')
+
+    callout(doc, "note", "Session reuse within one agent loop",
+            "A single agent invocation for one user query opens one MCP session (one initialize call). "
+            "The LangGraph ReAct loop may call tools/call multiple times within that session — "
+            "each carrying the same Mcp-Session-Id and a refreshed Authorization header. "
+            "The session ends when the agent context manager exits.")
+
+    callout(doc, "warning", "Token Renewal on 401",
+            "When a 1-hour per-server JWT expires mid-session the MCP server returns HTTP 401.\n"
+            "Renewal: (1) call POST /discover again with the hub JWT to mint a fresh server token, "
+            "(2) open a new MCP session with the new token.\n"
+            "Do not attempt to reuse the expired token or the existing Mcp-Session-Id — both are rejected.")
+
+    H2(doc, "5.2  Chat Service Integration")
+    body(doc,
+         "The chat server (chat_service/chat_server.py) provides the browser interface. "
+         "It authenticates users with PBKDF2-SHA256, holds hub JWTs in session cookies, "
+         "and runs the agent as a background asyncio.Task so browser disconnects do not abort "
+         "in-progress agent work. The final answer is always saved to MySQL.")
+
+    table(doc,
+          ["Endpoint", "Purpose", "Notes"],
+          [
+              ("POST /login",        "PBKDF2 verify → hub JWT (8h) as HttpOnly cookie",         "Rate-limited: 10 attempts/15 min per username → HTTP 423"),
+              ("GET  /sse",          "Open long-lived streaming connection for response events",  "Background task survives browser disconnect"),
+              ("POST /messages",     "Submit query → launch run_agent() asyncio.Task",           "Task created before SSE generator — decoupled lifetimes"),
+              ("GET  /poll",         "Re-attach to running task; retrieve missed events",         "Used on reconnect after disconnect"),
+              ("GET  /conversations","User conversation history from MySQL",                      "Paginated; requires valid session cookie"),
+          ],
+          widths=[3.5, 7.5, 5.0])
+
+
+# ---------------------------------------------------------------------------
+# 6. Operations & Deployment
+# ---------------------------------------------------------------------------
+
+def _s6(doc, paths):
+    doc.add_page_break()
+    H1(doc, "6.  Operations & Deployment")
+    lead(doc,
+         "Configuration reference, production readiness checklist, "
+         "security properties summary, and key files index.")
+
+    H2(doc, "6.1  Environment Variables")
+    callout(doc, "note", "Startup-time variables",
+            "Variables in the Hub Auth group are read by hub_service/auth.py at module import time. "
+            "Changes require a hub process restart.")
+
+    table(doc,
+          ["Variable", "Service", "Required", "Description"],
+          [
+              # Hub auth
+              ("AUTH_ENABLED",          "Hub Auth",   "No",       "true (default). false = all requests pass as anonymous admin — never production."),
+              ("AUTH_PROVIDER",         "Hub Auth",   "No",       "local (default) or azure. local: RS256/HS256/API-key chain. azure: Entra ID OIDC."),
+              ("HUB_API_KEY",           "Hub Auth",   "No",       "Static pre-shared key accepted as Bearer token. Roles from HUB_API_KEY_ROLES."),
+              ("HUB_API_KEY_ROLES",     "Hub Auth",   "No",       "Comma-separated roles for HUB_API_KEY callers (default: agent)."),
+              ("JWT_SECRET",            "Hub Auth",   "No",       "Shared HMAC secret for HS256 JWT verification. Setting this exits dev mode."),
+              ("HUB_JWT_ISSUER",        "Hub Auth",   "No",       "iss claim in hub-minted tokens (default: fab-mcp-hub). Must match MCP_JWT_ISSUER."),
+              ("HUB_JWT_KID",           "Hub Auth",   "No",       "kid in JWT header and JWKS (default: hub-rsa-1). Increment on RSA key rotation."),
+              ("HUB_PRIVATE_KEY_PATH",  "Hub Auth",   "No",       "RSA private key PEM path (default: hub_service/.keys/private.pem)."),
+              ("HUB_PUBLIC_KEY_PATH",   "Hub Auth",   "No",       "RSA public key PEM path (default: hub_service/.keys/public.pem)."),
+              ("HUB_JWKS_URL",          "Hub Auth",   "No",       "Override JWKS URL when hub is behind a load balancer or API gateway."),
+              ("AZURE_TENANT_ID",       "Hub Auth",   "If azure", "Azure AD tenant GUID or domain. Required when AUTH_PROVIDER=azure."),
+              ("AZURE_CLIENT_ID",       "Hub Auth",   "If azure", "App registration Client ID — expected JWT audience for Entra ID tokens."),
+              # MCP server
+              ("MCP_AUTH_ENABLED",      "MCP Server", "Yes",      "true in all non-dev environments. false = completely open, no JWT checks."),
+              ("MCP_SERVER_ID",         "MCP Server", "Yes",      "Unique server ID matching registry id field. Used as expected JWT audience."),
+              ("HUB_SERVER_URL",        "MCP Server", "Yes",      "Hub base URL for JWKS fetch: https://hub.internal:8090"),
+              ("MCP_JWT_ISSUER",        "MCP Server", "Yes",      "Expected JWT issuer. Must match HUB_JWT_ISSUER on hub."),
+              ("MCP_TOOL_KEY",          "MCP Server", "If ext.",  "API key for MCP-server-to-external-API calls. Never forwarded to agent or hub."),
+              # Database
+              ("MYSQL_HOST",            "Hub + MCP",  "Yes",      "Database host (default: 127.0.0.1)."),
+              ("MYSQL_PORT",            "Hub + MCP",  "Yes",      "Database port (default: 3306)."),
+              ("MYSQL_USER",            "Hub + MCP",  "Yes",      "DB username — separate user per service with minimum required privileges."),
+              ("MYSQL_PASSWORD",        "Hub + MCP",  "Yes",      "DB password — store in secrets manager, never in source control."),
+              ("MYSQL_DATABASE",        "Hub + MCP",  "Yes",      "Target database name (e.g. fab_semantic)."),
+              # Chat / infra
+              ("CHAT_USERS",            "Chat",       "Yes",      "Comma-separated user:password pairs for initial user seeding."),
+              ("OLLAMA_BASE_URL",       "Hub",        "If LLM",   "LLM endpoint for routing agent (default: http://localhost:11434/v1)."),
+              ("HUB_JWT_EXPIRY_HOURS",  "Hub",        "No",       "Hub login token expiry in hours (default: 8). Per-server tokens are always 1h."),
+          ],
+          widths=[3.8, 2.3, 2.0, 7.9])
 
     doc.add_page_break()
 
-    # ===========================================================================
-    # 13 · DEPLOYMENT
-    # ===========================================================================
-    H1(doc,"13.  Deployment & Configuration Reference")
-
-    H2(doc,"13.1  Environment Variables")
+    H2(doc, "6.2  Production Readiness Checklist")
     table(doc,
-        ["Variable","Service","Required","Description"],
-        [
-            ("MCP_AUTH_ENABLED",   "MCP Server", "Yes (prod)", "Set 'true' always in non-dev. 'false' = completely open."),
-            ("MCP_SERVER_ID",      "MCP Server", "Yes (prod)", "This server's unique ID — must match registry id field; used as JWT aud."),
-            ("HUB_SERVER_URL",     "MCP Server", "Yes",        "Hub base URL for JWKS fetch, e.g. https://hub.internal:8090"),
-            ("MCP_JWT_ISSUER",     "MCP Server", "Yes",        "Expected JWT issuer string — must match hub config (default: mcp-hub)."),
-            ("MCP_TOOL_KEY",       "MCP Server", "If ext API", "Key for MCP server → external HTTP API calls; never forwarded."),
-            ("MYSQL_HOST",         "Hub + MCP",  "Yes",        "Database host (default: 127.0.0.1)."),
-            ("MYSQL_PORT",         "Hub + MCP",  "Yes",        "Database port (default: 3306)."),
-            ("MYSQL_USER",         "Hub + MCP",  "Yes",        "Database username — use separate user per service."),
-            ("MYSQL_PASSWORD",     "Hub + MCP",  "Yes",        "Database password — store in secrets manager in production."),
-            ("MYSQL_DATABASE",     "Hub + MCP",  "Yes",        "Target database name (e.g. fab_semantic)."),
-            ("CHAT_USERS",         "Chat Server","Yes",        "Comma-separated user:password pairs for initial seeding."),
-            ("OLLAMA_BASE_URL",    "Hub",        "If LLM",     "Local LLM endpoint for routing agent (default: http://localhost:11434/v1)."),
-            ("HUB_JWT_EXPIRY_HOURS","Hub",       "No",         "Hub token expiry hours (default: 8). MCP token always 1 hour."),
-        ],
-        widths=[4.5,2.8,2.5,8.7])
+          ["Area", "Check", "✓"],
+          [
+              ("Auth",         "AUTH_PROVIDER configured and tested",                            "[ ]"),
+              ("Auth",         "JWT_SECRET or HUB_API_KEY set — hub not in dev mode",           "[ ]"),
+              ("Auth",         "MCP_AUTH_ENABLED=true on all MCP servers",                       "[ ]"),
+              ("Auth",         "MCP_SERVER_ID matches id field in registry",                     "[ ]"),
+              ("Auth",         "MCP_JWT_ISSUER matches HUB_JWT_ISSUER",                          "[ ]"),
+              ("Auth (Azure)", "AZURE_TENANT_ID and AZURE_CLIENT_ID set if AUTH_PROVIDER=azure", "[ ]"),
+              ("Keys",         "RSA key pair exists; private.pem readable only by hub process",  "[ ]"),
+              ("Keys",         "HUB_JWT_KID set and matches kid value in JWKS response",        "[ ]"),
+              ("Keys",         "/.well-known/jwks.json reachable by all MCP servers via HTTPS", "[ ]"),
+              ("Secrets",      ".env and *.pem files excluded from git (.gitignore verified)",   "[ ]"),
+              ("Secrets",      "All secrets in vault / secrets manager — not in plaintext files","[ ]"),
+              ("Network",      "TLS/HTTPS on all inter-service endpoints",                       "[ ]"),
+              ("Network",      "JWKS endpoint served over HTTPS (plain HTTP allows MITM)",       "[ ]"),
+              ("Network",      "MCP server ports not publicly reachable — hub-internal only",    "[ ]"),
+              ("Database",     "MYSQL_PASSWORD in secrets manager — not in plaintext config",    "[ ]"),
+              ("Database",     "hub_events table created and indexed",                           "[ ]"),
+              ("Observability","logs/ directory writable by hub process",                        "[ ]"),
+              ("Observability","Log aggregator ingesting logs/hub.log (Splunk / ELK / CloudWatch)","[ ]"),
+              ("Operations",   "GET /health monitored by infrastructure health check",           "[ ]"),
+              ("Operations",   "Rate limiting on /login active and tuned",                       "[ ]"),
+          ],
+          widths=[2.8, 12.4, 0.8])
 
-    H2(doc,"13.2  Production Readiness Checklist")
+    doc.add_page_break()
+
+    H2(doc, "6.3  Security Reference")
+    H3(doc, "Security Properties")
     table(doc,
-        ["Area","Check","Status"],
-        [
-            ("Network",       "TLS/HTTPS on all inter-service endpoints", "[ ]"),
-            ("Auth",          "MCP_AUTH_ENABLED=true on all MCP servers", "[ ]"),
-            ("Auth",          "MCP_SERVER_ID set on all MCP servers",     "[ ]"),
-            ("Auth",          "MCP_JWT_ISSUER matches hub config",        "[ ]"),
-            ("Keys",          "RSA key pair generated; private.pem accessible only to hub", "[ ]"),
-            ("Keys",          "JWKS endpoint reachable by all MCP servers over HTTPS",      "[ ]"),
-            ("Secrets",       ".env and .pem excluded from version control",               "[ ]"),
-            ("Secrets",       "Secrets in vault / secret manager; not in env files on servers","[ ]"),
-            ("Database",      "pool_recycle <= 1800s (MySQL wait_timeout guard)",          "[ ]"),
-            ("Database",      "hub_events table exists and is indexed",                    "[ ]"),
-            ("Observability", "logs/ directory writable by hub process",                   "[ ]"),
-            ("Observability", "Log aggregator (Splunk / ELK) ingesting logs/hub.log",      "[ ]"),
-            ("Security",      "Rate limiting active on /login endpoint",                   "[ ]"),
-            ("Security",      "MCP server endpoints not publicly reachable",               "[ ]"),
-            ("Operations",    "GET /health monitored by infrastructure health check",      "[ ]"),
-            ("Operations",    "Background task cleanup implemented (_bg_tasks TTL)",       "[ ]"),
-        ],
-        widths=[3.0,11.0,2.5])
+          ["Property", "Implementation", "Threat Mitigated"],
+          [
+              ("Token forgery prevention",
+               "RS256 asymmetric — private key never leaves hub process",
+               "Forged tokens rejected at signature verification on every MCP server"),
+              ("Cross-server token replay",
+               "Per-server aud claim — servers reject mismatched audience",
+               "Stolen token from Server A is unusable on Server B"),
+              ("Short token exposure window",
+               "MCP tokens expire in 1 hour; re-mint via POST /discover",
+               "Limits damage duration from interception"),
+              ("Credential isolation",
+               "Each layer uses its own credential type; none forwarded across boundaries",
+               "One compromised component cannot access other layers"),
+              ("Password hardening",
+               "PBKDF2-SHA256, 200,000 iterations, unique 16-byte salt per user",
+               "Offline dictionary attack; rainbow tables"),
+              ("Brute-force protection",
+               "10 failed logins per username per 15 min → HTTP 423",
+               "Online brute-force / credential stuffing"),
+              ("PII in logs",
+               "audit_log() records argument key names only — never values",
+               "Customer data stays out of log streams and SIEM"),
+              ("Secrets in version control",
+               ".gitignore covers .env · private.pem · public.pem",
+               "Credentials exposed in git history"),
+              ("Hub dev mode open access",
+               "⚠ WARNING at startup; exits when JWT_SECRET or HUB_API_KEY set",
+               "Silent open-admin access surviving into production"),
+              ("Azure token forgery",
+               "PyJWKClient fetches Microsoft JWKS; RS256 sig verified against tenant keys",
+               "Forged Entra ID tokens rejected at signature verification"),
+          ],
+          widths=[4.0, 5.5, 6.5])
 
-    # ===========================================================================
-    # 14 · KEY FILES
-    # ===========================================================================
-    H1(doc,"14.  Key Files Reference")
+    spacer(doc, 4)
+    H3(doc, "Anti-Patterns")
     table(doc,
-        ["File","Role","Notes"],
-        [
-            ("hub_service/hub_server.py",             "FastAPI hub: registry, JWT, routing, Admin UI", "~2900 lines; entry point for hub process"),
-            ("hub_service/db.py",                     "SQLAlchemy engine factory",                     "pool_recycle=1800; loads .env at import time"),
-            ("hub_service/observability.py",          "4-way event fan-out logger",                    "Permanent MySQL skip on first failure"),
-            ("hub_service/.keys/private.pem",         "RSA private key — signs all JWTs",              "NEVER share or commit to git"),
-            ("hub_service/.keys/public.pem",          "RSA public key — served at JWKS endpoint",      "Safe to share; published publicly"),
-            ("hub_service/mcp-hub.json",              "Declarative server registry source file",        "Seeded into MySQL by seed_hub_db.py"),
-            ("chat_service/chat_server.py",           "Chat UI SPA server",                            "User auth; SSE; background tasks"),
-            ("agent.py",                              "LangGraph ReAct orchestrator",                  "Hub discovery; mcp_session(); astream_events"),
-            ("datalayer-as-service/mcp_server/auth.py","JWT verification, RBAC, audit logging",        "require_role(); audit_log(); BearerClaimsMiddleware"),
-            ("datalayer-as-service/mcp_server/server.py","FastMCP server setup + middleware wiring",   "JWTVerifier + BearerClaimsMiddleware registration"),
-            ("datalayer-as-service/mcp_server/tools.py","MCP tool implementations",                    "All @mcp.tool() definitions"),
-            ("datalayer-as-service/mcp_server/db.py", "MySQL connection for MCP data tools",           "SQLAlchemy; queries semantic views"),
-            ("scripts/seed_hub_db.py",                "Idempotent DB seeder",                          "UPSERT: re-run safe; re-activates disabled servers"),
-            ("datalayer-as-service/.env",             "MySQL + MCP server config",                     "NEVER commit to git"),
-            ("logs/hub.log",                          "JSONL structured event log",                    "Line-buffered; survives restarts"),
-            ("ARCHITECTURE.md",                       "ASCII architecture reference",                  "Component diagrams; design decisions"),
-            ("AUTH.md",                               "JWT auth deep-dive",                            "Standard JWT-for-MCP pattern mapping"),
-            ("RUNBOOK.md",                            "Operational playbook",                          "Start / stop / debug procedures"),
-        ],
-        widths=[5.5,5.5,6.5])
+          ["Anti-Pattern", "Risk", "Correct Approach"],
+          [
+              ("HS256 as sole JWT signing mechanism",
+               "Any component with JWT_SECRET can forge tokens",
+               "RS256 — servers hold public key only; cannot sign"),
+              ("Single JWT valid on all MCP servers",
+               "Full cross-service blast radius on token theft",
+               "Per-server aud-scoped JWTs from /discover"),
+              ("Shared routing agent across requests",
+               "Concurrent state interleaving → wrong server selected",
+               "New LangGraph agent instance per /discover call"),
+              ("Full JWT value in logs",
+               "Bearer credential accessible in log streams / SIEM",
+               "Log sub and roles from decoded payload only"),
+              ("MCP servers publicly reachable",
+               "Callers bypass hub auth entirely — skip /discover",
+               "Hub-internal network access only"),
+              ("AUTH_ENABLED=false in staging",
+               "Staging config leaks into production",
+               "AUTH_ENABLED=true always; explicitly test auth flow"),
+          ],
+          widths=[4.8, 4.2, 7.0])
 
-    # Footer
-    spacer(doc,16)
-    p=doc.add_paragraph()
-    p.paragraph_format.space_before=Pt(0); p.paragraph_format.space_after=Pt(0)
-    _para_border_bottom(p,"DDEAF7","6")
-    spacer(doc,4)
-    fp=doc.add_paragraph(); fp.alignment=WD_ALIGN_PARAGRAPH.CENTER
+    doc.add_page_break()
+
+    H2(doc, "6.4  Key Files Reference")
+    table(doc,
+          ["File", "Role", "Notes"],
+          [
+              ("hub_service/hub_server.py",
+               "FastAPI hub — registry, JWT, routing, Admin UI",
+               "Entry point; imports auth.py, db.py, observability.py"),
+              ("hub_service/auth.py",
+               "Hub auth service — token minting, JWKS, multi-provider verification",
+               "Exports: verify_token · generate_token · generate_server_token · get_jwks"),
+              ("hub_service/db.py",
+               "SQLAlchemy engine factory",
+               "pool_recycle=1800; .env loaded at import"),
+              ("hub_service/observability.py",
+               "4-way event fan-out (memory · stdout · file · MySQL)",
+               "MySQL permanently disabled on first failure"),
+              ("hub_service/.keys/private.pem",
+               "RSA private key — signs all JWTs",
+               "Never commit to git. Path: HUB_PRIVATE_KEY_PATH"),
+              ("hub_service/.keys/public.pem",
+               "RSA public key — served at JWKS endpoint",
+               "Path: HUB_PUBLIC_KEY_PATH"),
+              ("hub_service/mcp-hub.json",
+               "Declarative server registry source",
+               "Seeded into MySQL via seed_hub_db.py"),
+              ("chat_service/chat_server.py",
+               "Chat UI server — user auth, streaming, conversation history",
+               "PBKDF2 auth; response streaming to browser; asyncio.Task"),
+              ("agent.py",
+               "LangGraph ReAct orchestrator",
+               "Hub discovery; mcp_session(); astream_events(v2)"),
+              ("datalayer-as-service/mcp_server/auth.py",
+               "MCP-side RBAC — require_role(), audit_log(), BearerClaimsMiddleware",
+               "ContextVar-based claim injection; no 2nd JWKS fetch"),
+              ("datalayer-as-service/mcp_server/server.py",
+               "FastMCP server setup + middleware wiring",
+               "JWTVerifier + BearerClaimsMiddleware registration"),
+              ("datalayer-as-service/mcp_server/tools.py",
+               "MCP tool implementations (@mcp.tool)",
+               "Queries semantic views — not raw base tables"),
+              ("scripts/seed_hub_db.py",
+               "Idempotent DB seeder",
+               "UPSERT from mcp-hub.json; safe to re-run"),
+              ("datalayer-as-service/.env",
+               "MySQL + MCP server secrets",
+               "Never commit to git"),
+              ("logs/hub.log",
+               "JSONL structured event log",
+               "Line-buffered; persists across restarts"),
+          ],
+          widths=[5.2, 5.0, 5.8])
+
+
+# ---------------------------------------------------------------------------
+# Build
+# ---------------------------------------------------------------------------
+
+def build():
+    print("Generating diagrams...")
+    paths = D.generate_all()
+
+    print("Building document...")
+    doc = Document()
+    _set_page_margins(doc, t=2.0, b=2.0, l=2.0, r=2.0)
+
+    _cover(doc)
+    _exec_summary(doc)
+    _toc(doc)
+
+    _s1(doc, paths)
+    _s2(doc, paths)
+    _s3(doc, paths)
+    _s4(doc, paths)
+    _s5(doc, paths)
+    _s6(doc, paths)
+
+    # Footer rule
+    spacer(doc, 12)
+    fp = doc.add_paragraph()
+    fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
     _run(fp,
-        f"MCP Hub Design Document  |  Version 2.0  |  "
-        f"{datetime.date.today().strftime('%B %d, %Y')}  |  Internal",
-        italic=True, size=9, color="999999")
+         f"MCP Hub — Solution Design Document  |  Version 4.0  |  "
+         f"{datetime.date.today().strftime('%B %d, %Y')}  |  CONFIDENTIAL",
+         italic=True, size=9, color=C["mgrey"])
 
     doc.save(str(OUT))
     print(f"Saved: {OUT}")

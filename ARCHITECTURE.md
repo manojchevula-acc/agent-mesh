@@ -95,22 +95,47 @@ GET http://localhost:8090/.well-known/jwks.json
                                              sub=user, roles=forwarded)
                                             ◄─── return [{server, token}, ...]
 
+                               ┌── INBOUND VERIFICATION (agent.py) ──────────────┐
+                               │  _verify_hub_token(token, audience=server_id)   │
+                               │  • RS256 sig via /.well-known/jwks.json          │
+                               │  • checks iss, aud=server_id, exp               │
+                               │  Hard fail → server skipped (not connected)      │
+                               │  Soft fail → warning; MCP server validates again │
+                               └─────────────────────────────────────────────────┘
+
                                             mcp_session(server):
                                               token = server["server_token"]
                                               Authorization: Bearer <token>
                                               ──────────────────────────────►
-                                                             JWTVerifier:
-                                                               verify RS256 ✓
+                                                             JWTVerifier (primary):
+                                                               RS256 via JWKS ✓
                                                                verify aud ✓
                                                                verify iss ✓
                                                                verify exp ✓
-                                                             BearerClaimsMiddleware:
-                                                               decode claims →
-                                                               _request_claims ContextVar
+                                                               → 401 if ANY fail
+                                                             BearerClaimsMiddleware
+                                                             (defense-in-depth):
+                                                               RS256 via JWKS ✓
+                                                               hard 401 on crypto fail
+                                                               soft warn on JWKS outage
+                                                               → _request_claims ContextVar
                                                              Tool function:
                                                                require_role("agent") ✓
                                                                audit_log(tool, args) ✓
                                                                ── execute ──
+```
+
+**Agent standalone path** also has INBOUND VERIFICATION for the hub login JWT:
+
+```
+Agent → POST /auth/login → Hub returns access_token
+                                │
+                                ▼  [INBOUND VERIFICATION — Step 2a]
+                           _verify_hub_token(token)   (agent.py)
+                           • RS256 sig via /.well-known/jwks.json
+                           • checks iss=fab-mcp-hub, exp
+                           • Hard fail → login rejected; token not cached
+                           • Soft fail → warning; token cached
 ```
 
 ### 2.3 Per-Server Audience Scoping
@@ -304,11 +329,14 @@ MCP tools query the **semantic views** (not raw tables). This isolates the tool 
 
 | Property | Implementation |
 |----------|---------------|
-| Token forgery prevention | RS256 — only hub's private key can sign; MCP servers verify with public key |
-| Cross-server token replay | Per-server `aud` claim — token rejected by any server other than its intended audience |
+| Token forgery prevention | RS256 — only hub's private key can sign; all verifiers check against JWKS public key |
+| Cross-server token replay | Per-server `aud` claim — token rejected by any server other than its intended audience; verified at agent AND MCP layers |
 | Token expiry | Hub tokens: 8h; per-server tokens: 1h |
 | Credential isolation | Each layer uses its own credential; none are forwarded across boundaries |
 | Brute-force resistance | Login rate-limited per username (10 attempts / 15 min); PBKDF2-SHA256 (200,000 iterations) |
+| Agent-side inbound verification | `_verify_hub_token()` in `agent.py` verifies hub login JWT (Step 2a) and each per-server JWT (Step 2b) via JWKS before use — catches forged tokens before MCP connection |
+| MCP defense-in-depth | `BearerClaimsMiddleware` independently verifies RS256 via JWKS in addition to `JWTVerifier`; safe even if `JWTVerifier` is absent |
+| JWKS key caching | `PyJWKClient(cache_keys=True, lifespan=300)` — shared module-level client; avoids per-request HTTP fetch; keys refreshed every 5 minutes |
 | Dev-mode flag | `MCP_AUTH_ENABLED=false` completely disables MCP auth — only for local dev |
 | Dev fallback risk | `_verify_jwt()` grants admin when no token + no `MCP_SERVER_ID` — never deploy without `MCP_SERVER_ID` set |
 | .env isolation | `datalayer-as-service/.env` contains real secrets; `.gitignore` must exclude it |
