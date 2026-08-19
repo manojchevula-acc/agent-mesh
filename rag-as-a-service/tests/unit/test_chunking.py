@@ -56,6 +56,45 @@ def test_factory_returns_hierarchical_by_default():
     assert isinstance(chunker, HierarchicalChunker)
 
 
+def test_child_chunk_uses_its_own_heading_not_the_parents():
+    """A child cut from deep inside a parent block must not inherit an earlier,
+    unrelated section's heading/clause just because the parent's first heading was
+    that earlier section.
+
+    Regression for a production bug: a real chunk whose text opened "## 5.1
+    Required Documentation for Credit Approval" was stored with
+    section_heading="3.2 Pricing Floors..." and clause_reference="3.2" — the
+    *parent* block's opening section — because the child heading/clause were
+    always taken from the parent, never re-derived from the child's own text.
+    Citations pointed at the wrong clause for every such chunk.
+    """
+    filler = " ".join(
+        f"This is filler sentence number {i} padding out section 3.2 pricing "
+        "floor content for the corporate term loan product."
+        for i in range(28)
+    )
+    markdown = (
+        "## 3.2 Pricing Floors - Reference to Credit Pricing Policy\n\n"
+        f"{filler}\n\n"
+        "## 5. Documentation and Credit Approval\n\n"
+        "## 5.1 Required Documentation for Credit Approval\n\n"
+        "- Completed Credit Application Form (CAF) - FAB-CAF-CORP-2024.\n"
+        "- Audited financial statements - minimum 3 years.\n"
+    )
+    extraction = ExtractionResult(
+        elements=[], raw_markdown=markdown, page_count=1, file_path="x.pdf"
+    )
+    chunks = HierarchicalChunker(ChunkingConfig()).chunk(extraction, _base_metadata())
+    children = [c for c in chunks if not c.is_parent]
+
+    doc_child = next(c for c in children if "Documentation and Credit Approval" in c.text)
+    assert doc_child.metadata.section_heading.startswith("5.")
+    assert doc_child.metadata.clause_reference == "5.1"
+    # And the earlier section's own chunks must still correctly report themselves.
+    floor_child = next(c for c in children if c.text.startswith("This is filler"))
+    assert floor_child.metadata.clause_reference == "3.2"
+
+
 def test_long_table_split_across_chunks_keeps_header_in_every_piece():
     # A high-confidence table stays as plain markdown and goes through the same
     # RecursiveCharacterTextSplitter as prose; long enough here to force a

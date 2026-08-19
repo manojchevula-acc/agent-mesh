@@ -118,13 +118,23 @@ class HierarchicalChunker(BaseChunker):
                     if len(child_text.split()) < self._config.min_chunk_size // 4:
                         continue  # Skip too-small chunks
                     child_text = _repair_fragmented_table(child_text, parent_text)
-                    clause_ref = self._extract_clause_ref(child_text, parent_heading)
+                    # A parent block (up to parent_chunk_size tokens) commonly spans
+                    # more than one heading, so a child cut from deep inside it can
+                    # legitimately start its own, later section. Always attributing
+                    # every child to the *parent's* heading — the previous
+                    # behaviour — means a child whose own text opens "## 5.1
+                    # Required Documentation" still inherits "3.2 Pricing Floors"
+                    # from wherever the parent block happened to start, because
+                    # _extract_clause_ref checks its `heading` argument before
+                    # `text`. The child's own heading, when it has one, must win.
+                    child_heading = self._extract_heading(child_text) or parent_heading
+                    clause_ref = self._extract_clause_ref(child_text, child_heading)
                     child_id = make_chunk_id(doc_name, f"p{pi}_c{ci}")
                     child_meta = ChunkMetadata(
                         **{
                             **base_metadata,
                             "clause_reference": clause_ref or parent_clause or f"p{pi}_c{ci}",
-                            "section_heading": parent_heading,
+                            "section_heading": child_heading,
                             "parent_chunk_id": parent_id,
                         }
                     )

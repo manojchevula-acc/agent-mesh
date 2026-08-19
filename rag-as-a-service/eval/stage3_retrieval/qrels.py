@@ -134,8 +134,32 @@ def _grade(
         )
         if strong_full or strong_partial:
             return _Proposal(GRADE_PRIMARY, evidence, "numeric")
-        if coverage >= _PARTIAL_NUMERIC_COVERAGE:
+        # A bare coverage threshold with no topical check grades a chunk relevant
+        # purely because it happens to print the same 1-2 common values (e.g. a
+        # "40 bps" that appears in both the gold RCF floor and an unrelated FTP
+        # rate table) — confirmed in production: an EIBOR/liquidity-premium table
+        # graded relevant for a revolving-credit-facility floor question on
+        # exactly this basis. Requiring some restatement of the answer's own
+        # wording is what a coincidental number match can't produce but the real
+        # source chunk always can.
+        if coverage >= _PARTIAL_NUMERIC_COVERAGE and answer_overlap >= _SUPPORTING_ANSWER_OVERLAP:
             return _Proposal(GRADE_ALTERNATE, evidence, "numeric")
+        # A chunk can restate the answer's own substance in prose — the right
+        # clause, near word-for-word — without containing the one specific number
+        # the grader is matching on, when that number sits in an adjacent clause
+        # of the same section (e.g. "5.1 Human-in-the-Loop Controls" states the
+        # requirement; "5.2 Override and Escalation" states the 25%/90-day
+        # threshold two clauses later). Confirmed in production: the chunk
+        # containing that exact CBUAE Article 5.1 text was going completely
+        # unjudged for a question whose gold answer is almost a direct quote of
+        # it. Withheld from grade 3 (no number confirms it's the primary source),
+        # but strong lexical restatement alone is real evidence of relevance.
+        if answer_overlap >= _STRONG_ANSWER_OVERLAP:
+            return _Proposal(
+                GRADE_ALTERNATE,
+                f"answer-term overlap {answer_overlap:.2f} (gold numbers not in this chunk)",
+                "numeric_lexical",
+            )
 
     # ── Lexical path, for gold answers with no quantities ───────────────
     if not gold_keys and not answer_keys and in_expected_document:

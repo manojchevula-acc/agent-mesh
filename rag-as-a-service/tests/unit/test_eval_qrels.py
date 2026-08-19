@@ -198,6 +198,61 @@ class TestQrelsAutoGrader:
         index = ChunkIndex([_chunk("unrelated", "Section 1 covers 2 topics across 3 pages.")])
         assert derive(gold, index)[0].questions[0].basis != "numeric"
 
+    def test_coincidental_number_overlap_alone_does_not_grade_a_chunk_relevant(self):
+        # Regression: an EIBOR/liquidity-premium table sharing "20 bps" and
+        # "40 bps" with an RCF drawn-margin-floor question's gold answer was
+        # graded relevant purely on that overlap, despite being about a
+        # completely different topic. Coverage alone must not be enough —
+        # some restatement of the answer's own wording is required too.
+        gold = self._gold(
+            expected_answer="160 bps drawn margin floor and 40 bps commitment fee floor for RCFs."
+        )
+        index = ChunkIndex(
+            [
+                _chunk(
+                    "unrelated_numbers",
+                    "Tenor Bucket EIBOR Tenor Liquidity Premium: 20 bps. Tenor Premium: 40 bps. "
+                    "Treasury pricing portal confirms indicative FTP rates for syndicated loans.",
+                ),
+                _chunk(
+                    "hit",
+                    "Revolving credit facilities: 160 bps drawn margin floor, 40 bps commitment "
+                    "fee floor.",
+                ),
+            ]
+        )
+        question = derive(gold, index)[0].questions[0]
+        assert "unrelated_numbers" not in question.relevant_ids
+        assert question.graded["hit"] == 3
+
+    def test_strong_lexical_restatement_grades_relevant_even_without_the_gold_number(self):
+        # Regression: the CBUAE Article 5.1 chunk stating the human-in-the-loop
+        # requirement almost word-for-word was left completely unjudged, because
+        # the gold answer's "25%, 90 days" figures actually belong to the
+        # adjacent Article 5.2 clause, not this one. The chunk is still a
+        # legitimate source for the qualitative part of the answer.
+        gold = self._gold(
+            expected_answer=(
+                "Mandatory human-in-the-loop review — a human reviewer must have full "
+                "access to the inputs and reasoning, perform a floor check and independent "
+                "assessment, and approve or override the recommendation; an override rate "
+                "above 25% over a rolling 90 days escalates to the AI Risk Officer."
+            )
+        )
+        index = ChunkIndex(
+            [
+                _chunk(
+                    "right_clause_no_numbers",
+                    "Mandatory human-in-the-loop review: a human reviewer must have full "
+                    "access to the inputs and reasoning, perform a floor check and "
+                    "independent assessment, and approve or override the recommendation.",
+                )
+            ]
+        )
+        question = derive(gold, index)[0].questions[0]
+        assert question.graded.get("right_clause_no_numbers", 0) >= 2
+        assert question.basis == "numeric_lexical"
+
     def test_a_question_nothing_matches_is_flagged_not_silently_dropped(self):
         index = ChunkIndex([_chunk("only", "Unrelated prose about branch opening hours.")])
         qrels, warnings = derive(self._gold(), index)
