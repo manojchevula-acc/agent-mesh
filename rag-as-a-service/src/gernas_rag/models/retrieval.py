@@ -54,6 +54,13 @@ class RetrievedChunk(BaseModel):
     table_part: str | None = None  # "2/3" when the table was row-split
     page_number: int | None = None
 
+    # ── Identity ────────────────────────────────────────────────────────
+    # The deterministic MD5(doc_name::ref) chunk id — distinct from the
+    # UUIDv5 Qdrant point id, and from `asset_id` above. Empty string when the
+    # source didn't carry one (should not happen for live Qdrant results).
+    chunk_id: str = ""
+    is_parent: bool = False  # True if this hit is itself a parent-level chunk
+
 
 class RetrievedImage(BaseModel):
     model_config = ConfigDict(frozen=True)

@@ -97,6 +97,8 @@ class RetrievalPipeline:
                 asset_id=r.metadata.get("asset_id"),
                 table_part=r.metadata.get("table_part"),
                 page_number=r.metadata.get("source_page"),
+                chunk_id=r.chunk_id,
+                is_parent=bool(r.metadata.get("is_parent", False)),
             )
             for r in candidates
         ]

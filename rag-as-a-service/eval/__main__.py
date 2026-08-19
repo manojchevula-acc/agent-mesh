@@ -62,7 +62,10 @@ def _run_stage(name: str, args) -> report.StageResult | None:
     elif name == "stage1":
         result = module.run(only=args.only)
     elif name == "stage3":
-        result = module.run(limit=args.limit, only=args.only, top_k=args.top_k)
+        result = module.run(
+            limit=args.limit, only=args.only, top_k=args.top_k,
+            rank_depth=args.rank_depth, fresh=args.fresh,
+        )
     elif name == "stage4":
         result = module.run(
             limit=args.limit, only=args.only, top_k=args.top_k,
@@ -85,10 +88,15 @@ def main() -> int:
     parser.add_argument("--limit", type=int, help="stage2b: only the first N crops")
     parser.add_argument("--only", help="stage1: document names; stage3/4: gold case ids")
     parser.add_argument("--top-k", type=int, help="stage3/4: override retrieval.final_top_k")
+    parser.add_argument(
+        "--rank-depth", type=int, default=10,
+        help="stage3: how deep to keep hits in data/eval/runs/stage3_retrieval.json "
+             "(default 10) — does not change final_top_k or existing metrics",
+    )
     parser.add_argument("--judge-model", help="stage4: judge model (must not be a generator)")
     parser.add_argument(
         "--fresh", action="store_true",
-        help="stage2b/4: discard checkpointed cases and rescore from scratch",
+        help="stage2b/3/4: discard checkpointed cases and rescore from scratch",
     )
     parser.add_argument(
         "--rescore", action="store_true",
@@ -154,6 +162,7 @@ def _run_all(args) -> int:
         ("--limit", args.limit),
         ("--only", args.only),
         ("--top-k", args.top_k),
+        ("--rank-depth", args.rank_depth),
         ("--delay", args.delay),
         ("--judge-model", args.judge_model),
     ):
