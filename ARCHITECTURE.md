@@ -334,7 +334,7 @@ MCP tools query the **semantic views** (not raw tables). This isolates the tool 
 | Token expiry | Hub tokens: 8h; per-server tokens: 1h |
 | Credential isolation | Each layer uses its own credential; none are forwarded across boundaries |
 | Brute-force resistance | Login rate-limited per username (10 attempts / 15 min); PBKDF2-SHA256 (200,000 iterations) |
-| Agent-side inbound verification | `_verify_hub_token()` in `agent.py` verifies hub login JWT (Step 2a) and each per-server JWT (Step 2b) via JWKS before use — catches forged tokens before MCP connection |
+| Agent-side inbound verification | `_verify_hub_token()` in `agent.py` uses FastMCP `JWTVerifier` (via `_get_hub_jwt_verifier()`) to verify hub login JWT (Step 2a) and each per-server JWT (Step 2b) — same pattern as MCP servers; catches forged tokens before MCP connection |
 | MCP token validation | FastMCP `JWTVerifier` is the sole cryptographic gatekeeper — RS256 via hub JWKS; rejects 401 on any failure |
 | MCP claims extraction | `ClaimsExtractorMiddleware` performs unverified decode (no second JWKS call) to populate `_request_claims` ContextVar for RBAC |
 | Dev-mode flag | `MCP_AUTH_ENABLED=false` completely disables MCP auth — only for local dev |
@@ -347,7 +347,8 @@ MCP tools query the **semantic views** (not raw tables). This isolates the tool 
 
 | File | Role |
 |------|------|
-| `hub_service/hub_server.py` | FastAPI hub: server registry, routing, admin SPA, JWKS endpoint |
+| `hub_service/hub_server.py` | FastAPI hub: server registry, routing, admin SPA, JWKS endpoint; async `_require_auth` routes by alg (RS256 → `JWTVerifier`; HS256 → `verify_token`) |
+| `hub_service/auth.py` | Hub auth helpers: `build_hub_jwt_verifier()`, `generate_server_token()`, `verify_token()`, JWKS construction |
 | `hub_service/db.py` | SQLAlchemy engine factory; reads credentials from `datalayer-as-service/.env` |
 | `hub_service/observability.py` | 4-way event fan-out (memory + stdout + file + MySQL) |
 | `chat_service/chat_server.py` | Chat UI SPA server; user auth; SSE streaming; background tasks |

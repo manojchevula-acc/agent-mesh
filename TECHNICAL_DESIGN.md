@@ -266,21 +266,22 @@ The agent participates in authentication in **two directions** and uses the **sa
 
 ┌─ DIRECTION 2: INBOUND VERIFICATION ─────────────────────────────────────────────┐
 │  The agent verifies tokens it RECEIVES from the hub before using them.           │
-│  Uses the same hub JWKS endpoint. Agent uses PyJWKClient; MCP servers use         │
-│  FastMCP JWTVerifier (no PyJWKClient on MCP side).                               │
+│  Uses the same hub JWKS endpoint. Both agent and MCP servers use FastMCP         │
+│  JWTVerifier — no PyJWKClient anywhere in the auth path.                         │
 │                                                                                  │
 │  Step 2a  Hub ──access_token──► _get_hub_token()                                │
 │           _verify_hub_token(token)                                               │
-│           • PyJWKClient fetches /.well-known/jwks.json (cached 5 min)           │
-│           • Checks: RS256 sig · iss=fab-mcp-hub · exp                           │
+│           • _get_hub_jwt_verifier() → FastMCP JWTVerifier (JWKS cached)        │
+│           • await verifier.verify_token(token): RS256 sig · iss=fab-mcp-hub · exp │
 │           • Hard fail (raise) → token NOT cached; login rejected                 │
-│           • Soft fail (JWKS down) → warning; token cached anyway                │
+│           • Soft fail (JWTVerifier unavailable) → warning; token cached anyway  │
 │                                                                                  │
 │  Step 2b  Hub ──server_token[]──► run_agent()  (after POST /discover)           │
 │           _verify_hub_token(token, audience=server_id)                           │
+│           • Same JWTVerifier; aud=server_id checked manually after verify       │
 │           • Checks: RS256 sig · iss · aud=server_id · exp                       │
 │           • Hard fail (raise) → that server is SKIPPED entirely                 │
-│           • Soft fail (JWKS down) → warning; MCP server validates as fallback   │
+│           • Soft fail (JWTVerifier unavailable) → warning; MCP server fallback  │
 │                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────┘
 
@@ -304,8 +305,8 @@ Incoming JWT (from agent) → FastMCP JWTVerifier  (hub JWKS; 401 on fail)
 | Function | Signature | Direction | Purpose |
 |----------|-----------|-----------|---------|
 | `_get_hub_token` | `async _get_hub_token() -> str` | OUTBOUND (1a) | POST /auth/login → hub JWT; caches result; calls `_verify_hub_token` on the returned token (Step 2a). |
-| `_verify_hub_token` | `async _verify_hub_token(token, *, audience) -> dict` | INBOUND (2a/2b) | Verifies an RS256 JWT from the hub via `/.well-known/jwks.json`. Hard-raises on signature/aud/iss/exp mismatch. Soft-warns on JWKS outage. |
-| `_jwks` | `_jwks() -> PyJWKClient \| None` | — | Lazy-init module-level `PyJWKClient` (keys cached 5 min). Shared across all `_verify_hub_token` calls. |
+| `_verify_hub_token` | `async _verify_hub_token(token, *, audience) -> dict` | INBOUND (2a/2b) | Verifies an RS256 JWT from the hub via `/.well-known/jwks.json`. Delegates to `_get_hub_jwt_verifier()` (FastMCP `JWTVerifier`). Hard-raises on signature/aud/iss/exp mismatch. Soft-warns when `JWTVerifier` is unavailable. |
+| `_get_hub_jwt_verifier` | `_get_hub_jwt_verifier() -> JWTVerifier \| None` | — | Lazy-init module-level FastMCP `JWTVerifier` using hub JWKS. Replaces the old `_jwks()` / `PyJWKClient` approach. JWKS caching is handled internally by `JWTVerifier`. Shared across all `_verify_hub_token` calls. |
 | `_decode_jwt_claims` | `_decode_jwt_claims(token) -> dict` | OBSERVABILITY ONLY | Unverified `verify_signature=False` decode for logging and chat UI display only. Never used for access-control. |
 | `_auth_headers` | `_auth_headers(key) -> dict` | OUTBOUND (1b/1c) | Returns `{"Authorization": "Bearer <key>"}` when key is set; empty dict otherwise. |
 
@@ -801,15 +802,25 @@ This ensures correct routing even when Ollama is unreachable or LLM routing is d
 ### 13.1 Communication Paths
 
 ```
-agent.py  ──[HUB_API_KEY Bearer]──►  hub_server.py    hub_service/auth.py
-agent.py  ──[MCP_API_KEY Bearer]──►  MCP servers      mcp_server/auth.py
+agent.py  ──[RS256 JWT Bearer]──►  hub_server.py    hub_service/auth.py  (FastMCP JWTVerifier)
+agent.py  ──[RS256 JWT Bearer]──►  MCP servers      mcp_server/auth.py   (FastMCP JWTVerifier)
+chat_ui   ──[HS256 JWT Bearer]──►  hub_server.py    hub_service/auth.py  (verify_token / JWT_SECRET)
 ```
 
-Each layer has an independent auth module with identical provider model: static API key, local HS256 JWT, or Azure AD RS256 JWT. Both default to **disabled** (open dev mode).
+Each layer has an independent auth module. The hub routes by JWT `alg` header: RS256 → `JWTVerifier`; HS256/API-key → existing `verify_token()`. Both default to **disabled** (open dev mode).
 
-### 13.2 Hub Auth (`hub_service/auth.py`)
+### 13.2 Hub Auth (`hub_service/auth.py` + `hub_service/hub_server.py`)
 
-Wired into FastAPI via `_require_auth` dependency on protected endpoints (`/servers`, `/discover`).
+Wired into FastAPI via `async _require_auth` dependency on protected endpoints (`/servers`, `/discover`).
+
+`_require_auth` reads the unverified JWT header to route by algorithm:
+
+| Token `alg` | Validator | Use case |
+|---|---|---|
+| `RS256` | `await _HUB_JWT_VERIFIER.verify_token(token)` (FastMCP `JWTVerifier`) | Agent RS256 JWT (new default) |
+| `HS256` / API key | `verify_token(token)` (existing `hub_service/auth.py` helper) | Chat UI HS256 JWT; static `HUB_API_KEY` |
+
+`_HUB_JWT_VERIFIER = build_hub_jwt_verifier()` — module-level singleton from `hub_service/auth.py`. Uses `jwks_uri=http://localhost:8090/.well-known/jwks.json`, `issuer=fab-mcp-hub`, no audience (hub login tokens carry no `aud` claim).
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
@@ -825,6 +836,7 @@ Wired into FastAPI via `_require_auth` dependency on protected endpoints (`/serv
 **Internal helpers** (not part of public API):
 - `_normalize_claims(payload)` — converts JWT payload to consistent `{sub, roles, iss, aud, server_id, _source}` dict; used by both RS256 and HS256 paths
 - `_jwt_error_result(exc)` — maps PyJWT exception to `(False, {"_error": ...})` tuple; shared by both verify paths
+- `build_hub_jwt_verifier()` — factory that returns a `JWTVerifier` for the hub's own JWKS; returns `None` when auth disabled or `fastmcp` not installed
 
 **Token generation:** `python hub_service/auth.py --sub agent --hours 24`
 

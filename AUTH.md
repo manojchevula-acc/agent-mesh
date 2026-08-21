@@ -157,9 +157,10 @@ the agent runs `_verify_hub_token()` (Step 2a — INBOUND VERIFICATION):**
 ```python
 # agent.py — _get_hub_token()
 claims = await _verify_hub_token(token)
-# PyJWKClient fetches GET /.well-known/jwks.json, verifies RS256 signature + iss + exp.
+# _get_hub_jwt_verifier() returns a FastMCP JWTVerifier pointed at hub JWKS.
+# await verifier.verify_token(token) → RS256 signature + iss + exp verified.
 # Hard failure (signature/issuer mismatch) → raise; token is NOT cached.
-# Soft failure (JWKS unreachable)          → warning logged; token cached anyway.
+# Soft failure (JWTVerifier unavailable)   → warning logged; token cached anyway.
 ```
 
 Only after passing JWKS verification is the token cached in `_hub_token_cache`.
@@ -546,12 +547,12 @@ POST /auth/login  →  Hub returns access_token
                          │
                          ▼  INBOUND VERIFICATION
                     _verify_hub_token(token)
-                    ├── PyJWKClient fetches /.well-known/jwks.json
-                    ├── Verifies RS256 signature (kid=hub-rsa-1)
+                    ├── _get_hub_jwt_verifier() → FastMCP JWTVerifier (hub JWKS)
+                    ├── await verifier.verify_token(token) — RS256 sig · iss · exp
                     ├── Checks: iss == "fab-mcp-hub"
                     ├── Checks: exp > now
                     ├── Hard fail → raise; token NOT cached; login rejected
-                    └── Soft fail (JWKS unreachable) → warning; token cached
+                    └── Soft fail (JWTVerifier unavailable) → warning; token cached
 ```
 
 ### Step 2b — /discover Server Tokens (`run_agent()`)
@@ -561,13 +562,14 @@ POST /discover  →  Hub returns [{server_token, id, endpoint, …}, …]
                          │  (for each server)
                          ▼  INBOUND VERIFICATION
                     _verify_hub_token(token, audience=server_id)
-                    ├── PyJWKClient fetches /.well-known/jwks.json (cached)
-                    ├── Verifies RS256 signature
+                    ├── _get_hub_jwt_verifier() → FastMCP JWTVerifier (hub JWKS)
+                    ├── await verifier.verify_token(token) — RS256 sig · iss · exp
+                    ├── manual aud check: payload["aud"] == server_id
                     ├── Checks: iss == "fab-mcp-hub"
                     ├── Checks: aud == server_id  (audience must match exactly)
                     ├── Checks: exp > now
                     ├── Hard fail → server SKIPPED; no MCP connection attempted
-                    └── Soft fail (JWKS unreachable) → warning; token used anyway
+                    └── Soft fail (JWTVerifier unavailable) → warning; token used anyway
 ```
 
 ### Failure behaviour
@@ -579,7 +581,7 @@ POST /discover  →  Hub returns [{server_token, id, endpoint, …}, …]
 | `iss` does not match `fab-mcp-hub` | Hard | `InvalidIssuerError` raised; rejected |
 | Token expired | Hard | `ExpiredSignatureError` raised; rejected |
 | JWKS endpoint unreachable | Soft | Warning logged; token used (MCP server validates again) |
-| PyJWT not installed | Soft | Warning logged; unverified decode (dev only) |
+| `fastmcp` not installed / JWTVerifier unavailable | Soft | Warning logged; unverified decode (dev only) |
 
 ### Why verify tokens the agent receives?
 
@@ -587,7 +589,7 @@ The agent already trusts the hub (it authenticated to it). The JWKS check adds d
 
 - Detects a MITM attack that substitutes a forged JWT in the hub's response.
 - Catches mis-issued tokens (wrong aud, expired) before a TCP connection is opened to the MCP server.
-- Mirrors exactly what MCP servers do — both sides use the same `PyJWKClient` + JWKS endpoint.
+- Mirrors exactly what MCP servers do — both sides use the same FastMCP `JWTVerifier` + JWKS endpoint.
 
 ---
 
