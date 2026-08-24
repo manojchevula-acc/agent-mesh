@@ -859,10 +859,7 @@ async def domain_node(
                 })
                 _set_ok(span)
 
-            record_a2a_call(_target_node, "SUCCESS", float(total_ms))
             record_domain_route(route, float(total_ms))
-        elif failed:
-            record_a2a_call(_target_node, "ERROR", float(total_ms))
 
     _emit_stream_event({"stage": "domain", "status": "completed",
                         "message": "Domain agent responded"})

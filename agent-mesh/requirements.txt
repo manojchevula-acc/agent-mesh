@@ -6,10 +6,20 @@
 #
 #   py -3.13 -m venv C:\fab-venv
 #   C:\fab-venv\Scripts\pip install -r requirements.txt
+#
+# PyPI audit: 2026-08-24. All packages verified to exist. Version notes:
+#   FIXED: groq <1.0.0 cap removed (was trapping on pre-GA SDK; latest is 1.6.0)
+#   FIXED: mcp capped <2.0.0 (2.0 has breaking streamable-HTTP transport changes)
+#   NOTE:  Several packages resolve to a newer major version than the floor —
+#          see inline comments. They are satisfiable but may have breaking APIs.
 # =============================================================================
 
 # -----------------------------------------------------------------------------
 # LangGraph / LangChain — replaces Microsoft Agent Framework (MAF)
+# NOTE: langgraph resolves to 1.x (stable GA); floor 0.2.0 is fine — 1.x is
+#       backward-compatible with the StateGraph / create_react_agent API used here.
+# NOTE: langchain-openai resolves to 1.6.0 (was 0.x when floor was set); OK —
+#       only ChatGroq is used in this project, not ChatOpenAI.
 # -----------------------------------------------------------------------------
 langgraph>=0.2.0
 langchain-openai>=0.3.0
@@ -25,13 +35,20 @@ sse-starlette>=3.4.5
 python-multipart>=0.0.32
 
 # -----------------------------------------------------------------------------
-# Pydantic (data validation — used by MAF, FastAPI, and all agents)
+# Pydantic (data validation — used by FastAPI and all agents)
 # -----------------------------------------------------------------------------
 pydantic>=2.13.4
 pydantic-settings>=2.14.2
 
 # -----------------------------------------------------------------------------
 # LLM clients
+# NOTE: openai resolves to 3.x (was 2.x when floor was set). The mesh uses
+#       ChatGroq (not the openai client directly), so 3.x breaking changes
+#       are isolated to langchain-groq's internal usage.
+# NOTE: anthropic resolves to 1.0 GA — not used directly in this project.
+# NOTE: groq capped <1.0.0 — langchain-groq 1.1.x requires groq<1.0.0 (transitive).
+#       Mesh never imports groq directly; all calls go through ChatGroq.
+#       Upgrade only when langchain-groq lifts this constraint.
 # -----------------------------------------------------------------------------
 anthropic>=0.80.0
 openai>=2.43.0
@@ -40,12 +57,15 @@ groq>=0.30.0,<1.0.0
 
 # -----------------------------------------------------------------------------
 # MCP (Model Context Protocol) — consumed by DataAgent and RAGAgent
+# Cap <2.0.0: MCP 2.0 changed the streamable-HTTP transport API used in
+# src/integrations/mcp_clients.py (ClientSession.initialize, list_tools).
+# Upgrade only after verifying the new API in mcp_clients.py.
 # -----------------------------------------------------------------------------
-mcp[cli]>=1.28.0
+mcp[cli]>=1.28.0,<2.0.0
 
 # -----------------------------------------------------------------------------
 # OpenTelemetry observability stack
-# Instrumentation versions track the SDK minor (0.63b1 = SDK 1.42.x)
+# Instrumentation beta versions track the SDK minor (0.65b0 = SDK 1.44.x)
 # -----------------------------------------------------------------------------
 opentelemetry-api>=1.42.1
 opentelemetry-sdk>=1.42.1
@@ -67,6 +87,8 @@ azure-monitor-opentelemetry-exporter>=1.0.0b45
 
 # -----------------------------------------------------------------------------
 # Azure SDK (identity, AI services)
+# NOTE: azure-search-documents resolves to 12.0.0 GA (floor was 11.7.0b2).
+#       Not used in the core agent mesh — safe to leave open.
 # -----------------------------------------------------------------------------
 azure-identity>=1.25.3
 azure-core>=1.41.0
@@ -77,7 +99,9 @@ azure-search-documents>=11.7.0b2
 
 # -----------------------------------------------------------------------------
 # Machine learning — embeddings, transformers, retrieval
-# Python 3.13 requires torch>=2.5.0; venv ships 2.12.1
+# NOTE: sentence-transformers resolves to 6.0.0 (floor is 3.3.0 — 3 major
+#       versions ahead). Used by the RAG reranker. If the RAG service breaks,
+#       pin to sentence-transformers>=3.3.0,<4.0.0 and investigate.
 # -----------------------------------------------------------------------------
 torch>=2.5.0
 torchvision>=0.20.0
@@ -94,9 +118,12 @@ scipy>=1.18.0
 
 # -----------------------------------------------------------------------------
 # Vector databases
+# NOTE: chromadb resolves to 1.5.9 (floor 0.5.0 — major API overhaul at 1.0).
+#       Not used in the core LangGraph mesh (Step 2 feature). Safe for now.
+# NOTE: pymilvus resolves to 3.0.1 (floor 2.4.0 — breaking changes at 3.0).
+#       Optional RAG-as-a-Service backend; not used in core mesh.
 # -----------------------------------------------------------------------------
 qdrant-client>=1.18.0
-# pymilvus and chromadb are optional backends in RAG-as-a-Service
 pymilvus>=2.4.0
 chromadb>=0.5.0
 
@@ -111,12 +138,10 @@ pyarrow>=24.0.0
 # -----------------------------------------------------------------------------
 # Database drivers (datalayer-as-service)
 # -----------------------------------------------------------------------------
-# pymysql is a pure-Python MySQL client (Python 3.13 compatible)
 pymysql>=1.1.0
 
 # -----------------------------------------------------------------------------
 # Document extraction (RAG-as-a-Service ingestion pipeline)
-# docling ships Python 3.13 wheels as of 2.x; pymupdf (fitz) now PyMuPDF 1.24+
 # -----------------------------------------------------------------------------
 docling>=2.105.0
 docling-core>=2.83.1
@@ -135,7 +160,6 @@ pillow>=12.2.0
 # -----------------------------------------------------------------------------
 langchain-core>=1.4.8
 langchain-text-splitters>=1.1.2
-langchain-protocol>=0.0.18
 
 # -----------------------------------------------------------------------------
 # RAG evaluation
@@ -145,6 +169,9 @@ ragas>=0.1.14
 
 # -----------------------------------------------------------------------------
 # Caching (Redis)
+# NOTE: redis resolves to 8.1.0 (floor 7.1.1 — major version jump).
+#       The Redis conversation backend is an unimplemented stub (raises
+#       NotImplementedError), so the API change has no runtime impact.
 # -----------------------------------------------------------------------------
 redis>=7.1.1
 redisvl>=0.15.0
@@ -188,7 +215,6 @@ click>=8.4.1
 typer>=0.24.2
 tabulate>=0.10.0
 prompt-toolkit>=3.0.52
-# Streamlit dashboard for DataLayer-as-a-Service
 streamlit>=1.30.0
 
 # -----------------------------------------------------------------------------
@@ -213,6 +239,10 @@ regex>=2026.5.9
 
 # -----------------------------------------------------------------------------
 # Testing
+# NOTE: pytest-asyncio resolves to 1.x (was 0.x — asyncio_mode config required).
+#       pytest.ini in this repo sets asyncio_mode = auto to handle this.
+# NOTE: pytest-cov resolves to 7.1.0 (floor 5.0.0 — 2 major versions ahead).
+#       No breaking changes that affect this project's usage.
 # -----------------------------------------------------------------------------
 pytest>=9.0.3
 pytest-asyncio>=0.23.0

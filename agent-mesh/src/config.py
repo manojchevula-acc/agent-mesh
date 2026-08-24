@@ -169,6 +169,10 @@ class Config:
             raise ValueError("Invalid Configuration: GROQ_API_KEY (LLM API key) is required.")
         if not cls.GROQ_MODEL:
             raise ValueError("Invalid Configuration: GROQ_MODEL (LLM model name) is required.")
+        if cls.CONVERSATION_BACKEND == "redis":
+            raise RuntimeError(
+                "Redis conversation backend is not implemented. Set CONVERSATION_BACKEND=jsonl in .env."
+            )
 
     @classmethod
     def check_groq(cls) -> tuple[bool, str]:

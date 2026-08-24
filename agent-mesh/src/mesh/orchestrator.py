@@ -141,8 +141,7 @@ async def handle_request(
                 extra={"user": user.username, "session_id": session_id},
             )
             final = await workflow.ainvoke(initial_dict)
-
-        _enrich_root_span(root_span, final, request_id)
+            _enrich_root_span(root_span, final, request_id)
     finally:
         duration_ms = (time.perf_counter() - t0) * 1000
         if final is None:

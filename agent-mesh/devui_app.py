@@ -1,46 +1,36 @@
-"""Docker-free live trace + agent visualization for the agent mesh via DevUI.
+"""Docker-free single-process dev entry point for the agent mesh.
 
 Why this exists
 ---------------
-You can't run container-based collectors (Aspire/Jaeger) in this environment, so
-instead we use the Microsoft Agent Framework **DevUI** — a built-in, local web app
-that renders agent interactions and the OpenTelemetry trace tree in real time.
+Runs the entire mesh in one process — no A2A HTTP hops — so every span stays
+in-process and is easy to inspect with a local OTLP collector (Aspire/Jaeger).
+The production mesh spawns four separate processes via launch_mesh.py; this
+entry point collapses them into one for local development and debugging.
 
-The catch: Python DevUI only visualizes traces for entities it runs **in its own
-process** (it captures spans with an in-memory collector, not a network OTLP
-receiver). The production mesh runs each node in a separate A2A server process, so
-those spans never reach DevUI. This entrypoint therefore runs the **entire mesh in
-one process**: the orchestration workflow calls each node agent directly via an
-in-process adapter instead of over A2A. DevUI then captures the full trace tree:
-
-    workflow.run
-      └─ executor.process input_guardrail / compliance / policy / output_redaction
-            └─ invoke_agent <Node>  └─ chat <model>  └─ execute_tool <fn>
-
-The distributed A2A mesh (``launch_mesh.py`` + ``run.py``) is unchanged; this is a
-separate, dev-only lens onto the same agents and the same workflow graph.
+How it works
+------------
+Instead of ``ask_remote()`` (httpx POST over A2A), we build every node agent
+in-process and patch ``src.mesh.orchestrator.ask_remote`` with a local
+transport that calls each agent's ``ainvoke()`` directly. The same
+``handle_request()`` orchestrator and ``build_mesh_workflow()`` graph are
+used — only the transport layer differs.
 
 Run
 ---
-    1. Ensure Ollama is running (``ollama serve``) and the model is pulled.
-    2. ``python devui_app.py``  -> opens http://127.0.0.1:8090
-    3. Pick the ``agent_mesh_pipeline`` workflow to watch a full request flow, or
-       chat any single node agent directly. Open the Debug panel to see traces.
+    1. Fill in .env with a valid GROQ_API_KEY / Cerebras key.
+    2. ``python devui_app.py``  -> interactive REPL at the terminal.
+    3. Type a query and press Enter. Type 'exit' to quit.
 
-DevUI is a development tool only — it is not a production hosting surface.
+DevUI is a development tool only — not a production hosting surface.
 """
 import os
-
-# Single-process mode: no A2A hops, so skip OTLP/Aspire export wiring (which would
-# otherwise try to reach a non-existent collector at :4317). DevUI provides the
-# tracing surface itself via ``instrumentation_enabled=True`` below. We still want
-# the rich, trace-correlated console/file logging, so set the profile to "off"
-# (logging only) BEFORE importing the observability setup.
-os.environ.setdefault("PYTHONWARNINGS", "ignore")
-os.environ["OBS_PROFILE"] = "off"
-
+import asyncio
 import sys
 import pathlib
+
+# Single-process mode: use dev OTel profile so no external collector is required.
+os.environ.setdefault("OBS_PROFILE", "dev")
+os.environ.setdefault("PYTHONWARNINGS", "ignore")
 
 project_root = str(pathlib.Path(__file__).resolve().parent)
 if project_root not in sys.path:
@@ -48,49 +38,38 @@ if project_root not in sys.path:
 
 from src.observability import setup_observability, get_logger, CAT_SYSTEM
 
-# Activate centralized logging for this process (no OTel exporters; see above).
 setup_observability(service_name="agent_mesh_devui")
-
-from agent_framework.devui import serve
-
-from src.config import Config
-from src.agents.node_registry import NODE_NAMES, build_node
-from src.mesh.workflow import build_devui_workflow
-
 _log = get_logger(CAT_SYSTEM)
 
-
-def _build_agents() -> dict:
-    """Builds every mesh node agent once, in-process.
-
-    The same instances back both the workflow's in-process transport and the
-    individually browsable DevUI entities, so a trace started by the workflow and
-    a direct chat hit the exact same agent objects.
-    """
-    return {name: build_node(name)[0] for name in NODE_NAMES}
+from src.config import Config
+from src.auth.identity_provider import login
+from src.agents.node_registry import NODE_NAMES, build_node
+from langchain_core.messages import HumanMessage
 
 
 def _make_local_ask(agents: dict):
     """In-process replacement for the A2A ``ask_remote`` transport.
 
-    Calls the target node agent directly (``agent.run``) instead of crossing an
-    A2A boundary, keeping the whole trace in one process for DevUI to capture.
-    Signature matches ``ask_remote`` so the workflow executors are unchanged.
+    Calls the target node agent's ``ainvoke()`` directly instead of an HTTP hop,
+    so the full trace stays in one process. Signature matches ``ask_remote``.
     """
     async def local_ask(name: str, prompt: str, *_args, **_kwargs) -> str:
         agent = agents.get(name)
         if agent is None:
             raise ValueError(f"Unknown mesh node '{name}'. Valid: {', '.join(NODE_NAMES)}")
-        res = await agent.run(prompt)
-        return getattr(res, "text", str(res))
+        result = await agent.ainvoke({"messages": [HumanMessage(content=prompt)]})
+        messages = result.get("messages", [])
+        if messages:
+            last = messages[-1]
+            return getattr(last, "content", str(last))
+        return str(result)
 
     return local_ask
 
 
-def main() -> None:
+async def _run_repl() -> None:
     Config.validate()
 
-    # Fail fast if Groq API key is missing: otherwise agents will return 401 errors.
     ok, msg = Config.check_groq()
     if not ok:
         _log.error("DevUI startup blocked: %s", msg)
@@ -98,35 +77,50 @@ def main() -> None:
         sys.exit(1)
     print(f"[devui] {msg}")
 
-    agents = _build_agents()
-    workflow = build_devui_workflow(
-        ask=_make_local_ask(agents),
-        user_name=Config.DEVUI_USER,
-        role=Config.DEVUI_ROLE,
-    )
+    # Build all node agents in-process.
+    agents = {name: build_node(name)[0] for name in NODE_NAMES}
 
-    # Register the full pipeline AND each node agent so you can watch an end-to-end
-    # request or poke a single agent. ``instrumentation_enabled=True`` turns on the
-    # framework's OpenTelemetry so DevUI's trace panel is populated.
-    entities = [workflow, *agents.values()]
+    # Patch the orchestrator's ask_remote with our in-process local transport.
+    import src.mesh.orchestrator as _orch
+    _orch.ask_remote = _make_local_ask(agents)
+
+    from src.mesh.orchestrator import handle_request
+
+    # Resolve the DevUI user from the mock corporate directory.
+    user = login(Config.DEVUI_USER)
 
     print("=" * 72)
-    print("  AGENT MESH — DevUI (Docker-free live traces)")
+    print("  AGENT MESH — DevUI (single-process, in-process transport)")
     print("=" * 72)
-    print(f"  URL:        http://{Config.DEVUI_HOST}:{Config.DEVUI_PORT}")
-    print(f"  Identity:   user={Config.DEVUI_USER} role={Config.DEVUI_ROLE}")
-    print(f"  Entities:   agent_mesh_pipeline (workflow) + {len(agents)} agents "
-          f"({', '.join(NODE_NAMES)})")
+    print(f"  User:   {user.username}  Role: {user.role.value}")
+    print(f"  Nodes:  {', '.join(NODE_NAMES)}")
+    print("  Type a query and press Enter. Type 'exit' to quit.")
     print("-" * 72)
 
-    serve(
-        entities=entities,
-        host=Config.DEVUI_HOST,
-        port=Config.DEVUI_PORT,
-        auto_open=Config.DEVUI_AUTO_OPEN,
-        instrumentation_enabled=True,
-        auth_enabled=not Config.DEVUI_NO_AUTH,
-    )
+    while True:
+        try:
+            query = input("\n[devui] > ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n[devui] Exiting.")
+            break
+
+        if not query or query.lower() in ("exit", "quit", "q"):
+            print("[devui] Exiting.")
+            break
+
+        try:
+            result = await handle_request(user=user, query=query)
+            print("\n[devui] Answer:")
+            print(result.answer)
+            if result.blocked:
+                print(f"[devui] BLOCKED at stage: {result.block_stage}")
+        except Exception as exc:
+            _log.exception("DevUI request failed: %s", exc)
+            print(f"[devui] ERROR: {exc}")
+
+
+def main() -> None:
+    asyncio.run(_run_repl())
 
 
 if __name__ == "__main__":
