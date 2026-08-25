@@ -80,7 +80,7 @@ async def handle_request(
     _baggage_ctx, _baggage_token = set_request_baggage(
         request_id=request_id,
         user=user.username,
-        role=user.role.value,
+        role=getattr(user.role, "value", str(user.role)),
         session_id=session_id,
     )
 
@@ -113,7 +113,7 @@ async def handle_request(
 
     initial_dict: MeshState = {
         "user_name":           user.username,
-        "role":                user.role.value,
+        "role":                getattr(user.role, "value", str(user.role)),
         "query":               query,
         "session_id":          session_id,
         "compliance_verdict":  "",
@@ -137,7 +137,7 @@ async def handle_request(
         with span_cm as root_span:
             _log.info(
                 "Request start user=%s role=%s query_len=%d req=%s",
-                user.username, user.role.value, len(query), request_id,
+                user.username, getattr(user.role, "value", str(user.role)), len(query), request_id,
                 extra={"user": user.username, "session_id": session_id},
             )
             final = await workflow.ainvoke(initial_dict)
@@ -235,7 +235,7 @@ def _root_span(user: User, query: str, session_id: str, request_id: str = ""):
                 self._span = cm.__enter__()
                 try:
                     self._span.set_attribute("mesh.user", user.username)
-                    self._span.set_attribute("mesh.role", user.role.value)
+                    self._span.set_attribute("mesh.role", getattr(user.role, "value", str(user.role)))
                     self._span.set_attribute("session.id", session_id)
                     self._span.set_attribute("mesh.query_length", len(query))
                     if request_id:

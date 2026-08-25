@@ -154,20 +154,23 @@ openpyxl>=3.1.5
 lxml>=6.1.1
 beautifulsoup4>=4.15.0
 pillow>=12.2.0
-# unstructured — OPTIONAL alternative extractor; install separately if needed:
-# unstructured[pdf,docx]>=0.14.0
+unstructured[pdf,docx]>=0.14.0
 
 # -----------------------------------------------------------------------------
 # LangChain utilities
-#   langchain       : datalayer-as-service/agent.py uses langchain.agents
-#   langchain-core  : shared base types across the LangGraph stack
-#   langchain-groq  : ChatGroq LLM client used by all mesh agents
-#   langchain-community: RAG evaluator fallback embeddings + RAGAS compat
+#   langchain           : datalayer-as-service/agent.py uses langchain.agents
+#   langchain-core      : shared base types across the LangGraph stack
+#   langchain-groq      : ChatGroq LLM client used by all mesh agents
+#   langchain-anthropic : rag-as-a-service Anthropic LLM provider
+#   langchain-huggingface: rag-as-a-service HuggingFace embeddings provider
+#   langchain-community : RAG evaluator fallback embeddings + RAGAS compat
 # REMOVED: langchain-protocol (does not exist on PyPI)
 # -----------------------------------------------------------------------------
 langchain>=1.0.0
 langchain-core>=1.4.8
 langchain-text-splitters>=1.1.2
+langchain-anthropic>=0.1.22
+langchain-huggingface>=0.0.3
 langchain-community>=0.4.2
 
 # -----------------------------------------------------------------------------

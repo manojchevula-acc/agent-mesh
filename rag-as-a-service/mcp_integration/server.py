@@ -29,10 +29,7 @@ if str(_SRC_DIR) not in sys.path:
 # Load project .env so this process shares the backend's config.
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
-try:
-    from mcp.server.fastmcp import FastMCP  # mcp < 2.0
-except ImportError:
-    from fastmcp import FastMCP  # mcp >= 2.0 — FastMCP is now a standalone package
+from fastmcp import FastMCP  # standalone fastmcp package (has run_http_async)
 
 DEFAULT_GENERATE_ANSWER = os.getenv("RAG_GENERATE_ANSWER", "false").lower() in {
     "1",
@@ -136,7 +133,7 @@ def _format_chunks(payload: dict) -> dict:
 
 @mcp.tool()
 async def search_documents(
-    query: str, top_k: int = 5, generate_answer: bool = DEFAULT_GENERATE_ANSWER
+    query: str, top_k: int = 5, generate_answer: bool | str | None = DEFAULT_GENERATE_ANSWER
 ) -> dict:
     """Search FAB credit & regulatory policy documents for grounded context.
 
@@ -160,6 +157,12 @@ async def search_documents(
         ``{"error": <message>}``.
     """
     top_k = max(1, min(int(top_k), 20))
+    # Groq serializes booleans as strings ("False"/"True") in XML tool calls.
+    # FastMCP falls back to None when strict bool validation fails.
+    if isinstance(generate_answer, str):
+        generate_answer = generate_answer.strip().lower() not in {"false", "0", "no", ""}
+    elif generate_answer is None:
+        generate_answer = DEFAULT_GENERATE_ANSWER
 
     try:
         pipeline, generator = await _ensure_pipeline()
@@ -181,8 +184,8 @@ async def search_documents(
 
 if __name__ == "__main__":
     if MCP_TRANSPORT in {"http", "streamable-http"}:
-        # Network service: remote agents connect to http://MCP_HOST:MCP_PORT/mcp
-        mcp.run(transport="streamable-http", host=MCP_HOST, port=MCP_PORT)
+        import asyncio
+        asyncio.run(mcp.run_http_async(host=MCP_HOST, port=MCP_PORT, transport="streamable-http"))
     elif MCP_TRANSPORT == "sse":
         mcp.run(transport="sse")
     else:

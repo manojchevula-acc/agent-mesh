@@ -22,6 +22,7 @@ import signal
 import socket
 import subprocess
 import pathlib
+import platform
 
 project_root = str(pathlib.Path(__file__).resolve().parent)
 if project_root not in sys.path:
@@ -44,6 +45,24 @@ START_ORDER = ["compliance", "data_agent", "rag_agent", "price_assist"]
 _PORT_READY_TIMEOUT = 30.0  # seconds to wait for each node's port to bind
 
 
+def _free_port(port: int) -> None:
+    """Kill any process holding the given TCP port (Windows)."""
+    if platform.system() != "Windows":
+        return
+    try:
+        result = subprocess.run(["netstat", "-ano"], capture_output=True, text=True)
+        for line in result.stdout.splitlines():
+            if f":{port} " in line and ("LISTENING" in line or "ESTABLISHED" in line):
+                parts = line.strip().split()
+                pid = parts[-1]
+                if pid.isdigit() and int(pid) != os.getpid():
+                    subprocess.run(["taskkill", "/F", "/PID", pid], capture_output=True)
+                    print(f"[mesh] Freed port {port} (killed PID {pid})")
+                    time.sleep(0.3)
+    except Exception:
+        pass
+
+
 def _wait_for_port(host: str, port: int, timeout: float = _PORT_READY_TIMEOUT) -> None:
     """Block until host:port accepts a TCP connection or timeout elapses."""
     deadline = time.monotonic() + timeout
@@ -64,6 +83,7 @@ def main():
     print("=" * 70)
     for name in START_ORDER:
         port = Config.AGENT_PORTS[name]
+        _free_port(port)
         p = subprocess.Popen([sys.executable, server, "--agent", name, "--port", str(port)])
         procs.append((name, p))
         print(f"  -> {name:<13} pid={p.pid:<6} http://{Config.A2A_HOST}:{port}/  (waiting…)")

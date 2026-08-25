@@ -65,7 +65,12 @@ logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # MCP server instance
+# Host/port read at module level so they're available to the FastMCP constructor.
+# FastMCP 2.x accepts host/port as constructor kwargs → ServerSettings.
 # ---------------------------------------------------------------------------
+_MCP_HOST = os.getenv("MCP_HOST", "127.0.0.1")
+_MCP_PORT = int(os.getenv("MCP_PORT", "9100"))
+
 mcp = FastMCP(
     name="FAB Pricing Recommendation MCP Server",
     instructions=(
@@ -245,10 +250,9 @@ def similar_customer_pricing(new_customer_id: str = "") -> str:
 if __name__ == "__main__":
     transport = os.getenv("MCP_TRANSPORT", "stdio").lower()
     if transport in ("http", "streamable-http"):
-        host = os.getenv("MCP_HOST", "127.0.0.1")
-        port = int(os.getenv("MCP_PORT", "9100"))
-        logger.info("Starting FAB Pricing MCP Server (streamable HTTP) on %s:%s ...", host, port)
-        mcp.run(transport="streamable-http", host=host, port=port)
+        import asyncio
+        logger.info("Starting FAB Pricing MCP Server (streamable HTTP) on %s:%s ...", _MCP_HOST, _MCP_PORT)
+        asyncio.run(mcp.run_http_async(host=_MCP_HOST, port=_MCP_PORT, transport="streamable-http"))
     else:
         logger.info("Starting FAB Pricing Recommendation MCP Server (stdio) ...")
         mcp.run()

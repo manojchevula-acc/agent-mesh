@@ -31,6 +31,8 @@ import dataclasses
 import json
 import os
 import pathlib
+import platform
+import subprocess
 import sys
 import time
 import uuid
@@ -171,38 +173,36 @@ async def post_query(request: Request) -> JSONResponse:
 
 async def get_mesh_status(request: Request) -> JSONResponse:
     """Fan-out GET /health to all A2A nodes and return per-node status."""
-    nodes = []
-    async with httpx.AsyncClient(timeout=5.0) as client:
-        tasks = {
-            name: asyncio.ensure_future(
-                client.get(f"{Config.agent_url(name)}/health")
-            )
-            for name in Config.AGENT_PORTS
-        }
-        for name, port in Config.AGENT_PORTS.items():
-            task = tasks[name]
-            try:
-                resp = await task
+    agent_names = list(Config.AGENT_PORTS.keys())
+
+    async def _fetch_one(name: str) -> dict:
+        url = f"{Config.agent_url(name).rstrip('/')}/health"
+        port = Config.AGENT_PORTS[name]
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(url)
                 data = resp.json()
-                nodes.append({
+                return {
                     "name": name,
                     "port": port,
                     "status": data.get("status", "unknown"),
                     "uptime_seconds": data.get("uptime_seconds"),
                     "model": data.get("model"),
                     "url": Config.agent_url(name),
-                })
-            except Exception as exc:
-                nodes.append({
-                    "name": name,
-                    "port": port,
-                    "status": "error",
-                    "uptime_seconds": None,
-                    "model": None,
-                    "url": Config.agent_url(name),
-                    "error": str(exc),
-                })
-    return JSONResponse(nodes)
+                }
+        except Exception as exc:
+            return {
+                "name": name,
+                "port": port,
+                "status": "error",
+                "uptime_seconds": None,
+                "model": None,
+                "url": Config.agent_url(name),
+                "error": str(exc),
+            }
+
+    results = await asyncio.gather(*[_fetch_one(n) for n in agent_names])
+    return JSONResponse(list(results))
 
 
 async def get_conversation(request: Request) -> JSONResponse:
@@ -821,6 +821,24 @@ except Exception:
     pass  # package not installed — degrade gracefully, mesh still works
 
 
+def _free_port(port: int) -> None:
+    """Kill any process holding the given TCP port (Windows)."""
+    if platform.system() != "Windows":
+        return
+    try:
+        result = subprocess.run(["netstat", "-ano"], capture_output=True, text=True)
+        for line in result.stdout.splitlines():
+            if f":{port} " in line and ("LISTENING" in line or "ESTABLISHED" in line):
+                parts = line.strip().split()
+                pid = parts[-1]
+                if pid.isdigit() and int(pid) != os.getpid():
+                    subprocess.run(["taskkill", "/F", "/PID", pid], capture_output=True)
+                    print(f"[api_server] Freed port {port} (killed PID {pid})")
+                    time.sleep(0.3)
+    except Exception:
+        pass
+
+
 def main() -> None:
     Config.validate()
 
@@ -848,10 +866,11 @@ def main() -> None:
     print(f"  CORS:   {', '.join(_CORS_ORIGINS)}")
     print("  Routes: GET /health  GET /api/users  POST /api/login")
     print("          POST /api/query  GET /api/mesh/status")
-    print(f"  Observability: profile={profile} → {obs_dest}")
+    print(f"  Observability: profile={profile} -> {obs_dest}")
     print("  Note:   Ensure mesh is running first (python launch_mesh.py)")
     print("=" * 64)
 
+    _free_port(_API_SERVER_PORT)
     uvicorn.run(
         app,
         host=_API_SERVER_HOST,

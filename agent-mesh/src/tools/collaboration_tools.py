@@ -143,27 +143,30 @@ async def _consult_peer(node: str, question: str, unavailable_label: str) -> str
             pass
 
 
-@tool(description=(
-    "Query FAB structured banking data via the Data Agent: customer profiles, deal "
-    "pricing, margins, profitability, and RWA/capital (DataLayer). Use for any "
-    "numeric or record lookup about a customer or deal (e.g. CUST001's recommended "
-    "price, margin analysis, profitability tier, RWA impact)."
-))
 async def query_structured_data(question: str) -> str:
     """Agent-to-agent hop: Price Assist asks the Data Agent (over A2A)."""
     return await _consult_peer("data_agent", question, "DATA_UNAVAILABLE")
 
 
-@tool(description=(
-    "Query FAB banking knowledge via the RAG Agent: pricing floors and ceilings, "
-    "fee schedules, credit/regulatory policy, product guidelines, FAQs, operational "
-    "procedures, AML/KYC rules, concentration limits, model risk policy "
-    "(RAG-as-a-Service knowledge base). Use to retrieve the rule or benchmark that "
-    "a price or action must comply with."
-))
 async def query_knowledge_base(question: str) -> str:
     """Agent-to-agent hop: Price Assist asks the RAG Agent (over A2A)."""
     return await _consult_peer("rag_agent", question, "RAG_UNAVAILABLE")
 
 
-COORDINATION_TOOLS = [query_structured_data, query_knowledge_base]
+# LangGraph tool-wrapped versions for use inside ReAct agents.
+_query_structured_data_tool = tool(description=(
+    "Query FAB structured banking data via the Data Agent: customer profiles, deal "
+    "pricing, margins, profitability, and RWA/capital (DataLayer). Use for any "
+    "numeric or record lookup about a customer or deal (e.g. CUST001's recommended "
+    "price, margin analysis, profitability tier, RWA impact)."
+))(query_structured_data)
+
+_query_knowledge_base_tool = tool(description=(
+    "Query FAB banking knowledge via the RAG Agent: pricing floors and ceilings, "
+    "fee schedules, credit/regulatory policy, product guidelines, FAQs, operational "
+    "procedures, AML/KYC rules, concentration limits, model risk policy "
+    "(RAG-as-a-Service knowledge base). Use to retrieve the rule or benchmark that "
+    "a price or action must comply with."
+))(query_knowledge_base)
+
+COORDINATION_TOOLS = [_query_structured_data_tool, _query_knowledge_base_tool]
