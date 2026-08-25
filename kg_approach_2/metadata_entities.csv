@@ -1,0 +1,11 @@
+entity_name,description,source_file,primary_key
+Customer,Customer master information,customer_master.csv,customer_id
+Deal,Historical deal information,historical_deals.csv,deal_id
+Product,Product master information,product_master.csv,product_id
+PricingPolicy,Pricing policy definitions,pricing_policy.csv,policy_id
+BusinessRule,Business rule definitions,config/business_rules.yaml,rule_id
+PolicyException,Deal policy exceptions,DERIVED:rule_evaluation,deal_id
+DealOutcome,Deal outcome information,DERIVED:kg_deals_curated.csv,deal_id
+Recommendation,Deal pricing recommendations,DERIVED:kg_deals_curated.csv,deal_id
+ApprovalLevel,Approval level definitions,config/business_rules.yaml,level_code
+TreasuryRate,Treasury benchmark and funding rates,treasury_rate_sheet.csv,rate_id

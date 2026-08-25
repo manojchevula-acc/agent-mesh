@@ -1,0 +1,9 @@
+from_entity,relationship,to_entity,join_key
+Customer,HAS_DEAL,Deal,customer_id
+Deal,FOR_PRODUCT,Product,product_id
+Deal,HAS_OUTCOME,DealOutcome,deal_id
+Deal,HAS_RECOMMENDATION,Recommendation,deal_id
+Deal,HAS_POLICY_EXCEPTION,PolicyException,deal_id
+PolicyException,TRIGGERED_BY,BusinessRule,rule_id
+PolicyException,GOVERNED_BY,PricingPolicy,policy_id
+PolicyException,HAS_SEVERITY,ApprovalLevel,severity=level_code

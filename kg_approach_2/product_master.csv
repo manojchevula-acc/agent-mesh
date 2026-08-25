@@ -1,0 +1,9 @@
+product_id,product_name,product_type,pricing_method,currency,eligible_tenors,standard_margin_pct,max_margin_pct,max_discount_allowed_pct,min_ticket_size,max_ticket_size,eligible_segments
+PROD001,Working Capital Loan,Loan,Floating,AED,"1M,3M,6M,12M",1.8,4.0,0.75,500000,50000000,"Corporate,SME"
+PROD002,Term Loan,Loan,Floating,AED,"12M,24M,36M,60M",2.1,4.5,0.6,1000000,100000000,"Corporate,SME"
+PROD003,Trade Finance LC,Trade Finance,Fixed,AED,"3M,6M,12M",1.25,3.0,0.5,250000,25000000,"Corporate,SME"
+PROD004,Invoice Discounting,Trade Finance,Floating,AED,"1M,3M,6M",1.5,3.5,0.5,100000,15000000,SME
+PROD005,Overdraft Facility,Loan,Floating,AED,"1M,3M,6M,12M",2.4,5.0,0.8,200000,30000000,"Corporate,SME"
+PROD006,USD Term Loan,Loan,Floating,USD,"12M,24M,36M,60M",2.25,4.75,0.6,500000,80000000,"Corporate,SME"
+PROD007,FX Forward Facility,Treasury,Fixed,USD,"1M,3M,6M,12M",0.6,2.0,0.35,100000,20000000,"Corporate,SME"
+PROD008,Corporate Deposit,Deposit,Fixed,AED,"1M,3M,6M,12M",0.25,1.25,0.25,1000000,200000000,"Corporate,SME"

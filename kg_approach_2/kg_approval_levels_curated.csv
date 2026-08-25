@@ -1,0 +1,4 @@
+level_code,description,escalation_order,source_file,load_timestamp
+STANDARD,"Standard approval - discount within policy threshold, no escalation needed.",1,config/business_rules.yaml,2026-07-29T11:45:14.387938+00:00
+SENIOR,Senior management approval required - proposed discount exceeds the policy's approval_required_if_discount_above_pct threshold.,2,config/business_rules.yaml,2026-07-29T11:45:14.387941+00:00
+EXECUTIVE,Executive approval required - proposed discount exceeds the product's hard max_discount_allowed_pct cap.,3,config/business_rules.yaml,2026-07-29T11:45:14.387943+00:00

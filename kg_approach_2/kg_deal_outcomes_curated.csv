@@ -1,0 +1,61 @@
+deal_id,deal_outcome,final_approved_price_pct,expected_margin_pct,sales_channel,source_file,load_timestamp
+DEAL001,Won,8.33,1.98,Relationship Manager,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL002,Won,6.0,-1.05,Relationship Manager,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL003,Won,6.92,1.52,Relationship Manager,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL004,Won,7.6,1.95,API Quote,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL005,Won,7.25,1.35,API Quote,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL006,Won,4.9,0.05,Digital Upload,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL007,Won,7.75,2.35,API Quote,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL008,Won,7.67,1.92,Branch,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL009,Won,8.02,1.97,Branch,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL010,Won,6.4,0.97,Relationship Manager,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL011,Won,8.1,2.2,API Quote,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL012,Won,7.02,1.62,Branch,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL013,Won,6.55,-1.1,Branch,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL014,Won,6.4,1.0,Branch,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL015,Lost,5.35,-0.05,Relationship Manager,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL016,Won,6.6,1.0,Digital Upload,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL017,Won,6.55,0.95,API Quote,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL018,Won,6.42,0.82,API Quote,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL019,Won,8.55,2.95,Digital Upload,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL020,Won,7.3,1.8,Branch,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL021,Won,7.12,1.52,Branch,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL022,Won,4.8,0.15,API Quote,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL023,Won,6.25,0.85,Digital Upload,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL024,Won,8.25,1.9,Relationship Manager,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL025,Won,7.3,1.7,Relationship Manager,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL026,Won,8.15,1.8,Branch,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL027,Won,6.35,0.95,API Quote,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL028,Lost,6.15,0.55,API Quote,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL029,Lost,5.95,-1.0,Relationship Manager,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL030,Won,6.32,1.02,Digital Upload,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL031,Won,8.8,2.6,Digital Upload,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL032,Lost,5.15,-0.0,Relationship Manager,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL033,Won,6.8,1.05,API Quote,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL034,Won,7.4,1.8,API Quote,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL035,Won,6.65,1.05,API Quote,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL036,Won,7.6,2.2,API Quote,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL037,Won,8.5,2.75,API Quote,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL038,Won,7.95,1.9,API Quote,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL039,Won,5.4,0.05,Relationship Manager,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL040,Lost,5.45,-0.5,Digital Upload,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL041,Won,6.5,0.9,Branch,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL042,Lost,5.25,-0.1,Digital Upload,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL043,Won,7.57,1.67,Relationship Manager,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL044,Won,7.3,1.25,Relationship Manager,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL045,Won,6.03,-0.58,Digital Upload,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL046,Won,7.0,1.5,Relationship Manager,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL047,Lost,5.35,-0.0,Digital Upload,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL048,Won,6.42,1.07,Relationship Manager,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL049,Won,6.55,0.95,Relationship Manager,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL050,Won,6.0,-0.7,Digital Upload,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL051,Won,7.55,1.65,API Quote,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL052,Won,8.5,2.45,Branch,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL053,Won,8.32,2.12,Relationship Manager,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL054,Won,8.18,2.28,Branch,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL055,Won,6.37,1.07,Relationship Manager,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL056,Lost,5.25,-0.05,API Quote,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL057,Lost,5.15,-0.2,Relationship Manager,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL058,Won,7.3,1.65,Relationship Manager,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL059,Won,6.6,1.0,Branch,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
+DEAL060,Won,6.6,1.2,Branch,DERIVED:kg_deals_curated.csv,2026-07-29T11:45:14.387851+00:00
