@@ -2,6 +2,8 @@
 
 **Version:** 3.0 (as of 2026-07-21)
 
+> **Function call graph:** See [CALL_GRAPH.md](CALL_GRAPH.md) for the full per-function call tree, Mermaid sequence diagrams, and auth-boundary summary.
+
 ---
 
 ## 1. Overview

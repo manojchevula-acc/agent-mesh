@@ -1,5 +1,7 @@
 # FAB MCP Hub — Authentication & Authorization Reference
 
+> **Call graph:** See [CALL_GRAPH.md](CALL_GRAPH.md) for the complete function call tree and Mermaid sequence diagrams showing every auth check in the request flow.
+
 ## Architecture Overview
 
 Two independent paths authenticate against the hub. Both share the same RS256 key pair and JWKS endpoint.
