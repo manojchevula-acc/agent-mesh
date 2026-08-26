@@ -78,15 +78,15 @@ app = mcp.http_app(middleware=claims_middleware())         # mcp_server/auth.py:
        │             │     # Lazy singleton — created once per process
        │             │     JWTVerifier(jwks_uri=hub/.well-known/jwks.json, issuer=fab-mcp-hub)
        │             ├─ verifier.verify_token(token)
-       │             │     GET /.well-known/jwks.json   (public endpoint)  hub_server.py:695
-       │             │         get_jwks()                                   auth.py:103
-       │             │         → RSA public key (n, e) in JWK format
-       │             │     Match kid header → RSA public key
-       │             │     RS256 signature verified ✓
-       │             │     iss == "fab-mcp-hub" ✓
-       │             │     exp > now ✓
-       │             │     HARD fail → raise (token not cached; login rejected)
-       │             │     SOFT fail → WARNING + proceed (JWKS unreachable)
+       │             │     # JWTVerifier internally does all of the following:
+       │             │     [internal] GET /.well-known/jwks.json → hub_server.py:695 → get_jwks() auth.py:103
+       │             │     [internal]     → RSA public key (n, e) in JWK format; cached in JWTVerifier
+       │             │     [internal] Match kid header → select RSA public key
+       │             │     [internal] RS256 signature verified ✓
+       │             │     [internal] iss == "fab-mcp-hub" ✓
+       │             │     [internal] exp > now ✓
+       │             │     HARD fail (sig/iss/exp wrong) → raise (token not cached; login rejected)
+       │             │     SOFT fail (JWKS unreachable)  → WARNING + proceed
        │             └─ jwt.decode(token, verify_signature=False) → claims dict
        │                  # Safe: JWTVerifier already validated the token
        │
@@ -100,8 +100,9 @@ app = mcp.http_app(middleware=claims_middleware())         # mcp_server/auth.py:
        │         │         │
        │         │         ├─ alg == "RS256":
        │         │         │     _HUB_JWT_VERIFIER.verify_token(token)   # singleton
-       │         │         │         GET /.well-known/jwks.json (cached in JWTVerifier)
-       │         │         │         RS256 sig + iss + exp ✓
+       │         │         │         # JWTVerifier internally fetches JWKS and verifies:
+       │         │         │         [internal] GET /.well-known/jwks.json (cached in JWTVerifier)
+       │         │         │         [internal] RS256 sig ✓  iss ✓  exp ✓
        │         │         │     jwt.decode(token, verify=False) → claims
        │         │         │
        │         │         └─ HS256 / API key / other:
@@ -171,8 +172,9 @@ app = mcp.http_app(middleware=claims_middleware())         # mcp_server/auth.py:
        │       _verify_hub_token(server_token, audience=server_id)       agent.py:549
        │           ├─ _get_hub_jwt_verifier()  (cached singleton)         agent.py:522
        │           ├─ verifier.verify_token(token)
-       │           │     GET /.well-known/jwks.json (cached in JWTVerifier)
-       │           │     RS256 sig + iss + exp ✓
+       │           │     # JWTVerifier internally fetches JWKS and verifies:
+       │           │     [internal] GET /.well-known/jwks.json (cached in JWTVerifier)
+       │           │     [internal] RS256 sig ✓  iss ✓  exp ✓
        │           ├─ jwt.decode(token, verify_signature=False) → payload
        │           ├─ manual aud check: payload["aud"] == server_id ✓
        │           │     raises InvalidAudienceError if mismatch → server SKIPPED
@@ -238,10 +240,11 @@ app = mcp.http_app(middleware=claims_middleware())         # mcp_server/auth.py:
                        │         POST /mcp  {"method":"initialize",…}  Bearer: token
                        │         ┌─ MCP server side ────────────────────────────────────┐
                        │         │  FastMCP JWTVerifier (auth=build_jwt_verifier())      │
-                       │         │    GET /.well-known/jwks.json (cached)                │
-                       │         │    Match kid → RSA public key                         │
-                       │         │    RS256 sig ✓  iss="fab-mcp-hub" ✓                  │
-                       │         │    aud == MCP_SERVER_ID ✓   exp > now ✓              │
+                       │         │    JWTVerifier.verify_token(token)  ← called by FastMCP│
+                       │         │      [internal] GET /.well-known/jwks.json (cached)   │
+                       │         │      [internal] Match kid → RSA public key            │
+                       │         │      [internal] RS256 sig ✓  iss="fab-mcp-hub" ✓     │
+                       │         │      [internal] aud == MCP_SERVER_ID ✓  exp > now ✓  │
                        │         │    → 401 on ANY failure (before middleware runs)       │
                        │         │                                                        │
                        │         │  ClaimsExtractorMiddleware.dispatch()   auth.py:247   │
@@ -310,7 +313,10 @@ app = mcp.http_app(middleware=claims_middleware())         # mcp_server/auth.py:
                                    │          "params":{"name":tool_name,"arguments":args}}
                                    │
                                    │         ┌─ MCP server side ─────────────────────────┐
-                                   │         │  JWTVerifier validates AGAIN (per-request) │
+                                   │         │  JWTVerifier.verify_token(token)            │
+                                   │         │    [internal] GET /.well-known/jwks.json    │
+                                   │         │    [internal] RS256 sig+iss+aud+exp ✓       │
+                                   │         │    (per-request; keys cached in JWTVerifier)│
                                    │         │  ClaimsExtractorMiddleware reads claims     │
                                    │         │                                             │
                                    │         │  MCP Tool function:                         │
@@ -344,6 +350,11 @@ app = mcp.http_app(middleware=claims_middleware())         # mcp_server/auth.py:
 
 ## 3. Mermaid Sequence Diagram — Full Request Flow
 
+> **Key:** `JWTVerifier` is a library object that lives *inside* the caller (Agent, Hub, or MCP).
+> The caller never calls `GET /.well-known/jwks.json` directly — `JWTVerifier.verify_token()`
+> does it internally as its first step, then caches the fetched keys.
+> Arrows from `JWTVerifier` to `JWKS` represent that internal fetch.
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -352,7 +363,8 @@ sequenceDiagram
     participant Agent as agent.py
     participant Hub as hub_server.py
     participant Auth as hub_service/auth.py
-    participant JWKS as GET /.well-known/jwks.json<br/>(public — no auth)
+    participant JV as JWTVerifier<br/>(library — inside Agent / Hub / MCP)
+    participant JWKS as GET /.well-known/jwks.json<br/>❌ public — no auth
     participant MCP as MCP Server
     participant DB as MySQL
 
@@ -366,33 +378,48 @@ sequenceDiagram
     Auth->>Auth: jwt.encode(payload, private.pem)
     Auth-->>Hub: RS256 JWT {sub, roles, iss=fab-mcp-hub, exp=now+8h}
     Hub-->>Agent: {access_token}
-    Agent->>JWKS: GET /.well-known/jwks.json [Direction 2a]
-    Agent->>Agent: JWTVerifier.verify_token(access_token)<br/>RS256 sig + iss + exp ✓
+
+    Note over Agent,JWKS: Direction 2a — Agent verifies hub-issued JWT via JWTVerifier
+    Agent->>JV: _verify_hub_token → verifier.verify_token(access_token)
+    JV->>JWKS: GET /.well-known/jwks.json [internal to JWTVerifier; cached]
+    JWKS-->>JV: RSA public key (n, e)
+    JV->>JV: RS256 sig ✓  iss=fab-mcp-hub ✓  exp ✓
+    JV-->>Agent: verified (or raises on failure)
+    Agent->>Agent: jwt.decode(token, verify=False) → claims dict
 
     Note over Agent,Hub: Step 2 — Discover + route
     Agent->>Agent: _decode_jwt_claims(hub_token) [observability only]
     Agent->>Hub: POST /discover {intent}<br/>Authorization: Bearer hub-jwt
     Hub->>Hub: _RequestLogMiddleware logs request
     Hub->>Hub: _require_auth: jwt.get_unverified_header → alg=RS256
-    Hub->>JWKS: GET /.well-known/jwks.json (cached in JWTVerifier)
-    Hub->>Hub: _HUB_JWT_VERIFIER.verify_token(hub-jwt) ✓
+    Hub->>JV: _HUB_JWT_VERIFIER.verify_token(hub-jwt)
+    JV->>JWKS: GET /.well-known/jwks.json [cached in JWTVerifier]
+    JWKS-->>JV: RSA public key
+    JV->>JV: RS256 sig ✓  iss ✓  exp ✓
+    JV-->>Hub: verified
+    Hub->>Hub: jwt.decode(token, verify=False) → claims
     Hub->>Hub: load_hub() → MySQL mcp_servers (60s TTL cache)
-    Hub->>Hub: _agent_route: _build_server_context(servers)
-    Hub->>Hub: create_react_agent(llm, pick_server) → LLM picks server_id
+    Hub->>Hub: _agent_route: _build_server_context → LLM picks server_id
     Hub->>Auth: generate_server_token(server_id, sub, roles, exp=1h)
     Auth->>Auth: jwt.encode({aud=server_id, exp=now+1h}, private.pem)
     Hub-->>Agent: [{id, endpoint, server_token(aud=server_id)}]
 
-    Note over Agent: Step 3 — Verify each per-server JWT [Direction 2b]
-    Agent->>JWKS: GET /.well-known/jwks.json (cached in JWTVerifier)
-    Agent->>Agent: JWTVerifier.verify_token(server_token)<br/>RS256 sig + iss + exp ✓
+    Note over Agent,JWKS: Direction 2b — Agent verifies each per-server JWT
+    Agent->>JV: _verify_hub_token → verifier.verify_token(server_token)
+    JV->>JWKS: GET /.well-known/jwks.json [cached]
+    JWKS-->>JV: RSA public key
+    JV->>JV: RS256 sig ✓  iss ✓  exp ✓
+    JV-->>Agent: verified
     Agent->>Agent: manual aud check: payload.aud == server_id ✓
 
     Note over Agent,MCP: Step 4 — MCP session + tool execution
     Agent->>Agent: _decode_jwt_claims(server_token) [observability only]
     Agent->>MCP: POST /mcp initialize<br/>Authorization: Bearer server_token
-    MCP->>JWKS: GET /.well-known/jwks.json (cached in JWTVerifier)
-    MCP->>MCP: JWTVerifier: RS256 sig + iss + aud=server_id + exp ✓
+    MCP->>JV: FastMCP JWTVerifier.verify_token(server_token)
+    JV->>JWKS: GET /.well-known/jwks.json [cached in MCP's JWTVerifier]
+    JWKS-->>JV: RSA public key
+    JV->>JV: RS256 sig ✓  iss ✓  aud=server_id ✓  exp ✓
+    JV-->>MCP: verified (or 401)
     MCP->>MCP: ClaimsExtractorMiddleware:<br/>jwt.decode → _set_claims → _request_claims ContextVar
     MCP-->>Agent: MCP initialized
 
@@ -406,12 +433,13 @@ sequenceDiagram
     Agent->>Agent: LLM inference → decides: call tool X with args Y
 
     Agent->>MCP: POST /mcp tools/call {name, arguments}<br/>Authorization: Bearer server_token
-    MCP->>JWKS: GET /.well-known/jwks.json (cached — per-request validation)
-    MCP->>MCP: JWTVerifier validates token again
+    MCP->>JV: FastMCP JWTVerifier.verify_token(server_token) [per-request]
+    JV->>JWKS: GET /.well-known/jwks.json [cached]
+    JWKS-->>JV: RSA public key
+    JV->>JV: RS256 sig ✓  iss ✓  aud ✓  exp ✓
+    JV-->>MCP: verified
     MCP->>MCP: ClaimsExtractorMiddleware → _request_claims refreshed
-    MCP->>MCP: get_agent_context() → claims dict
-    MCP->>MCP: require_role("agent","admin") → checks _request_claims ✓
-    MCP->>MCP: audit_log(tool, args, "mysql") → structured JSON event
+    MCP->>MCP: get_agent_context() → claims / require_role ✓ / audit_log
     MCP->>DB: SQL query (MYSQL_USER/MYSQL_PASSWORD — NOT the JWT)
     DB-->>MCP: result rows
     MCP-->>Agent: tool result
@@ -426,45 +454,61 @@ sequenceDiagram
 ## 4. Mermaid Sequence Diagram — Auth Layer Only
 
 Strips MCP protocol detail to show only the security enforcement boundaries.
+`JWTVerifier` is shown as a separate participant because it is the actor that
+actually calls `GET /.well-known/jwks.json` — not the Agent, Hub, or MCP server.
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant Agent as agent.py
     participant Hub as hub_server.py<br/>_require_auth [async]
-    participant Auth as auth.py<br/>build_hub_jwt_verifier
+    participant Auth as auth.py
+    participant JV as JWTVerifier<br/>(library — inside Agent / Hub / MCP)
     participant JWKS as /.well-known/jwks.json<br/>❌ public — no auth
-    participant MCP as FastMCP JWTVerifier<br/>+ ClaimsExtractorMiddleware
+    participant MCP as MCP Server<br/>(FastMCP + ClaimsExtractorMiddleware)
     participant Tool as MCP Tool fn<br/>require_role()
 
-    Note over Agent,JWKS: OUTBOUND — agent presents tokens
+    Note over Agent,Auth: OUTBOUND — agent presents tokens
     Agent->>Hub: POST /auth/login (credentials)
     Hub->>Auth: generate_token(RS256, private.pem)
-    Auth-->>Agent: hub-jwt {sub, roles, iss, exp=8h}
+    Auth-->>Agent: hub-jwt {sub, roles, iss=fab-mcp-hub, exp=8h}
 
-    Agent->>Hub: POST /discover  Bearer: hub-jwt  [alg=RS256]
-    Hub->>Hub: jwt.get_unverified_header → alg=RS256
-    Hub->>Hub: _HUB_JWT_VERIFIER.verify_token(hub-jwt)
-    Hub->>JWKS: fetch RSA public key (cached)
+    Agent->>Hub: POST /discover  Bearer: hub-jwt
+    Hub->>Hub: jwt.get_unverified_header(token) → alg=RS256
+    Hub->>JV: _HUB_JWT_VERIFIER.verify_token(hub-jwt)
+    JV->>JWKS: GET /.well-known/jwks.json [internal fetch; cached]
+    JWKS-->>JV: RSA public key
+    JV->>JV: RS256 sig ✓  iss ✓  exp ✓
+    JV-->>Hub: verified
+    Hub->>Auth: generate_server_token(server_id, sub, roles, exp=1h)
     Hub-->>Agent: servers + server_token[aud=server_id, exp=1h]
 
-    Agent->>MCP: POST /mcp  Bearer: server_token  [alg=RS256]
-    MCP->>JWKS: fetch RSA public key (cached)
-    MCP->>MCP: verify sig + iss + aud=server_id + exp
+    Agent->>MCP: POST /mcp  Bearer: server_token
+    MCP->>JV: FastMCP JWTVerifier.verify_token(server_token)
+    JV->>JWKS: GET /.well-known/jwks.json [internal fetch; cached]
+    JWKS-->>JV: RSA public key
+    JV->>JV: RS256 sig ✓  iss ✓  aud=server_id ✓  exp ✓
+    JV-->>MCP: verified (or 401 before any tool code runs)
 
     Note over Agent,JWKS: INBOUND — agent verifies tokens it receives [Direction 2]
-    Agent->>JWKS: GET /.well-known/jwks.json (via _get_hub_jwt_verifier())
-    Agent->>Agent: verify hub-jwt — sig + iss + exp [Direction 2a]
-    Agent->>JWKS: GET /.well-known/jwks.json (cached)
-    Agent->>Agent: verify server_token — sig + iss + aud=server_id [Direction 2b]
+    Agent->>JV: _verify_hub_token → verifier.verify_token(hub-jwt) [Dir 2a]
+    JV->>JWKS: GET /.well-known/jwks.json [internal fetch; cached]
+    JWKS-->>JV: RSA public key
+    JV->>JV: RS256 sig ✓  iss ✓  exp ✓
+    JV-->>Agent: verified
+    Agent->>JV: _verify_hub_token → verifier.verify_token(server_token) [Dir 2b]
+    JV->>JWKS: GET /.well-known/jwks.json [cached]
+    JWKS-->>JV: RSA public key
+    JV->>JV: RS256 sig ✓  iss ✓  exp ✓
+    JV-->>Agent: verified
+    Agent->>Agent: manual aud check: payload.aud == server_id ✓
 
     Note over MCP,Tool: RBAC inside every tool call
-    MCP->>MCP: jwt.decode(token,verify=False) → _set_claims(payload)
-    MCP->>MCP: _request_claims.set({sub,roles,iss,aud}) [ContextVar]
+    MCP->>MCP: ClaimsExtractorMiddleware:<br/>jwt.decode(verify=False) → _set_claims → _request_claims ContextVar
     MCP->>Tool: tool function called
     Tool->>Tool: get_agent_context() → _request_claims.get()
     Tool->>Tool: require_role("agent","admin") ✓
-    Tool->>Tool: audit_log(tool, args, "mysql") → JSON event
+    Tool->>Tool: audit_log(tool, args, "mysql") → structured JSON event
 ```
 
 ---
