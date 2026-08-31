@@ -85,6 +85,12 @@ class KGLookup:
     definitions: dict[str, str] = field(default_factory=dict)
     columns: list[str] = field(default_factory=list)        # "table.column"
     tables: list[str] = field(default_factory=list)         # FINAL set, best-ranked first
+    # The S1-S5 fused-and-cut set, frozen BEFORE S6 closure / S7 join-path bridging touch it.
+    # NOT derivable from attribution: a table scored by a direct signal but ranked below the
+    # cut still gets that signal recorded in `attribution` if closure later pulls it in, so
+    # "attribution has more than just join_closure" is NOT a valid "was it in core" test —
+    # this field is the actual membership snapshot, not an inference from it.
+    pre_closure_tables: list[str] = field(default_factory=list)
     attribution: dict[str, list[str]] = field(default_factory=dict)
     scores: dict[str, float] = field(default_factory=dict)  # table -> fused score
     term_scores: dict[str, float] = field(default_factory=dict)  # term -> sim (exact = 1.0)
@@ -112,6 +118,7 @@ class KGLookup:
             "term_scores": {k: round(v, 4) for k, v in self.term_scores.items()},
             "columns": self.columns,
             "tables": self.tables,
+            "pre_closure_tables": self.pre_closure_tables,
             "attribution": self.attribution,
             "scores": {k: round(v, 4) for k, v in self.scores.items()},
             "join_edges": [
@@ -567,6 +574,7 @@ def _lookup(question: str, tables_hint, client, started: float) -> KGLookup:
         definitions=definitions,
         columns=sorted(c for c in columns if c in graph.columns),
         tables=sorted(final, key=lambda t: -scores.get(t, 0.0)),
+        pre_closure_tables=selected,   # already score-ordered (ordered[:cut])
         attribution={t: attribution[t] for t in final if t in attribution},
         scores={t: round(scores.get(t, 0.0), 4) for t in final},
         term_scores=term_scores,

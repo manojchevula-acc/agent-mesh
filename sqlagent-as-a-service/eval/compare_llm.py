@@ -55,11 +55,21 @@ there are always computed identically.
 ONE REPORT PER --runs FILE — evaluating a different recorded-runs file writes a
 DIFFERENTLY-NAMED report (tag derived from the --runs filename, e.g. agent_runs_JOIN.yaml
 -> EVAL_REPORT_JOIN.md) instead of overwriting the last one. Pass --tag to name it
-explicitly. Re-running against the SAME --runs file still overwrites (idempotent).
+explicitly. Re-running against the SAME --runs file still overwrites — but see --ids below,
+which makes that overwrite a targeted UPDATE rather than a truncation.
+
+--ids REFRESHES, IT DOES NOT FILTER THE REPORT DOWN — the report always covers every id in
+--runs (so re-running on a subset never shrinks the file). What --ids controls is which ids
+get a FRESH LLM judge call; every other id keeps its judge verdict from the previous
+EVAL_REPORT.json for that same --runs/--tag (its deterministic metrics are still recomputed
+fresh either way — they're free and exact, never cached). So after re-running one question
+through eval/run_agent.py, `--ids <that id>` regrades just it — new SQL, new data, new judge
+verdict — while every other row's judge verdict is carried over unchanged. Omit --ids to
+judge everyone fresh, same as before.
 
 Run:
-    .venv/Scripts/python.exe eval/compare_llm.py                 # LLM + deterministic
-    .venv/Scripts/python.exe eval/compare_llm.py --ids D01,D02
+    .venv/Scripts/python.exe eval/compare_llm.py                 # LLM + deterministic, everyone judged fresh
+    .venv/Scripts/python.exe eval/compare_llm.py --ids D01,D02   # only D01/D02 rejudged; report still has everyone
     .venv/Scripts/python.exe eval/compare_llm.py --pause 3       # rate-limit friendly
     .venv/Scripts/python.exe eval/compare_llm.py --runs eval/results/agent_runs/agent_runs_JOIN.yaml
 """
@@ -418,7 +428,9 @@ def main() -> int:
         description="Diff agent runs against the gold set; write a markdown analysis.")
     ap.add_argument("--gold", default=str(GOLD_PATH))
     ap.add_argument("--runs", default=str(RUNS_PATH))
-    ap.add_argument("--ids", help="only compare these ids, comma-separated")
+    ap.add_argument("--ids", help="only re-judge these ids, comma-separated — the report "
+                    "still covers every id in --runs; unlisted ids keep their cached judge "
+                    "verdict from the previous report")
     ap.add_argument("--pause", type=float, default=0.0,
                     help="seconds between judge calls (rate limits)")
     ap.add_argument("--tag", help="name the output report explicitly (default: derived "
@@ -435,22 +447,53 @@ def main() -> int:
         raise SystemExit(f"No agent runs at {runs_path}. Run eval/run_agent.py first.")
     runs_doc = yaml.safe_load(runs_path.read_text(encoding="utf-8")) or {}
     runs = runs_doc.get("runs", [])
-    # Coverage is measured against the WHOLE gold set, from the whole runs file — before
-    # any --ids filter — because the question it answers ("how much of the benchmark has
-    # actually been attempted?") is a property of the dataset, not of this invocation.
+    if not runs:
+        raise SystemExit(f"No runs recorded in {runs_path}. Run eval/run_agent.py first.")
+    # Coverage is measured against the WHOLE gold set, and the report below covers every run
+    # in --runs — --ids does NOT filter this list, it only selects who gets rejudged (see
+    # module docstring), so this is a property of the dataset, not of this invocation.
     covered = {r["gold_id"] for r in runs}
     unrun = [i for i in gold if i not in covered]
+
+    # --ids selects who gets a FRESH judge call, not who's in the report — the report always
+    # covers every run in --runs (see module docstring). None => judge everyone (unchanged
+    # default behaviour); an explicit set that matches nothing is worth a warning since it
+    # usually means a typo, but is not fatal — everyone just keeps their cached verdict.
+    judge_ids: set[str] | None = None
     if args.ids:
-        want = {t.strip().lower() for t in args.ids.split(",")}
-        runs = [r for r in runs if r["id"].lower() in want or r["gold_id"].lower() in want]
-    if not runs:
-        raise SystemExit("No agent runs matched the selection.")
+        judge_ids = {t.strip().lower() for t in args.ids.split(",")}
+        matched = {r["id"].lower() for r in runs} | {r["gold_id"].lower() for r in runs}
+        unmatched = judge_ids - matched
+        if unmatched:
+            print(f"[warn] --ids not found among recorded runs: {', '.join(sorted(unmatched))}")
+
+    # Cached judge verdicts from the PREVIOUS report for this same --runs/--tag, keyed by id.
+    # Only the judge (sql_verdict/sql_reason/data_verdict/data_reason) is cached — everything
+    # else is recomputed fresh below regardless, since it's free and exact.
+    verdict_cache: dict[str, dict] = {}
+    if REPORT_JSON.exists():
+        try:
+            prior = json.loads(REPORT_JSON.read_text(encoding="utf-8"))
+            for row in prior.get("rows", []):
+                verdict_cache[row["id"]] = {
+                    "sql_verdict": row.get("sql_verdict", "?"),
+                    "sql_reason": row.get("sql_reason", ""),
+                    "data_verdict": row.get("data_verdict", "?"),
+                    "data_reason": row.get("data_reason", ""),
+                }
+        except Exception as exc:  # noqa: BLE001 — a corrupt/missing prior report just means no cache
+            print(f"[warn] could not read prior report for judge cache | {exc}")
 
     defaults = (gold_doc.get("meta") or {}).get("defaults") or {}
     tol = defaults.get("numeric_tolerance", 0.01)
 
-    print(f"Comparing {len(runs)} agent run(s) against {len(gold)} gold item(s) "
-          f"— with LLM judge")
+    if judge_ids is None:
+        print(f"Comparing {len(runs)} agent run(s) against {len(gold)} gold item(s) "
+              f"— with LLM judge")
+    else:
+        print(f"Comparing {len(runs)} agent run(s) against {len(gold)} gold item(s) — "
+              f"re-judging {', '.join(sorted(args.ids.split(',')))}, "
+              f"{len(runs) - len(judge_ids)} other row(s) keep their cached verdict")
     if unrun:
         print(f"Coverage: {len(covered)}/{len(gold)} gold questions have a recorded run — "
               f"{len(unrun)} NOT run: {', '.join(unrun)}")
@@ -494,13 +537,22 @@ def main() -> int:
             "tables_extra": t_ov["extra"],
             "column_recall": c_ov["recall"], "columns_missing": c_ov["missing"],
         }
-        verdict = judge(item, run)
+        needs_judge = (judge_ids is None
+                      or run["id"].lower() in judge_ids
+                      or run["gold_id"].lower() in judge_ids)
+        if needs_judge:
+            verdict = judge(item, run)
+        else:
+            verdict = verdict_cache.get(run["id"]) or {
+                "sql_verdict": "?", "sql_reason": "not re-judged this run (no prior cache)",
+                "data_verdict": "?", "data_reason": ""}
         cmp["diagnosis"] = diagnose(run, cmp)
         passed = bool(cmp["data_match"])
         # Deterministic evaluator — the LLM judge's transparent counterpart. Runs the full
         # metric suite (structural SQL P/R/F1, result-set similarity, schema-aware id<->name
         # equivalence) and renders its OWN PASS/FAIL + confidence, to be compared with the
-        # LLM's data_verdict below.
+        # LLM's data_verdict below. Always recomputed fresh — it's free and exact, so a
+        # row's --ids status never lets its deterministic grade go stale.
         det = det_ev.evaluate(item, run)
         llm_pass = _llm_pass(verdict)
         agree = (llm_pass is None) or (llm_pass == det.passed)
@@ -509,11 +561,12 @@ def main() -> int:
                          "llm_pass": llm_pass, "det_pass": det.passed, "agree": agree})
         flag = "  <== STALE" if run["id"] in stale else ""
         disagree = "" if agree else "  <== LLM/DET DISAGREE"
+        cached = "  (cached judge)" if not needs_judge else ""
         print(f"[{'PASS' if passed else 'FAIL'}] {run['id']:12s} "
               f"{cmp['diagnosis']:24s} sql={verdict['sql_verdict']:10s} "
               f"data={'MATCH' if cmp['data_match'] else 'MISMATCH'} "
-              f"det={det.verdict}({det.confidence}){flag}{disagree}")
-        if args.pause:
+              f"det={det.verdict}({det.confidence}){flag}{disagree}{cached}")
+        if needs_judge and args.pause:
             time.sleep(args.pause)
 
     if stale:

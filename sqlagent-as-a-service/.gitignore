@@ -35,3 +35,5 @@ documentation/
 logs/
 agent_test/
 eval/results/
+combine_deterministic_reports.py
+combine_llm_reports.py
