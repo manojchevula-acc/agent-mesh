@@ -49,3 +49,6 @@ Thumbs.db
 *.jsonl
 *.tmp
 *.swp
+results
+artifacts/
+data/

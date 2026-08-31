@@ -63,6 +63,13 @@ TOOL_TIER_REGISTRY = {
     "find_policies": "semi_dynamic", "find_deals": "semi_dynamic",
     # full dynamic (gated)
     "analytical_query": "full_dynamic",
+    # kg metadata — Approach B templates. Metadata only (no business rows), so NOT gated by
+    # dynamic_sql. Bound only when kg_tools_enabled; see the module docstring in
+    # sql_agent/tools/kg/__init__.py for why they default off.
+    "get_customer_metadata": "kg_metadata",
+    "get_deal_metadata": "kg_metadata",
+    "get_product_metadata": "kg_metadata",
+    "get_join_path": "kg_metadata",
     # meta — ask the user for a missing required input (touches no data)
     # DISABLED for now: do not bind ask_clarification to the agent, so it answers
     # with sensible defaults instead of stopping to ask the user.
@@ -77,6 +84,7 @@ GATED_SCOPE = "dynamic_sql"
 _TIER_TOGGLES = {
     "parameterised": "parameterised_tools_enabled",
     "semi_dynamic": "semi_dynamic_tools_enabled",
+    "kg_metadata": "kg_tools_enabled",
 }
 
 

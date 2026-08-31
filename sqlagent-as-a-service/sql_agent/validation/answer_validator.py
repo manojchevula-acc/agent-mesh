@@ -32,10 +32,39 @@ class Verdict:
 
 
 def _parse(text: str) -> dict:
-    start, end = text.find("{"), text.rfind("}")
-    if start == -1 or end == -1 or end < start:
+    """Extract and parse the FIRST complete, balanced JSON object in ``text``.
+
+    Naive "first '{' to last '}'" slicing breaks the moment the model adds anything after
+    the JSON — trailing commentary, a stray second brace-containing chunk, a reasoning
+    model's extra remarks — because the LAST '}' in the whole response then belongs to
+    that trailing content, not to the JSON object itself, and json.loads chokes on the
+    leftover text ("Extra data"). Scanning brace depth from the first '{' and stopping at
+    its OWN matching '}' is immune to anything that comes after.
+    """
+    start = text.find("{")
+    if start == -1:
         raise ValueError("no JSON object found")
-    return json.loads(text[start : end + 1])
+    depth = 0
+    in_string = False
+    escape = False
+    for i, ch in enumerate(text[start:], start):
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return json.loads(text[start : i + 1])
+    raise ValueError("no balanced JSON object found")
 
 
 def judge_sql(question: str, sql: str, columns: list[str], row_count: int,

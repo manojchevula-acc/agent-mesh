@@ -18,10 +18,14 @@ from sql_agent.semantic_layer.loader import (
 )
 
 from .exceptions import (
+    CardinalityRiskError,
     ColumnBlockedError,
     ColumnNotInTableError,
     InjectionDetectedError,
     JoinNotAllowedError,
+    KGColumnUnknownError,
+    KGJoinNotAllowedError,
+    KGTypeMismatchError,
     ParseError,
     StatementTypeError,
     TableNotAllowedError,
@@ -38,9 +42,18 @@ INJECTION_PATTERNS = [
     r"0x[0-9a-fA-F]+",                                      # hex-encoded payloads
 ]
 
+# A quoted literal MySQL would still coerce to a usable number ('12', '3.5', '-0.4'). Only a
+# quoted value that is not numeric AT ALL trips the type half of check #11.
+_NUMERIC_LITERAL = re.compile(r"^[+-]?\d+(\.\d+)?$")
+
+
+def _looks_numeric(value: str) -> bool:
+    return bool(_NUMERIC_LITERAL.match(value.strip()))
+
 
 class SQLValidator:
-    def validate(self, sql: str, allowed_join_pairs=None, strict_columns=False) -> str:
+    def validate(self, sql: str, allowed_join_pairs=None, strict_columns=False,
+                 kg_constraints=None) -> str:
         """Runs the safety checks IN ORDER. Returns the (possibly LIMIT-augmented)
         safe SQL string, or raises a typed exception.
 
@@ -51,6 +64,14 @@ class SQLValidator:
         qualified column belongs to its table — catching a wrong-table reference (e.g.
         ``historical_deals.customer_segment``) before it reaches the database. Hand-written
         tool SQL passes neither, so those tiers are unaffected.
+
+        ``kg_constraints`` (a kg.constraints.KGConstraints, dynamic tier only) enables the
+        KG-constrained checks #10-#12. They EXTEND the checks above rather than replacing any
+        of them: checks #1-#9 remain the security boundary and still derive their allow-lists
+        from schema.yaml, so a KG that is stale, unbuilt or switched off can never WIDEN what
+        the agent is permitted to read — only decline to add the extra precision. That
+        ordering is deliberate: correctness grounding may depend on a synced artifact; the
+        safety gate may not.
         """
         ast = self._check_1_parse(sql)
         self._check_2_statement_type(ast)
@@ -63,6 +84,13 @@ class SQLValidator:
             self._check_7_join_graph(ast, allowed_join_pairs)
         if settings.column_binding_check_enabled and strict_columns:
             self._check_8_column_binding(ast)
+        if kg_constraints is not None:
+            if settings.kg_join_check_enabled:
+                self._check_10_kg_join_keys(ast, kg_constraints)
+            if settings.kg_column_check_enabled:
+                self._check_11_kg_columns(ast, kg_constraints)
+            if settings.kg_cardinality_check_enabled:
+                self._check_12_kg_cardinality(ast, kg_constraints)
         return sql
 
     # 1. SQL parse check
@@ -181,6 +209,193 @@ class SQLValidator:
                 f"View {views_in_query} may only be joined to customer_master "
                 f"(for a customer attribute it lacks), not {others}"
             )
+
+    # ---------------------------------------------------------------------------------
+    # KG-constrained validation (KG design doc §4.1, "KG-Constrained Validation").
+    # These run only for the dynamic tier and only when a KG constraint bundle was resolved
+    # for this query. Each is a STRICTER version of something the pipeline already does
+    # approximately, using metadata checks #7/#8 simply do not have: the exact column pairs
+    # behind a relationship, the physical/enum domain of a column, and join cardinality. All
+    # are retryable, and every message names the FIX so the self-correction prompt carries
+    # the answer, not just the complaint.
+    # ---------------------------------------------------------------------------------
+
+    # 10. KG join-key check — a join must use the KG edge's DECLARED column pair.
+    # Check #7 asks "may these two tables be joined at all?"; this asks "and on the right
+    # keys?". Joining customer_master to historical_deals on `product_id` instead of
+    # `customer_id` passes #7 (the table pair IS declared), parses, and runs without error in
+    # MySQL — it just answers a different question. This is the check that makes join paths
+    # retrieved rather than guessed, which is the whole point of the layer.
+    def _check_10_kg_join_keys(self, ast, kg) -> None:
+        alias_map = self._alias_map(ast)
+        for join in ast.find_all(sqlglot.exp.Join):
+            on = join.args.get("on")
+            if on is None:
+                raise KGJoinNotAllowedError("Join without an ON condition is not allowed")
+            for eq in on.find_all(sqlglot.exp.EQ):
+                left = self._column_ref(eq.left, alias_map)
+                right = self._column_ref(eq.right, alias_map)
+                if left is None or right is None or left[0] == right[0]:
+                    continue  # not a cross-table column comparison we can vet
+                if not (kg.has_table(left[0]) and kg.has_table(right[0])):
+                    continue  # outside the KG's scope for this query — #3/#7 still apply
+                declared = kg.declared_pairs(left[0], right[0])
+                if not declared:
+                    raise KGJoinNotAllowedError(
+                        f"No relationship exists in the knowledge graph between "
+                        f"'{left[0]}' and '{right[0]}' — do not join them"
+                    )
+                used = frozenset((f"{left[0]}.{left[1]}", f"{right[0]}.{right[1]}"))
+                if used not in declared:
+                    expected = " OR ".join(
+                        " = ".join(sorted(pair)) for pair in sorted(map(sorted, declared))
+                    )
+                    raise KGJoinNotAllowedError(
+                        f"Join {left[0]}.{left[1]} = {right[0]}.{right[1]} is not the "
+                        f"declared key for this relationship. Join on: {expected}"
+                    )
+
+    # 11. KG column check — existence, type compatibility, and enum domain.
+    # Existence overlaps #8 but is sourced from the KG (which knows the PHYSICAL columns, not
+    # only the declared ones); the type/enum halves are new. The enum half earns its keep on
+    # this schema in particular: the generator reliably echoes the user's wording ("Term
+    # Loan", "60-month") rather than the governed token ("Loan", "60M"), which executes
+    # cleanly and returns ZERO rows — a wrong answer that looks like a valid one. The
+    # parameterised tools already defend against this via loader.canonicalize; until now the
+    # dynamic tier had no equivalent.
+    def _check_11_kg_columns(self, ast, kg) -> None:
+        alias_map = self._alias_map(ast)
+
+        for col in ast.find_all(sqlglot.exp.Column):
+            ref = self._column_ref(col, alias_map)
+            if ref is None or not kg.has_table(ref[0]):
+                continue
+            if kg.column(ref[0], ref[1]) is None:
+                raise KGColumnUnknownError(
+                    f"Column '{ref[1]}' does not exist on '{ref[0]}' — check which table "
+                    f"owns it before qualifying it"
+                )
+
+        for comparison in ast.find_all(sqlglot.exp.EQ, sqlglot.exp.NEQ):
+            for column_side, literal_side in ((comparison.left, comparison.right),
+                                              (comparison.right, comparison.left)):
+                if isinstance(literal_side, sqlglot.exp.Literal):
+                    self._assert_literal_fits(column_side, literal_side, alias_map, kg)
+
+        for member in ast.find_all(sqlglot.exp.In):
+            for literal in member.args.get("expressions") or []:
+                if isinstance(literal, sqlglot.exp.Literal):
+                    self._assert_literal_fits(member.this, literal, alias_map, kg)
+
+    def _assert_literal_fits(self, column_expr, literal, alias_map, kg) -> None:
+        """One column-vs-literal comparison, checked against the KG's column node."""
+        ref = self._column_ref(column_expr, alias_map)
+        if ref is None or not kg.has_table(ref[0]):
+            return
+        node = kg.column(ref[0], ref[1])
+        if node is None:
+            return
+        value = str(literal.this)
+
+        if node.enum_values:
+            allowed = {v.lower() for v in node.enum_values}
+            if literal.is_string and value.lower() not in allowed:
+                raise KGTypeMismatchError(
+                    f"'{value}' is not a permitted value for {ref[0]}.{ref[1]}. "
+                    f"Allowed values: {', '.join(node.enum_values)}"
+                )
+            return  # an enum column's domain IS its enum; no further type check applies
+
+        # A numeric column compared to a non-numeric string literal never matches a row, and
+        # is nearly always the model quoting a value it should have written bare.
+        if node.is_numeric and literal.is_string and not _looks_numeric(value):
+            raise KGTypeMismatchError(
+                f"{ref[0]}.{ref[1]} is {node.logical_type}; it cannot be compared to the "
+                f"text value '{value}'"
+            )
+
+    # 12. KG cardinality / fan-out guard — the check that catches a query which is
+    # syntactically perfect, passes every other check, executes without error, and returns a
+    # WRONG NUMBER. Joining a one-row-per-entity table to a many-row table multiplies the
+    # first table's rows, so SUM/AVG/COUNT over ITS columns silently counts each value once
+    # per matching row on the other side. Off by default (kg_cardinality_check_enabled): it
+    # is a judgement call rather than a safety rule, so it earns a shadow period first, the
+    # same way intent detection and the answer judge were introduced.
+    def _check_12_kg_cardinality(self, ast, kg) -> None:
+        alias_map = self._alias_map(ast)
+        aggregated = self._aggregated_tables(ast, alias_map)
+        if not aggregated:
+            return
+        for join in ast.find_all(sqlglot.exp.Join):
+            on = join.args.get("on")
+            if on is None:
+                continue
+            for eq in on.find_all(sqlglot.exp.EQ):
+                left = self._column_ref(eq.left, alias_map)
+                right = self._column_ref(eq.right, alias_map)
+                if left is None or right is None or left[0] == right[0]:
+                    continue
+                for near, far in ((left[0], right[0]), (right[0], left[0])):
+                    if near in aggregated and kg.fans_out(near, far):
+                        edge = kg.edge(near, far)
+                        raise CardinalityRiskError(
+                            f"Aggregating {near}'s columns across a {edge.cardinality} join "
+                            f"to {far} double-counts them ({far} has multiple rows per "
+                            f"{near} row). Aggregate {far}'s own measures, or pre-aggregate "
+                            f"{far} in a subquery before joining"
+                        )
+                # A composite relationship joined on only SOME of its key columns is the same
+                # failure with a different cause: the missing predicate is what was keeping
+                # the join one-to-one.
+                if kg.is_composite(left[0], right[0]):
+                    self._assert_composite_complete(join, left[0], right[0], alias_map, kg)
+
+    def _assert_composite_complete(self, join, table_a, table_b, alias_map, kg) -> None:
+        declared = kg.declared_pairs(table_a, table_b)
+        used = set()
+        for eq in (join.args.get("on") or join).find_all(sqlglot.exp.EQ):
+            left = self._column_ref(eq.left, alias_map)
+            right = self._column_ref(eq.right, alias_map)
+            if left and right and left[0] != right[0]:
+                used.add(frozenset((f"{left[0]}.{left[1]}", f"{right[0]}.{right[1]}")))
+        missing = declared - used
+        if missing:
+            predicates = " AND ".join(
+                " = ".join(sorted(p)) for p in sorted(map(sorted, missing)))
+            raise CardinalityRiskError(
+                f"{table_a} and {table_b} join on a composite key; the ON clause is missing "
+                f"{predicates}, which fans out the result"
+            )
+
+    def _aggregated_tables(self, ast, alias_map) -> set[str]:
+        """Tables whose columns sit inside a fan-out-sensitive aggregate.
+
+        SUM, AVG and plain COUNT are sensitive to duplicated rows. MIN, MAX and
+        COUNT(DISTINCT ...) are not — duplicates do not change their result — so they are
+        deliberately excluded rather than producing a false rejection.
+        """
+        tables: set[str] = set()
+        for node in ast.find_all(sqlglot.exp.Sum, sqlglot.exp.Avg, sqlglot.exp.Count):
+            if isinstance(node, sqlglot.exp.Count) and isinstance(
+                node.this, sqlglot.exp.Distinct
+            ):
+                continue
+            for col in node.find_all(sqlglot.exp.Column):
+                ref = self._column_ref(col, alias_map)
+                if ref is not None:
+                    tables.add(ref[0])
+        return tables
+
+    @staticmethod
+    def _column_ref(expr, alias_map: dict) -> tuple[str, str] | None:
+        """(real_table, column) for a QUALIFIED column reference, else None.
+
+        Unqualified columns return None: without a qualifier there is no sound way to say
+        which table owns them, and guessing is exactly what these checks exist to stop."""
+        if not isinstance(expr, sqlglot.exp.Column) or not expr.table:
+            return None
+        real = alias_map.get(expr.table.lower())
+        return (real, expr.name.lower()) if real else None
 
     @staticmethod
     def _alias_map(ast) -> dict:

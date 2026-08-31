@@ -306,7 +306,7 @@ HARD CONSTRAINTS
 {dialect_notes}
 - Do not select customer_name together with sensitive scoring unless asked.
 - Return ONLY the SQL. No prose, no markdown fences, no explanation.
-{join_hints_block}{glossary_block}{examples_block}{entity_block}
+{kg_block}{join_hints_block}{glossary_block}{examples_block}{entity_block}
 QUESTION: {question}
 
 If the question cannot be answered from the allowed schema, return exactly:

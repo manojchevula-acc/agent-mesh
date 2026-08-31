@@ -69,6 +69,9 @@ from .semi_dynamic.search_tools import (
     find_customers, find_products, find_policies, find_deals,
 )
 from .dynamic.analytical_tool import analytical_query
+from .kg.metadata_tools import (
+    get_customer_metadata, get_deal_metadata, get_join_path, get_product_metadata,
+)
 # DISABLED for now — clarification asking is turned off (see ALL_TOOLS below).
 # from .meta.clarify_tools import ask_clarification
 
@@ -123,6 +126,11 @@ ALL_TOOLS = {
     "find_deals": find_deals,
     # full dynamic (gated)
     "analytical_query": analytical_query,
+    # kg metadata — schema metadata only, no business rows (tier: kg_metadata)
+    "get_customer_metadata": get_customer_metadata,
+    "get_deal_metadata": get_deal_metadata,
+    "get_product_metadata": get_product_metadata,
+    "get_join_path": get_join_path,
     # meta — ask the user for a missing required input (touches no data)
     # DISABLED for now — clarification asking is turned off.
     # "ask_clarification": ask_clarification,

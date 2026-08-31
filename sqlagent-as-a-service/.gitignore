@@ -28,6 +28,9 @@ docs/
 *.db-shm
 *.db-wal
 qdrant_data/
+# Metadata-KG build output only (scripts/build_metadata_kg.py) — anchored to the repo
+# root so this does NOT also match sql_agent/kg/ or sql_agent/tools/kg/ (source code).
+/kg/
 documentation/
 logs/
 agent_test/

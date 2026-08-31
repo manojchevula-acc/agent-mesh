@@ -252,6 +252,76 @@ class Settings(BaseSettings):
     examples_qdrant_collection: str = "sql_agent_examples"
     examples_vector_index_path: str = ""       # faiss backend for examples; blank = in-RAM
 
+    # --- Production upgrade: metadata Knowledge Graph -------------------------
+    # A SCHEMA-level graph (Table / Column / Term nodes; HAS_FOREIGN_KEY / REFERENCES /
+    # DEFINES / HAS_TERM edges) built from information_schema + schema.yaml + the business
+    # glossary. Metadata only — no transactional row data ever enters it. Shadow-first like
+    # every other upgrade here: with kg_enabled=False the pipeline is byte-identical to
+    # today's semantic-layer behaviour. See docs/KG_METADATA_LAYER_DESIGN.md.
+    kg_enabled: bool = False
+    # WHERE the graph lives. Same swap pattern as vector_backend:
+    #   memory — the built JSON artifact held in RAM, BFS in Python. Zero infra; the right
+    #            choice at this scale (21 tables / 347 columns / 15 edges).
+    #   neo4j  — a real graph database, queried with the SAME parameterised Cypher the
+    #            templates declare. Opt-in; needed only if the KG outgrows one process.
+    kg_backend: str = "memory"                 # memory | neo4j
+    kg_artifact_path: str = "./kg/metadata_kg.json"
+    neo4j_uri: str = "bolt://localhost:7687"
+    neo4j_user: str = "neo4j"
+    neo4j_password: str = ""
+    neo4j_database: str = "neo4j"
+    # Which retrieval signals run. "auto" = all of them, unioned (the measured design).
+    # The narrow modes exist for evaluation: re-running the gold sets under each is how the
+    # per-signal contribution gets re-measured as the glossary and question mix evolve.
+    kg_retrieval_strategy: str = "auto"        # auto | template | semantic | exact
+    # Retrieval reuses the EXISTING embedding stack (embedding_backend/embedding_model) and
+    # vector backend; only the collection is new. :Term + :Scenario nodes only (~44 vectors)
+    # — a :Column index was measured at +0 recall on top of table-level retrieval, so it is
+    # deliberately not built.
+    kg_node_collection: str = "sql_agent_kg_nodes"
+    kg_node_index_path: str = ""               # faiss backend only; blank = in-RAM
+    kg_term_top_k: int = 5
+    kg_scenario_top_k: int = 8
+    # Cosine floor for a term match. 0.50 is the measured optimum (92% vs 89% recall at
+    # 0.60, for ~3 extra candidate tables per question).
+    kg_term_min_score: float = 0.50
+    # How many fused candidates reach the schema planner. 0 = uncapped (pass everything).
+    # 12 leaves ~4 positions of headroom above the measured cliff (100% recall first arrives
+    # at 8, 97% at 6) while still handing the planner FEWER tables than a plain union of
+    # every signal would (17.6). Tighten toward 8 only after the fusion weights below are
+    # re-validated on held-out questions.
+    kg_candidate_top_k: int = 12
+    # --- Fusion weights (design section 8) ------------------------------------------
+    # TUNED ON THE EVAL GOLD SETS — config-driven precisely so they can be re-validated
+    # against held-out questions. Treat the measured 100% as "no known misses on 123
+    # questions", not as a forward guarantee.
+    kg_weight_lexical: float = 1.6      # S4 — strongest single signal
+    kg_weight_coverage: float = 1.0     # share of the question's resolved columns a table has
+    kg_weight_exact: float = 0.5        # S3
+    kg_weight_term: float = 0.5         # S2 DEFINES traversal
+    kg_weight_template: float = 0.5     # S1
+    kg_weight_rank: float = 12.0        # S5 + scenario ranking, decayed by position
+    kg_rank_smoothing: int = 10         # the k in w/(k+rank); same shape as the RRF constant
+    # Query-side instruction for TERM retrieval. Deliberately separate from
+    # embedding_query_prefix (worded for whole-table docs) — these documents are business
+    # terms, and the instruction measurably conditions the embedding space.
+    kg_embedding_query_prefix: str = (
+        "Represent this question for retrieving the business terms it refers to: ")
+    # One-hop base-table expansion of the resolved set. Measured as the 97% -> 100% step.
+    kg_join_closure_enabled: bool = True
+    kg_max_join_hops: int = 3                  # bounds the join-path BFS
+    # KG-constrained validation (checks #10-#12). Join and column checks default ON with the
+    # feature (they are strictly stronger versions of #7/#8 and share their retryable
+    # exception types); the fan-out check defaults OFF for a shadow period, matching how
+    # every other judgement-call check in this codebase was introduced.
+    kg_join_check_enabled: bool = True         # #10: join must match a KG edge's keys
+    kg_column_check_enabled: bool = True       # #11: column existence / type / enum
+    kg_cardinality_check_enabled: bool = False  # #12: aggregate fan-out guard
+    # Bind the Approach B metadata tools to the ReAct agent. Off by default: with the fixed
+    # tiers disabled the agent has exactly one tool by design, and the template match runs
+    # deterministically inside the KG node instead (no extra LLM round-trip).
+    kg_tools_enabled: bool = False
+
     # --- Production upgrade: validation (Component C) --------------------------
     join_graph_check_enabled: bool = True     # validator check #7 (only fires w/ join pairs)
     column_binding_check_enabled: bool = True  # check #8: qualified col must belong to its table

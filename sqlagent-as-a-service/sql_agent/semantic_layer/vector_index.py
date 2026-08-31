@@ -278,3 +278,16 @@ def get_example_vector_index() -> VectorIndex:
     Retriever). Same backend/connection as the schema index but a SEPARATE collection."""
     return _make_index(settings.examples_qdrant_collection,
                        settings.examples_vector_index_path)
+
+
+@lru_cache(maxsize=1)
+def get_kg_node_index() -> VectorIndex:
+    """Resolve the vector index backend for the metadata-KG :Term and :Scenario vectors.
+
+    Third collection on the SAME backend and, for Qdrant, the same shared client — the KG
+    reuses the existing embedding/vector stack wholesale rather than standing up its own.
+    ~44 vectors: 23 business terms plus one "what this object is FOR" scenario document per
+    table. There is deliberately NO :Column collection — measured at +0 recall on top of
+    table-level retrieval, because selector._table_docs already aggregates the same column
+    descriptions. See docs/KG_METADATA_LAYER_DESIGN.md section 8."""
+    return _make_index(settings.kg_node_collection, settings.kg_node_index_path)

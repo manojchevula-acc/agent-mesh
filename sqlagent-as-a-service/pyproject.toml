@@ -34,6 +34,12 @@ retrieval = [
     "qdrant-client>=1.9.0",         # optional VECTOR_BACKEND=qdrant (existing service)
 ]
 
+# Optional graph-database backend for the metadata KG. Only needed when KG_BACKEND=neo4j;
+# the driver is imported lazily so the package works without it.
+kg = [
+    "neo4j>=5.0.0",
+]
+
 [dependency-groups]
 # Installed by default with `uv sync`.
 dev = [

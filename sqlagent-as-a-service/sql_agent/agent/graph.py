@@ -20,6 +20,7 @@ from sql_agent.agent.prompts import (
 from sql_agent.agent.state import AgentState
 from sql_agent.config import settings
 from sql_agent.formatting.audit_logger import log_invocation
+from sql_agent.kg.node import kg_lookup_node
 from sql_agent.llm import Step, get_llm, log_usage
 from sql_agent.logging_config import get_logger
 from sql_agent.memory import approved_examples, render_examples_block
@@ -315,14 +316,20 @@ def build_sql_agent_graph(llm=None, checkpointer=None):
         if (settings.intent_detection_enforced
                 and state.get("intent", {}).get("tier") == "out_of_scope"):
             return END
-        return "agent"
+        return "kg_lookup"
 
     graph = StateGraph(AgentState)
     graph.add_node("intent", intent_node)
+    # KG lookup sits between intent and agent so it runs ONCE per turn (not once per
+    # dynamic call) and its result is checkpointed before tool selection. It is a no-op
+    # returning {} when kg_enabled is false, so the graph shape is unchanged in effect.
+    graph.add_node("kg_lookup", kg_lookup_node)
     graph.add_node("agent", agent_node)
     graph.add_node("tools", tool_node)
     graph.set_entry_point("intent")
-    graph.add_conditional_edges("intent", _after_intent, {"agent": "agent", END: END})
+    graph.add_conditional_edges("intent", _after_intent,
+                                {"kg_lookup": "kg_lookup", END: END})
+    graph.add_edge("kg_lookup", "agent")
     graph.add_conditional_edges(
         "agent",
         lambda s: "tools" if s["messages"][-1].tool_calls else END,

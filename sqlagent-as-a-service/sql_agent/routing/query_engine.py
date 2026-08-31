@@ -8,6 +8,8 @@ six-check validator, and — on a retryable failure — self-correct, bounded to
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 from sqlalchemy.exc import SQLAlchemyError
 
 from sql_agent.agent.prompts import (
@@ -18,6 +20,15 @@ from sql_agent.config import settings
 from sql_agent.db import db
 from sql_agent.db.dialect import dialect_label, dialect_notes
 from sql_agent.formatting import format_error, format_response
+from sql_agent.formatting.audit_logger import log_kg_lookup, log_validator_decision
+from sql_agent.kg.constraints import KGConstraints, constraints_for
+from sql_agent.kg.context import get_kg_lookup
+from sql_agent.kg.retrieval import (
+    KGLookup,
+    kg_join_closure,
+    lookup as kg_lookup,
+    resolve_kg_joins,
+)
 from sql_agent.llm import Step, get_llm, log_usage
 from sql_agent.logging_config import get_logger
 from sql_agent.memory import relevant_examples, render_examples_block
@@ -29,11 +40,15 @@ from sql_agent.semantic_layer.schema_link import link_schema
 from sql_agent.semantic_layer.selector import select_tables
 from sql_agent.validation.answer_validator import judge_sql
 from sql_agent.validation.exceptions import (
+    CardinalityRiskError,
     ColumnBlockedError,
     ColumnNotInTableError,
     ExecutionCostError,
     InjectionDetectedError,
     JoinNotAllowedError,
+    KGColumnUnknownError,
+    KGJoinNotAllowedError,
+    KGTypeMismatchError,
     MaxRetriesError,
     ParseError,
     StatementTypeError,
@@ -42,13 +57,91 @@ from sql_agent.validation.exceptions import (
 
 log = get_logger("query")
 
-# Retryable validator failures engage the self-correction loop; everything else is a
-# hard reject (Design Document §7.1). JoinNotAllowedError and ColumnNotInTableError are
-# retryable — the model can re-emit using a declared relationship / the correct table.
-RETRYABLE = (ParseError, TableNotAllowedError, JoinNotAllowedError, ColumnNotInTableError)
+# The KG checks (#10-#12) join the retryable set: KGJoinNotAllowedError and
+# KGColumnUnknownError subclass the two above and so are already covered, while the
+# type/enum and fan-out failures are listed explicitly. Every one carries the FIX in its
+# message, which is exactly what SELF_CORRECTION_PROMPT feeds back to the model.
+RETRYABLE = (
+    ParseError, TableNotAllowedError, JoinNotAllowedError, ColumnNotInTableError,
+    KGTypeMismatchError, CardinalityRiskError,
+)
 HARD_REJECT = (
     StatementTypeError, ColumnBlockedError, InjectionDetectedError, ExecutionCostError,
 )
+
+
+@dataclass(frozen=True)
+class SchemaPlan:
+    """Everything the generation prompt and the validator need for one attempt.
+
+    Replaces what was a positional 4-tuple threaded through five call sites; the KG adds two
+    more members (the constraint bundle and the lookup) and an unlabelled 6-tuple would be
+    unreadable.
+    """
+
+    schema_context: str
+    join_clauses: list[str] = field(default_factory=list)
+    # None => validator check #7 is skipped (retrieval off), preserving prior behaviour.
+    allowed_pairs: set | None = None
+    planned_tables: list[str] | None = None
+    # None => the KG checks (#10-#12) are skipped: KG off, unbuilt, or nothing resolved.
+    kg_constraints: KGConstraints | None = None
+    kg: KGLookup | None = None
+
+    @property
+    def kg_block(self) -> str:
+        """The KG grounding block for the prompt; "" when there is no KG context."""
+        block = self.kg.render_block() if self.kg else ""
+        return f"\n\n{block}\n" if block else ""
+
+
+def _is_kg_check(exc: Exception) -> bool:
+    """Whether a rejection came from a KG-constrained check (#10-#12) rather than a core
+    safety check — recorded on the audit line so the two are distinguishable in review."""
+    return isinstance(exc, (KGJoinNotAllowedError, KGColumnUnknownError,
+                            KGTypeMismatchError, CardinalityRiskError))
+
+
+def _resolve_kg(question: str, tables_hint: list[str] | None) -> KGLookup | None:
+    """The turn's KG lookup: the one published by the kg_lookup graph node if there is one,
+    otherwise performed here.
+
+    Both paths matter. In the served agent the node has already run, so this is free and the
+    pipeline sees exactly the grounding that was logged for the turn. When the pipeline is
+    driven directly — the eval harness, a test — the lookup happens here, so KG grounding is
+    never silently absent just because the entry point differed.
+    """
+    if not settings.kg_enabled:
+        return None
+    published = get_kg_lookup()
+    return published if published is not None else kg_lookup(question, tables_hint)
+
+
+def _plan_with_kg(plan_tables: set[str], plan_pairs, kg: KGLookup | None):
+    """Join resolution + the validator's constraint bundle, KG-first.
+
+    With a KG, join paths come from its typed edges (explicit column pairs, inferred
+    cardinality, recorded provenance, view-scope filtered) instead of schema.yaml's rule
+    strings. Without one — or when the KG has no edge between the planned tables — this falls
+    straight back to resolve_joins, so the KG can only ever ADD precision, never remove a
+    join the pipeline could previously resolve.
+    """
+    if kg is None:
+        clauses, allowed_pairs, used = resolve_joins(plan_tables, plan_pairs)
+        return clauses, allowed_pairs, used, None
+
+    clauses, allowed_pairs, used, edges = resolve_kg_joins(plan_tables, plan_pairs)
+    if not clauses and len(plan_tables) > 1:
+        # The KG knows these tables but not how to legally connect them (e.g. only a
+        # proposed relationship, or a view-scope-illegal path). Defer to the semantic layer
+        # rather than emitting a joinless plan.
+        log.info("KG join resolution empty for %s | falling back to the semantic layer",
+                 sorted(plan_tables))
+        clauses, allowed_pairs, used = resolve_joins(plan_tables, plan_pairs)
+    else:
+        log.info("KG joins | %d edge(s) | %s", len(edges),
+                 [f"{e.from_table}<->{e.to_table}" for e in edges])
+    return clauses, allowed_pairs, used, constraints_for(used)
 
 
 def _generate_sql(prompt: str, step: Step) -> str:
@@ -64,34 +157,40 @@ def _generate_sql(prompt: str, step: Step) -> str:
     return text.strip().strip("`").removeprefix("sql").strip()
 
 
-def _plan_schema(question: str, tables_hint: list[str] | None):
+def _plan_schema(question: str, tables_hint: list[str] | None) -> SchemaPlan:
     """Scoped-schema-retrieval front end for the dynamic tier (Component B).
 
-    Returns (schema_context, join_clauses, allowed_join_pairs, planned_tables) —
-    ``planned_tables`` is the schema-link plan's chosen table set (plus join bridges),
-    passed to the example ranker as its table signal. When schema retrieval is disabled
-    this is byte-identical to the original behaviour: full schema, no join hints, no
-    join constraint (allowed_join_pairs is None so validator check #7 is skipped), and
-    no planned tables (the ranker falls back to the pre-flight tables_hint).
+    Returns a SchemaPlan. When schema retrieval is disabled this is byte-identical to the
+    original behaviour: full schema, no join hints, no join constraint (allowed_pairs is
+    None so validator check #7 is skipped), and no planned tables (the ranker falls back to
+    the pre-flight tables_hint) — plus the KG grounding, if the KG is enabled.
     """
+    kg = _resolve_kg(question, tables_hint)
+
     if not settings.schema_retrieval_enabled:
-        return render_schema_context(), [], None, None
+        return SchemaPlan(schema_context=render_schema_context(), kg=kg)
 
     # 1. RETRIEVE candidates (index lookup, no LLM) -> 2. SCHEMA-LINK plan (planner LLM).
-    # Feed the planner the ranked candidates WITHOUT the join-closure expansion: the plan
-    # only picks among ranked tables, and rendering the full closure (customer_master
-    # neighbours nearly every view) can exceed the provider's per-minute token limit. Any
-    # bridge the plan needs is re-added by resolve_joins below.
-    candidates = select_tables(question, tables_hint, apply_closure=False)
+    # The KG output IS the candidate set. Its S5 signal already folds in
+    # selector.ranked_core (dense + BM25 + RRF), so unioning select_tables on top would add
+    # nothing but width and would defeat the top-k cut. When the KG is unavailable, fall
+    # back to select_tables exactly as today. Measured: 100% gold-table recall at ~10-12
+    # candidates, against 86% at 10 today.
+    candidates = (set(kg.tables) if kg is not None and kg.tables
+                  else select_tables(question, tables_hint, apply_closure=False))
     plan = link_schema(question, candidates)
-    # 3. JOIN-RESOLVE minimal path (+ bridge tables) with real keys from the graph.
-    join_clauses, allowed_pairs, used_tables = resolve_joins(plan.tables, plan.join_pairs)
+    # 3. JOIN-RESOLVE minimal path (+ bridge tables), KG-first, with the validator bundle.
+    join_clauses, allowed_pairs, used_tables, kg_constraints = _plan_with_kg(
+        plan.tables, plan.join_pairs, kg)
     # 4. RENDER only the plan's tables plus any bridge tables the join path needs.
     schema_context = render_schema_context(tables=used_tables)
-    return schema_context, join_clauses, allowed_pairs, sorted(used_tables)
+    return SchemaPlan(schema_context=schema_context, join_clauses=join_clauses,
+                      allowed_pairs=allowed_pairs, planned_tables=sorted(used_tables),
+                      kg_constraints=kg_constraints, kg=kg)
 
 
-def _widen_schema(question: str, tables_hint: list[str] | None):
+def _widen_schema(question: str, tables_hint: list[str] | None,
+                  kg: KGLookup | None = None) -> SchemaPlan:
     """Bounded widen for a self-correction retry — TPM-safe.
 
     Re-slices the SAME already-computed retrieval ranking (selector.py) to
@@ -102,15 +201,22 @@ def _widen_schema(question: str, tables_hint: list[str] | None):
     widened candidates so the widened GENERATION prompt renders the planner's 1-2 tables,
     not a full N-view dump; resolve_joins re-adds only the bridge tables the plan needs.
     Costs one small planner call in exchange for a much smaller generation prompt.
+
+    ``kg`` reuses the turn's already-resolved lookup — the question has not changed, so a
+    retry must not pay for a second embedding call, and the audit trail stays one lookup per
+    turn.
     """
     candidates = select_tables(
         question, tables_hint,
         top_k=settings.schema_retrieval_widen_top_k, apply_closure=False,
     )
     plan = link_schema(question, candidates)
-    join_clauses, allowed_pairs, used_tables = resolve_joins(plan.tables, plan.join_pairs)
+    join_clauses, allowed_pairs, used_tables, kg_constraints = _plan_with_kg(
+        plan.tables, plan.join_pairs, kg)
     schema_context = render_schema_context(tables=used_tables)
-    return schema_context, join_clauses, allowed_pairs, sorted(used_tables)
+    return SchemaPlan(schema_context=schema_context, join_clauses=join_clauses,
+                      allowed_pairs=allowed_pairs, planned_tables=sorted(used_tables),
+                      kg_constraints=kg_constraints, kg=kg)
 
 
 def run_dynamic_pipeline(question: str, tables_hint: list[str] | None = None) -> dict:
@@ -120,7 +226,12 @@ def run_dynamic_pipeline(question: str, tables_hint: list[str] | None = None) ->
     The validator is the hard gate; generation quality is grounded in the semantic
     layer, never invented relationships.
     """
-    schema_context, join_clauses, allowed_pairs, planned_tables = _plan_schema(question, tables_hint)
+    plan = _plan_schema(question, tables_hint)
+    # One structured audit record per dynamic call, written BEFORE any SQL exists: it states
+    # what metadata grounded this answer (signals, template + bound params, terms, subschema,
+    # join edges, KG fingerprint) independently of whether generation then succeeded — which
+    # is what a banking audit trail has to be able to show.
+    log_kg_lookup(question, plan.kg, plan.kg_constraints)
 
     # Resolve any customer NAME in the question to its id up front (mirrors the view
     # tools' _resolve_customer_id) so the generator filters on the id. Computed once and
@@ -154,27 +265,28 @@ def run_dynamic_pipeline(question: str, tables_hint: list[str] | None = None) ->
         # widened table set automatically. No-op when examples are disabled.
         if not settings.examples_enabled:
             return ""
-        hint = list(dict.fromkeys([*(planned_tables or []), *(tables_hint or [])]))
+        hint = list(dict.fromkeys([*(plan.planned_tables or []), *(tables_hint or [])]))
         block = render_examples_block(
             relevant_examples(q, tier="full_dynamic", tables_hint=hint or None)
         )
         return f"\n\n{block}\n" if block else ""
 
-    def _base_prompt(schema: str, joins: list[str]) -> str:
-        # The generator is told which engine it targets, so it writes correct SQL. Join
-        # hints, the business glossary, and few-shot examples are rendered BEFORE the
-        # question (Phase 11 prompt ordering) rather than appended after formatting, so
-        # the model sees "how to answer" immediately ahead of "what to answer".
+    def _base_prompt(current: SchemaPlan) -> str:
+        # The generator is told which engine it targets, so it writes correct SQL. The KG
+        # block, join hints, the business glossary, and few-shot examples are rendered
+        # BEFORE the question (Phase 11 prompt ordering) rather than appended after
+        # formatting, so the model sees "how to answer" immediately ahead of "what to answer".
         return DYNAMIC_SQL_GENERATION_PROMPT.format(
-            schema_context=schema, question=question,
+            schema_context=current.schema_context, question=question,
             dialect=dialect_label(), dialect_notes=dialect_notes(),
-            join_hints_block=_join_hints_block(joins),
+            kg_block=current.kg_block,
+            join_hints_block=_join_hints_block(current.join_clauses),
             glossary_block=_glossary_block_for(question),
             examples_block=_examples_block_for(question),
             entity_block=entity_block,
         )
 
-    prompt = _base_prompt(schema_context, join_clauses)
+    prompt = _base_prompt(plan)
     max_attempts = settings.max_self_correction_attempts
     previous_sql = ""
     last_error = "unknown"
@@ -204,9 +316,9 @@ def run_dynamic_pipeline(question: str, tables_hint: list[str] | None = None) ->
             if narrowed:
                 log.info("DYNAMIC cannot-answer on narrowed schema | widening "
                          "(bounded) and retrying | reason=%s", reason)
-                schema_context, join_clauses, allowed_pairs, planned_tables = _widen_schema(question, tables_hint)
+                plan = _widen_schema(question, tables_hint, plan.kg)
                 narrowed = False
-                prompt = _base_prompt(schema_context, join_clauses)
+                prompt = _base_prompt(plan)
                 continue
             log.info("DYNAMIC cannot answer | reason=%s", reason)
             return format_error("ValidationError",
@@ -217,23 +329,32 @@ def run_dynamic_pipeline(question: str, tables_hint: list[str] | None = None) ->
             # db.execute runs the safety validator (join-graph #7 + column-binding #8)
             # before touching the DB. allowed_pairs is None when retrieval is off -> #7
             # skipped; strict_columns=True enables #8 for this LLM-generated SQL.
-            result = db.execute(sql, allowed_join_pairs=allowed_pairs, strict_columns=True)
+            # kg_constraints is None unless the KG resolved a subschema -> #10-#12 skipped.
+            # This is the KG-CONSTRAINED VALIDATION stage: the SQL is checked against the
+            # graph BEFORE it reaches MySQL, so a wrong join key or an off-enum filter costs
+            # a retry, not a wrong answer.
+            result = db.execute(sql, allowed_join_pairs=plan.allowed_pairs,
+                                strict_columns=True, kg_constraints=plan.kg_constraints)
         except HARD_REJECT as exc:
             log.warning("DYNAMIC hard reject | %s: %s", type(exc).__name__, exc)
+            log_validator_decision(sql, "reject", f"{type(exc).__name__}: {exc}",
+                                   kg_enforced=_is_kg_check(exc))
             return format_error(type(exc).__name__, str(exc),
                                 retryable=False, attempts_used=attempt)
         except RETRYABLE as exc:
             log.warning("DYNAMIC retryable | %s: %s | self-correcting",
                         type(exc).__name__, exc)
+            log_validator_decision(sql, "retry", f"{type(exc).__name__}: {exc}",
+                                   kg_enforced=_is_kg_check(exc))
             previous_sql, last_error = sql, str(exc)
             # Widen (bounded — see _widen_schema) so an under-selection cannot starve
             # the fix; drop the narrow join constraint accordingly (invented joins are
             # still rejected by the table whitelist). Append the validator's exact
             # error and regenerate.
-            schema_context, join_clauses, allowed_pairs, planned_tables = _widen_schema(question, tables_hint)
+            plan = _widen_schema(question, tables_hint, plan.kg)
             narrowed = False
             prompt = (
-                _base_prompt(schema_context, join_clauses)
+                _base_prompt(plan)
                 + "\n\n"
                 + SELF_CORRECTION_PROMPT.format(
                     previous_sql=previous_sql, error_message=last_error
@@ -250,10 +371,10 @@ def run_dynamic_pipeline(question: str, tables_hint: list[str] | None = None) ->
             db_error = str(getattr(exc, "orig", exc))
             log.warning("DYNAMIC db-exec error | %s | self-correcting", db_error)
             previous_sql, last_error = sql, db_error
-            schema_context, join_clauses, allowed_pairs, planned_tables = _widen_schema(question, tables_hint)
+            plan = _widen_schema(question, tables_hint, plan.kg)
             narrowed = False
             prompt = (
-                _base_prompt(schema_context, join_clauses)
+                _base_prompt(plan)
                 + "\n\n"
                 + SELF_CORRECTION_PROMPT.format(
                     previous_sql=previous_sql, error_message=last_error
@@ -265,7 +386,7 @@ def run_dynamic_pipeline(question: str, tables_hint: list[str] | None = None) ->
         # when disabled; only a confident mismatch under enforcement triggers a retry.
         columns = list(result.rows[0].keys()) if result.rows else []
         verdict = judge_sql(question, result.sql, columns, len(result),
-                            schema_context=schema_context)
+                            schema_context=plan.schema_context)
         if settings.answer_validation_enforced and not verdict.passes:
             log.warning("DYNAMIC answer mismatch | %s | self-correcting", verdict.reason)
             previous_sql, last_error = result.sql, f"answer mismatch: {verdict.reason}"
@@ -274,7 +395,7 @@ def run_dynamic_pipeline(question: str, tables_hint: list[str] | None = None) ->
             # answer instead of a hard error.
             best_effort, best_effort_reason = result, verdict.reason
             prompt = (
-                _base_prompt(schema_context, join_clauses)
+                _base_prompt(plan)
                 + "\n\n"
                 + SELF_CORRECTION_PROMPT.format(
                     previous_sql=previous_sql, error_message=last_error
@@ -285,6 +406,8 @@ def run_dynamic_pipeline(question: str, tables_hint: list[str] | None = None) ->
         # format_response now surfaces `sql` for every tier (from the QueryResult),
         # so the dynamic envelope already carries the validated SELECT the auditor logs.
         response = format_response(result, tier="full_dynamic", tool="analytical_query")
+        log_validator_decision(result.sql, "pass",
+                               kg_enforced=plan.kg_constraints is not None)
         log.info("DYNAMIC success | attempt=%d | rows=%d", attempt, len(result))
         return response
 

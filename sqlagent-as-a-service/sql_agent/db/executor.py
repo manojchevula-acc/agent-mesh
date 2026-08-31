@@ -31,13 +31,16 @@ class Executor:
 
     def execute(
         self, sql: str, params: dict | None = None, allowed_join_pairs=None,
-        strict_columns: bool = False,
+        strict_columns: bool = False, kg_constraints=None,
     ) -> "QueryResult":
         """Validate the SQL, then execute read-only.
 
         ``allowed_join_pairs`` is passed through to the validator's join-graph check (#7)
         and ``strict_columns`` enables the column-binding check (#8); both are supplied
         only by the dynamic tier (other tiers pass the defaults and skip those checks).
+        ``kg_constraints`` likewise enables the KG-constrained checks (#10-#12) — a plain
+        pass-through, since the executor's job is to route the query through the gate, not
+        to know what the gate checks.
         When the execution guard is enabled, an EXPLAIN cost pre-flight runs before the
         query touches a potentially large table.
 
@@ -46,7 +49,8 @@ class Executor:
         """
         params = params or {}
         safe_sql = self._validator.validate(
-            sql, allowed_join_pairs=allowed_join_pairs, strict_columns=strict_columns
+            sql, allowed_join_pairs=allowed_join_pairs, strict_columns=strict_columns,
+            kg_constraints=kg_constraints,
         )
         log.info("DB execute | sql=%s | params=%s", safe_sql, params)
 

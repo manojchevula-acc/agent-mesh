@@ -19,3 +19,8 @@ class AgentState(TypedDict, total=False):
     # Advisory intent classification for the current turn (Component A). Shadow-first:
     # logged and available downstream; only alters routing when enforcement is enabled.
     intent: dict[str, Any]              # {tier, domain, entities, missing, confidence, ...}
+    # Metadata-KG grounding for the current turn (see sql_agent/kg/node.py). Checkpointed
+    # so the audit trail — which terms resolved to which columns, which join edges were
+    # retrieved, under which KG fingerprint — is part of the conversation record rather
+    # than only a log line. Absent when the KG is disabled or resolved nothing.
+    kg_context: dict[str, Any]

@@ -9,50 +9,98 @@
 # category is free-form but kept consistent with the semantic_layer domains
 # (pricing, risk, customer, treasury, deals) so the prompt's glossary block can group
 # related terms together.
+#
+# `definition` (optional) is the natural-language meaning of the term. It is EMBEDDED into
+# the metadata KG's :Term vector (sql_agent/kg/retrieval.py::_node_documents), so it is what
+# lets a paraphrased question — "how levered are they", "balance-sheet risk" — reach the
+# right column without using the term verbatim. Terms without one still work, but match far
+# more narrowly; scripts/build_metadata_kg.py warns about them.
 
 terms:
   - term: "gearing"
     columns: ["debt_to_equity_ratio"]
     category: risk
+    definition: >
+      The ratio of a customer's total debt to its equity. A measure of leverage and
+      balance-sheet risk; higher gearing means more debt funding relative to owned capital.
   - term: "leverage"
     columns: ["debt_to_equity_ratio"]
     category: risk
+    definition: >
+      How much a customer relies on borrowed money relative to its own capital. Measured
+      here by the debt-to-equity ratio; a highly leveraged customer carries more risk.
   - term: "dte"
     columns: ["debt_to_equity_ratio"]
     category: risk
+    definition: >
+      Debt-to-equity ratio — total debt divided by total equity. The standard shorthand for
+      the same leverage/gearing measure.
   - term: "exposure"
     columns: ["existing_exposure_aed"]
     category: risk
+    definition: >
+      The bank's current total outstanding credit to a customer, in AED, across all facilities
+      already booked — how much is already at risk with that customer.
   - term: "revenue"
     columns: ["annual_revenue_aed"]
     category: customer
+    definition: >
+      A customer's reported annual revenue in AED — the top-line size of the customer's
+      business, used to gauge scale and creditworthiness.
   - term: "turnover"
     columns: ["annual_revenue_aed"]
     category: customer
+    definition: >
+      Synonym for annual revenue — the total value of a customer's sales/business activity
+      over a year, in AED.
   - term: "margin"
     columns: ["expected_margin_pct", "net_margin_pct"]
     category: pricing
+    definition: >
+      The profitability of a deal or customer relationship, expressed as a percentage —
+      either the margin expected at pricing time or the net margin actually realised.
   - term: "win rate"
     columns: ["win_rate_pct", "deal_outcome"]
     category: deals
+    definition: >
+      The share of quoted/priced deals that were actually won (accepted by the customer)
+      rather than lost, expressed as a percentage.
   - term: "profitability"
     columns: ["net_margin_pct", "profitability_tier"]
     category: pricing
+    definition: >
+      How profitable a deal or customer relationship is, either as the net margin percentage
+      or a coarser profitability tier/bucket derived from it.
   - term: "capital"
     columns: ["capital_required_aed", "rwa_aed"]
     category: risk
+    definition: >
+      The regulatory capital a deal or exposure consumes — either the capital required in AED
+      or the risk-weighted assets (RWA) figure it is derived from.
   - term: "rwa"
     columns: ["rwa_aed", "rwa_risk_weight_pct"]
     category: risk
+    definition: >
+      Risk-Weighted Assets — the regulatory capital measure for a deal's credit risk, either
+      the AED amount or the risk-weight percentage applied to the exposure.
   - term: "tenor"
     columns: ["tenor"]
     category: deals
+    definition: >
+      The duration/term of a deal or facility (e.g. expressed in months), i.e. how long the
+      facility runs before maturity.
   - term: "sme"
     columns: ["customer_segment"]
     category: customer
+    definition: >
+      Small and Medium Enterprise — one of the governed customer_segment values, denoting a
+      smaller-business customer as opposed to a large Corporate client.
   - term: "corporate"
     columns: ["customer_segment"]
     category: customer
+    definition: >
+      Corporate — one of the governed customer_segment values, denoting a large-enterprise
+      customer as opposed to an SME.
   # --- Terms from the task brief, formalising the policy-margin distinction ------
   # NOTE: the physical column is named differently across views
   # (min_expected_margin_pct on pricing_policy/margin_analysis/segment_pricing_benchmark,
@@ -61,27 +109,54 @@ terms:
   - term: "policy margin"
     columns: ["min_expected_margin_pct", "policy_min_expected_margin_pct"]
     category: pricing
+    definition: >
+      The minimum margin the bank's pricing policy requires for a given segment/product/risk
+      combination — the governed floor a deal's actual margin is checked against.
   - term: "minimum margin"
     columns: ["min_expected_margin_pct", "policy_min_expected_margin_pct"]
     category: pricing
+    definition: >
+      Synonym for the policy margin floor — the lowest margin percentage a deal may be priced
+      at under the current pricing policy.
   - term: "policy minimum"
     columns: ["min_expected_margin_pct", "policy_min_expected_margin_pct"]
     category: pricing
+    definition: >
+      Synonym for the policy margin floor — the governed minimum margin a deal must clear to
+      be compliant.
   - term: "expected margin"
     columns: ["expected_margin_pct"]
     category: pricing
+    definition: >
+      The margin percentage a deal was priced/recommended at — the actual (not policy-floor)
+      margin figure for that specific deal.
   - term: "risk band"
     columns: ["risk_category"]
     category: risk
+    definition: >
+      The customer's or deal's credit risk classification (e.g. Low/Medium/High) used to
+      determine pricing policy and risk premium.
   - term: "customer segment"
     columns: ["customer_segment"]
     category: customer
+    definition: >
+      The governed classification of a customer's business size/type (e.g. SME, Corporate),
+      used to determine which pricing policy and benchmarks apply.
   - term: "policy compliant"
     columns: ["policy_compliant"]
     category: pricing
+    definition: >
+      Whether a deal's price/margin meets the bank's pricing policy requirements — a boolean
+      compliance flag.
   - term: "policy violation"
     columns: ["policy_compliant", "margin_below_minimum"]
     category: pricing
+    definition: >
+      A deal that fails the bank's pricing policy — either flagged non-compliant outright, or
+      specifically because its margin fell below the required minimum.
   - term: "below minimum"
     columns: ["margin_below_minimum"]
     category: pricing
+    definition: >
+      Whether a deal's margin fell below the policy-required minimum margin — the specific
+      breach type behind many policy violations.
