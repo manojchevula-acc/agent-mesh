@@ -1,6 +1,6 @@
 """Section 4.3 — Treasury tools (treasury_rate_sheet). Parameterised."""
 
-from langchain_core.tools import tool
+from sql_agent.tools.decorator import tool
 
 from sql_agent.db import db
 from sql_agent.formatting import format_response

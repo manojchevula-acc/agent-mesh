@@ -46,7 +46,8 @@ sql_agent/
 │   ├── analytical_tool.py     # 6   — the one gated dynamic tool
 │   └── registry.py            # ALL_TOOLS map (bound per caller scope)
 ├── llm/                       # Configurable multi-provider LLM, per-step selection
-│   └── factory.py             # get_llm(Step.GENERATION|CORRECTION|AGENT|JUDGE)
+│   ├── factory.py             # get_llm(Step.GENERATION|CORRECTION|AGENT|JUDGE)
+│   └── step.py                # complete/acomplete/complete_with_tools (one-shot calls)
 ├── calculations/              # Section 7 — pure formulas, zero SQL, zero LLM
 │   ├── pricing.py
 │   ├── risk.py
@@ -57,8 +58,9 @@ sql_agent/
 ├── routing/                   # Section 9 — tier decision + dispatch
 │   ├── tier_router.py
 │   └── query_engine.py
-├── agent/                     # Section 10-11 — LangGraph ReAct definition
-│   ├── graph.py
+├── agent/                     # Section 10-11 — MAF (Microsoft Agent Framework) ReAct definition
+│   ├── workflow.py
+│   ├── messages.py            # Message/Content adapter layer
 │   ├── state.py
 │   └── prompts.py
 ├── formatting/                # Section 12 — typed JSON/markdown output + audit
@@ -100,8 +102,8 @@ Supported providers: **`groq`** (default), `openai`, `azure`, `anthropic`. Code 
 for its model by step:
 
 ```python
-from sql_agent.llm import Step, get_llm
-llm = get_llm(Step.GENERATION)   # resolves provider+model from config
+from sql_agent.llm import Step, complete
+text = complete(Step.GENERATION, prompt)   # resolves provider+model from config
 ```
 
 Add a new provider by adding one builder to `sql_agent/llm/factory.py`.

@@ -11,7 +11,7 @@ import json
 from dataclasses import asdict, dataclass, field
 
 from sql_agent.agent.prompts import INTENT_PRECLASSIFIER_PROMPT
-from sql_agent.llm import Step, get_llm, log_usage
+from sql_agent.llm import Step, acomplete
 from sql_agent.logging_config import get_logger
 
 log = get_logger("intent")
@@ -39,15 +39,12 @@ def _parse(text: str) -> dict:
     return json.loads(text[start : end + 1])
 
 
-def classify(question: str) -> Intent:
+async def classify(question: str) -> Intent:
     """Classify a single user question. Never raises — falls back to a safe default
     (full_dynamic) so the pipeline continues even if the classifier misbehaves."""
     try:
-        raw = get_llm(Step.INTENT).invoke(
-            INTENT_PRECLASSIFIER_PROMPT.format(user_request=question)
-        )
-        log_usage(Step.INTENT, raw)
-        text = raw.content if hasattr(raw, "content") else str(raw)
+        text = await acomplete(
+            Step.INTENT, INTENT_PRECLASSIFIER_PROMPT.format(user_request=question))
         data = _parse(text)
     except Exception as exc:  # noqa: BLE001 — advisory stage must never break the turn
         log.warning("INTENT classify failed | %s | defaulting to full_dynamic", exc)

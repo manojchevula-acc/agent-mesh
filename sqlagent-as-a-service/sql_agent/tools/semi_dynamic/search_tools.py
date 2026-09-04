@@ -5,7 +5,7 @@ semantic layer (Section 3). The clause-builder may NEVER emit a condition outsid
 set — the shape of the WHERE clause varies, but only over an enumerated menu.
 """
 
-from langchain_core.tools import tool
+from sql_agent.tools.decorator import tool
 
 from sql_agent.db import db
 from sql_agent.db.dialect import csv_membership_clause
@@ -15,9 +15,10 @@ from sql_agent.semantic_layer.loader import canonicalize_enum
 
 @tool
 def find_customers(
-    segment: str = None, risk_category: str = None, region: str = None,
-    industry: str = None, relationship_status: str = None,
-    min_revenue: float = None, max_dte: float = None,
+    segment: str | None = None, risk_category: str | None = None,
+    region: str | None = None, industry: str | None = None,
+    relationship_status: str | None = None,
+    min_revenue: float | None = None, max_dte: float | None = None,
 ) -> list[dict]:
     """Find customers matching ANY COMBINATION of the optional filters below.
     Use for portfolio shortlists, not for one specific named customer.
@@ -59,8 +60,8 @@ def find_customers(
 
 @tool
 def find_products(
-    product_type: str = None, segment: str = None, currency: str = None,
-    pricing_method: str = None,
+    product_type: str | None = None, segment: str | None = None,
+    currency: str | None = None, pricing_method: str | None = None,
 ) -> list[dict]:
     """Find products matching ANY COMBINATION of the optional filters.
     product_type: Loan | Trade Finance | Treasury | Deposit
@@ -91,8 +92,8 @@ def find_products(
 
 @tool
 def find_policies(
-    segment: str = None, product_type: str = None, risk_category: str = None,
-    status: str = "Active",
+    segment: str | None = None, product_type: str | None = None,
+    risk_category: str | None = None, status: str = "Active",
 ) -> list[dict]:
     """List pricing policy rows matching ANY COMBINATION of the optional
     filters. Defaults to Active policies only."""
@@ -119,9 +120,10 @@ def find_policies(
 
 @tool
 def find_deals(
-    customer_id: str = None, product_type: str = None, outcome: str = None,
-    channel: str = None, currency: str = None, date_from: str = None,
-    date_to: str = None, below_floor: bool = False,
+    customer_id: str | None = None, product_type: str | None = None,
+    outcome: str | None = None, channel: str | None = None,
+    currency: str | None = None, date_from: str | None = None,
+    date_to: str | None = None, below_floor: bool = False,
 ) -> list[dict]:
     """Find historical deals matching ANY COMBINATION of filters.
     outcome: Won | Lost

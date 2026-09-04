@@ -8,14 +8,18 @@ contract are identical to the in-process case, so promotion requires no caller c
 from __future__ import annotations
 
 import ast
+import asyncio
 import json
 from functools import lru_cache
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from pydantic import BaseModel, Field
 
+from sql_agent.agent.messages import (
+    is_assistant, is_tool_result, is_user, text_of, tool_call_id_of,
+    tool_calls_of, tool_name_of, tool_result_text, user_message,
+)
 from sql_agent.config import settings
 from sql_agent.feedback import capture_implicit
 from sql_agent.feedback import record as record_feedback
@@ -23,7 +27,7 @@ from sql_agent.formatting import format_error
 from sql_agent.logging_config import get_logger
 from sql_agent.memory import (
     delete_session,
-    get_checkpointer,
+    get_conversation_store,
     list_sessions,
     list_turns,
     new_session_id,
@@ -109,7 +113,13 @@ def invoke(req: InvokeRequest) -> dict:
 
     tool = ALL_TOOLS[req.tool]
     try:
-        return tool.invoke(req.args)
+        # Validate against the tool's schema BEFORE calling, exactly as
+        # StructuredTool.invoke(dict) did. Skipping this would change the endpoint's
+        # error contract: a bad argument would surface as a TypeError from Python or,
+        # worse, reach the SQL layer, instead of the ValidationError envelope callers
+        # already handle. .func is the undecorated callable, so the endpoint stays
+        # SYNC and its blocking DB work keeps running in FastAPI's threadpool.
+        return tool.func(**tool.input_model(**req.args).model_dump())
     except AuthError as exc:
         return format_error("AuthError", str(exc), retryable=False)
     except SQLAgentError as exc:
@@ -119,43 +129,65 @@ def invoke(req: InvokeRequest) -> dict:
 
 
 @lru_cache(maxsize=1)
-def _agent_graph():
-    """Compile the ReAct agent graph once, with the configured checkpointer so the
-    agent remembers a conversation across turns (keyed by thread_id = session_id).
-    The LLM (Step.AGENT) selects the tool + tier per question; tool binding is
-    per-caller via the state's auth scopes."""
-    from sql_agent.agent.graph import build_sql_agent_graph
-    return build_sql_agent_graph(checkpointer=get_checkpointer())
+def _agent_workflow():
+    """Build the ReAct workflow once. Conversation memory is no longer a compile-time
+    argument — the store is consulted per turn by run_turn() (see agent/workflow.py),
+    keyed by thread_id = session_id."""
+    from sql_agent.agent.workflow import build_sql_agent_workflow
+    return build_sql_agent_workflow()
 
 
 @app.on_event("startup")
-def _prewarm() -> None:
+async def _prewarm() -> None:
     """Warm the heavy singletons at boot so the FIRST user request is fast.
 
-    Without this, the first request pays the one-time cost of (a) compiling the graph +
-    initialising the checkpointer, and (b) loading the embedding model + opening the
-    vector index — together ~30-60s that otherwise land on a real user's request and can
-    trip a frontend timeout. Each step is best-effort: a failure here must not stop the
-    server from starting (the work would just fall back to lazy init on first use)."""
+    Without this, the first request pays the one-time cost of (a) building the
+    workflow + opening the conversation store, and (b) loading the embedding model +
+    opening the vector index — together ~30-60s that otherwise land on a real user's
+    request and can trip a frontend timeout. Each step is best-effort: a failure here
+    must not stop the server from starting (the work would just fall back to lazy init
+    on first use)."""
     try:
-        _agent_graph()  # compile graph + init checkpointer once
-        log.info("prewarm: agent graph ready")
+        _agent_workflow()
+        get_conversation_store()      # open the sqlite file / pg pool at boot
+        log.info("prewarm: agent workflow ready")
     except Exception as exc:  # noqa: BLE001 — never block startup on prewarm
-        log.warning("prewarm: agent graph failed | %s", exc)
+        log.warning("prewarm: agent workflow failed | %s", exc)
 
     if settings.schema_retrieval_enabled:
         try:
             # Loads the embedding model into RAM and builds/opens the vector index
             # (the lru_cached singletons the request path reuses).
             from sql_agent.semantic_layer.selector import select_tables
-            select_tables("warmup")
+            await asyncio.to_thread(select_tables, "warmup")
             log.info("prewarm: schema retrieval ready (embeddings + vector index)")
         except Exception as exc:  # noqa: BLE001
             log.warning("prewarm: schema retrieval failed | %s", exc)
 
+    if settings.kg_enabled:
+        try:
+            # get_kg_client() reads the built artifact and loads it into the configured
+            # backend (memory | neo4j) — for neo4j that load is a real Cypher upsert, so
+            # this doubles as a startup connectivity check instead of only failing on
+            # the first user question that happens to need the KG. It logs its own
+            # "KG ready | backend=... fingerprint=..." line on success (kg/client.py),
+            # or a clear warning naming the cause (missing artifact / backend
+            # unreachable) on failure — either way it degrades to "no KG grounding",
+            # never to a broken turn. @lru_cache'd, so this also warms the client the
+            # request path reuses, same as the embeddings/vector-index step above.
+            from sql_agent.kg.client import get_kg_client
+            client = await asyncio.to_thread(get_kg_client)
+            if client is None:
+                log.warning("prewarm: KG enabled but unavailable — see the warning "
+                           "above for why (missing artifact or backend failure)")
+            else:
+                log.info("prewarm: KG ready (backend=%s)", settings.kg_backend)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("prewarm: KG failed | %s", exc)
+
 
 def _parse_tool_content(content):
-    """Tool results come back as ToolMessage content (JSON string). Parse to dict."""
+    """Tool results come back as a tool-message payload (JSON string). Parse to dict."""
     if isinstance(content, dict):
         return content
     if isinstance(content, str):
@@ -169,39 +201,35 @@ def _parse_tool_content(content):
     return None
 
 
-def _text(content) -> str:
-    return content if isinstance(content, str) else str(content)
-
-
 def _pending_request_prefix(messages: list) -> str:
     """If the thread's last agent action was ask_clarification, return the previous
     user message so we can fold it into this reply.
 
     ask_clarification records no id, so after it fires the customer/product the user
-    named survives only as a NAME in an earlier HumanMessage. Models reliably act on
+    named survives only as a NAME in an earlier user message. Models reliably act on
     the CURRENT message but not on an unresolved name buried in older history, so a
     bare "provide for 12 months" loses the customer. Prepending the prior request
     puts the whole ask back into the live turn. The prior request is cumulative: each
     clarification reply already folded in the one before it, so a single level of
     look-back reconstructs the entire chain (original request + every value supplied).
     Returns "" when we're not answering a clarification (normal turns are untouched)."""
-    last_tool = next((m for m in reversed(messages) if isinstance(m, ToolMessage)), None)
+    last_tool = next((m for m in reversed(messages) if is_tool_result(m)), None)
     if last_tool is None:
         return ""
-    parsed = _parse_tool_content(last_tool.content)
+    parsed = _parse_tool_content(tool_result_text(last_tool))
     if not (isinstance(parsed, dict) and parsed.get("status") == "clarification"):
         return ""
-    last_human = next((m for m in reversed(messages) if isinstance(m, HumanMessage)), None)
-    return _text(last_human.content).strip() if last_human is not None else ""
+    last_human = next((m for m in reversed(messages) if is_user(m)), None)
+    return text_of(last_human).strip() if last_human is not None else ""
 
 
-def _merge_pending_clarification(graph, config: dict, question: str) -> str:
+def _merge_pending_clarification(store, session_id: str, question: str) -> str:
     """Fold any unanswered clarification request into `question` (see
-    _pending_request_prefix). Reads the thread's messages from the checkpointer;
+    _pending_request_prefix). Reads the thread's messages from the conversation store;
     on any failure it degrades to the raw question so a turn never breaks over this."""
     try:
-        snapshot = graph.get_state(config)
-        prior = (snapshot.values or {}).get("messages", []) if snapshot else []
+        prior_state = store.load(session_id) or {}
+        prior = prior_state.get("messages", [])
     except Exception:
         return question
     prefix = _pending_request_prefix(prior)
@@ -209,7 +237,7 @@ def _merge_pending_clarification(graph, config: dict, question: str) -> str:
 
 
 @app.post("/v1/sql-agent/ask")
-def ask(req: AskRequest) -> dict:
+async def ask(req: AskRequest) -> dict:
     """Run a natural-language question through the ReAct agent.
 
     Unlike /invoke (which targets one named tool), this lets the agent's LLM choose
@@ -223,27 +251,27 @@ def ask(req: AskRequest) -> dict:
 
     cid = req.envelope.correlation_id or "-"
     # Identity: each login person has a user_id; each chat is a session_id. The
-    # session_id is the conversation-memory thread (LangGraph thread_id). Omitting it
-    # starts a fresh chat. Permissions still come from auth_scope on THIS request.
+    # session_id is the conversation-memory thread. Omitting it starts a fresh chat.
+    # Permissions still come from auth_scope on THIS request.
     user_id = req.user_id or "anonymous"
     session_id = req.session_id or new_session_id()
     touch_session(session_id, user_id)
     log.info("[%s] ASK received | caller=%s | user=%s | session=%s | question=%r",
              cid, req.envelope.caller_agent, user_id, session_id, req.question)
 
-    graph = _agent_graph()
-    config = {"configurable": {"thread_id": session_id}, "recursion_limit": 25}
+    workflow = _agent_workflow()
+    store = get_conversation_store()
 
     # If this turn answers an ask_clarification, fold the pending request back in so the
     # named customer/product isn't lost (ask_clarification records no id — see helper).
-    question_text = _merge_pending_clarification(graph, config, req.question)
+    question_text = _merge_pending_clarification(store, session_id, req.question)
     if question_text != req.question:
         log.info("[%s] ASK folding clarification context into reply", cid)
 
-    # Pass ONLY the new turn; the checkpointer merges it with this session's history
-    # via the add_messages reducer (do not re-seed prior messages here).
+    # Pass ONLY the new turn; run_turn merges it with this session's history via
+    # state.merge_state + add_messages (do not re-seed prior messages here).
     state = {
-        "messages": [HumanMessage(content=question_text)],
+        "messages": [user_message(question_text)],
         "caller_agent": req.envelope.caller_agent,
         "auth_scopes": scopes,
         "tool_call_count": 0,
@@ -253,7 +281,8 @@ def ask(req: AskRequest) -> dict:
         "session_id": session_id,
     }
     try:
-        out = graph.invoke(state, config=config)
+        from sql_agent.agent.workflow import run_turn
+        out = await run_turn(workflow, state, store=store, thread_id=session_id)
     except SQLAgentError as exc:
         log.warning("[%s] ASK failed | %s: %s", cid, type(exc).__name__, exc)
         return format_error(type(exc).__name__, str(exc), retryable=False)
@@ -263,22 +292,22 @@ def ask(req: AskRequest) -> dict:
 
     messages = out.get("messages", [])
 
-    # With conversation memory the checkpointer returns the FULL thread history.
+    # With conversation memory the store returns the FULL thread history.
     # Scope the execution flow to THIS turn only (messages after the last human
     # turn) so each answer reports just the tools it ran — not prior turns' calls.
     last_human_idx = max(
-        (i for i, m in enumerate(messages) if isinstance(m, HumanMessage)),
+        (i for i, m in enumerate(messages) if is_user(m)),
         default=-1,
     )
     turn_messages = messages[last_human_idx + 1:]
 
-    # The arguments the model passed live on the AIMessage tool_calls, not on the
-    # ToolMessage result. Map tool_call_id -> args so each step can show exactly
-    # which parameters were used (e.g. {"customer_id": "CUST002"}).
+    # The arguments the model passed live on the assistant message's tool calls, not
+    # on the tool RESULT message. Map tool_call_id -> args so each step can show
+    # exactly which parameters were used (e.g. {"customer_id": "CUST002"}).
     call_args: dict[str, dict] = {}
     for m in turn_messages:
-        if isinstance(m, AIMessage):
-            for tc in getattr(m, "tool_calls", None) or []:
+        if is_assistant(m):
+            for tc in tool_calls_of(m):
                 if tc.get("id"):
                     call_args[tc["id"]] = tc.get("args") or {}
 
@@ -286,18 +315,18 @@ def ask(req: AskRequest) -> dict:
     steps: list[dict] = []
     last_result: dict | None = None
     for m in turn_messages:
-        if isinstance(m, ToolMessage):
-            parsed = _parse_tool_content(m.content)
+        if is_tool_result(m):
+            parsed = _parse_tool_content(tool_result_text(m))
             if isinstance(parsed, dict):
                 steps.append({
-                    "tool": parsed.get("tool", getattr(m, "name", None)),
+                    "tool": parsed.get("tool", tool_name_of(m)),
                     "query_tier": parsed.get("query_tier"),
                     "status": parsed.get("status"),
                     "rows_returned": parsed.get("rows_returned"),
                     "sql": parsed.get("sql"),
                     # Full execution flow for the UI: the call arguments and the
                     # bound SQL params behind this step's query.
-                    "args": call_args.get(getattr(m, "tool_call_id", None), {}),
+                    "args": call_args.get(tool_call_id_of(m), {}),
                     "sql_params": parsed.get("sql_params"),
                     # Formula + term values behind a computed figure (compute_* tools).
                     "calc_explain": parsed.get("calc_explain"),
@@ -305,11 +334,11 @@ def ask(req: AskRequest) -> dict:
                 if parsed.get("status") == "success" or last_result is None:
                     last_result = parsed
 
-    # Composed natural-language answer = the final AI message with no tool calls.
+    # Composed natural-language answer = the final assistant message with no tool calls.
     answer = ""
     for m in reversed(messages):
-        if isinstance(m, AIMessage) and not getattr(m, "tool_calls", None):
-            answer = m.content if isinstance(m.content, str) else str(m.content)
+        if is_assistant(m) and not tool_calls_of(m):
+            answer = text_of(m)
             break
 
     if steps:

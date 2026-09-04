@@ -1,6 +1,6 @@
 """Section 4.2 — Product tools (product_master). Parameterised, one fixed shape each."""
 
-from langchain_core.tools import tool
+from sql_agent.tools.decorator import tool
 
 from sql_agent.db import db
 from sql_agent.db.dialect import csv_membership_clause

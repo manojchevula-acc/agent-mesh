@@ -29,7 +29,7 @@ from sql_agent.kg.retrieval import (
     lookup as kg_lookup,
     resolve_kg_joins,
 )
-from sql_agent.llm import Step, get_llm, log_usage
+from sql_agent.llm import Step, complete
 from sql_agent.logging_config import get_logger
 from sql_agent.memory import relevant_examples, render_examples_block
 from sql_agent.routing.entity_resolver import resolve_customer_hint
@@ -150,9 +150,7 @@ def _generate_sql(prompt: str, step: Step) -> str:
     First attempt uses the GENERATION model; self-correction retries use the
     CORRECTION model (both configurable per provider/model in config).
     """
-    response = get_llm(step).invoke(prompt)
-    log_usage(step, response)
-    text = response.content if hasattr(response, "content") else str(response)
+    text = complete(step, prompt)      # log_usage happens inside
     # Model is instructed to return ONLY SQL, but strip any stray fences defensively.
     return text.strip().strip("`").removeprefix("sql").strip()
 

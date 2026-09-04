@@ -51,19 +51,26 @@ class LocalEmbeddings(EmbeddingBackend):
 
 class AzureEmbeddings(EmbeddingBackend):
     def __init__(self, model: str) -> None:
-        from langchain_openai import AzureOpenAIEmbeddings
+        # MAF ships an embedding client; Azure is reached with azure_endpoint, the
+        # same way the chat client is (see llm/factory._build_azure).
+        from agent_framework.openai import OpenAIEmbeddingClient
 
-        self._model = AzureOpenAIEmbeddings(
-            azure_deployment=model,
-            azure_endpoint=settings.azure_openai_endpoint,
+        self._client = OpenAIEmbeddingClient(
+            model=model,
             api_key=settings.azure_openai_api_key,
+            azure_endpoint=settings.azure_openai_endpoint,
             api_version=settings.azure_openai_api_version,
         )
 
     def embed(self, texts):
+        import asyncio
+
         import numpy as np
 
-        return np.asarray(self._model.embed_documents(list(texts)))
+        # OpenAIEmbeddingClient is async-first; embed() is called from sync code
+        # (the selector, on a worker thread), so drive it with asyncio.run here.
+        embeddings = asyncio.run(self._client.get_embeddings(list(texts)))
+        return np.asarray([e.vector for e in embeddings])
 
 
 @lru_cache(maxsize=1)

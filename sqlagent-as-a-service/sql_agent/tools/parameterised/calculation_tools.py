@@ -5,7 +5,7 @@ then call the pure formula functions in calculations/. Deterministic and cacheab
 The arithmetic is NEVER done by the LLM (Design Document §5 hard rule).
 """
 
-from langchain_core.tools import tool
+from sql_agent.tools.decorator import tool
 
 from sql_agent.calculations import pricing, risk, eligibility
 from sql_agent.db import db

@@ -1,7 +1,7 @@
 """Eval runner — score the WHOLE agent against a gold dataset.
 
 Sends each dataset question (and every language/paraphrase variant) through the SAME
-LangGraph ReAct agent the service runs (build_sql_agent_graph -> intent -> tool/tier
+MAF ReAct agent the service runs (build_sql_agent_workflow -> intent -> tool/tier
 selection -> validator -> live DB -> answer), then SCORES the outcome (routing / SQL
 execution / gold execution-match / table+column selection / refusal / leakage / answer)
 — it does not assert pass/fail. Produces per-slice scores (by tier, domain, language) that
@@ -38,6 +38,7 @@ instead of re-burning tokens on completed work.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import sys
 import time
@@ -48,9 +49,12 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
 import yaml  # noqa: E402
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage  # noqa: E402
 
-from sql_agent.agent.graph import build_sql_agent_graph  # noqa: E402
+from sql_agent.agent.messages import (  # noqa: E402
+    is_assistant, is_tool_result, text_of, tool_calls_of, tool_result_text,
+    user_message,
+)
+from sql_agent.agent.workflow import build_sql_agent_workflow, run_turn  # noqa: E402
 from sql_agent.db import db  # noqa: E402
 from sql_agent.routing.tier_router import tier_of  # noqa: E402
 from sql_agent.service.api import _parse_tool_content  # noqa: E402
@@ -100,20 +104,20 @@ def _is_rate_limited(exc: Exception) -> bool:
 def _extract(messages, intent: dict) -> AgentRun:
     run = AgentRun(intent=intent or {})
     for m in messages:
-        if isinstance(m, AIMessage):
-            for c in getattr(m, "tool_calls", None) or []:
+        if is_assistant(m):
+            for c in tool_calls_of(m):
                 run.tools_called.append(c["name"])
     run.tiers_called = [tier_of(t) for t in run.tools_called]
 
     for m in reversed(messages):
-        if isinstance(m, AIMessage) and not getattr(m, "tool_calls", None):
-            run.answer = m.content if isinstance(m.content, str) else str(m.content)
+        if is_assistant(m) and not tool_calls_of(m):
+            run.answer = text_of(m)
             break
 
     any_success = False
     for m in messages:
-        if isinstance(m, ToolMessage):
-            parsed = _parse_tool_content(m.content)
+        if is_tool_result(m):
+            parsed = _parse_tool_content(tool_result_text(m))
             if not isinstance(parsed, dict):
                 continue
             if parsed.get("sql"):
@@ -231,7 +235,7 @@ def _completed_ids() -> set[str]:
 # --------------------------------------------------------------------------- #
 # Run
 # --------------------------------------------------------------------------- #
-def _invoke_with_retry(graph, state, row, retries: int, backoff: float) -> AgentRun:
+async def _invoke_with_retry(workflow, state, row, retries: int, backoff: float) -> AgentRun:
     """Invoke the agent, retrying ONLY on provider rate limits.
 
     A rate limit is a property of the clock, not of the agent — retrying it measures the
@@ -240,7 +244,7 @@ def _invoke_with_retry(graph, state, row, retries: int, backoff: float) -> Agent
     """
     for attempt in range(1, retries + 2):
         try:
-            out = graph.invoke(state, config={"recursion_limit": 25})
+            out = await run_turn(workflow, state)
             return _extract(out.get("messages", []), out.get("intent", {}))
         except Exception as exc:  # noqa: BLE001
             if not _is_rate_limited(exc):
@@ -251,18 +255,18 @@ def _invoke_with_retry(graph, state, row, retries: int, backoff: float) -> Agent
                                 answer=f"rate limited after {retries} retries: {exc}")
             wait = backoff * (2 ** (attempt - 1))
             print(f"       rate-limited, retry {attempt}/{retries} in {wait:.0f}s")
-            time.sleep(wait)
+            await asyncio.sleep(wait)
     return AgentRun(final_status="rate-limited")
 
 
-def run(dataset: str, items: list[dict], pause: float, retries: int, backoff: float,
-        judge: bool, resume: bool):
+async def run(dataset: str, items: list[dict], pause: float, retries: int, backoff: float,
+              judge: bool, resume: bool):
     expected = json.loads((HERE / "datasets" / f"{dataset}.expected.json").read_text(
         encoding="utf-8"))["expected"]
     whitelist = _governed_whitelist()
     done = _completed_ids() if resume else set()
 
-    graph = build_sql_agent_graph()
+    workflow = build_sql_agent_workflow()
     rows_out = []
     for row in _expand(items):
         if row["id"] in done:
@@ -272,12 +276,12 @@ def run(dataset: str, items: list[dict], pause: float, retries: int, backoff: fl
         scopes = set(row.get("scopes") or [])
         set_caller_scopes(scopes)
         state = {
-            "messages": [HumanMessage(content=row["text"])],
+            "messages": [user_message(row["text"])],
             "caller_agent": "eval_runner", "auth_scopes": scopes,
             "tool_call_count": 0, "dynamic_call_count": 0, "correlation_id": row["id"],
         }
         started = time.time()
-        run_ = _invoke_with_retry(graph, state, row, retries, backoff)
+        run_ = await _invoke_with_retry(workflow, state, row, retries, backoff)
         _reexecute(run_)
         latency = round((time.time() - started) * 1000)
 
@@ -305,7 +309,7 @@ def run(dataset: str, items: list[dict], pause: float, retries: int, backoff: fl
         print(f"[{'PASS' if passed else 'FAIL'}] {row['id']:14s} {row['lang']:2s} "
               f"{why:24s} | primary={primary} | {marks}")
         if pause:
-            time.sleep(pause)
+            await asyncio.sleep(pause)
     return rows_out
 
 
@@ -459,7 +463,7 @@ def report(rows_out, dataset: str, resume: bool):
                                    sorted(modes.items(), key=lambda kv: -kv[1])))
 
 
-if __name__ == "__main__":
+async def main() -> None:
     ap = argparse.ArgumentParser(
         description="Score the agent against a gold eval set.",
         epilog="Selection accepts dataset ids (D07) or 1-based positions (10). "
@@ -502,5 +506,10 @@ if __name__ == "__main__":
         raise SystemExit("Selection matched no examples. Use --list to see the ids.")
     print(f"Running eval '{args.dataset}' — {len(selected)} example(s): "
           f"{', '.join(it['id'] for it in selected)}")
-    report(run(args.dataset, selected, args.pause, args.retries, args.backoff,
-               args.judge, args.resume), args.dataset, args.resume)
+    rows_out = await run(args.dataset, selected, args.pause, args.retries, args.backoff,
+                        args.judge, args.resume)
+    report(rows_out, args.dataset, args.resume)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

@@ -10,7 +10,7 @@ the user is itself a tool call, so the grounding rule holds and the turn ends wi
 clean question instead of a rejection. It touches no data.
 """
 
-from langchain_core.tools import tool
+from sql_agent.tools.decorator import tool
 
 
 @tool

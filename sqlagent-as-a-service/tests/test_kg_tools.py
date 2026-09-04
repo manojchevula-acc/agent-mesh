@@ -44,8 +44,10 @@ def test_tool_payload_is_metadata_only(monkeypatch):
     from sql_agent.tools.kg import metadata_tools
     from tests.kg_fixtures import build_client
 
+    from tests.conftest import call_tool
+
     monkeypatch.setattr(metadata_tools, "get_kg_client", lambda: build_client())
-    result = metadata_tools.get_customer_metadata.invoke({"customer_id": "CUST002"})
+    result = call_tool(metadata_tools.get_customer_metadata, {"customer_id": "CUST002"})
     assert result["status"] == "success"
     for obj in result["objects"]:
         assert set(obj) == {"table", "db_schema", "grain", "purpose", "is_view", "columns"}

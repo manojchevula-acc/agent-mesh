@@ -9,7 +9,7 @@ Every tool degrades to a typed error envelope rather than raising when the KG is
 a metadata lookup failing must not fail the turn.
 """
 
-from langchain_core.tools import tool
+from sql_agent.tools.decorator import tool
 
 from sql_agent.formatting import format_error
 from sql_agent.kg.client import get_kg_client

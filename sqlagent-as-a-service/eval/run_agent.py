@@ -40,6 +40,7 @@ the output file so an interrupted run continues instead of re-burning tokens.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import datetime
 import decimal
 import sys
@@ -50,9 +51,12 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
 import yaml  # noqa: E402
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage  # noqa: E402
 
-from sql_agent.agent.graph import build_sql_agent_graph  # noqa: E402
+from sql_agent.agent.messages import (  # noqa: E402
+    is_assistant, is_tool_result, text_of, tool_calls_of, tool_result_text,
+    user_message,
+)
+from sql_agent.agent.workflow import build_sql_agent_workflow, run_turn  # noqa: E402
 from sql_agent.db import db  # noqa: E402
 from sql_agent.service.api import _parse_tool_content  # noqa: E402
 from sql_agent.tools.registry import set_caller_scopes  # noqa: E402
@@ -93,28 +97,28 @@ def _harvest(messages) -> dict:
     """Pull the SQL, the tool choices and the final answer out of the agent's messages."""
     tools_called, sql, answer = [], "", ""
     for m in messages:
-        if isinstance(m, AIMessage):
-            for c in getattr(m, "tool_calls", None) or []:
+        if is_assistant(m):
+            for c in tool_calls_of(m):
                 tools_called.append(c["name"])
     for m in reversed(messages):
-        if isinstance(m, AIMessage) and not getattr(m, "tool_calls", None):
-            answer = m.content if isinstance(m.content, str) else str(m.content)
+        if is_assistant(m) and not tool_calls_of(m):
+            answer = text_of(m)
             break
     for m in messages:
-        if isinstance(m, ToolMessage):
-            parsed = _parse_tool_content(m.content)
+        if is_tool_result(m):
+            parsed = _parse_tool_content(tool_result_text(m))
             if isinstance(parsed, dict) and parsed.get("sql"):
                 sql = parsed["sql"]          # last SQL wins — the one that answered
     return {"tools_called": tools_called, "agent_sql": sql, "agent_answer": answer}
 
 
-def ask_agent(graph, question: str, cid: str, scopes: set[str],
-              retries: int, backoff: float) -> dict:
+async def ask_agent(workflow, question: str, cid: str, scopes: set[str],
+                    retries: int, backoff: float) -> dict:
     """One question -> one record. Retries ONLY rate limits: those are a property of the
     clock, not the agent. A real agent error is an outcome worth recording, not retrying."""
     set_caller_scopes(scopes)
     state = {
-        "messages": [HumanMessage(content=question)],
+        "messages": [user_message(question)],
         "caller_agent": "eval_runner", "auth_scopes": scopes,
         "tool_call_count": 0, "dynamic_call_count": 0, "correlation_id": cid,
     }
@@ -122,7 +126,8 @@ def ask_agent(graph, question: str, cid: str, scopes: set[str],
     rec: dict = {"tools_called": [], "agent_sql": "", "agent_answer": ""}
     for attempt in range(1, retries + 2):
         try:
-            out = graph.invoke(state, config={"recursion_limit": 25})
+            out = await run_turn(workflow, state)     # no store -> no thread memory,
+                                                       # same as before
             rec = _harvest(out.get("messages", []))
             break
         except Exception as exc:  # noqa: BLE001
@@ -137,7 +142,7 @@ def ask_agent(graph, question: str, cid: str, scopes: set[str],
                 break
             wait = backoff * (2 ** (attempt - 1))
             print(f"       rate-limited, retry {attempt}/{retries} in {wait:.0f}s")
-            time.sleep(wait)
+            await asyncio.sleep(wait)
 
     rec["latency_ms"] = round((time.time() - started) * 1000)
 
@@ -219,7 +224,7 @@ def _load_prior() -> dict:
     return {r["id"]: r for r in doc.get("runs", [])}
 
 
-def main() -> int:
+async def main() -> int:
     ap = argparse.ArgumentParser(
         description="Run gold questions through the live agent; record SQL + rows.",
         epilog="Selection accepts dataset ids (D07) or 1-based positions (7). See --list.")
@@ -267,14 +272,14 @@ def main() -> int:
 
     print(f"Running {len(todo)} question(s) through the agent: "
           f"{', '.join(t[0] for t in todo)}")
-    graph = build_sql_agent_graph()
+    workflow = build_sql_agent_workflow()
     records = dict(prior)
 
     for cid, question, item in todo:
         if args.resume and cid in prior:
             print(f"[SKIP] {cid:12s} already recorded (--resume)")
             continue
-        rec = ask_agent(graph, question, cid, scopes, args.retries, args.backoff)
+        rec = await ask_agent(workflow, question, cid, scopes, args.retries, args.backoff)
         records[cid] = {
             "id": cid, "question": question,
             "gold_id": item["id"],
@@ -289,7 +294,7 @@ def main() -> int:
         print(f"[{rec['status']:12s}] {cid:12s} rows={n if n is not None else '-':>3} "
               f"tools={','.join(rec['tools_called']) or '-'}")
         if args.pause:
-            time.sleep(args.pause)
+            await asyncio.sleep(args.pause)
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     ordered = [records[k] for k in sorted(records)]
@@ -310,4 +315,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(asyncio.run(main()))

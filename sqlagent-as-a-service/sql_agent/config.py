@@ -25,12 +25,20 @@ class Settings(BaseSettings):
     llm_provider: str = "groq"
     llm_model: str = "llama-3.3-70b-versatile"
     llm_temperature: float = 0.0
-    # Groq reasoning models (e.g. openai/gpt-oss-120b) spend part of their output budget
-    # on hidden reasoning before the final answer; left unset, a model can under-invest in
-    # the final answer even with the right tool result in context. "low" biases it toward
-    # actually answering. Applied only to models whose name contains "gpt-oss" (see
-    # llm/factory.py _build_groq) — harmless/ignored for non-reasoning models like llama.
+    # Groq reasoning models (name contains "gpt-oss" or "qwen" — see llm/factory.py
+    # _build_groq's _REASONING_MODEL_MARKERS) spend part of their output budget on
+    # hidden reasoning before the final answer; left unset, a model can under-invest in
+    # the final answer even with the right tool result in context. "low" biases it
+    # toward actually answering. Harmless/ignored for non-reasoning models like llama.
     groq_reasoning_effort: str = "low"
+    # Ceiling on OUTPUT tokens for those same reasoning models. Their hidden <think>
+    # trace is generated — and counted against this SAME budget — even when
+    # reasoning_format="parsed" keeps it out of the visible .content, so a low/unset
+    # max_tokens can let reasoning consume the entire budget and truncate the visible
+    # answer to nothing (observed live: a fully-formed answer cut off mid-sentence).
+    # Generous by design since it only applies to reasoning models and an unused
+    # ceiling costs nothing.
+    groq_reasoning_max_output_tokens: int = 8000
 
     # --- Per-step LLM overrides (blank = fall back to the default above) -------
     # step: agent (ReAct tool selection) | generation (tier-3 SQL) |
@@ -70,6 +78,9 @@ class Settings(BaseSettings):
 
     # --- Provider credentials -------------------------------------------------
     groq_api_key: str = ""
+    # Groq is reached through its OpenAI-compatible endpoint (MAF has no Groq client).
+    # Override only for a proxy or a region-specific host.
+    groq_base_url: str = "https://api.groq.com/openai/v1"
     # Optional PER-STEP Groq API keys. Spread pipeline steps across several Groq keys to
     # raise the effective per-minute token/request limit (each key has its own quota).
     # Blank => that step falls back to groq_api_key. Resolved in llm/factory.py; only

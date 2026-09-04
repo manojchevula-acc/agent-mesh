@@ -28,7 +28,7 @@ Why explicit column lists instead of ``SELECT *``:
 
 import re
 
-from langchain_core.tools import tool
+from sql_agent.tools.decorator import tool
 
 from sql_agent.db import db
 from sql_agent.formatting import format_response

@@ -7,5 +7,7 @@ config change, not a code change.
 """
 
 from .factory import Step, get_llm, log_usage
+from .step import acomplete, complete, complete_with_tools
 
-__all__ = ["Step", "get_llm", "log_usage"]
+__all__ = ["Step", "get_llm", "log_usage",
+           "complete", "acomplete", "complete_with_tools"]

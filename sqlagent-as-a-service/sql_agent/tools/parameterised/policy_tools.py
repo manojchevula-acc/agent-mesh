@@ -4,7 +4,7 @@ The single most-called tool in the whole platform — every price, margin, and R
 calculation depends on it.
 """
 
-from langchain_core.tools import tool
+from sql_agent.tools.decorator import tool
 
 from sql_agent.db import db
 from sql_agent.formatting import format_response

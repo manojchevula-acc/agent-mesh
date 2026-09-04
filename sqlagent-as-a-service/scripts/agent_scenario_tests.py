@@ -1,7 +1,7 @@
 """End-to-end scenario test harness for the FAB SQL ReAct agent.
 
 Runs a battery of natural-language questions through the SAME path the DAL uses
-(`/v1/sql-agent/ask` -> LangGraph ReAct agent -> governed tools -> live DB), then
+(`/v1/sql-agent/ask` -> MAF ReAct agent -> governed tools -> live DB), then
 scores, for each case, a set of INDEPENDENT checks:
 
   * tool       — did the agent call the CORRECT tool(s)?          (Correct / Partial / None)
@@ -50,9 +50,13 @@ from pathlib import Path
 # Make `sql_agent` importable when run as a standalone script.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage  # noqa: E402
+import asyncio  # noqa: E402
 
-from sql_agent.agent.graph import build_sql_agent_graph  # noqa: E402
+from sql_agent.agent.messages import (  # noqa: E402
+    is_assistant, is_tool_result, text_of, tool_calls_of, tool_result_text,
+    user_message,
+)
+from sql_agent.agent.workflow import build_sql_agent_workflow, run_turn  # noqa: E402
 from sql_agent.config import settings  # noqa: E402
 from sql_agent.routing.tier_router import tier_of  # noqa: E402
 from sql_agent.service.api import _parse_tool_content  # noqa: E402
@@ -334,15 +338,15 @@ def _extract(messages) -> tuple[list[str], str, str, str, str]:
     generated dynamic SQL, and any answer-judge notice out of the agent's messages."""
     tools_called: list[str] = []
     for m in messages:
-        if isinstance(m, AIMessage):
-            for c in getattr(m, "tool_calls", None) or []:
+        if is_assistant(m):
+            for c in tool_calls_of(m):
                 tools_called.append(c["name"])
 
-    # Final natural-language answer = last AIMessage with no tool calls.
+    # Final natural-language answer = last assistant message with no tool calls.
     answer = ""
     for m in reversed(messages):
-        if isinstance(m, AIMessage) and not getattr(m, "tool_calls", None):
-            answer = m.content if isinstance(m.content, str) else str(m.content)
+        if is_assistant(m) and not tool_calls_of(m):
+            answer = text_of(m)
             break
 
     # Walk the tool payloads: did any tool succeed, and did the dynamic tier surface SQL?
@@ -350,8 +354,8 @@ def _extract(messages) -> tuple[list[str], str, str, str, str]:
     generated_sql = ""
     notice = ""
     for m in messages:
-        if isinstance(m, ToolMessage):
-            parsed = _parse_tool_content(m.content)
+        if is_tool_result(m):
+            parsed = _parse_tool_content(tool_result_text(m))
             if not isinstance(parsed, dict):
                 continue
             if parsed.get("status") == "success":
@@ -494,16 +498,16 @@ def _evaluate(case: Case, tools_called: list[str], tiers_called: list[str],
     ]
 
 
-def run(cases: list[Case], pause: float = 0.0,
-        stop_on_rate_limit: bool = True) -> list[Result]:
-    graph = build_sql_agent_graph()
+async def run(cases: list[Case], pause: float = 0.0,
+              stop_on_rate_limit: bool = True) -> list[Result]:
+    workflow = build_sql_agent_workflow()
     results: list[Result] = []
 
     for case in cases:
         scopes = set(case.scopes)
         set_caller_scopes(scopes)
         state = {
-            "messages": [HumanMessage(content=case.question)],
+            "messages": [user_message(case.question)],
             "caller_agent": "scenario_harness",
             "auth_scopes": scopes,
             "tool_call_count": 0,
@@ -512,7 +516,7 @@ def run(cases: list[Case], pause: float = 0.0,
         }
         started = time.time()
         try:
-            out = graph.invoke(state, config={"recursion_limit": 25})
+            out = await run_turn(workflow, state)
             messages = out.get("messages", [])
             intent = out.get("intent", {}) or {}
             tools_called, answer, final_status, gen_sql, notice = _extract(messages)
@@ -558,7 +562,7 @@ def run(cases: list[Case], pause: float = 0.0,
         )
         print(f"[{flag}] {case.cid} {case.category:28s} tools={tools_called or '-'} | {summary}")
         if pause:
-            time.sleep(pause)
+            await asyncio.sleep(pause)
     return results
 
 
@@ -711,7 +715,7 @@ def _select(only: str | None, limit: int | None, full: bool) -> list[Case]:
     return cases
 
 
-if __name__ == "__main__":
+async def main() -> None:
     ap = argparse.ArgumentParser(description="Run the SQL-agent scenario battery.")
     ap.add_argument("--only", help="comma-separated case ids, e.g. P02,V01,D04")
     ap.add_argument("--limit", type=int, help="run only the first N cases")
@@ -729,5 +733,9 @@ if __name__ == "__main__":
         sys.exit("No cases selected.")
     battery = "full" if args.full else ("custom" if args.only else "smoke (default)")
     print(f"Running {len(selected)} case(s) — {battery} battery...")
-    write_report(run(selected, pause=args.pause,
-                     stop_on_rate_limit=not args.keep_going))
+    write_report(await run(selected, pause=args.pause,
+                           stop_on_rate_limit=not args.keep_going))
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

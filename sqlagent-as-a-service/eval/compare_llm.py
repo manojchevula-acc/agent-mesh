@@ -332,7 +332,7 @@ def judge(item: dict, run: dict, cap: int = 15) -> dict:
     match is unaffected either way.
     """
     try:
-        from sql_agent.llm import Step, get_llm
+        from sql_agent.llm import Step, complete
         prompt = _JUDGE_PROMPT.format(
             schema=_schema_for(item, run),
             question=item["question"],
@@ -341,8 +341,7 @@ def judge(item: dict, run: dict, cap: int = 15) -> dict:
             gold_rows=json.dumps((item.get("gold_result") or [])[:cap], default=str),
             agent_rows=json.dumps((run.get("agent_result") or [])[:cap], default=str),
         )
-        raw = get_llm(Step.JUDGE).invoke(prompt)
-        text = raw.content if hasattr(raw, "content") else str(raw)
+        text = complete(Step.JUDGE, prompt)
         m = re.search(r"\{.*\}", text, re.DOTALL)
         if not m:
             return {"sql_verdict": "?", "sql_reason": "judge unparseable",

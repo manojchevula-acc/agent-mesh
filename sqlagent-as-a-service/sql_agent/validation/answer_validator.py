@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 from sql_agent.agent.prompts import ANSWER_VALIDATION_PROMPT
 from sql_agent.config import settings
-from sql_agent.llm import Step, get_llm, log_usage
+from sql_agent.llm import Step, complete
 from sql_agent.logging_config import get_logger
 
 log = get_logger("judge")
@@ -75,15 +75,11 @@ def judge_sql(question: str, sql: str, columns: list[str], row_count: int,
         return Verdict(passes=True, confidence=1.0, reason="disabled")
 
     try:
-        raw = get_llm(Step.JUDGE).invoke(
-            ANSWER_VALIDATION_PROMPT.format(
-                question=question, sql=sql,
-                columns=", ".join(columns) or "(none)", row_count=row_count,
-                schema_context=schema_context or "(not provided)",
-            )
-        )
-        log_usage(Step.JUDGE, raw)
-        text = raw.content if hasattr(raw, "content") else str(raw)
+        text = complete(Step.JUDGE, ANSWER_VALIDATION_PROMPT.format(
+            question=question, sql=sql,
+            columns=", ".join(columns) or "(none)", row_count=row_count,
+            schema_context=schema_context or "(not provided)",
+        ))
         data = _parse(text)
     except Exception as exc:  # noqa: BLE001 — fail open while un-calibrated
         log.warning("JUDGE failed | %s | failing open (pass)", exc)

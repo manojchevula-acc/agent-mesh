@@ -22,8 +22,7 @@ and the turn is byte-identical to today's.
 
 from __future__ import annotations
 
-from langchain_core.messages import HumanMessage
-
+from sql_agent.agent.messages import is_user, text_of
 from sql_agent.config import settings
 from sql_agent.kg.context import set_kg_lookup
 from sql_agent.kg.retrieval import lookup
@@ -43,16 +42,16 @@ def kg_lookup_node(state) -> dict:
 
     cid = state.get("correlation_id") or "-"
     last_human = next(
-        (m for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), None
+        (m for m in reversed(state["messages"]) if is_user(m)), None
     )
-    if last_human is None or not isinstance(last_human.content, str):
+    if last_human is None or not text_of(last_human):
         return {}
 
     # The intent classifier's table hints, when it ran, seed the lookup the same way they
     # seed schema retrieval today — ADDITIVE only; the KG never treats them as a filter.
     tables_hint = list(state.get("intent", {}).get("tables") or []) or None
 
-    result = lookup(last_human.content, tables_hint)
+    result = lookup(text_of(last_human), tables_hint)
     set_kg_lookup(result)
 
     if result.is_empty:

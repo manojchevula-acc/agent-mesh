@@ -5,7 +5,7 @@ free-text-to-SQL generation flows, which keeps the attack surface and the audit
 surface both as small as possible. One tool, one gate, one prompt, one log stream.
 """
 
-from langchain_core.tools import tool
+from sql_agent.tools.decorator import tool
 
 from sql_agent.validation.exceptions import AuthError
 

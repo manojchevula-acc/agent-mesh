@@ -5,6 +5,21 @@ class SQLAgentError(Exception):
     pass
 
 
+class GraphRecursionError(Exception):
+    """The ReAct loop hit MAX_SUPERSTEPS without reaching a stop condition.
+
+    Named after LangGraph's exception on purpose: service/api.py puts
+    type(exc).__name__ into the error envelope, so keeping the name keeps the
+    HTTP response contract identical for callers that match on it.
+
+    Deliberately NOT a subclass of SQLAgentError. LangGraph's version wasn't either,
+    so it fell through api.ask()'s `except SQLAgentError` into the generic handler —
+    which logs at ERROR ("ASK error"), not WARNING ("ASK failed"). Subclassing
+    SQLAgentError would silently downgrade that log line and move the event to a
+    different alerting path. The response body is identical either way; the log is not.
+    """
+
+
 class ParseError(SQLAgentError):
     pass
 

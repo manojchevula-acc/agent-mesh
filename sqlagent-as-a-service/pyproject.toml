@@ -5,12 +5,15 @@ description = "Production-grade multi-agent ReAct SQL Agent for the GERNAS v3.0 
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "langgraph>=0.2.0",
-    "langchain-core>=0.3.0",
-    # LLM providers — provider is configurable per step (see sql_agent/llm/).
-    "langchain-groq>=0.2.0",
-    "langchain-openai>=0.2.0",
-    "langchain-anthropic>=0.2.0",
+    # Microsoft Agent Framework — orchestration (workflows), tool declaration
+    # (@tool), message types. Provider clients ship as SEPARATE distributions, so
+    # agent-framework-openai must be listed explicitly (it serves OpenAI, Groq via
+    # base_url, AND Azure via azure_endpoint — there is no separate Azure chat class).
+    "agent-framework>=1.16.0,<2",
+    "agent-framework-openai>=1.14.0",
+    # agent-framework-openai requires openai>=2.25,<3. Pin the ceiling explicitly:
+    # a bare `openai` resolves to 3.x and breaks the import at runtime.
+    "openai>=2.25,<3",
     "sqlglot>=25.0.0",
     "sqlalchemy>=2.0.0",
     # Database drivers — works on both PostgreSQL and MySQL out of the box.
@@ -40,6 +43,23 @@ kg = [
     "neo4j>=5.0.0",
 ]
 
+# Anthropic as a per-step provider. Only needed when any LLM_*_PROVIDER=anthropic.
+# Imported lazily by llm/factory.py, so the package runs without it.
+# NOTE: agent-framework-anthropic still ships as a pre-release (1.0.0bNNNNNN) even
+# though the core agent-framework package has reached 1.x stable — pin loosely and
+# re-check when it stabilizes.
+anthropic = [
+    "agent-framework-anthropic>=1.0.0b1",
+]
+
+# Streamlit chat UI for the POC (ui/app.py). Talks to the FastAPI service over plain
+# HTTP, so it has no dependency on the agent internals beyond this — install with
+# `uv sync --extra demo` and run `streamlit run ui/app.py` alongside the service.
+demo = [
+    "streamlit>=1.38.0",
+    "requests>=2.31.0",
+]
+
 [dependency-groups]
 # Installed by default with `uv sync`.
 dev = [
@@ -49,14 +69,13 @@ dev = [
     # inline in eval/datasets/*.yaml; PyYAML would drop the dataset's documentation.
     "ruamel.yaml>=0.18.0",
 ]
-# Conversation memory in production (Postgres checkpointer + metadata DB).
+# Conversation memory in production (Postgres-backed ConversationStore + metadata DB).
 # Only needed when CHECKPOINTER_BACKEND=postgres:  uv sync --group memory
-# Dev uses the in-memory checkpointer and needs none of these.
+# Dev uses the in-memory store and needs none of these. The sqlite backend needs
+# nothing extra either — stdlib sqlite3.
 memory = [
-    "langgraph-checkpoint-postgres>=2.0.0",
-    "psycopg[binary]>=3.1.0",  # PostgresSaver uses psycopg3
-    "psycopg-pool>=3.2.0",     # connection pool for the long-lived checkpointer
-    "langgraph-checkpoint-sqlite",
+    "psycopg[binary]>=3.1.0",
+    "psycopg-pool>=3.2.0",     # connection pool for the long-lived store
 ]
 
 [build-system]

@@ -234,14 +234,13 @@ def score_answer(item: dict, run, gold_result) -> Score:
     if gold_result is None or not run.answer:
         return Score("answer", None, "no gold rows or no answer to grade")
     try:
-        from sql_agent.llm import Step, get_llm
+        from sql_agent.llm import Step, complete
 
         import json as _json
         gold_txt = _json.dumps(gold_result[:20], indent=None, default=str)
         prompt = _ANSWER_JUDGE_PROMPT.format(
             question=item["question"], gold=gold_txt, answer=run.answer)
-        raw = get_llm(Step.JUDGE).invoke(prompt)
-        text = raw.content if hasattr(raw, "content") else str(raw)
+        text = complete(Step.JUDGE, prompt)
         m = re.search(r'"verdict"\s*:\s*"(PASS|FAIL)"', text, re.IGNORECASE)
         if not m:
             return Score("answer", None, "judge unparseable; fail-open")

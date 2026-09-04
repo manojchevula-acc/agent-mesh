@@ -68,13 +68,14 @@ def test_dynamic_scope_gate_bypassed_when_fixed_tiers_off(monkeypatch):
     from sql_agent.tools.registry import set_caller_scopes
     from sql_agent.tools.dynamic.analytical_tool import analytical_query
     from sql_agent.validation.exceptions import AuthError
+    from tests.conftest import call_tool
 
     monkeypatch.setattr(settings, "parameterised_tools_enabled", True)
     monkeypatch.setattr(settings, "semi_dynamic_tools_enabled", True)
     set_caller_scopes(set())  # no dynamic_sql scope
     # Gate active while a fixed tier is on -> raises before touching the DB/LLM.
     with pytest.raises(AuthError):
-        analytical_query.invoke({"question": "total rwa by product"})
+        call_tool(analytical_query, {"question": "total rwa by product"})
 
 
 def test_circuit_breaker_total_calls():

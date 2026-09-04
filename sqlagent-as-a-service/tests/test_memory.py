@@ -1,109 +1,116 @@
 """Conversation-memory tests — no LLM keys required.
 
 Covers two things:
-  (1) The checkpointer makes a graph remember a thread across invokes.
+  (1) The conversation store makes a thread persist across turns, and merge_state's
+      channel-update semantics (kg_context/intent survive; counters get overwritten).
   (2) The has_tool_result check looks at the CURRENT turn only, not history —
       this is the fix for the multi-turn follow-up bug.
 """
 
-from typing import Annotated, TypedDict
-
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.graph import END, START, StateGraph
-from langgraph.graph.message import add_messages
 
+from sql_agent.agent.messages import assistant_message, tool_message, user_message
+from sql_agent.agent.state import add_messages, merge_state
 from sql_agent.memory import (
     new_session_id,
     render_examples_block,
 )
+from sql_agent.memory.conversation_store import InMemoryStore
 
 
-# --- helpers ------------------------------------------------------------------
+# --- (1) the store persists per thread, merge_state channel semantics --------
 
-class _S(TypedDict):
-    messages: Annotated[list, add_messages]
+def test_store_persists_messages_per_thread():
+    store = InMemoryStore()
+    first = merge_state(store.load("sess_test"), {"messages": [user_message("first")]})
+    first["messages"] = add_messages(first["messages"], [assistant_message("ok")])
+    store.save("sess_test", first)
 
+    second = merge_state(store.load("sess_test"), {"messages": [user_message("second")]})
+    second["messages"] = add_messages(second["messages"], [assistant_message("ok")])
+    store.save("sess_test", second)
 
-def _tiny_graph(checkpointer):
-    """A throwaway 1-node graph (no LLM) to prove thread persistence."""
-    g = StateGraph(_S)
-    g.add_node("reply", lambda s: {"messages": [AIMessage(content="ok")]})
-    g.add_edge(START, "reply")
-    g.add_edge("reply", END)
-    return g.compile(checkpointer=checkpointer)
-
-
-# --- (1) checkpointer persists per thread ------------------------------------
-
-def test_checkpointer_persists_messages_per_thread():
-    app = _tiny_graph(InMemorySaver())
-    cfg = {"configurable": {"thread_id": "sess_test"}}
-    app.invoke({"messages": [HumanMessage("first")]}, config=cfg)
-    out = app.invoke({"messages": [HumanMessage("second")]}, config=cfg)
     # two human turns + two AI replies, all retained on the same thread
-    assert len(out["messages"]) == 4
+    assert len(store.load("sess_test")["messages"]) == 4
 
 
 def test_separate_threads_do_not_share_history():
-    app = _tiny_graph(InMemorySaver())
-    app.invoke({"messages": [HumanMessage("a")]},
-               config={"configurable": {"thread_id": "s1"}})
-    out = app.invoke({"messages": [HumanMessage("b")]},
-                     config={"configurable": {"thread_id": "s2"}})
-    assert len(out["messages"]) == 2   # s2 has its own turn + reply only
+    store = InMemoryStore()
+    s1 = merge_state(store.load("s1"), {"messages": [user_message("a")]})
+    s1["messages"] = add_messages(s1["messages"], [assistant_message("ok")])
+    store.save("s1", s1)
+
+    s2 = merge_state(store.load("s2"), {"messages": [user_message("b")]})
+    s2["messages"] = add_messages(s2["messages"], [assistant_message("ok")])
+    store.save("s2", s2)
+
+    assert len(store.load("s2")["messages"]) == 2   # s2 has its own turn + reply only
+
+
+def test_merge_state_preserves_uncarried_keys():
+    """kg_context/intent survive a turn that does not resend them, exactly as the
+    old LangGraph checkpointer's channel semantics did — this is what lets api.ask()
+    send tool_call_count=0 every turn while kg_context accumulated earlier survives."""
+    prior = {"messages": [], "kg_context": {"tables": ["customer_master"]},
+             "tool_call_count": 7}
+    merged = merge_state(prior, {"messages": [user_message("q")], "tool_call_count": 0})
+    assert merged["kg_context"] == {"tables": ["customer_master"]}   # kept
+    assert merged["tool_call_count"] == 0                            # overwritten
 
 
 # --- (2) has_tool_result looks at CURRENT turn only (multi-turn bug fix) -----
 
 def test_has_tool_result_uses_current_turn_only():
-    """Prior-turn ToolMessages must NOT cause tool_choice to be set to 'auto'
+    """Prior-turn tool-result messages must NOT cause tool_choice to be set to 'auto'
     on the first step of a new turn — that was the bug causing the model to
     skip calling a tool on follow-up questions."""
     # Simulate what state["messages"] looks like at the start of turn 2:
-    # turn 1 history is already in the message list (from the checkpointer).
+    # turn 1 history is already in the message list (from the conversation store).
+    from sql_agent.agent.messages import is_tool_result, is_user
+
     messages = [
-        HumanMessage("Who is CUST002?"),          # turn 1 human
-        AIMessage("ok", tool_calls=[]),            # turn 1 AI
-        ToolMessage(content="{}", tool_call_id="x"),   # turn 1 tool result
-        AIMessage("Falcon Steel..."),              # turn 1 final answer
-        HumanMessage("What deals do they have?"), # turn 2 human  ← current
+        user_message("Who is CUST002?"),          # turn 1 human
+        assistant_message("ok"),                   # turn 1 AI
+        tool_message("x", "get_customer", "{}"),   # turn 1 tool result
+        assistant_message("Falcon Steel..."),       # turn 1 final answer
+        user_message("What deals do they have?"),  # turn 2 human  ← current
     ]
-    # Reproduce the fixed logic from graph.py
+    # Reproduce the fixed logic from agent/workflow.py
     last_human_idx = max(
-        (i for i, m in enumerate(messages) if isinstance(m, HumanMessage)),
+        (i for i, m in enumerate(messages) if is_user(m)),
         default=-1,
     )
     current_turn_messages = messages[last_human_idx + 1:]
-    has_tool_result = any(isinstance(m, ToolMessage) for m in current_turn_messages)
+    has_tool_result = any(is_tool_result(m) for m in current_turn_messages)
 
-    # No ToolMessage exists AFTER the last HumanMessage → must be False
-    # so tool_choice stays "any" and the model is forced to call a tool.
+    # No tool-result message exists AFTER the last human turn → must be False
+    # so tool_choice stays "required" and the model is forced to call a tool.
     assert has_tool_result is False, (
         "has_tool_result should be False at the start of turn 2 — "
-        "prior-turn ToolMessages must not count"
+        "prior-turn tool results must not count"
     )
 
 
 def test_has_tool_result_true_after_tool_runs_this_turn():
     """Once a tool has run IN the current turn, has_tool_result should be True
     so tool_choice switches to 'auto' and the model can compose its answer."""
+    from sql_agent.agent.messages import is_tool_result, is_user
+
     messages = [
-        HumanMessage("Who is CUST002?"),          # turn 1
-        AIMessage("ok", tool_calls=[]),
-        ToolMessage(content="{}", tool_call_id="x"),
-        AIMessage("Falcon Steel..."),
-        HumanMessage("What deals do they have?"), # turn 2 human
-        AIMessage("ok", tool_calls=[]),            # turn 2 AI step 1
-        ToolMessage(content="{}", tool_call_id="y"),  # turn 2 tool result ← current turn
+        user_message("Who is CUST002?"),          # turn 1
+        assistant_message("ok"),
+        tool_message("x", "get_customer", "{}"),
+        assistant_message("Falcon Steel..."),
+        user_message("What deals do they have?"), # turn 2 human
+        assistant_message("ok"),                   # turn 2 AI step 1
+        tool_message("y", "get_deals", "{}"),      # turn 2 tool result ← current turn
     ]
     last_human_idx = max(
-        (i for i, m in enumerate(messages) if isinstance(m, HumanMessage)),
+        (i for i, m in enumerate(messages) if is_user(m)),
         default=-1,
     )
     current_turn_messages = messages[last_human_idx + 1:]
-    has_tool_result = any(isinstance(m, ToolMessage) for m in current_turn_messages)
+    has_tool_result = any(is_tool_result(m) for m in current_turn_messages)
 
     assert has_tool_result is True
 
