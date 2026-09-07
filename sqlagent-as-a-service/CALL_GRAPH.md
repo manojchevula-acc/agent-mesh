@@ -7,23 +7,26 @@ since that's where nearly all of the architecture (KG, semantic layer, validator
 self-correction) actually executes.
 
 ────────────────────────────────────────────────────────────────────
+
 ## 1. Entry points
+
 ────────────────────────────────────────────────────────────────────
 
 **HTTP endpoints** — `sql_agent/service/api.py` (FastAPI app `app`, instantiated line 49)
 
-| Method | Path | Handler | Line |
-|---|---|---|---|
-| POST | `/v1/sql-agent/invoke` | `def invoke(req: InvokeRequest) -> dict` | api.py:100 |
-| POST | `/v1/sql-agent/ask` | `async def ask(req: AskRequest) -> dict` | api.py:240 |
-| POST | `/v1/sql-agent/feedback` | `def feedback(req: FeedbackRequest) -> dict` | api.py:421 |
-| GET | `/v1/sql-agent/sessions` | `def sessions(user_id: str) -> dict` | api.py:433 |
-| GET | `/v1/sql-agent/sessions/{session_id}/history` | `def history(session_id: str) -> dict` | api.py:439 |
-| PATCH | `/v1/sql-agent/sessions/{session_id}` | `def rename(session_id, req) -> dict` | api.py:445 |
-| DELETE | `/v1/sql-agent/sessions/{session_id}` | `def delete(session_id, user_id) -> dict` | api.py:452 |
-| GET | `/healthz` | `def healthz() -> dict` | api.py:459 |
+| Method | Path                                            | Handler                                        | Line       |
+| ------ | ----------------------------------------------- | ---------------------------------------------- | ---------- |
+| POST   | `/v1/sql-agent/invoke`                        | `def invoke(req: InvokeRequest) -> dict`     | api.py:100 |
+| POST   | `/v1/sql-agent/ask`                           | `async def ask(req: AskRequest) -> dict`     | api.py:240 |
+| POST   | `/v1/sql-agent/feedback`                      | `def feedback(req: FeedbackRequest) -> dict` | api.py:421 |
+| GET    | `/v1/sql-agent/sessions`                      | `def sessions(user_id: str) -> dict`         | api.py:433 |
+| GET    | `/v1/sql-agent/sessions/{session_id}/history` | `def history(session_id: str) -> dict`       | api.py:439 |
+| PATCH  | `/v1/sql-agent/sessions/{session_id}`         | `def rename(session_id, req) -> dict`        | api.py:445 |
+| DELETE | `/v1/sql-agent/sessions/{session_id}`         | `def delete(session_id, user_id) -> dict`    | api.py:452 |
+| GET    | `/healthz`                                    | `def healthz() -> dict`                      | api.py:459 |
 
 **Startup hook (module-level code that runs on process boot)**
+
 - `@app.on_event("startup") async def _prewarm()` — api.py:141: builds the workflow,
   opens the conversation store, warms the embedding/vector index and the KG client so
   the first real request isn't slow.
@@ -31,34 +34,37 @@ self-correction) actually executes.
 **CLI / script entry points** (`if __name__ == "__main__":` + argparse, all under
 `scripts/` and `eval/`)
 
-| File | main() | Purpose |
-|---|---|---|
-| scripts/load_excel_to_db.py:155 | `def main()` | Load POC Excel workbook into Postgres/MySQL/SQLite |
-| scripts/init_agent_db.py:18 | `def main()` | Create the agent metadata DB tables |
-| scripts/build_schema_index.py:34 | `def main()` | Build/upsert the schema vector index |
-| scripts/build_example_index.py:36 | `def main()` | Build/upsert the few-shot example vector index |
-| scripts/build_metadata_kg.py:28 | `def main()` | Build the metadata Knowledge Graph artifact |
-| scripts/seed_examples.py:47 | `def main()` | Seed approved few-shot examples from YAML |
-| scripts/promote_example.py:19 | `def main()` | Promote one Q→SQL pair to an approved example |
-| scripts/generate_example_metadata.py:49 | `def main()` | Tag examples with structured metadata |
-| scripts/audit_example_corpus.py:33 | `def main()` | Lint the example corpus |
-| scripts/agent_scenario_tests.py:719 | `async def main()` | Scenario battery against the live agent |
-| eval/run_agent.py:228 | `async def main()` | Run the agent over a gold dataset (records raw runs) |
-| eval/run_eval.py:467 | `async def main()` | Full eval harness (agent + LLM judge) |
-| eval/deterministic_eval.py:67 | `def main()` | Deterministic (non-LLM) scoring against recorded runs |
-| eval/compare_llm.py:426 | `def main()` | LLM-judge re-scoring |
-| eval/check_table_retrieval.py:563 | `def main()` | Isolated retrieval-quality check |
-| eval/check_example_retrieval.py:165 | `def main()` | Isolated example-retrieval check |
-| eval/materialize_gold.py:170 / materialize_gold_v1_expected.py:105 | | Materialize expected answers by running SQL against the DB |
-| eval/correlate_retrieval_outcome.py:151 | `def main()` | Correlate retrieval quality with eval outcome |
+| File                                                               | main()               | Purpose                                                    |
+| ------------------------------------------------------------------ | -------------------- | ---------------------------------------------------------- |
+| scripts/load_excel_to_db.py:155                                    | `def main()`       | Load POC Excel workbook into Postgres/MySQL/SQLite         |
+| scripts/init_agent_db.py:18                                        | `def main()`       | Create the agent metadata DB tables                        |
+| scripts/build_schema_index.py:34                                   | `def main()`       | Build/upsert the schema vector index                       |
+| scripts/build_example_index.py:36                                  | `def main()`       | Build/upsert the few-shot example vector index             |
+| scripts/build_metadata_kg.py:28                                    | `def main()`       | Build the metadata Knowledge Graph artifact                |
+| scripts/seed_examples.py:47                                        | `def main()`       | Seed approved few-shot examples from YAML                  |
+| scripts/promote_example.py:19                                      | `def main()`       | Promote one Q→SQL pair to an approved example             |
+| scripts/generate_example_metadata.py:49                            | `def main()`       | Tag examples with structured metadata                      |
+| scripts/audit_example_corpus.py:33                                 | `def main()`       | Lint the example corpus                                    |
+| scripts/agent_scenario_tests.py:719                                | `async def main()` | Scenario battery against the live agent                    |
+| eval/run_agent.py:228                                              | `async def main()` | Run the agent over a gold dataset (records raw runs)       |
+| eval/run_eval.py:467                                               | `async def main()` | Full eval harness (agent + LLM judge)                      |
+| eval/deterministic_eval.py:67                                      | `def main()`       | Deterministic (non-LLM) scoring against recorded runs      |
+| eval/compare_llm.py:426                                            | `def main()`       | LLM-judge re-scoring                                       |
+| eval/check_table_retrieval.py:563                                  | `def main()`       | Isolated retrieval-quality check                           |
+| eval/check_example_retrieval.py:165                                | `def main()`       | Isolated example-retrieval check                           |
+| eval/materialize_gold.py:170 / materialize_gold_v1_expected.py:105 |                      | Materialize expected answers by running SQL against the DB |
+| eval/correlate_retrieval_outcome.py:151                            | `def main()`       | Correlate retrieval quality with eval outcome              |
 
 **UI entry point (not HTTP, run via `streamlit run`)**
+
 - `ui/app.py` — module-level Streamlit script. Executes top-to-bottom on every rerun
   (`st.set_page_config` line 77 → `_init_state()` line 102 → sidebar block lines 147–232
   → chat render loop 334–339 → `_ask()` line 342, invoked at the bottom, line 391).
 
 ────────────────────────────────────────────────────────────────────
+
 ## 2. Call chains
+
 ────────────────────────────────────────────────────────────────────
 
 ### Flow A — `POST /v1/sql-agent/ask` → ReAct loop → **full-dynamic SQL generation** (the primary flow)
@@ -225,7 +231,9 @@ main()                                          eval/run_agent.py:228  [async]
 ```
 
 ────────────────────────────────────────────────────────────────────
+
 ## 3. Data flow summary
+
 ────────────────────────────────────────────────────────────────────
 
 **`/ask` (dynamic tier), end to end:**
@@ -258,46 +266,49 @@ via `record_turn()` (memory/turns.py) into the agent metadata DB, independent of
 response, so `/sessions/{id}/history` can reconstruct it later.
 
 ────────────────────────────────────────────────────────────────────
+
 ## 4. Cross-module dependency map
+
 ────────────────────────────────────────────────────────────────────
 
-| From | → | To | Uses |
-|---|---|---|---|
-| `service.api` | → | `agent.workflow` | `build_sql_agent_workflow`, `run_turn` |
-| `service.api` | → | `agent.messages` | `is_user/is_assistant/text_of/tool_calls_of/...` |
-| `service.api` | → | `routing.tier_router` | `TOOL_TIER_REGISTRY`, `GATED_TOOLS`, `fixed_tiers_disabled` |
-| `service.api` | → | `tools.registry` | `ALL_TOOLS`, `set_caller_scopes` |
-| `service.api` | → | `memory` | session/turn/store helpers |
-| `service.api` | → | `feedback` | `capture_implicit`, `record` |
-| `service.api` | → | `formatting` | `format_error` |
-| `agent.workflow` | → | `routing.tier_router` | `tools_for_caller`, `guard_tool_call`, `tier_of`, `fixed_tiers_disabled` |
-| `agent.workflow` | → | `routing.intent_classifier` | `classify` |
-| `agent.workflow` | → | `kg.node` | `kg_lookup_node` |
-| `agent.workflow` | → | `llm` (step) | `acomplete`, `complete_with_tools` |
-| `agent.workflow` | → | `memory` | `approved_examples`, `render_examples_block` |
-| `agent.workflow` | → | `formatting.audit_logger` | `log_invocation` |
-| `routing.tier_router` | → | `tools.registry` | `ALL_TOOLS`, `set_caller_scopes` |
-| `tools.dynamic.analytical_tool` | → | `tools.registry` | `caller_has_scope` |
-| `tools.dynamic.analytical_tool` | → | `routing.tier_router` | `fixed_tiers_disabled` (**lazy import — breaks a cycle**) |
-| `tools.dynamic.analytical_tool` | → | `routing.query_engine` | `run_dynamic_pipeline` (**lazy import**) |
-| `routing.query_engine` | → | `semantic_layer.{selector,schema_link,joins,renderer,glossary}` | table retrieval / planning / rendering |
-| `routing.query_engine` | → | `kg.{context,retrieval,constraints}` | KG-first join resolution & constraints |
-| `routing.query_engine` | → | `routing.entity_resolver` | `resolve_customer_hint` |
-| `routing.query_engine` | → | `validation.answer_validator` | `judge_sql` |
-| `routing.query_engine` | → | `db` | `db.execute` |
-| `routing.query_engine` | → | `llm` | `complete` |
-| `routing.query_engine` | → | `memory.examples` | `relevant_examples`, `render_examples_block` |
-| `db.executor` | → | `validation.sql_validator` | `SQLValidator.validate` |
-| `db.executor` | → | `db.connection` | `get_engine` |
-| `validation.sql_validator` | → | `semantic_layer.loader` | `ALLOWED_TABLES`, `BLOCKED_COLUMNS`, `VIEW_TABLES`, `table_columns` |
-| `validation.sql_validator` | → | `db.dialect` | `sqlglot_dialect` (**lazy import — avoids circular import with `db`**) |
-| `tools.parameterised.*` / `tools.semi_dynamic.*` | → | `db`, `formatting`, `semantic_layer.loader` | `db.execute`, `format_response`, `canonicalize_enum` |
-| `llm.step` | → | `llm.factory` | `get_llm`, `log_usage` |
-| `kg.node` | → | `kg.retrieval`, `kg.context` | `lookup`, `set_kg_lookup` |
-| `formatting.audit_logger` | → | `routing.tier_router` | `tier_of` (**lazy import**) |
-| `ui.app` | → | `ui.api_client` | `SqlAgentClient` (pure HTTP boundary — no internal import into `sql_agent`) |
+| From                                                 | → | To                                                                | Uses                                                                              |
+| ---------------------------------------------------- | -- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `service.api`                                      | → | `agent.workflow`                                                | `build_sql_agent_workflow`, `run_turn`                                        |
+| `service.api`                                      | → | `agent.messages`                                                | `is_user/is_assistant/text_of/tool_calls_of/...`                                |
+| `service.api`                                      | → | `routing.tier_router`                                           | `TOOL_TIER_REGISTRY`, `GATED_TOOLS`, `fixed_tiers_disabled`                 |
+| `service.api`                                      | → | `tools.registry`                                                | `ALL_TOOLS`, `set_caller_scopes`                                              |
+| `service.api`                                      | → | `memory`                                                        | session/turn/store helpers                                                        |
+| `service.api`                                      | → | `feedback`                                                      | `capture_implicit`, `record`                                                  |
+| `service.api`                                      | → | `formatting`                                                    | `format_error`                                                                  |
+| `agent.workflow`                                   | → | `routing.tier_router`                                           | `tools_for_caller`, `guard_tool_call`, `tier_of`, `fixed_tiers_disabled`  |
+| `agent.workflow`                                   | → | `routing.intent_classifier`                                     | `classify`                                                                      |
+| `agent.workflow`                                   | → | `kg.node`                                                       | `kg_lookup_node`                                                                |
+| `agent.workflow`                                   | → | `llm` (step)                                                    | `acomplete`, `complete_with_tools`                                            |
+| `agent.workflow`                                   | → | `memory`                                                        | `approved_examples`, `render_examples_block`                                  |
+| `agent.workflow`                                   | → | `formatting.audit_logger`                                       | `log_invocation`                                                                |
+| `routing.tier_router`                              | → | `tools.registry`                                                | `ALL_TOOLS`, `set_caller_scopes`                                              |
+| `tools.dynamic.analytical_tool`                    | → | `tools.registry`                                                | `caller_has_scope`                                                              |
+| `tools.dynamic.analytical_tool`                    | → | `routing.tier_router`                                           | `fixed_tiers_disabled` (**lazy import — breaks a cycle**)                |
+| `tools.dynamic.analytical_tool`                    | → | `routing.query_engine`                                          | `run_dynamic_pipeline` (**lazy import**)                                  |
+| `routing.query_engine`                             | → | `semantic_layer.{selector,schema_link,joins,renderer,glossary}` | table retrieval / planning / rendering                                            |
+| `routing.query_engine`                             | → | `kg.{context,retrieval,constraints}`                            | KG-first join resolution & constraints                                            |
+| `routing.query_engine`                             | → | `routing.entity_resolver`                                       | `resolve_customer_hint`                                                         |
+| `routing.query_engine`                             | → | `validation.answer_validator`                                   | `judge_sql`                                                                     |
+| `routing.query_engine`                             | → | `db`                                                            | `db.execute`                                                                    |
+| `routing.query_engine`                             | → | `llm`                                                           | `complete`                                                                      |
+| `routing.query_engine`                             | → | `memory.examples`                                               | `relevant_examples`, `render_examples_block`                                  |
+| `db.executor`                                      | → | `validation.sql_validator`                                      | `SQLValidator.validate`                                                         |
+| `db.executor`                                      | → | `db.connection`                                                 | `get_engine`                                                                    |
+| `validation.sql_validator`                         | → | `semantic_layer.loader`                                         | `ALLOWED_TABLES`, `BLOCKED_COLUMNS`, `VIEW_TABLES`, `table_columns`       |
+| `validation.sql_validator`                         | → | `db.dialect`                                                    | `sqlglot_dialect` (**lazy import — avoids circular import with `db`**) |
+| `tools.parameterised.*` / `tools.semi_dynamic.*` | → | `db`, `formatting`, `semantic_layer.loader`                 | `db.execute`, `format_response`, `canonicalize_enum`                        |
+| `llm.step`                                         | → | `llm.factory`                                                   | `get_llm`, `log_usage`                                                        |
+| `kg.node`                                          | → | `kg.retrieval`, `kg.context`                                  | `lookup`, `set_kg_lookup`                                                     |
+| `formatting.audit_logger`                          | → | `routing.tier_router`                                           | `tier_of` (**lazy import**)                                               |
+| `ui.app`                                           | → | `ui.api_client`                                                 | `SqlAgentClient` (pure HTTP boundary — no internal import into `sql_agent`)  |
 
 **Circular imports (resolved via lazy/local imports, all deliberate and commented in-code):**
+
 - `tools.registry` ↔ `tools.dynamic.analytical_tool` — `analytical_tool` needs
   `caller_has_scope` from `registry`, which is why the `ContextVar` is defined *before*
   the tool-module imports in registry.py:11-25.
@@ -309,24 +320,26 @@ response, so `/sessions/{id}/history` can reconstruct it later.
   (audit_logger.py:21).
 
 ────────────────────────────────────────────────────────────────────
+
 ## 5. External integrations
+
 ────────────────────────────────────────────────────────────────────
 
-| Direction | Protocol | Target | Auth method | Called from |
-|---|---|---|---|---|
-| inbound | HTTP | `/v1/sql-agent/*`, `/healthz` | none (CORS-open by default) | api.py |
-| outbound | HTTP (chat completions) | Groq (`api.groq.com/openai/v1`, default) | `GROQ_API_KEY` (+ optional per-step keys) | llm/factory.py:108 via llm/step.py |
-| outbound | HTTP (chat completions) | OpenAI | `OPENAI_API_KEY` | llm/factory.py:163 |
-| outbound | HTTP (chat completions) | Azure OpenAI | `AZURE_OPENAI_API_KEY` + endpoint | llm/factory.py:174 |
-| outbound | HTTP | Anthropic | `ANTHROPIC_API_KEY` | llm/factory.py:191 |
-| outbound | SQL (SELECT-only) | Postgres / MySQL / SQLite (`fab_pricing`/`fab_curated`+`fab_semantic`) | DSN credential (`DB_DSN`, read-only grant) | db/connection.py:19, executed in db/executor.py:62 |
-| outbound | SQL (read/write) | agent metadata DB (sqlite/postgres, `AGENT_DB_DSN`) | separate DSN | memory/*, feedback/store.py |
-| outbound | Cypher (optional) | Neo4j (`kg_backend=neo4j`) | `neo4j_user`/`neo4j_password` | kg/client.py |
-| outbound | HTTP (optional) | Qdrant vector store | `qdrant_url`/`qdrant_api_key` | semantic_layer/vector_index.py |
-| outbound | in-process model inference | local embedding model (BAAI/bge-base-en-v1.5, sentence-transformers) | none | semantic_layer/embeddings.py |
-| outbound | HTTP | UI → agent service (`SQL_AGENT_API_URL`, default `localhost:8000`) | none | ui/api_client.py:66 |
-| outbound | filesystem | rotating log file (`logs/sql_agent.log`) | n/a | logging_config.py |
-| outbound | filesystem | KG artifact (`./kg/metadata_kg.json`) | n/a | kg/client.py, built by scripts/build_metadata_kg.py |
+| Direction | Protocol                   | Target                                                                       | Auth method                                  | Called from                                         |
+| --------- | -------------------------- | ---------------------------------------------------------------------------- | -------------------------------------------- | --------------------------------------------------- |
+| inbound   | HTTP                       | `/v1/sql-agent/*`, `/healthz`                                            | none (CORS-open by default)                  | api.py                                              |
+| outbound  | HTTP (chat completions)    | Groq (`api.groq.com/openai/v1`, default)                                   | `GROQ_API_KEY` (+ optional per-step keys)  | llm/factory.py:108 via llm/step.py                  |
+| outbound  | HTTP (chat completions)    | OpenAI                                                                       | `OPENAI_API_KEY`                           | llm/factory.py:163                                  |
+| outbound  | HTTP (chat completions)    | Azure OpenAI                                                                 | `AZURE_OPENAI_API_KEY` + endpoint          | llm/factory.py:174                                  |
+| outbound  | HTTP                       | Anthropic                                                                    | `ANTHROPIC_API_KEY`                        | llm/factory.py:191                                  |
+| outbound  | SQL (SELECT-only)          | Postgres / MySQL / SQLite (`fab_pricing`/`fab_curated`+`fab_semantic`) | DSN credential (`DB_DSN`, read-only grant) | db/connection.py:19, executed in db/executor.py:62  |
+| outbound  | SQL (read/write)           | agent metadata DB (sqlite/postgres,`AGENT_DB_DSN`)                         | separate DSN                                 | memory/*, feedback/store.py                         |
+| outbound  | Cypher (optional)          | Neo4j (`kg_backend=neo4j`)                                                 | `neo4j_user`/`neo4j_password`            | kg/client.py                                        |
+| outbound  | HTTP (optional)            | Qdrant vector store                                                          | `qdrant_url`/`qdrant_api_key`            | semantic_layer/vector_index.py                      |
+| outbound  | in-process model inference | local embedding model (BAAI/bge-base-en-v1.5, sentence-transformers)         | none                                         | semantic_layer/embeddings.py                        |
+| outbound  | HTTP                       | UI → agent service (`SQL_AGENT_API_URL`, default `localhost:8000`)      | none                                         | ui/api_client.py:66                                 |
+| outbound  | filesystem                 | rotating log file (`logs/sql_agent.log`)                                   | n/a                                          | logging_config.py                                   |
+| outbound  | filesystem                 | KG artifact (`./kg/metadata_kg.json`)                                      | n/a                                          | kg/client.py, built by scripts/build_metadata_kg.py |
 
 Auth model overall: **no inbound auth on the FastAPI service itself** — access control
 is `auth_scope` values inside the request `envelope` (caller-declared, checked in-app
@@ -334,7 +347,9 @@ for the `dynamic_sql` gate only). This is a DAL microservice meant to sit behind
 trusted parent agent/gateway, not to be internet-facing on its own.
 
 ────────────────────────────────────────────────────────────────────
+
 ## 6. Async concurrency map
+
 ────────────────────────────────────────────────────────────────────
 
 - **`asyncio.gather`** — agent/workflow.py:373, `ToolsExecutor.run`: fans out every
@@ -363,31 +378,33 @@ trusted parent agent/gateway, not to be internet-facing on its own.
   (a plain `def`, not `async def`).
 
 ────────────────────────────────────────────────────────────────────
+
 ## 7. Configuration & environment wiring
+
 ────────────────────────────────────────────────────────────────────
 
 All settings load once via `pydantic_settings.BaseSettings` in sql_agent/config.py:16
 → `settings = Settings()` (module-level singleton, config.py:348), reading `.env`
 (`SettingsConfigDict(env_file=".env")`, line 345).
 
-| Env var (examples) | Read in | Used by |
-|---|---|---|
-| `DB_DSN`, `DB_DIALECT` | `settings.db_dsn/db_dialect` | `db/connection.get_engine`, `db/dialect.py` |
-| `AGENT_DB_DSN` | `settings.agent_db_dsn` | `memory/db.py`, `feedback/store.py` (blank ⇒ everything degrades to no-op/in-RAM) |
-| `LLM_PROVIDER`, `LLM_MODEL`, `LLM_*_PROVIDER/MODEL` (per-step) | `settings.llm_*` | `llm/factory._resolve` → `get_llm(step)` |
-| `GROQ_API_KEY`, `GROQ_API_KEY_AGENT`/`_GENERATION`/... | `settings.groq_api_key*` | `llm/factory._resolve_groq_key` |
-| `CORS_ALLOW_ORIGINS` | `settings.cors_allow_origins` | `service/api.py:54` CORS middleware config |
-| `CHECKPOINTER_BACKEND` (memory/sqlite/postgres) | `settings.checkpointer_backend` | `memory/conversation_store.get_conversation_store` — picks `InMemoryStore`/SQLite/Postgres impl |
-| `SCHEMA_RETRIEVAL_ENABLED`, `EMBEDDING_*` | `settings.schema_retrieval_enabled`, etc. | `semantic_layer/selector.py` (gates dense/BM25 retrieval vs. full-schema fallback) |
-| `KG_ENABLED`, `KG_BACKEND`, `KG_ARTIFACT_PATH`, `NEO4J_*` | `settings.kg_*` | `kg/client.py`, `kg/node.py`, `routing/query_engine.py` |
-| `INTENT_DETECTION_ENABLED/ENFORCED` | `settings.intent_detection_*` | `agent/workflow.py` `IntentExecutor`, `_after_intent_continues` |
-| `RESPONSE_SYNTHESIS_ENABLED`, `LLM_SYNTHESIS_*` | `settings.response_synthesis_enabled` | `agent/workflow._synthesize_final_answer` |
-| `PARAMETERISED_TOOLS_ENABLED`, `SEMI_DYNAMIC_TOOLS_ENABLED` | `settings.*_tools_enabled` | `routing/tier_router._tier_enabled`, `fixed_tiers_disabled` — controls which tool tiers bind to the agent at all |
-| `ANSWER_VALIDATION_ENABLED/ENFORCED` | `settings.answer_validation_*` | `routing/query_engine.run_dynamic_pipeline` → `judge_sql` |
-| `MAX_TOOL_CALLS_PER_TURN`, `MAX_DYNAMIC_CALLS_PER_TURN` | `settings.max_*_per_turn` | `routing/tier_router.guard_tool_call` (circuit breaker) |
-| `ROW_CAP`, `STATEMENT_TIMEOUT_SECONDS` | `settings.row_cap/statement_timeout_seconds` | `validation/sql_validator._check_6_row_cap`, `db/executor._apply_statement_timeout` |
-| `LOG_LEVEL`, `LOG_FILE*` | `settings.log_*` | `logging_config.py` |
-| `SQL_AGENT_API_URL` (UI-only, not pydantic-settings) | `os.environ.get` in ui/app.py:67 | `ui/api_client.SqlAgentClient` base URL |
+| Env var (examples)                                                   | Read in                                        | Used by                                                                                                               |
+| -------------------------------------------------------------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `DB_DSN`, `DB_DIALECT`                                           | `settings.db_dsn/db_dialect`                 | `db/connection.get_engine`, `db/dialect.py`                                                                       |
+| `AGENT_DB_DSN`                                                     | `settings.agent_db_dsn`                      | `memory/db.py`, `feedback/store.py` (blank ⇒ everything degrades to no-op/in-RAM)                                |
+| `LLM_PROVIDER`, `LLM_MODEL`, `LLM_*_PROVIDER/MODEL` (per-step) | `settings.llm_*`                             | `llm/factory._resolve` → `get_llm(step)`                                                                         |
+| `GROQ_API_KEY`, `GROQ_API_KEY_AGENT`/`_GENERATION`/...         | `settings.groq_api_key*`                     | `llm/factory._resolve_groq_key`                                                                                     |
+| `CORS_ALLOW_ORIGINS`                                               | `settings.cors_allow_origins`                | `service/api.py:54` CORS middleware config                                                                          |
+| `CHECKPOINTER_BACKEND` (memory/sqlite/postgres)                    | `settings.checkpointer_backend`              | `memory/conversation_store.get_conversation_store` — picks `InMemoryStore`/SQLite/Postgres impl                  |
+| `SCHEMA_RETRIEVAL_ENABLED`, `EMBEDDING_*`                        | `settings.schema_retrieval_enabled`, etc.    | `semantic_layer/selector.py` (gates dense/BM25 retrieval vs. full-schema fallback)                                  |
+| `KG_ENABLED`, `KG_BACKEND`, `KG_ARTIFACT_PATH`, `NEO4J_*`    | `settings.kg_*`                              | `kg/client.py`, `kg/node.py`, `routing/query_engine.py`                                                         |
+| `INTENT_DETECTION_ENABLED/ENFORCED`                                | `settings.intent_detection_*`                | `agent/workflow.py` `IntentExecutor`, `_after_intent_continues`                                                 |
+| `RESPONSE_SYNTHESIS_ENABLED`, `LLM_SYNTHESIS_*`                  | `settings.response_synthesis_enabled`        | `agent/workflow._synthesize_final_answer`                                                                           |
+| `PARAMETERISED_TOOLS_ENABLED`, `SEMI_DYNAMIC_TOOLS_ENABLED`      | `settings.*_tools_enabled`                   | `routing/tier_router._tier_enabled`, `fixed_tiers_disabled` — controls which tool tiers bind to the agent at all |
+| `ANSWER_VALIDATION_ENABLED/ENFORCED`                               | `settings.answer_validation_*`               | `routing/query_engine.run_dynamic_pipeline` → `judge_sql`                                                        |
+| `MAX_TOOL_CALLS_PER_TURN`, `MAX_DYNAMIC_CALLS_PER_TURN`          | `settings.max_*_per_turn`                    | `routing/tier_router.guard_tool_call` (circuit breaker)                                                             |
+| `ROW_CAP`, `STATEMENT_TIMEOUT_SECONDS`                           | `settings.row_cap/statement_timeout_seconds` | `validation/sql_validator._check_6_row_cap`, `db/executor._apply_statement_timeout`                               |
+| `LOG_LEVEL`, `LOG_FILE*`                                         | `settings.log_*`                             | `logging_config.py`                                                                                                 |
+| `SQL_AGENT_API_URL` (UI-only, not pydantic-settings)               | `os.environ.get` in ui/app.py:67             | `ui/api_client.SqlAgentClient` base URL                                                                             |
 
 Config → module wiring is uniformly **flag-gated and shadow-first**: nearly every
 "production upgrade" feature (intent detection, schema retrieval, KG, answer-alignment
@@ -395,7 +412,9 @@ judge, synthesis step, cardinality check) defaults `False`/off and degrades to
 byte-identical legacy behavior, per the repeated docstring pattern across the codebase.
 
 ────────────────────────────────────────────────────────────────────
+
 ## Mermaid — the most important flow: `POST /v1/sql-agent/ask` → dynamic SQL pipeline
+
 ────────────────────────────────────────────────────────────────────
 
 ```mermaid
