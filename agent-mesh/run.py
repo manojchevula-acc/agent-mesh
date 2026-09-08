@@ -17,6 +17,11 @@ project_root = str(pathlib.Path(__file__).resolve().parent)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+# Load .env before beacon_kit reads OBS_PROFILE — otherwise exporter_type
+# defaults to "console" and every span/metric floods stdout.
+from dotenv import load_dotenv
+load_dotenv(pathlib.Path(__file__).resolve().parent / ".env", override=False)
+
 # BEACON_KIT: replaced by beacon_kit setup_telemetry (reads OBS_PROFILE from .env)
 # from src.observability import setup_observability
 # setup_observability(service_name="agent_mesh_cli")

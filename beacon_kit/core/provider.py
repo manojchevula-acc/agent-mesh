@@ -89,11 +89,42 @@ def setup_telemetry(config: "TelemetryConfig") -> TelemetryHandle:
     metric_exporter = build_metric_exporter(config)
     # In pretty mode flush metrics every 5 s so they appear shortly after each request
     metric_interval = 5_000 if config.exporter_type == "pretty" else 30_000
-    meter_provider = MeterProvider(
-        resource=resource,
-        metric_readers=[PeriodicExportingMetricReader(metric_exporter, export_interval_millis=metric_interval)],
+    metric_readers = [PeriodicExportingMetricReader(metric_exporter, export_interval_millis=metric_interval)]
+
+    # ── Secondary file processors (dual-export: primary backend + local JSONL) ─
+    # Build file exporters independently so a metric reader failure doesn't
+    # prevent span or log file export. File_output_dir must be set; exporter_type
+    # "file" already writes to files as the primary (no secondary needed), and
+    # "off" discards everything.
+    _wants_file_secondary = (
+        bool(config.file_output_dir)
+        and config.exporter_type not in ("file", "off")
     )
+    _file_span_exp = _file_log_exp = None
+    if _wants_file_secondary:
+        try:
+            from beacon_kit.core.file_exporters import FileSpanExporter, FileMetricExporter, FileLogExporter
+            _file_span_exp = FileSpanExporter(config.file_path("traces"))
+            _file_log_exp = FileLogExporter(config.file_path("logs"))
+        except Exception:
+            pass
+        try:
+            _file_metric_exp = FileMetricExporter(config.file_path("metrics"))
+            metric_readers.append(
+                PeriodicExportingMetricReader(_file_metric_exp, export_interval_millis=15_000)
+            )
+        except Exception:
+            pass  # metric file failure never kills traces or logs
+
+    meter_provider = MeterProvider(resource=resource, metric_readers=metric_readers)
     metrics.set_meter_provider(meter_provider)
+
+    # Add secondary span processor after MeterProvider is created
+    if _file_span_exp is not None:
+        try:
+            tracer_provider.add_span_processor(SimpleSpanProcessor(_file_span_exp))
+        except Exception:
+            pass
 
     # W3C TraceContext + W3C Baggage as global propagator
     set_global_textmap(
@@ -113,13 +144,22 @@ def setup_telemetry(config: "TelemetryConfig") -> TelemetryHandle:
         log_exporter = build_log_exporter(config)
         logger_provider = LoggerProvider(resource=resource)
         logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
+
+        # Secondary file log processor for dual-export
+        if _file_log_exp is not None:
+            try:
+                logger_provider.add_log_record_processor(BatchLogRecordProcessor(_file_log_exp))
+            except Exception:
+                pass
+
         set_logger_provider(logger_provider)
 
         # Bridge Python's logging module to OTEL so @log_calls and manual
         # logging.getLogger(__name__).info() calls produce OTEL log records
         # with trace_id / span_id automatically injected.
+        # Covers beacon_kit internals + all mesh/agent namespaces used in this project.
         otel_handler = LoggingHandler(level=logging.DEBUG, logger_provider=logger_provider)
-        for ns in ("beacon_kit", "simple_project"):
+        for ns in ("beacon_kit", "simple_project", "mesh", "src", "agent_mesh"):
             ns_logger = logging.getLogger(ns)
             if not any(isinstance(h, LoggingHandler) for h in ns_logger.handlers):
                 ns_logger.addHandler(otel_handler)

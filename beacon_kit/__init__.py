@@ -17,6 +17,7 @@ Typical minimal setup:
 # ── Layer 1: Core Infrastructure ────────────────────────────────────────────
 from beacon_kit.core.config import TelemetryConfig
 from beacon_kit.core.provider import TelemetryHandle, setup_telemetry, flush_telemetry
+from beacon_kit.core.file_exporters import FileSpanExporter, FileMetricExporter, FileLogExporter
 
 # ── Layer 2: Agentic Interaction Decorators ──────────────────────────────────
 from beacon_kit.decorators.trace import traced, traced_node, traced_pipeline
@@ -66,6 +67,9 @@ __all__ = [
     "TelemetryHandle",
     "setup_telemetry",
     "flush_telemetry",
+    "FileSpanExporter",
+    "FileMetricExporter",
+    "FileLogExporter",
     # Layer 2 — Agentic Interactions
     "traced",
     "traced_node",

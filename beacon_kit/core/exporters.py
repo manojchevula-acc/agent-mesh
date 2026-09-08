@@ -1,10 +1,21 @@
 """ExporterFactory — build span and metric exporters from TelemetryConfig.
 
 Switching backends requires only an env var change; no application code changes.
+
+Exporter types:
+  console          — stdout (OTEL SDK default pretty-print)
+  pretty           — rich-formatted stdout (beacon_kit PrettyExporter)
+  otel_collector   — OTLP/gRPC to a local collector (e.g. Jaeger, Aspire)
+  grafana          — OTLP/HTTP to Grafana Cloud with Basic auth
+  grafana_and_file — OTLP/HTTP to Grafana Cloud AND local JSONL files (primary exporter only;
+                     provider.py adds the secondary file processor)
+  file             — local JSONL files only (no network export)
+  azure_monitor    — Azure Application Insights
+  off              — no-op (discard all signals)
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Tuple
 
 from opentelemetry.sdk.trace.export import SpanExporter, ConsoleSpanExporter
 from opentelemetry.sdk.metrics.export import MetricExporter, ConsoleMetricExporter
@@ -39,11 +50,15 @@ def build_span_exporter(config: "TelemetryConfig") -> SpanExporter:
         from beacon_kit.core.pretty_exporter import PrettySpanExporter
         return PrettySpanExporter()
 
-    if config.exporter_type == "grafana":
+    if config.exporter_type in ("grafana", "grafana_and_file"):
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter as OTLPSpanExporterHTTP
         import base64
         headers = _grafana_auth_headers(config)
         return OTLPSpanExporterHTTP(endpoint=config.otel_endpoint, headers=headers)
+
+    if config.exporter_type == "file":
+        from beacon_kit.core.file_exporters import FileSpanExporter
+        return FileSpanExporter(config.file_path("traces"))
 
     # Default: console (dev)
     return ConsoleSpanExporter()
@@ -74,10 +89,14 @@ def build_metric_exporter(config: "TelemetryConfig") -> MetricExporter:
         from beacon_kit.core.pretty_exporter import PrettyMetricExporter
         return PrettyMetricExporter()
 
-    if config.exporter_type == "grafana":
+    if config.exporter_type in ("grafana", "grafana_and_file"):
         from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter as OTLPMetricExporterHTTP
         headers = _grafana_auth_headers(config)
         return OTLPMetricExporterHTTP(endpoint=config.otel_endpoint, headers=headers)
+
+    if config.exporter_type == "file":
+        from beacon_kit.core.file_exporters import FileMetricExporter
+        return FileMetricExporter(config.file_path("metrics"))
 
     return ConsoleMetricExporter()
 
@@ -112,7 +131,7 @@ def build_log_exporter(config: "TelemetryConfig"):
         except ImportError as exc:
             raise ImportError("Install azure extras: pip install beacon_kit[azure]") from exc
 
-    if config.exporter_type == "grafana":
+    if config.exporter_type in ("grafana", "grafana_and_file"):
         try:
             from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter as OTLPLogExporterHTTP
             headers = _grafana_auth_headers(config)
@@ -120,8 +139,26 @@ def build_log_exporter(config: "TelemetryConfig"):
         except ImportError as exc:
             raise ImportError("Install otlp-http extras: pip install opentelemetry-exporter-otlp-proto-http") from exc
 
+    if config.exporter_type == "file":
+        from beacon_kit.core.file_exporters import FileLogExporter
+        return FileLogExporter(config.file_path("logs"))
+
     from opentelemetry.sdk._logs.export import ConsoleLogExporter
     return ConsoleLogExporter()
+
+
+def build_file_exporters(config: "TelemetryConfig") -> "Tuple":
+    """Return (FileSpanExporter, FileMetricExporter, FileLogExporter) for dual-export wiring.
+
+    Called by provider.py when file_output_dir is set. Callers add these as secondary
+    processors alongside the primary (Grafana/console) processors.
+    """
+    from beacon_kit.core.file_exporters import FileSpanExporter, FileMetricExporter, FileLogExporter
+    return (
+        FileSpanExporter(config.file_path("traces")),
+        FileMetricExporter(config.file_path("metrics")),
+        FileLogExporter(config.file_path("logs")),
+    )
 
 
 def _grafana_auth_headers(config: "TelemetryConfig") -> dict:
