@@ -46,10 +46,12 @@ project_root = str(pathlib.Path(__file__).resolve().parent)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from src.observability import setup_observability, get_logger, CAT_SYSTEM
-
-# Activate centralized logging for this process (no OTel exporters; see above).
-setup_observability(service_name="agent_mesh_devui")
+# BEACON_KIT: OBS_PROFILE=off is already set above; beacon_kit reads it and uses no-op exporters
+# from src.observability import setup_observability, get_logger, CAT_SYSTEM
+# setup_observability(service_name="agent_mesh_devui")
+from src.observability import get_logger, CAT_SYSTEM
+from beacon_kit import setup_telemetry, TelemetryConfig
+_bk_handle = setup_telemetry(TelemetryConfig.from_env(service_name="agent_mesh_devui"))
 
 from agent_framework.devui import serve
 

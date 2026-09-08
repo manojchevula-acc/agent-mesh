@@ -27,7 +27,9 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from src.config import Config
-from src.observability import setup_observability
+# BEACON_KIT: replaced by beacon_kit setup_telemetry
+# from src.observability import setup_observability
+from beacon_kit import setup_telemetry, TelemetryConfig
 from src.agents.node_registry import build_node, NODE_NAMES, MCP_BACKED_NODES
 from src.a2a.hosting import build_agent_card, serve, build_starlette_app
 
@@ -106,10 +108,9 @@ def main():
     parser.add_argument("--port", type=int, default=None, help="Override the port (defaults to registry).")
     args = parser.parse_args()
 
-    # Activate framework-native OpenTelemetry + centralized logging for THIS node
-    # process, with a per-node service name so each node is a distinct service in
-    # the distributed trace tree. Exporter wiring is driven by OBS_PROFILE.
-    setup_observability(service_name=f"agent_mesh_{args.agent}")
+    # BEACON_KIT: per-node service name so each node is distinct in Grafana Tempo
+    # setup_observability(service_name=f"agent_mesh_{args.agent}")
+    _bk_handle = setup_telemetry(TelemetryConfig.from_env(service_name=f"agent_mesh_{args.agent}"))
 
     Config.validate()
 

@@ -41,8 +41,12 @@ if project_root not in sys.path:
 
 os.environ.setdefault("PYTHONWARNINGS", "ignore")
 
-from src.observability import setup_observability
-setup_observability(service_name="agent_mesh_api")
+# BEACON_KIT: replaced by beacon_kit setup_telemetry (reads OBS_PROFILE/GRAFANA_* from .env)
+# from src.observability import setup_observability
+# setup_observability(service_name="agent_mesh_api")
+from beacon_kit import setup_telemetry, TelemetryConfig, flush_telemetry
+from beacon_kit.middleware.fastapi import TelemetryMiddleware
+_bk_handle = setup_telemetry(TelemetryConfig.from_env(service_name="agent_mesh_api"))
 
 import httpx
 import uvicorn
@@ -60,7 +64,9 @@ from src.feedback.store import record_feedback, record_structured_feedback, get_
 from src.mesh.orchestrator import handle_request, handle_request_stream
 from src.hitl.approval_store import approval_store, CHECKPOINT_DIR
 from src.memory import ConversationStore
-from src.observability import get_logger, CAT_SYSTEM, flush_observability
+from src.observability import get_logger, CAT_SYSTEM
+# BEACON_KIT: flush_observability replaced by flush_telemetry (imported above with setup_telemetry)
+# from src.observability import get_logger, CAT_SYSTEM, flush_observability
 from src.tracing.execution_trace import ExecutionTracer, set_active_tracer, clear_active_tracer
 
 _log = get_logger(CAT_SYSTEM)
@@ -828,8 +834,10 @@ async def _lifespan(app):
         if restored:
             _log.info("UC-5: Restored %d pending HITL approval(s) from data/checkpoints/", restored)
     yield
-    _log.info("api_server shutting down — flushing observability exporters.")
-    flush_observability()
+    _log.info("api_server shutting down — flushing beacon_kit exporters.")
+    # BEACON_KIT: flush_observability() replaced by flush_telemetry(_bk_handle)
+    # flush_observability()
+    flush_telemetry(_bk_handle)
 
 
 _API_SERVER_HOST = os.getenv("API_SERVER_HOST", "127.0.0.1")
@@ -1121,6 +1129,8 @@ app = Starlette(
             allow_headers=["*"],
         ),
         Middleware(TraceContextMiddleware),
+        # BEACON_KIT: enrich spans with run_id, service name, and route
+        Middleware(TelemetryMiddleware),
     ],
     routes=[
         Route("/health",               health,              methods=["GET"]),
@@ -1152,13 +1162,12 @@ app = Starlette(
     ],
 )
 
-# HTTP-level OTel spans (method, path, status code, latency) for Grafana Tempo.
-# Requires: opentelemetry-instrumentation-starlette in requirements.txt
-try:
-    from opentelemetry.instrumentation.starlette import StarletteInstrumentor
-    StarletteInstrumentor().instrument_app(app)
-except Exception:
-    pass  # package not installed — degrade gracefully, mesh still works
+# BEACON_KIT: StarletteInstrumentor replaced by beacon_kit TelemetryMiddleware (added in Middleware list below)
+# try:
+#     from opentelemetry.instrumentation.starlette import StarletteInstrumentor
+#     StarletteInstrumentor().instrument_app(app)
+# except Exception:
+#     pass
 
 
 def main() -> None:

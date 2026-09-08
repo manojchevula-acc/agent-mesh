@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "beacon_kit"
+version = "0.1.0"
+description = "Drop-in OpenTelemetry sidecar: traces, metrics, compliance events, and circuit breakers via decorators"
+requires-python = ">=3.11"
+dependencies = [
+    "opentelemetry-sdk>=1.24.0",
+    "opentelemetry-api>=1.24.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.24.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.24.0",
+    "opentelemetry-instrumentation-fastapi>=0.45b0",
+    "opentelemetry-instrumentation-httpx>=0.45b0",
+    "pybreaker>=1.0",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+azure = [
+    "azure-monitor-opentelemetry-exporter==1.0.0b28",
+]
+fastapi = [
+    "fastapi>=0.111",
+    "starlette>=0.37",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "fastapi>=0.111",
+    "httpx>=0.27",
+    "uvicorn>=0.29",
+]
+
+[tool.setuptools.packages.find]
+where = [".."]
+include = ["beacon_kit*"]

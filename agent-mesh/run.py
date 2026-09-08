@@ -17,13 +17,11 @@ project_root = str(pathlib.Path(__file__).resolve().parent)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-# Activate the Agent Framework SDK's built-in OpenTelemetry instrumentation +
-# centralized logging via the single mesh setup point. This auto-traces
-# agent.run(), @tool calls, LLM get_response(), and workflow execution across the
-# orchestrator. Exporter wiring is driven by OBS_PROFILE (dev=OTLP/console,
-# prod=Azure Monitor). See src/observability/setup.py and .env.example.
-from src.observability import setup_observability
-setup_observability(service_name="agent_mesh_cli")
+# BEACON_KIT: replaced by beacon_kit setup_telemetry (reads OBS_PROFILE from .env)
+# from src.observability import setup_observability
+# setup_observability(service_name="agent_mesh_cli")
+from beacon_kit import setup_telemetry, TelemetryConfig
+_bk_handle = setup_telemetry(TelemetryConfig.from_env(service_name="agent_mesh_cli"))
 
 from rich.console import Console
 from rich.panel import Panel

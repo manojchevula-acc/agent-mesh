@@ -64,6 +64,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# beacon_kit — Layer 1: Infrastructure (traces + metrics)
+# ---------------------------------------------------------------------------
+try:
+    from beacon_kit import setup_telemetry, TelemetryConfig
+    setup_telemetry(TelemetryConfig.from_env(service_name="datalayer_mcp"))
+except Exception as _bk_err:
+    logger.warning("beacon_kit telemetry disabled: %s", _bk_err)
+
+# ---------------------------------------------------------------------------
 # MCP server instance
 # ---------------------------------------------------------------------------
 mcp = FastMCP(

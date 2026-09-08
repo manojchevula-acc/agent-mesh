@@ -15,7 +15,10 @@ from .ingestion.pipeline import IngestionPipeline
 from .llm.factory import get_llm
 from .retrieval.pipeline import RetrievalPipeline
 from .utils.logging import configure_logging, get_logger
-from .utils.telemetry import configure_telemetry, instrument_fastapi
+# BEACON_KIT: replaced by beacon_kit setup_telemetry
+# from .utils.telemetry import configure_telemetry, instrument_fastapi
+from beacon_kit import setup_telemetry, TelemetryConfig
+from beacon_kit.middleware.fastapi import TelemetryMiddleware
 from .vectordb.factory import get_vectordb
 
 logger = get_logger(__name__)
@@ -26,7 +29,9 @@ async def lifespan(app: FastAPI):
     # ── Startup ────────────────────────────────────────────────────────
     settings = get_settings()
     configure_logging(settings.log_level)
-    configure_telemetry(settings.service_name)
+    # BEACON_KIT: configure_telemetry replaced by setup_telemetry
+    # configure_telemetry(settings.service_name)
+    _bk_handle = setup_telemetry(TelemetryConfig.from_env(service_name=settings.service_name))
     logger.info("Starting GERNAS RAG service", environment=settings.environment)
 
     embedder = get_embedder(settings.embedding)
@@ -81,7 +86,9 @@ def create_app() -> FastAPI:
     app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
     app.include_router(evaluate.router, prefix="/api/v1", tags=["evaluation"])
 
-    instrument_fastapi(app)
+    # BEACON_KIT: instrument_fastapi replaced by TelemetryMiddleware
+    # instrument_fastapi(app)
+    app.add_middleware(TelemetryMiddleware)
     return app
 
 
