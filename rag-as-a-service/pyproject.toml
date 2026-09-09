@@ -31,7 +31,23 @@ dependencies = [
     # Multimodal (image-as-text) — PIL encode/decode for VLM payloads + artifact store
     "pillow>=10.4.0",
     # Chunking
+    # Retained deliberately. RecursiveCharacterTextSplitter is a string utility
+    # with no LLM, chain or graph involvement. MAF has no equivalent and does
+    # not need one.
     "langchain-text-splitters>=0.2.0",
+    # Orchestration (Microsoft Agent Framework)
+    # Runtime dependency of the retrieval path — src/gernas_rag/workflow/ runs
+    # every retrieve() call. Not optional.
+    #
+    # Deliberately `agent-framework-core`, NOT the `agent-framework` umbrella
+    # package. Core supplies everything the workflow needs (Executor,
+    # WorkflowBuilder, WorkflowContext, handler) and resolves to 2 packages with
+    # zero changes to existing pins. The umbrella package pulls in 132 packages —
+    # the full Azure SDK, boto3, google-genai, mistralai, ollama, pythonnet/.NET
+    # interop, a WASM sandbox — and downgrades redis 8.0.0 -> 7.1.1 (this service
+    # caches on redis) while bumping openai 2.x -> 3.x. Do not widen this to
+    # `agent-framework` without re-running the resolution.
+    "agent-framework-core>=1.10.0",
     # LLM providers
     "groq>=0.9.0",
     "anthropic>=0.30.0",

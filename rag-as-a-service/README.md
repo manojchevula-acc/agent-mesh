@@ -598,6 +598,7 @@ Endpoints:
 | Cache      | **Redis / Valkey**                                        | —                                                         | Repetitive queries; soft-fail                               |
 | Eval       | Stage-wise CLI: deterministic + LLM judge + **RAGAS**     | —                                                         | Attributes a regression to the stage that caused it         |
 | Logging    | **structlog** (JSON) + OpenTelemetry                      | —                                                         | Queryable events + tracing                                  |
+| Orchestration | **MAF workflow** (`agent-framework-core`)              | Inline async calls (pre-migration)                         | Deterministic executor graph; native per-stage spans, and one framework across the monorepo |
 
 The recurring theme: **the default optimises for a bank's constraints** (data residency,
 auditability, cost, operational simplicity), and **every choice is reversible via config**
@@ -701,6 +702,7 @@ src/gernas_rag/
 ├── embeddings/      # BGE-M3 (primary), sentence-transformers + factory
 ├── vectordb/        # Qdrant (primary), Milvus, ChromaDB + factory
 ├── retrieval/       # HybridSearcher, Reranker, FreshnessFilter, RetrievalPipeline
+├── workflow/        # MAF orchestration: RagState + Executors + WorkflowBuilder
 ├── generation/      # ResponseGenerator (grounded, cited prompt)
 ├── llm/             # Groq (primary), Anthropic, HuggingFace, OpenAI-compat + factory
 ├── cache/           # RAGCache (Redis/Valkey)

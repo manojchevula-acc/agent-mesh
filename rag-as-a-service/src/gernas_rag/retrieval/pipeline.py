@@ -1,11 +1,19 @@
-"""RetrievalPipeline — hybrid search + rerank + freshness + parent expansion."""
+"""RetrievalPipeline — hybrid search + rerank + freshness + parent expansion.
 
-import time
+The flow itself is orchestrated by a Microsoft Agent Framework workflow
+(``gernas_rag.workflow``), which runs the stages as MAF Executors and emits
+native ``workflow.run`` / ``executor.process`` OpenTelemetry spans. This class is
+the public entry point and owns the components; the workflow only sequences them.
+
+All seven call sites — the HTTP router, the MCP server, both eval runners, the
+gold-set script and the tests — go through :meth:`retrieve` and are unaffected by
+that orchestration choice.
+"""
 
 from ..config.embedding import EmbeddingProvider
 from ..config.settings import Settings
 from ..embeddings.base import BaseEmbedder
-from ..models.retrieval import RetrievedChunk, RetrieveRequest, RetrieveResponse
+from ..models.retrieval import RetrieveRequest, RetrieveResponse
 from ..utils.logging import get_logger
 from ..vectordb.base import BaseVectorDB
 from .freshness import FreshnessFilter
@@ -14,6 +22,10 @@ from .reranker import Reranker
 
 logger = get_logger(__name__)
 
+# Canonical definition. Consumed by the workflow's AssembleResponseExecutor to set
+# `freshness_warning` on every returned chunk, and mirrored (deliberately, with a
+# note) by eval/stage4_generation/retrieval_reuse.py. Defined here rather than in
+# the workflow package so it stays with the retrieval domain.
 _FRESHNESS_WARNING_THRESHOLD = 0.7
 
 
@@ -22,12 +34,24 @@ class RetrievalPipeline:
 
     ``Query → Encode → Metadata filter → Dense ANN + Sparse BM25 → RRF merge →
     Cross-encoder rerank → Freshness penalty → Parent expand``
+
+    Each stage is a MAF Executor; this class builds them once, wires them into an
+    immutable workflow, and exposes the whole thing as one ``async`` call.
     """
 
     def __init__(self, settings: Settings, embedder: BaseEmbedder, vectordb: BaseVectorDB) -> None:
+        # Imported here rather than at module scope: workflow.executors imports
+        # _FRESHNESS_WARNING_THRESHOLD from this module, so a module-level import
+        # in either direction would be circular.
+        from ..workflow.build import build_retrieval_workflow
+
         self._settings = settings
         self._embedder = embedder
         self._vectordb = vectordb
+        # These three stay private-by-convention attributes rather than being
+        # inlined into the workflow: eval/stage3_retrieval/runner.py reaches into
+        # all three directly to drive the production components while measuring
+        # recall@k at a deeper rank than production returns.
         self._searcher = HybridSearcher(settings.retrieval, vectordb)
         self._reranker = (
             Reranker.from_embedding_config(settings.embedding)
@@ -36,76 +60,42 @@ class RetrievalPipeline:
         )
         self._freshness = FreshnessFilter(settings.retrieval)
 
+        # Built once and reused. MAF workflows are immutable and concurrency-safe
+        # because all per-request data travels on the RagState passed to run().
+        self._workflow = build_retrieval_workflow(
+            embedder=embedder,
+            vectordb=vectordb,
+            searcher=self._searcher,
+            reranker=self._reranker,
+            freshness=self._freshness,
+            pre_rerank_top_k=settings.retrieval.pre_rerank_top_k,
+        )
+
     async def retrieve(self, request: RetrieveRequest) -> RetrieveResponse:
-        start = time.perf_counter()
+        """Retrieve relevant chunks for a query.
 
-        # Step 1: Encode query (dense + sparse)
-        embedding = await self._embedder.embed_query(request.query)
+        Runs the MAF workflow and unwraps its output. MAF has no typed return
+        value: executors emit messages, and the ones yielded by executors named in
+        ``output_from`` are collected on the run result. This method is the only
+        place in the service that has to know that.
 
-        # Step 2: Hybrid search (dense ANN + sparse BM25 + RRF merge)
-        candidates = await self._searcher.search(
-            dense_vector=embedding.dense_vectors[0],
-            sparse_indices=embedding.sparse_indices[0] if embedding.sparse_indices else [],
-            sparse_values=embedding.sparse_values[0] if embedding.sparse_values else [],
-            filters=request.filters,
-            pre_rerank_top_k=self._settings.retrieval.pre_rerank_top_k,
-        )
+        Exceptions are deliberately **not** caught. ``workflow.run()`` propagates
+        an executor's exception unchanged (verified against agent_framework
+        1.17.0), so the router's own ``try/except`` still turns a failure into
+        HTTP 500 and the MCP server's still turns it into ``{"error": ...}``.
+        """
+        from ..workflow.state import RagState
 
-        # Step 3: Cross-encoder rerank
-        if self._reranker and candidates:
-            candidates = await self._reranker.rerank(
-                query=request.query, results=candidates, top_n=request.top_k
-            )
-        else:
-            candidates = candidates[: request.top_k]
+        events = await self._workflow.run(RagState(request=request))
 
-        # Step 4: Freshness penalty
-        candidates = self._freshness.apply(candidates)
+        for output in reversed(events.get_outputs()):
+            if isinstance(output, RagState) and output.response is not None:
+                return output.response
 
-        # Step 5: Parent chunk expansion
-        if request.include_parent:
-            parent_ids = [
-                r.metadata.get("parent_chunk_id")
-                for r in candidates
-                if r.metadata.get("parent_chunk_id")
-            ]
-            parents = (
-                await self._vectordb.get_by_ids(list(set(filter(None, parent_ids))))
-                if parent_ids
-                else []
-            )
-            parent_map = {p.id: p.text for p in parents}
-        else:
-            parent_map = {}
-
-        # Build response
-        latency_ms = (time.perf_counter() - start) * 1000
-        chunks = [
-            RetrievedChunk(
-                text=r.text,
-                source=r.metadata.get("document_name", ""),
-                section_heading=r.metadata.get("section_heading", ""),
-                clause_reference=r.metadata.get("clause_reference", ""),
-                score=r.score,
-                effective_date=r.metadata.get("effective_date", ""),
-                freshness_warning=r.metadata.get("freshness_score", 1.0)
-                < _FRESHNESS_WARNING_THRESHOLD,
-                parent_text=parent_map.get(r.metadata.get("parent_chunk_id", ""), None),
-                modality=r.metadata.get("modality", "text"),
-                artifact_ref=r.metadata.get("artifact_ref"),
-            )
-            for r in candidates
-        ]
-        freshness_global = any(c.freshness_warning for c in chunks)
-        logger.info(
-            "Retrieval complete",
-            query=request.query[:80],
-            results=len(chunks),
-            latency_ms=round(latency_ms, 2),
-        )
-        return RetrieveResponse(
-            chunks=chunks,
-            total_results=len(chunks),
-            latency_ms=round(latency_ms, 2),
-            freshness_warning_global=freshness_global,
+        # Unreachable unless the graph was misbuilt (e.g. `assemble` dropped from
+        # `output_from`). Fail loudly rather than returning an empty result set,
+        # which would look like "no documents matched" to every caller.
+        raise RuntimeError(
+            "MAF retrieval workflow produced no RetrieveResponse output; "
+            "check that AssembleResponseExecutor is listed in output_from"
         )
