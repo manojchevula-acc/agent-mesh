@@ -49,9 +49,10 @@ load_dotenv(pathlib.Path(__file__).resolve().parent / ".env", override=False)
 # BEACON_KIT: replaced by beacon_kit setup_telemetry (reads OBS_PROFILE/GRAFANA_* from .env)
 # from src.observability import setup_observability
 # setup_observability(service_name="agent_mesh_api")
-from beacon_kit import setup_telemetry, TelemetryConfig, flush_telemetry, set_default_compliance_config
+from beacon_kit import setup_telemetry, TelemetryConfig, flush_telemetry, set_default_compliance_config, generate_html_report
 from beacon_kit.middleware.fastapi import TelemetryMiddleware
-_bk_handle = setup_telemetry(TelemetryConfig.from_env(service_name="agent_mesh_api"))
+_bk_cfg = TelemetryConfig.from_env(service_name="agent_mesh_api")
+_bk_handle = setup_telemetry(_bk_cfg)
 set_default_compliance_config(TelemetryConfig.from_env())
 
 import httpx
@@ -844,6 +845,8 @@ async def _lifespan(app):
     # BEACON_KIT: flush_observability() replaced by flush_telemetry(_bk_handle)
     # flush_observability()
     flush_telemetry(_bk_handle)
+    _report_path = generate_html_report(config=_bk_cfg)
+    _log.info("Observability report written: %s", _report_path)
 
 
 _API_SERVER_HOST = os.getenv("API_SERVER_HOST", "127.0.0.1")

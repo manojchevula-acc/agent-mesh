@@ -18,6 +18,7 @@ Typical minimal setup:
 from beacon_kit.core.config import TelemetryConfig
 from beacon_kit.core.provider import TelemetryHandle, setup_telemetry, flush_telemetry
 from beacon_kit.core.file_exporters import FileSpanExporter, FileMetricExporter, FileLogExporter
+from beacon_kit.core.html_reporter import generate_html_report
 
 # ── Layer 2: Agentic Interaction Decorators ──────────────────────────────────
 from beacon_kit.decorators.trace import traced, traced_node, traced_pipeline
@@ -70,6 +71,7 @@ __all__ = [
     "FileSpanExporter",
     "FileMetricExporter",
     "FileLogExporter",
+    "generate_html_report",
     # Layer 2 — Agentic Interactions
     "traced",
     "traced_node",

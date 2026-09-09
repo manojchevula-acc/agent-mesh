@@ -179,6 +179,8 @@ Wraps the function in an OpenTelemetry **SERVER span** (server = entry point). R
 
 **Where it lives:** `beacon_kit/decorators/agent.py`
 
+## add decorator specific implementation context explanation for one of them
+## Gernas specific problem context in the start
 **Code example:**
 ```python
 from beacon_kit import traced_agent

@@ -25,8 +25,9 @@ load_dotenv(pathlib.Path(__file__).resolve().parent / ".env", override=False)
 # BEACON_KIT: replaced by beacon_kit setup_telemetry (reads OBS_PROFILE from .env)
 # from src.observability import setup_observability
 # setup_observability(service_name="agent_mesh_cli")
-from beacon_kit import setup_telemetry, TelemetryConfig, set_default_compliance_config
-_bk_handle = setup_telemetry(TelemetryConfig.from_env(service_name="agent_mesh_cli"))
+from beacon_kit import setup_telemetry, TelemetryConfig, set_default_compliance_config, generate_html_report
+_bk_cfg = TelemetryConfig.from_env(service_name="agent_mesh_cli")
+_bk_handle = setup_telemetry(_bk_cfg)
 set_default_compliance_config(TelemetryConfig.from_env())
 
 from rich.console import Console
@@ -177,6 +178,9 @@ async def main() -> None:
                 "[dim]Is the mesh running? Start it with "
                 "'python launch_mesh.py'.[/dim]"
             )
+
+    _report = generate_html_report(config=_bk_cfg)
+    _console.print(f"\n[dim]Observability report: {_report}[/dim]")
 
 
 async def _run_query(user, user_input: str) -> None:
