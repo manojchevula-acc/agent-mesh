@@ -48,7 +48,7 @@ if project_root not in sys.path:
 
 from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
 
-from src.guardrails.deterministic_filters import screen_input, redact_pii
+from src.guardrails.deterministic_filters import screen_input, redact_pii, _emit_screen_guardrail
 from src.auth.identity_provider import BankingRole
 from src.observability import get_logger, CAT_WORKFLOW
 from src.observability.metrics import (
@@ -67,6 +67,17 @@ from src.memory import ConversationStore
 from src.config import Config
 
 _log = get_logger(CAT_WORKFLOW)
+
+try:
+    from beacon_kit import traced_agent, AgenticMetrics
+    _bk_metrics = AgenticMetrics()
+    _BK_AVAILABLE = True
+except Exception:
+    _BK_AVAILABLE = False
+    _bk_metrics = None
+    def traced_agent(name):  # type: ignore[misc]
+        def _d(fn): return fn
+        return _d
 
 # Type alias for the injected dependency.
 AskRemote = Callable[..., Awaitable[str]]
@@ -267,6 +278,7 @@ class InputGuardrailExecutor(Executor):
     """Deterministic input screen (hard gate, pre-review). Workflow start node."""
 
     @handler
+    @traced_agent("input-guardrail")
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
         tracer = get_active_tracer()
         if tracer:
@@ -280,6 +292,10 @@ class InputGuardrailExecutor(Executor):
             _set_attr(span, "guardrail.query_length", len(state.query))
             try:
                 screen = screen_input(state.query)
+                try:
+                    _emit_screen_guardrail(state.query)
+                except Exception:
+                    pass
                 elapsed = (time.perf_counter() - t0) * 1000
 
                 if not screen.allowed:
@@ -353,6 +369,7 @@ class RBACValidationExecutor(Executor):
     """
 
     @handler
+    @traced_agent("rbac-validator")
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
         tracer = get_active_tracer()
         if tracer:
@@ -441,6 +458,7 @@ class CacheCheckExecutor(Executor):
     """
 
     @handler
+    @traced_agent("cache-check")
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
         tracer = get_active_tracer()
         if tracer:
@@ -896,6 +914,7 @@ class ComplianceExecutor(Executor):
         self._enabled = enabled
 
     @handler
+    @traced_agent("compliance-gate")
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
         tracer = get_active_tracer()
 
@@ -986,8 +1005,12 @@ class ComplianceExecutor(Executor):
                     state.block_stage = "compliance"
                     state.answer = "Request blocked by the Compliance agent (semantic safety review)."
                     state.trail.append("compliance_failed")
-                    _log.warning("Compliance FAIL: %s", verdict[:160],
-                                 extra={"user": state.user_name, "status": "FAIL"})
+                    from src.observability.baggage import get_request_id as _grid
+                    _log.warning("Compliance FAIL req=%s verdict=%s",
+                                 _grid() or "-", verdict[:160],
+                                 extra={"user": state.user_name, "status": "FAIL",
+                                        "request_id": _grid() or "-",
+                                        "verdict": "COMPLIANCE_FAILED"})
                     if tracer:
                         tracer.record_blocked("compliance")
                         tracer.emit_stage(
@@ -997,6 +1020,11 @@ class ComplianceExecutor(Executor):
                             rationale=[verdict[:120]],
                         )
                     record_compliance("FAILED", state.role, elapsed)
+                    if _bk_metrics is not None:
+                        try:
+                            _bk_metrics.record_agent_call("error", "compliance-gate", latency_ms=elapsed)
+                        except Exception:
+                            pass
                     _emit_stream_event({"stage": "compliance", "status": "blocked", "message": "Compliance check failed"})
                     log_state_handoff(
                         "compliance", "END", state, note="compliance failed -> early yield",
@@ -1015,7 +1043,11 @@ class ComplianceExecutor(Executor):
                 _set_ok(span)
 
                 state.trail.append("compliance_pass")
-                _log.info("Compliance PASS", extra={"user": state.user_name, "status": "PASS"})
+                from src.observability.baggage import get_request_id as _grid
+                _log.info("Compliance PASS req=%s", _grid() or "-",
+                          extra={"user": state.user_name, "status": "PASS",
+                                 "request_id": _grid() or "-",
+                                 "verdict": "COMPLIANCE_PASSED"})
                 if tracer:
                     tracer.emit_stage(
                         "compliance", "completed",
@@ -1026,6 +1058,11 @@ class ComplianceExecutor(Executor):
                         ],
                     )
                 record_compliance("PASSED", state.role, elapsed)
+                if _bk_metrics is not None:
+                    try:
+                        _bk_metrics.record_agent_call("success", "compliance-gate", latency_ms=elapsed)
+                    except Exception:
+                        pass
             except Exception as exc:
                 _set_error(span, str(exc)[:200])
                 raise
@@ -1112,6 +1149,7 @@ class DomainExecutor(Executor):
     _HALLUCINATION_RE = re.compile(r'\[(?![A-Z]{2,}[0-9])[A-Za-z][A-Za-z0-9 /-]{1,40}\]')
 
     @handler
+    @traced_agent("domain-processor")
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState]) -> None:
         tracer = get_active_tracer()
         t0 = time.perf_counter()
@@ -1548,6 +1586,14 @@ class DomainExecutor(Executor):
             elif failed:
                 record_a2a_call(_target_node, "ERROR", float(total_ms))
 
+        if _bk_metrics is not None:
+            try:
+                _bk_metrics.record_agent_call(
+                    "error" if failed else "success", "domain-processor",
+                    latency_ms=float((time.perf_counter() - t0) * 1000),
+                )
+            except Exception:
+                pass
         _emit_stream_event({"stage": "domain", "status": "completed", "message": "Domain agent responded"})
         log_state_handoff(
             "domain", "output_redaction", state,
@@ -1561,6 +1607,7 @@ class OutputRedactionExecutor(Executor):
     """Deterministic output redaction (PII). Terminal node — yields the answer."""
 
     @handler
+    @traced_agent("output-redaction")
     async def run(self, state: MeshState, ctx: WorkflowContext[Never, MeshState]) -> None:
         _emit_stream_event({"stage": "output_redaction", "status": "started", "message": "Redacting output..."})
         otel = _mesh_tracer()

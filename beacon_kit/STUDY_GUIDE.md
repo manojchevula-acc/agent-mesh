@@ -9,6 +9,7 @@
 1. [The Problem — Why Observability Was Hard Before](#1-the-problem--why-observability-was-hard-before)
 2. [What is beacon_kit?](#2-what-is-beacon_kit)
 3. [How beacon_kit Solves Each Problem (How / What / Where)](#3-how-beacon_kit-solves-each-problem)
+   - [3.11 Local JSONL File Export (New)](#311-local-jsonl-file-export)
 4. [How to Add beacon_kit to a New Project (5-Step Recipe)](#4-how-to-add-beacon_kit-to-a-new-project)
 5. [File Structure — What Every File Does](#5-file-structure--what-every-file-does)
 6. [Service Integration Map — Before vs After](#6-service-integration-map--before-vs-after)
@@ -142,11 +143,15 @@ handle.shutdown()
 | `OBS_PROFILE` / `EXPORTER_TYPE` | Traces go to | Metrics go to | When to use |
 |---|---|---|---|
 | `grafana` | Grafana Tempo (OTLP/HTTP + Basic auth) | Grafana Mimir | Production / shared infra |
+| `grafana_and_file` | Grafana Tempo **+ local JSONL** | Grafana Mimir **+ local JSONL** | Production with offline backup copy |
+| `file` | Local JSONL files only | Local JSONL files only | Offline dev / no network required |
 | `dev` / `otel_collector` | Local OTLP collector (gRPC :4317) | Same | Local dev with Aspire/Jaeger |
 | `azure_monitor` / `prod` | Azure Application Insights | Azure Monitor | Azure deployments |
 | `pretty` | Rich terminal waterfall | Rich terminal table | Local dev, no collector |
 | `console` | Stdout JSON | Stdout | CI / debugging |
 | `off` | Nothing (no-op) | Nothing | DevUI / test mode |
+
+> For `grafana_and_file` and `file` modes, set `OTEL_FILE_OUTPUT_DIR` (see [Section 3.11](#311-local-jsonl-file-export) and [Section 7](#7-environment-variables-reference)).
 
 **Where it lives:** `beacon_kit/core/exporters.py` — `build_span_exporter()`, `build_metric_exporter()`, `build_log_exporter()`
 
@@ -508,6 +513,107 @@ finally:
 
 ---
 
+### 3.11 Local JSONL File Export
+
+**What problem?** Grafana Cloud requires network connectivity. During development or offline debugging, there is no local copy of spans, metrics, or logs — you must either run a local OTLP collector or inspect the Grafana UI. There is also no way to `grep` raw telemetry data.
+
+**How it works:**
+Three new exporters write every signal to a local JSONL file (one JSON record per line, append mode). Files are auto-created (including parent directories) and thread-safe.
+
+```
+observability/           ← OTEL_FILE_OUTPUT_DIR in .env
+  traces/
+    20260908_143022_agent_mesh_cli.jsonl       ← one file per process
+    20260908_143022_agent_mesh_price_assist.jsonl
+  metrics/
+    20260908_143022_agent_mesh_cli.jsonl
+  logs/
+    20260908_143022_agent_mesh_cli.jsonl
+  compliance/
+    compliance_audit.jsonl                     ← Layer 3 HMAC-signed chain
+```
+
+**Filename convention:** `{YYYYMMDD}_{HHMMSS}_{service_name}[_{session_id}].jsonl`
+The timestamp is fixed at process startup so all signals from one run share the same prefix.
+
+**Dual-export mode (`grafana_and_file`):**
+When `OBS_PROFILE=grafana_and_file`, beacon_kit wires two processors simultaneously:
+- **Primary (Grafana):** `BatchSpanProcessor` → Grafana Tempo; `BatchLogRecordProcessor` → Grafana Loki; `PeriodicExportingMetricReader(30s)` → Grafana Mimir
+- **Secondary (file):** `SimpleSpanProcessor` → local JSONL (written immediately when span ends); `SimpleLogRecordProcessor` → local JSONL (written immediately on emit); `PeriodicExportingMetricReader(15s)` → local JSONL
+
+The file sink uses `Simple*Processor` (not `Batch*Processor`) so records are written immediately to disk — they are not lost if the process exits before a batch flush timer fires.
+
+**Sample span record (traces JSONL):**
+```json
+{
+  "ts": "2026-09-08T14:30:22.123456Z",
+  "trace_id": "0xabc123...",
+  "span_id": "0x456def...",
+  "parent_span_id": "0x789...",
+  "name": "a2a.price_assist",
+  "kind": "INTERNAL",
+  "start_ms": 1788870835530.0,
+  "duration_ms": 427.3,
+  "status": "OK",
+  "attributes": {"agent.name": "PriceAssistAgent", "agent.latency_ms": 427.3},
+  "events": [],
+  "resource": {"service.name": "agent_mesh_price_assist"}
+}
+```
+
+**Sample metric record (metrics JSONL):**
+```json
+{
+  "ts": "2026-09-08T14:30:52.000Z",
+  "name": "fab.a2a.calls.total",
+  "kind": "counter",
+  "unit": "{request}",
+  "attributes": {"target_node": "data_agent", "result": "SUCCESS"},
+  "value": 3
+}
+```
+
+**Sample log record (logs JSONL):**
+```json
+{
+  "ts": "2026-09-08T14:30:22.001Z",
+  "level": "INFO",
+  "logger": "mesh.a2a",
+  "trace_id": "0xabc123...",
+  "span_id": "0x456def...",
+  "msg": "A2A call node=price_assist ok (427 ms, 68 chars)",
+  "attributes": {"node": "price_assist", "status": "SUCCESS", "request_id": "A3F2B1C0"}
+}
+```
+
+**Debugging with local files:**
+```bash
+# Find all log lines for a specific request
+grep "req=A3F2B1C0" observability/logs/*.jsonl
+
+# Find all ERROR spans
+grep '"status":"ERROR"' observability/traces/*.jsonl | python -m json.tool
+
+# Watch metrics as they arrive (flushes every 15 s)
+tail -f observability/metrics/20260908_*_agent_mesh_cli.jsonl
+```
+
+**Logger namespace coverage:**
+beacon_kit's OTEL `LoggingHandler` is attached to these Python logger namespaces so their records flow through the file exporter automatically:
+`beacon_kit`, `simple_project`, `mesh`, `src`, `agent_mesh`
+
+This means all `mesh.a2a`, `mesh.workflow`, `mesh.agent`, `src.agents.*` log calls are captured without any changes to call sites.
+
+**Where it lives:**
+- `beacon_kit/core/file_exporters.py` — `FileSpanExporter`, `FileMetricExporter`, `FileLogExporter`
+- `beacon_kit/core/provider.py` — dual-export wiring (lines ~94–170)
+- `beacon_kit/core/config.py` — `file_output_dir`, `file_session_id`, `file_path(signal)`
+
+**Important implementation note — `MetricExporter` subclasses must call `super().__init__()`:**
+`PeriodicExportingMetricReader` reads `exporter._preferred_temporality` directly (not via the property) in OTEL SDK 1.42+. If a custom `MetricExporter` does not call `super().__init__()`, this attribute is never set, the reader constructor crashes silently (inside a `try/except`), and the metric file stays at 0 bytes with no error message. `FileMetricExporter` calls `super().__init__()` as its first line for exactly this reason.
+
+---
+
 ## 4. How to Add beacon_kit to a New Project
 
 Follow these 5 steps in order. Each step takes less than 5 minutes.
@@ -644,6 +750,7 @@ beacon_kit/
 │   ├── config.py                TelemetryConfig — all settings, reads from env vars
 │   ├── provider.py              setup_telemetry(), flush_telemetry(), TelemetryHandle
 │   ├── exporters.py             ExporterFactory — builds span/metric/log exporters per profile
+│   ├── file_exporters.py        FileSpanExporter, FileMetricExporter, FileLogExporter (local JSONL)
 │   └── pretty_exporter.py       Rich terminal waterfall exporter for local dev
 │
 ├── decorators/
@@ -724,7 +831,7 @@ The entire `agent-mesh/src/observability/` directory is **untouched** — all or
 
 | Environment Variable | Maps to | Default | Notes |
 |---|---|---|---|
-| `OBS_PROFILE` | `exporter_type` | `console` | Agent-mesh convention. `grafana`, `dev`, `prod`, `off` |
+| `OBS_PROFILE` | `exporter_type` | `console` | Agent-mesh convention. `grafana`, `grafana_and_file`, `file`, `dev`, `prod`, `off` |
 | `EXPORTER_TYPE` | `exporter_type` | `console` | beacon_kit native. Takes priority over `OBS_PROFILE` |
 | `GRAFANA_OTLP_ENDPOINT` | `otel_endpoint` | — | Grafana Cloud OTLP/HTTP gateway URL |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `otel_endpoint` (fallback) | `http://localhost:4317` | Local OTLP collector (used with `OBS_PROFILE=dev`) |
@@ -742,6 +849,8 @@ The entire `agent-mesh/src/observability/` directory is **untouched** — all or
 | `COMPLIANCE_STORE` | `compliance_store` | `compliance_events.jsonl` | Path to compliance JSONL file |
 | `COMPLIANCE_HMAC_KEY` | `compliance_hmac_key` | `dev-insecure-key-...` | HMAC key for audit signing. Must be changed in prod |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | `azure_connection_string` | `""` | Azure Monitor connection string (prod only) |
+| `OTEL_FILE_OUTPUT_DIR` | `file_output_dir` | `""` | Root directory for local JSONL files. Set to `../observability` from agent-mesh/. Subdirs `traces/`, `metrics/`, `logs/` are auto-created. When non-empty, a secondary file processor is wired alongside the primary exporter. |
+| `OTEL_FILE_SESSION_ID` | `file_session_id` | `""` | Optional label appended to filenames: `YYYYMMDD_HHMMSS_{service}_{session_id}.jsonl`. Useful for tagging individual test runs. |
 
 ---
 

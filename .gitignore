@@ -13,7 +13,9 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-
+observability/
+agent-mesh/compliance_events.jsonl
+beacon_kit/examples/compliance_audit.jsonl
 # ── Secrets & Environment Files ───────────────────────────────────────────────
 .env
 .env.backup

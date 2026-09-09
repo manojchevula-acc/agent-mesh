@@ -16,6 +16,12 @@ import re
 from dataclasses import dataclass, field
 from typing import List
 
+try:
+    from beacon_kit import guardrail_check as _guardrail_check
+    _BK_AVAILABLE = True
+except Exception:
+    _BK_AVAILABLE = False
+
 # --- Pattern banks -----------------------------------------------------------
 
 _INJECTION_PATTERNS = [
@@ -117,3 +123,14 @@ def screen_input(text: str) -> GuardrailResult:
         violations.extend(destr)
 
     return GuardrailResult(allowed=not violations, violations=violations, categories=categories)
+
+
+if _BK_AVAILABLE:
+    @_guardrail_check(rule_id="input_screen", action_on_block="warn")
+    def _emit_screen_guardrail(text: str) -> tuple:
+        r = screen_input(text)
+        return (not r.allowed, r.reason)
+else:
+    def _emit_screen_guardrail(text: str) -> tuple:  # type: ignore[misc]
+        r = screen_input(text)
+        return (not r.allowed, r.reason)

@@ -76,7 +76,13 @@ class FileSpanExporter(SpanExporter):
                         "events": [
                             {
                                 "name": e.name,
-                                "ts": _now_iso(),
+                                "ts": (
+                                    datetime.fromtimestamp(
+                                        e.time_unix_nano / 1e9, tz=timezone.utc
+                                    ).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+                                    if getattr(e, "time_unix_nano", None)
+                                    else _now_iso()
+                                ),
                                 "attributes": dict(e.attributes) if e.attributes else {},
                             }
                             for e in (span.events or [])
@@ -108,6 +114,10 @@ class FileMetricExporter(MetricExporter):
     """Appends one JSONL line per data point on every periodic flush."""
 
     def __init__(self, path: str) -> None:
+        # Must call super().__init__() — MetricExporter stores _preferred_temporality
+        # and _preferred_aggregation as instance attrs that PeriodicExportingMetricReader
+        # reads directly. Without this call those attrs don't exist and the reader crashes.
+        super().__init__()
         self._path = path
         self._lock = threading.Lock()
         try:

@@ -41,12 +41,18 @@ if project_root not in sys.path:
 
 os.environ.setdefault("PYTHONWARNINGS", "ignore")
 
+# Load .env before beacon_kit reads OBS_PROFILE / COMPLIANCE_STORE — otherwise
+# those env vars are missing and exporters fall back to wrong defaults.
+from dotenv import load_dotenv
+load_dotenv(pathlib.Path(__file__).resolve().parent / ".env", override=False)
+
 # BEACON_KIT: replaced by beacon_kit setup_telemetry (reads OBS_PROFILE/GRAFANA_* from .env)
 # from src.observability import setup_observability
 # setup_observability(service_name="agent_mesh_api")
-from beacon_kit import setup_telemetry, TelemetryConfig, flush_telemetry
+from beacon_kit import setup_telemetry, TelemetryConfig, flush_telemetry, set_default_compliance_config
 from beacon_kit.middleware.fastapi import TelemetryMiddleware
 _bk_handle = setup_telemetry(TelemetryConfig.from_env(service_name="agent_mesh_api"))
+set_default_compliance_config(TelemetryConfig.from_env())
 
 import httpx
 import uvicorn

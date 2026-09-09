@@ -145,10 +145,15 @@ def setup_telemetry(config: "TelemetryConfig") -> TelemetryHandle:
         logger_provider = LoggerProvider(resource=resource)
         logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
 
-        # Secondary file log processor for dual-export
+        # Secondary file log processor — SimpleLogRecordProcessor writes immediately
+        # so records aren't lost when a process exits before the batch timer fires.
         if _file_log_exp is not None:
             try:
-                logger_provider.add_log_record_processor(BatchLogRecordProcessor(_file_log_exp))
+                try:
+                    from opentelemetry.sdk._logs.export import SimpleLogRecordProcessor
+                    logger_provider.add_log_record_processor(SimpleLogRecordProcessor(_file_log_exp))
+                except ImportError:
+                    logger_provider.add_log_record_processor(BatchLogRecordProcessor(_file_log_exp))
             except Exception:
                 pass
 

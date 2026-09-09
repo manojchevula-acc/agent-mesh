@@ -243,14 +243,16 @@ class AuditMiddleware(AgentMiddleware):
             # 6. Structured, trace-correlated application log line.
             try:
                 if status == "ERROR":
-                    _log.error("agent=%s status=ERROR latency_ms=%d error=%s",
-                               agent_name, latency_ms, error_message,
+                    _log.error("agent=%s status=ERROR latency_ms=%d req=%s error=%s",
+                               agent_name, latency_ms, request_id, error_message,
                                extra={"agent": agent_name, "session_id": session_id,
-                                      "status": status})
+                                      "status": status, "request_id": request_id,
+                                      "latency_ms": latency_ms})
                 else:
-                    _log.info("agent=%s status=%s latency_ms=%d",
-                              agent_name, status, latency_ms,
+                    _log.info("agent=%s status=%s latency_ms=%d req=%s",
+                              agent_name, status, latency_ms, request_id,
                               extra={"agent": agent_name, "session_id": session_id,
-                                     "status": status})
+                                     "status": status, "request_id": request_id,
+                                     "latency_ms": latency_ms})
             except Exception:
                 pass

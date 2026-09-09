@@ -179,9 +179,10 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
         # workflow/executor/agent/A2A spans become children of this one.
         span_cm = _root_span(user, query, session_id, request_id)
         with span_cm as root_span:
-            _log.info("Request start user=%s role=%s query_len=%d req=%s",
-                      user.username, user.role.value, len(query), request_id,
-                      extra={"user": user.username, "session_id": session_id})
+            _log.info("Request start user=%s role=%s req=%s query=%s",
+                      user.username, user.role.value, request_id, query[:150],
+                      extra={"user": user.username, "role": user.role.value,
+                             "request_id": request_id, "session_id": session_id})
             events = await workflow.run(initial)
 
         final = _final_state(events)
@@ -190,10 +191,24 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
         duration_ms = (time.perf_counter() - t0) * 1000
         if final is None:
             record_mesh_request("ERROR", "internal_error", duration_ms)
+            _log.error("Request done req=%s user=%s duration_ms=%d outcome=ERROR",
+                       request_id, user.username, int(duration_ms),
+                       extra={"request_id": request_id, "user": user.username,
+                              "outcome": "ERROR", "duration_ms": int(duration_ms)})
         elif final.blocked:
             record_mesh_request("BLOCKED", final.block_stage or "none", duration_ms)
+            _log.info("Request done req=%s user=%s duration_ms=%d outcome=BLOCKED block_stage=%s",
+                      request_id, user.username, int(duration_ms), final.block_stage or "none",
+                      extra={"request_id": request_id, "user": user.username,
+                             "outcome": "BLOCKED", "block_stage": final.block_stage or "none",
+                             "duration_ms": int(duration_ms)})
         else:
             record_mesh_request("SUCCESS", "none", duration_ms)
+            _log.info("Request done req=%s user=%s duration_ms=%d outcome=SUCCESS answer=%s",
+                      request_id, user.username, int(duration_ms),
+                      (final.answer or "")[:200],
+                      extra={"request_id": request_id, "user": user.username,
+                             "outcome": "SUCCESS", "duration_ms": int(duration_ms)})
         detach_baggage(_baggage_token)
 
     if final is None:

@@ -25,8 +25,9 @@ load_dotenv(pathlib.Path(__file__).resolve().parent / ".env", override=False)
 # BEACON_KIT: replaced by beacon_kit setup_telemetry (reads OBS_PROFILE from .env)
 # from src.observability import setup_observability
 # setup_observability(service_name="agent_mesh_cli")
-from beacon_kit import setup_telemetry, TelemetryConfig
+from beacon_kit import setup_telemetry, TelemetryConfig, set_default_compliance_config
 _bk_handle = setup_telemetry(TelemetryConfig.from_env(service_name="agent_mesh_cli"))
+set_default_compliance_config(TelemetryConfig.from_env())
 
 from rich.console import Console
 from rich.panel import Panel
