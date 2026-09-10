@@ -115,7 +115,7 @@ def validate_cypher(cypher):
         if relationship not in ALLOWED_RELATIONSHIPS:
             return False
 
-        # Check properties such as:
+    # Check properties such as:
     # c.customer_id
     # p.product_name
     dotted_properties = re.findall(

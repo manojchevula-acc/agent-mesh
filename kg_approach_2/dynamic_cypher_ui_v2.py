@@ -14,98 +14,6 @@ st.set_page_config(
     layout="wide"
 )
 
-st.markdown(
-    """
-    <style>
-
-    /* Overall page */
-    .stApp {
-        background: #faf8fe;
-    }
-
-    /* Main title */
-    .main-title {
-        color: #460073;
-        font-size: 2rem;
-        font-weight: 800;
-        margin-bottom: 0.15rem;
-    }
-
-    .main-subtitle {
-        color: #6b6b7b;
-        font-size: 0.95rem;
-        margin-bottom: 1.2rem;
-    }
-
-    /* Welcome card */
-    .welcome-card {
-        background: linear-gradient(135deg, #f4eefc, #ffffff);
-        border: 1px solid #e6dbf7;
-        border-left: 5px solid #a100ff;
-        border-radius: 14px;
-        padding: 1.3rem 1.5rem;
-        margin-bottom: 1.2rem;
-        box-shadow: 0 2px 8px rgba(70,0,115,.06);
-    }
-
-    .welcome-title {
-        color: #460073;
-        font-size: 1.25rem;
-        font-weight: 750;
-    }
-
-    .welcome-text {
-        color: #5f5f6f;
-        margin-top: .35rem;
-        font-size: .92rem;
-    }
-
-    /* Assistant answer */
-    .answer-card {
-        background: #ffffff;
-        border: 1px solid #e6dbf7;
-        border-left: 4px solid #a100ff;
-        border-radius: 12px;
-        padding: 1rem 1.2rem;
-        margin: .35rem 0 .8rem;
-        box-shadow: 0 2px 7px rgba(70,0,115,.05);
-    }
-
-    .answer-label {
-        color: #460073;
-        font-size: .78rem;
-        font-weight: 750;
-        text-transform: uppercase;
-        letter-spacing: .04em;
-        margin-bottom: .45rem;
-    }
-
-    /* Suggested question buttons */
-    div[data-testid="stButton"] > button {
-        border-radius: 10px;
-        border: 1px solid #e6dbf7;
-        background: #ffffff;
-        color: #460073;
-        min-height: 48px;
-    }
-
-    div[data-testid="stButton"] > button:hover {
-        border-color: #a100ff;
-        background: #f4eefc;
-        color: #a100ff;
-    }
-
-    /* Expanders */
-    div[data-testid="stExpander"] {
-        border: 1px solid #e6dbf7;
-        border-radius: 10px;
-        background: #ffffff;
-    }
-
-    </style>
-    """,
-    unsafe_allow_html=True
-)
 
 # ---------------------------------------------------------
 # Session state
@@ -171,43 +79,27 @@ with st.sidebar:
 # Main header
 # ---------------------------------------------------------
 
-st.markdown(
-    '<div class="main-title">🤖 Dynamic Cypher AI Assistant</div>',
-    unsafe_allow_html=True
-)
+st.title("🤖 Dynamic Cypher AI Assistant")
 
-st.markdown(
-    '<div class="main-subtitle">'
-    'Ask business questions in natural language. '
-    'No Cypher knowledge required.'
-    '</div>',
-    unsafe_allow_html=True
+st.caption(
+    "Ask business questions in natural language. "
+    "No Cypher knowledge required."
 )
 
 
 # ---------------------------------------------------------
-# Welcome / Suggested questions
+# Welcome message
 # ---------------------------------------------------------
 
 if not st.session_state.messages:
 
-    st.markdown(
-        """
-        <div class="welcome-card">
-            <div class="welcome-title">
-                👋 Ask your business question
-            </div>
-            <div class="welcome-text">
-                Explore customers, deals, products and policy exceptions
-                using natural language. The assistant will find the relevant
-                information from the Knowledge Graph.
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
+    st.info(
+        "👋 Welcome! Ask me questions about customers, deals, "
+        "products, policy exceptions and other information "
+        "available in the Neo4j Knowledge Graph."
     )
 
-    st.markdown("### Suggested questions")
+    st.markdown("### Try a question")
 
     sample_questions = [
         "Which products have more than 5 deals, and how many deals does each have?",
@@ -224,6 +116,7 @@ if not st.session_state.messages:
         ):
             st.session_state.pending_question = question
             st.rerun()
+
 
 # ---------------------------------------------------------
 # Display conversation

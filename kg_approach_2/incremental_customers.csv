@@ -1,0 +1,6 @@
+customer_id,customer_name,customer_segment,industry,region
+CUST001,Acme Corporation,Corporate,Technology,India
+CUST002,Falcon Steel Industries,Corporate,Manufacturing,Dubai
+CUST003,Global Retail Ltd,SME,Retail,India
+CUST004,Tech Solutions Pvt Ltd,Corporate,Technology,India
+CUST005,New Test Customer,SME,Technology,Dubai
