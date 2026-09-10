@@ -2,6 +2,19 @@
 
 from pydantic import BaseModel
 
+# Below this freshness score a chunk is returned with ``freshness_warning=True``.
+#
+# Lives here rather than in ``retrieval/pipeline.py`` so that both the pipeline and
+# ``workflow/executors.py`` can import it without an import cycle — config depends on
+# nothing in either package. ``eval/stage4_generation/retrieval_reuse.py`` imports it
+# too, so the served path and the eval path cannot drift on the value.
+#
+# Deliberately a module constant rather than a ``RetrievalConfig`` field: the
+# executors that read it are constructed with components, not settings, and this
+# threshold has never been tuned per-deployment. Promote it to a field if that
+# changes.
+FRESHNESS_WARNING_THRESHOLD = 0.7
+
 
 class RetrievalConfig(BaseModel):
     # ── Candidate pool ────────────────────────────────────────────────
@@ -31,3 +44,28 @@ class RetrievalConfig(BaseModel):
     # ── Hybrid weights (for DBs that need explicit weights) ───────────
     dense_weight: float = 0.6  # Weight for dense score in fusion
     sparse_weight: float = 0.4  # Weight for sparse score in fusion
+
+    # ── Per-stage timeouts ────────────────────────────────────────────
+    # Budget in seconds for one workflow executor. ``None`` disables the timeout
+    # for that stage, which is the default for all four: this service's own eval
+    # runs take 90-150 s per query on CPU, so any value shipped as a default would
+    # be wrong for somebody. Set them per deployment once you have measured p99.
+    #
+    # Behaviour on expiry differs by stage, and follows the degradation the
+    # components already implement rather than inventing a new policy:
+    #
+    #   rerank        -> truncate to top_k and continue. The reranker already
+    #                    fails soft this way when its model will not load.
+    #   parent_expand -> continue with no parents. ``parent_text`` is optional on
+    #                    every chunk, so the response stays valid.
+    #   encode        -> propagate. Without a query vector there is nothing to
+    #                    search; returning empty would read as "no documents
+    #                    matched", which is a wrong answer rather than an error.
+    #   hybrid_search -> propagate, for the same reason.
+    #
+    # ``assemble`` has no timeout: it is pure CPU over an in-memory list, so a
+    # hang there is a bug that a timeout would mask rather than mitigate.
+    encode_timeout_s: float | None = None
+    search_timeout_s: float | None = None
+    rerank_timeout_s: float | None = None
+    parent_expand_timeout_s: float | None = None

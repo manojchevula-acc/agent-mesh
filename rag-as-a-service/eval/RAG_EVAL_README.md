@@ -253,9 +253,25 @@ pipeline (which combines keyword search and semantic search, then re-ranks
 the results) surface the passage that actually contains the answer, and rank
 it near the top?
 
-**Method:** For each question, the evaluation runs the exact retrieval path
-used in production — the same search logic, re-ranking model, and recency
-adjustments — so the results reflect exactly what a real user would receive.
+**Method:** For each question, the evaluation drives the production retrieval
+*components* — the same searcher, the same re-ranking model, the same recency
+adjustment, on the same instances the service uses — so the ranking reflects
+what a real user would receive.
+
+> **It does not call `RetrievalPipeline.retrieve()`.** `stage3_retrieval/runner.py`
+> invokes `_searcher`, `_reranker` and `_freshness` directly, one pass, and skips
+> parent expansion (which attaches text without reordering anything). This is
+> deliberate — it keeps the run cheap and lets recall be measured deeper than
+> production returns — but it means **stage 3 cannot detect a regression in the
+> orchestration layer**: the MAF workflow is constructed and never run.
+>
+> Two consequences worth knowing before you trust a green stage 3:
+>
+> - To check the served path end to end, use `scripts/retrieval_parity.py`, which
+>   replays these same questions through `retrieve()` and diffs the ranking against
+>   a recorded stage 3 run. No LLM required.
+> - A concurrency bug in the workflow was invisible to every stage of this suite,
+>   because all of them run questions sequentially.
 
 **Ground truth is calculated automatically, not hand-reviewed.** A retrieved
 passage is graded relevant when its text contains the facts already recorded

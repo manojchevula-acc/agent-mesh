@@ -11,10 +11,11 @@ from gernas_rag.config.settings import Settings
 from gernas_rag.generation.generator import ResponseGenerator
 from gernas_rag.models.chunk import EmbeddedChunk
 from gernas_rag.retrieval.pipeline import RetrievalPipeline
+from gernas_rag.storage.search_history_store import LocalSearchHistoryStore
 
 
 @pytest.fixture
-def app(settings, fake_embedder, fake_vectordb, fake_llm, sample_chunk):
+def app(settings, fake_embedder, fake_vectordb, fake_llm, sample_chunk, tmp_path):
     settings = Settings(_env_file=None, redis_enabled=False, api_key=None)  # type: ignore[call-arg]
     app = FastAPI()
     app.add_middleware(RequestIDMiddleware)
@@ -29,6 +30,11 @@ def app(settings, fake_embedder, fake_vectordb, fake_llm, sample_chunk):
     app.state.cache = RAGCache(settings.redis_url, 900, enabled=False)
     app.state.retrieval_pipeline = RetrievalPipeline(settings, fake_embedder, fake_vectordb)
     app.state.generator = ResponseGenerator(settings, fake_llm)
+    # The router records every search to history in a background task, so this has
+    # to be present even though no test here asserts on it — deps.py resolves it
+    # from app.state on the request path. Writing under tmp_path keeps each test's
+    # history isolated and cleaned up.
+    app.state.search_history_store = LocalSearchHistoryStore(tmp_path)
     return app
 
 

@@ -36,16 +36,16 @@ window than from an ``artifact_ref`` that resolves to nothing.
 
 from __future__ import annotations
 
+# FRESHNESS_WARNING_THRESHOLD is imported, not mirrored: it is the same constant the
+# served path uses to set `freshness_warning`, so a reused stage-3 ranking and a live
+# retrieval cannot disagree about which chunks are stale.
+from gernas_rag.config.retrieval import FRESHNESS_WARNING_THRESHOLD
 from gernas_rag.config.settings import Settings
 from gernas_rag.models.retrieval import RetrievedChunk
 from gernas_rag.retrieval.freshness import FreshnessFilter
 from gernas_rag.vectordb.base import BaseVectorDB, SearchResult
 
 from ..core.models import RankedHit
-
-# Mirrors RetrievalPipeline's own threshold (src/gernas_rag/retrieval/pipeline.py) —
-# duplicated rather than imported since that constant is module-private there.
-_FRESHNESS_WARNING_THRESHOLD = 0.7
 
 # Fields that change *what the ranking would be*, not just how deep it's read —
 # a mismatch here means the cached order can't be trusted to represent current
@@ -95,7 +95,7 @@ def _freshness_warning(effective_date: str, freshness: FreshnessFilter) -> bool:
     """
     probe = SearchResult(chunk_id="", text="", score=1.0, metadata={"effective_date": effective_date}, rank=0)
     (scored,) = freshness.apply([probe])
-    return scored.metadata.get("freshness_score", 1.0) < _FRESHNESS_WARNING_THRESHOLD
+    return scored.metadata.get("freshness_score", 1.0) < FRESHNESS_WARNING_THRESHOLD
 
 
 async def build_reused_chunks(

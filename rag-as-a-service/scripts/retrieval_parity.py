@@ -74,7 +74,11 @@ from gernas_rag.models.retrieval import DocumentFilter, RetrieveRequest  # noqa:
 from gernas_rag.retrieval.pipeline import RetrievalPipeline  # noqa: E402
 from gernas_rag.vectordb.factory import get_vectordb  # noqa: E402
 
-DEFAULT_BASELINE = Path("data/eval/runs/stage3_retrieval_run.json")
+# The frozen, checksummed, version-controlled baseline — see eval/baselines/README.md.
+# Deliberately NOT under data/, which is gitignored and is overwritten by ordinary eval
+# runs: a gate whose reference can be silently rewritten, or which is missing from a
+# fresh clone, is not a gate.
+DEFAULT_BASELINE = Path("eval/baselines/stage3_retrieval_run.json")
 
 
 def _identity(source: str, clause: str, modality: str, text: str) -> tuple[str, str, str, str]:

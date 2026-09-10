@@ -8,14 +8,17 @@ empty results, reranker fallback, and — most importantly — that an executor'
 exception propagates out of ``workflow.run()`` unchanged.
 """
 
+import asyncio
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from gernas_rag.config.embedding import EmbeddingProvider
+from gernas_rag.config.retrieval import FRESHNESS_WARNING_THRESHOLD
 from gernas_rag.models.chunk import Chunk, ChunkMetadata, EmbeddedChunk, Modality
 from gernas_rag.models.retrieval import DocumentFilter, RetrieveRequest
-from gernas_rag.retrieval.pipeline import _FRESHNESS_WARNING_THRESHOLD, RetrievalPipeline
+from gernas_rag.retrieval.pipeline import RetrievalPipeline
 from gernas_rag.vectordb.base import SearchResult
 
 
@@ -114,16 +117,30 @@ async def pipeline(settings, fake_embedder, fake_vectordb, fake_reranker):
     return RetrievalPipeline(settings, fake_embedder, fake_vectordb)
 
 
-async def test_workflow_is_built_and_reused(pipeline):
-    """MAF workflows are immutable and built once. Rebuilding per request would be
-    a silent performance regression."""
-    first = pipeline._workflow
-    assert first is not None
+async def test_workflow_is_built_per_request_components_are_not(pipeline):
+    """A fresh Workflow per request; the expensive components shared across them.
+
+    This asserts the shape of the fix for the concurrency bug below. MAF refuses a
+    second concurrent ``run()`` on one Workflow instance, so caching the Workflow
+    on the pipeline — as this class originally did — breaks under any overlapping
+    load. What must *not* be rebuilt is the embedder, cross-encoder and vector DB
+    client: those load models and hold connections, and rebuilding them per request
+    would turn a correctness fix into a performance disaster.
+    """
+    first = pipeline._build_workflow()
+    second = pipeline._build_workflow()
+    assert first is not second, "Workflow must not be cached — see _build_workflow's docstring"
+
+    embedder, searcher = pipeline._embedder, pipeline._searcher
+    reranker, freshness = pipeline._reranker, pipeline._freshness
 
     await pipeline.retrieve(RetrieveRequest(query="first call"))
     await pipeline.retrieve(RetrieveRequest(query="second call"))
 
-    assert pipeline._workflow is first
+    assert pipeline._embedder is embedder
+    assert pipeline._searcher is searcher
+    assert pipeline._reranker is reranker
+    assert pipeline._freshness is freshness
 
 
 @pytest.mark.parametrize(
@@ -185,7 +202,7 @@ async def test_freshness_warning_matches_threshold(pipeline):
     assert stale, "corpus produced no stale chunks"
     assert all(c.freshness_warning for c in stale)
     assert not any(c.freshness_warning for c in fresh)
-    assert _FRESHNESS_WARNING_THRESHOLD == 0.7
+    assert FRESHNESS_WARNING_THRESHOLD == 0.7
 
 
 async def test_multimodal_metadata_preserved(pipeline):
@@ -288,3 +305,183 @@ async def test_stage3_private_attrs_survive(pipeline):
     assert pipeline._searcher is not None
     assert pipeline._freshness is not None
     assert hasattr(pipeline, "_reranker")
+
+
+class QueryAwareReranker:
+    """A reranker whose ordering is a deterministic function of the query.
+
+    ``FakeReranker`` sorts by text length, which is query-blind: every query yields
+    the same ranking, so a concurrency test using it would pass even if every
+    request returned another request's answer. Character overlap is no better here,
+    because this corpus's chunks are near-identical strings.
+
+    So the key is ``sha256(query + chunk_id)``: not a plausible relevance function,
+    but it makes each query's ranking distinct and reproducible, which is exactly
+    what a contamination test needs. sha256 rather than ``hash()`` because the
+    latter is salted per interpreter run and would make failures unreproducible.
+    """
+
+    async def rerank(self, query: str, results: list[SearchResult], top_n: int) -> list[SearchResult]:
+        def key(r: SearchResult) -> str:
+            return hashlib.sha256(f"{query}|{r.chunk_id}".encode()).hexdigest()
+
+        ranked = sorted(results, key=key)[:top_n]
+        return [
+            SearchResult(r.chunk_id, r.text, r.score, r.metadata, i) for i, r in enumerate(ranked)
+        ]
+
+
+async def test_concurrent_requests_do_not_cross_contaminate(
+    monkeypatch, settings, fake_embedder, fake_vectordb
+):
+    """Overlapping requests must each get their own answer.
+
+    This is the load-bearing safety property of the whole design, and it caught a
+    real production bug. The pipeline originally built one ``Workflow`` in
+    ``__init__`` and reused it, documented as safe because per-request data travels
+    on ``RagState``. MAF disagrees: ``Workflow.run()`` raises
+
+        WorkflowException: Workflow is already running; concurrent runs are not
+        allowed on the same instance.
+
+    so the *second* of any two overlapping ``/api/v1/retrieve`` calls failed with
+    HTTP 500. Every test and eval ran sequentially, so nothing saw it. The fix is
+    a fresh Workflow per request (``RetrievalPipeline._build_workflow``).
+
+    Each query runs twice — alone, then in a concurrent batch — and the two must
+    agree. A query-aware reranker makes the rankings genuinely distinct, so a
+    swapped or shared state would change the answer rather than go unnoticed.
+    """
+    monkeypatch.setattr(
+        "gernas_rag.retrieval.pipeline.Reranker.from_embedding_config",
+        classmethod(lambda cls, cfg: QueryAwareReranker()),
+    )
+    await _seed(fake_vectordb)
+    pipeline = RetrievalPipeline(settings, fake_embedder, fake_vectordb)
+
+    queries = [
+        "credit pricing floor by rating",
+        "concentration limits by sector",
+        "term loan eligibility criteria",
+        "model risk escalation thresholds",
+        "commitment fee schedule",
+        "zzzz",
+    ]
+    requests = [RetrieveRequest(query=q, top_k=5) for q in queries]
+
+    def fingerprint(response):
+        return [(c.source, c.clause_reference, c.score) for c in response.chunks]
+
+    sequential = [fingerprint(await pipeline.retrieve(r)) for r in requests]
+    concurrent = [
+        fingerprint(r) for r in await asyncio.gather(*(pipeline.retrieve(r) for r in requests))
+    ]
+
+    assert concurrent == sequential
+    assert all(sequential), "corpus produced no results — the test would be vacuous"
+    # Without this, the comparison above would hold trivially even if every request
+    # returned another request's answer.
+    assert len({tuple(f) for f in sequential}) > 1, "rankings are query-blind; test proves nothing"
+
+
+async def test_rerank_timeout_degrades_to_fused_order(
+    monkeypatch, settings, fake_embedder, fake_vectordb
+):
+    """A slow cross-encoder must cost ranking quality, not the whole request.
+
+    This mirrors the fallback reranker.py already takes when its model will not
+    load — the candidates are still relevant, just in RRF order rather than
+    cross-encoder order. Returning a usable answer beats a 500.
+    """
+
+    class SlowReranker:
+        async def rerank(self, query, results, top_n):
+            await asyncio.sleep(5)
+            raise AssertionError("should have been cancelled by the timeout")
+
+    monkeypatch.setattr(
+        "gernas_rag.retrieval.pipeline.Reranker.from_embedding_config",
+        classmethod(lambda cls, cfg: SlowReranker()),
+    )
+    await _seed(fake_vectordb)
+    tuned = settings.model_copy(deep=True)
+    tuned.retrieval.rerank_timeout_s = 0.05
+    pipeline = RetrievalPipeline(tuned, fake_embedder, fake_vectordb)
+
+    response = await pipeline.retrieve(RetrieveRequest(query="pricing floor", top_k=5))
+
+    assert 0 < len(response.chunks) <= 5
+    assert [c.score for c in response.chunks] == sorted(
+        (c.score for c in response.chunks), reverse=True
+    )
+
+
+async def test_parent_expand_timeout_degrades_to_no_parents(
+    settings, fake_embedder, fake_vectordb, fake_reranker
+):
+    """parent_text is optional on every chunk, so a slow lookup drops the parents
+    and leaves the ranking — the part that matters — intact."""
+    await _seed(fake_vectordb)
+
+    async def slow_get_by_ids(ids):
+        await asyncio.sleep(5)
+        raise AssertionError("should have been cancelled by the timeout")
+
+    fake_vectordb.get_by_ids = slow_get_by_ids
+    tuned = settings.model_copy(deep=True)
+    tuned.retrieval.parent_expand_timeout_s = 0.05
+    pipeline = RetrievalPipeline(tuned, fake_embedder, fake_vectordb)
+
+    response = await pipeline.retrieve(
+        RetrieveRequest(query="pricing floor", top_k=5, include_parent=True)
+    )
+
+    assert response.chunks, "ranking must survive a parent-expansion timeout"
+    assert all(c.parent_text is None for c in response.chunks)
+
+
+async def test_encode_timeout_propagates(settings, fake_embedder, fake_vectordb, fake_reranker):
+    """No safe degradation exists for encode: without a query vector there is
+    nothing to search, and an empty result set would read as 'no documents
+    matched' — a wrong answer rather than an error."""
+    await _seed(fake_vectordb)
+
+    async def slow_embed_query(text):
+        await asyncio.sleep(5)
+
+    fake_embedder.embed_query = slow_embed_query
+    tuned = settings.model_copy(deep=True)
+    tuned.retrieval.encode_timeout_s = 0.05
+    pipeline = RetrievalPipeline(tuned, fake_embedder, fake_vectordb)
+
+    with pytest.raises(asyncio.TimeoutError):
+        await pipeline.retrieve(RetrieveRequest(query="pricing floor"))
+
+
+async def test_timeouts_are_off_by_default(settings):
+    """Shipping a default would be guessing: this service's own eval takes 90-150 s
+    per query on CPU, so any number baked in here would be wrong for someone."""
+    assert settings.retrieval.encode_timeout_s is None
+    assert settings.retrieval.search_timeout_s is None
+    assert settings.retrieval.rerank_timeout_s is None
+    assert settings.retrieval.parent_expand_timeout_s is None
+
+
+async def test_umbrella_agent_framework_is_not_installed():
+    """`agent-framework-core` only — never the `agent-framework` umbrella.
+
+    The umbrella resolves to 132 packages and uninstalls 14, downgrading redis
+    8.0.0 -> 7.1.1 (this service caches on redis) and major-bumping openai 2.x ->
+    3.x, to supply exactly the four names the workflow imports. The reasoning is
+    recorded in pyproject.toml; this is the assertion that enforces it, because a
+    comment cannot fail a build.
+
+    If this fails, someone widened the dependency. Re-read pyproject.toml before
+    changing this test.
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    version("agent-framework-core")  # Raises if the real dependency went missing.
+
+    with pytest.raises(PackageNotFoundError):
+        version("agent-framework")

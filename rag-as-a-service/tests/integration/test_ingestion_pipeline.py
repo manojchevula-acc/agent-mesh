@@ -9,7 +9,6 @@ from gernas_rag.ingestion.pipeline import IngestionPipeline
 
 async def test_ingest_file_end_to_end(monkeypatch, fake_embedder, fake_vectordb, sample_extraction):
     settings = Settings(_env_file=None, redis_enabled=False)  # type: ignore[call-arg]
-    pipeline = IngestionPipeline(settings, fake_embedder, fake_vectordb)
 
     # Patch extractor selection to avoid needing Docling / a real file.
     class _FakeExtractor:
@@ -19,10 +18,16 @@ async def test_ingest_file_end_to_end(monkeypatch, fake_embedder, fake_vectordb,
         def supports(self, file_path: Path) -> bool:
             return True
 
+    # Patched BEFORE the pipeline is constructed, not after: IngestionPipeline
+    # resolves its extractor once in __init__ and reuses it for every file (so
+    # Docling's weights load once, not per document). Patching afterwards leaves
+    # the real Docling extractor bound, which then tries to open a path that does
+    # not exist and turns this into an `error` result.
     monkeypatch.setattr(
         "gernas_rag.ingestion.pipeline.get_extractor",
-        lambda config, file_path: _FakeExtractor(),
+        lambda config, file_path, enrichment=None: _FakeExtractor(),
     )
+    pipeline = IngestionPipeline(settings, fake_embedder, fake_vectordb)
 
     result = await pipeline.ingest_file(
         Path("FAB_Credit_Pricing_Policy_v2.4.pdf"),
