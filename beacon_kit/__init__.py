@@ -57,6 +57,7 @@ from beacon_kit.propagation.baggage import inject_baggage, extract_baggage, set_
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 from beacon_kit.logconfig.request_logging import TraceContextFilter, setup_request_logging
+from beacon_kit.core.structured_logger import StructuredLogger, get_logger
 
 # ── Utils ─────────────────────────────────────────────────────────────────────
 from beacon_kit.utils.hashing import hash_inputs, summarize_output
@@ -109,6 +110,8 @@ __all__ = [
     # Logging
     "TraceContextFilter",
     "setup_request_logging",
+    "StructuredLogger",
+    "get_logger",
     # Utils
     "hash_inputs",
     "summarize_output",

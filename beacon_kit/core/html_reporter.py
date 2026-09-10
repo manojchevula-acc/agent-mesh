@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from datetime import datetime, timezone
 from glob import glob
 from typing import Any
@@ -41,16 +42,7 @@ def load_jsonl(path: str) -> list[dict]:
     return records
 
 
-def _glob_signal_dir(base_dir: str, signal: str, source_type: str) -> list[dict]:
-    """Read all *.jsonl files from {base_dir}/{signal}/ and tag each record."""
-    signal_dir = os.path.join(base_dir, signal)
-    records: list[dict] = []
-    for path in sorted(glob(os.path.join(signal_dir, "*.jsonl"))):
-        for rec in load_jsonl(path):
-            rec["_source_type"] = source_type
-            rec["_source_file"] = os.path.basename(path)
-            records.append(rec)
-    return records
+_TS_PREFIX_RE = re.compile(r'^(\d{8}_\d{6})_')
 
 
 def _session_iso(session_ts: str) -> str:
@@ -63,28 +55,70 @@ def _session_iso(session_ts: str) -> str:
     )
 
 
+def _ts_in_window(file_ts: str, session_ts: str, window_minutes: int = 10) -> bool:
+    """True if file_ts is within window_minutes of session_ts.
+
+    Handles the multi-process mesh case where each a2a node has a slightly
+    different startup timestamp (seconds apart), so an exact prefix match would
+    miss companion nodes. Old sessions (minutes away) are excluded.
+    """
+    try:
+        fn_dt = datetime.strptime(file_ts, "%Y%m%d_%H%M%S")
+        sess_dt = datetime.strptime(session_ts, "%Y%m%d_%H%M%S")
+        return abs((fn_dt - sess_dt).total_seconds()) <= window_minutes * 60
+    except (ValueError, OverflowError):
+        return True
+
+
+def _glob_signal_dir(base_dir: str, signal: str, source_type: str, session_ts: str = "") -> list[dict]:
+    """Read *.jsonl files from {base_dir}/{signal}/ and tag each record.
+
+    When session_ts is given:
+    - Timestamped files (e.g. 20260909_114012_service.jsonl): included only if
+      their timestamp is within 10 minutes of session_ts (captures all mesh nodes
+      from the same run while excluding old sessions).
+    - Rolling files (e.g. compliance_audit.jsonl): always read, but records whose
+      timestamp predates session_ts are skipped.
+    """
+    signal_dir = os.path.join(base_dir, signal)
+    session_iso = _session_iso(session_ts)
+    records: list[dict] = []
+    for path in sorted(glob(os.path.join(signal_dir, "*.jsonl"))):
+        filename = os.path.basename(path)
+        m = _TS_PREFIX_RE.match(filename)
+        if session_ts and m and not _ts_in_window(m.group(1), session_ts):
+            continue  # timestamped file from a different session — skip entirely
+        for rec in load_jsonl(path):
+            if session_ts and not m and session_iso:
+                rec_ts = str(rec.get("timestamp") or rec.get("ts") or "")[:19]
+                if rec_ts and rec_ts < session_iso:
+                    continue  # rolling file — skip records before this session
+            rec["_source_type"] = source_type
+            rec["_source_file"] = filename
+            records.append(rec)
+    return records
+
+
 def load_all_sources(
     otel_dir: str = "",
-    audit_trail: str = "",
-    trace_log: str = "",
-    compliance_store: str = "",
     session_ts: str = "",
 ) -> dict[str, list[dict]]:
-    """Load all JSONL observability sources.
+    """Load JSONL observability sources exclusively from otel_dir.
 
-    Session scoping strategy (when session_ts is provided):
-      1. Filter audit_trail records to those with timestamp >= session start.
-         The audit_trail is written by the API server and is the most reliable
-         session anchor — trace_ids propagate across all mesh nodes.
-      2. Collect session_trace_ids from those filtered audit records.
-      3. Filter all other sources (OTel spans/logs/compliance, trace_log) by
-         session_trace_ids. This handles the multi-process mesh case where each
-         a2a node has a slightly different startup timestamp.
+    Only reads files inside the observability folder (traces/, metrics/, logs/,
+    compliance/). Nothing outside that folder is ever touched.
+
+    Session scoping (when session_ts is provided):
+    - Timestamped JSONL files (e.g. 20260909_114012_service.jsonl) are included
+      only when their timestamp is within 10 minutes of session_ts, covering all
+      mesh nodes that started together.
+    - Rolling files (e.g. compliance_audit.jsonl) are read but records before
+      session_ts are dropped.
 
     Pass session_ts="" for full-history mode (no filtering).
 
     Returns a dict with keys: audit, traces, metrics, logs, compliance.
-    Each value is a list of dicts with an added '_source_type' field.
+    audit is always an empty list (kept for backward-compat with build_request_index).
     """
     data: dict[str, list[dict]] = {
         "audit": [],
@@ -93,79 +127,11 @@ def load_all_sources(
         "logs": [],
         "compliance": [],
     }
-
-    session_iso = _session_iso(session_ts)
-
     if otel_dir and os.path.isdir(otel_dir):
-        data["traces"].extend(_glob_signal_dir(otel_dir, "traces", "otel_span"))
-        data["metrics"].extend(_glob_signal_dir(otel_dir, "metrics", "otel_metric"))
-        data["logs"].extend(_glob_signal_dir(otel_dir, "logs", "otel_log"))
-        data["compliance"].extend(_glob_signal_dir(otel_dir, "compliance", "compliance"))
-
-    # Step 1: Load audit trail, filtering to session start time when known.
-    # The audit timestamp is the primary session anchor.
-    for path in filter(None, [audit_trail, "data/audit_trail.jsonl"]):
-        if os.path.exists(path):
-            for rec in load_jsonl(path):
-                if session_iso:
-                    rec_ts = str(rec.get("timestamp") or "")[:19]
-                    if rec_ts and rec_ts < session_iso:
-                        continue
-                rec["_source_type"] = "audit"
-                rec["_source_file"] = os.path.basename(path)
-                data["audit"].append(rec)
-            break
-
-    # Step 2: Build session_trace_ids from AUDIT records only — never from OTel
-    # spans, which would create circular contamination with old-session data.
-    # The audit_trail (timestamp-filtered above) is the reliable session anchor.
-    audit_trace_ids: set[str] = {
-        _norm_tid(r.get("trace_id")) for r in data["audit"] if r.get("trace_id")
-    }
-
-    # Step 3: Filter OTel spans, logs, compliance to session trace_ids.
-    # If session_ts is set but audit found nothing, clear OTel data too — there is
-    # genuinely no session data yet (app just started, no queries run).
-    if session_ts:
-        if audit_trace_ids:
-            data["traces"] = [r for r in data["traces"] if _norm_tid(r.get("trace_id")) in audit_trace_ids]
-            data["logs"] = [r for r in data["logs"] if _norm_tid(r.get("trace_id")) in audit_trace_ids]
-            data["compliance"] = [r for r in data["compliance"] if _norm_tid(r.get("trace_id")) in audit_trace_ids]
-        else:
-            data["traces"] = []
-            data["logs"] = []
-            data["compliance"] = []
-
-    # Legacy trace log — in session mode, only include records whose trace_id
-    # appears in audit_trace_ids. Skip entirely if session mode has no audit data.
-    for path in filter(None, [trace_log, "data/trace_log.jsonl"]):
-        if os.path.exists(path):
-            for rec in load_jsonl(path):
-                if session_ts:
-                    if not audit_trace_ids or _norm_tid(rec.get("trace_id")) not in audit_trace_ids:
-                        continue
-                rec["_source_type"] = "trace_log"
-                rec["_source_file"] = os.path.basename(path)
-                data["traces"].append(rec)
-            break
-
-    # Compliance fallback (root-level file or explicit store path)
-    if not data["compliance"]:
-        for path in filter(None, [
-            compliance_store,
-            "compliance_events.jsonl",
-            "../observability/compliance/compliance_audit.jsonl",
-        ]):
-            if os.path.exists(path):
-                for rec in load_jsonl(path):
-                    if session_ts:
-                        if not audit_trace_ids or _norm_tid(rec.get("trace_id")) not in audit_trace_ids:
-                            continue
-                    rec["_source_type"] = "compliance"
-                    rec["_source_file"] = os.path.basename(path)
-                    data["compliance"].append(rec)
-                break
-
+        data["traces"].extend(_glob_signal_dir(otel_dir, "traces", "otel_span", session_ts))
+        data["metrics"].extend(_glob_signal_dir(otel_dir, "metrics", "otel_metric", session_ts))
+        data["logs"].extend(_glob_signal_dir(otel_dir, "logs", "otel_log", session_ts))
+        data["compliance"].extend(_glob_signal_dir(otel_dir, "compliance", "compliance", session_ts))
     return data
 
 
@@ -405,10 +371,11 @@ def _render_requests(index: dict) -> tuple[str, list[str], list[str]]:
         filter_text = _esc(f"{tid} {user} {' '.join(agents)} {status}".lower())
         agent0 = _esc(agents[0] if agents else "")
 
+        gantt = _render_gantt_bars(spans)
         detail_html = (
             f'<div class="dp">'
             f'<div class="ds"><h4>Trace ID</h4><code>{_esc(tid)}</code></div>'
-            + (f'<div class="ds"><h4>Span Tree ({len(spans)} spans)</h4>{_span_tree(spans)}</div>' if spans else "")
+            + (f'<div class="ds"><h4>Span Timeline ({len(spans)} spans)</h4>{gantt if gantt else _span_tree(spans)}</div>' if spans else "")
             + (f'<div class="ds"><h4>Compliance ({len(comp)} events, {len(triggered)} triggered)</h4>{_mini_compliance_rows(comp)}</div>' if comp else "")
             + (f'<div class="ds"><h4>Logs ({len(logs)} entries)</h4>{_mini_log_rows(logs)}</div>' if logs else "")
             + (f'<div class="ds"><h4>Audit Records</h4>{_mini_audit_rows(audit)}</div>' if audit else "")
@@ -439,15 +406,26 @@ def _render_logs(logs: list[dict]) -> str:
         ts_v = _esc(_ts(r.get("ts") or r.get("timestamp")))
         logger = _esc(r.get("logger") or "")
         msg = _esc(str(r.get("msg") or r.get("message") or ""))
-        tid = _esc(_norm_tid(r.get("trace_id"))[:16])
-        ft = _esc(f"{level} {r.get('logger','')} {r.get('msg','')} {r.get('trace_id','')}".lower())
+        tid_raw = _norm_tid(r.get("trace_id"))
+        tid = _esc(tid_raw[:16])
+        # Structured attribute chips — show key=value pairs from OTel attributes
+        attrs = r.get("attributes") or {}
+        chips_html = ""
+        if isinstance(attrs, dict):
+            chips = []
+            for k, v in list(attrs.items())[:8]:
+                label = _esc(f"{k}={v}")
+                chips.append(f'<span class="ac" onclick="filterByAttr(\'{_esc(k)}\',\'{_esc(str(v))}\')" title="Filter by {_esc(k)}">{label}</span>')
+            chips_html = f'<div class="acs">{"".join(chips)}</div>' if chips else ""
+        tid_link = f'<a class="tl" onclick="jumpToTrace(\'{_esc(tid_raw)}\')" href="#">{tid}</a>' if tid_raw else "—"
+        ft = _esc(f"{level} {r.get('logger','')} {r.get('msg','')} {r.get('trace_id','')} {' '.join(str(v) for v in (attrs.values() if isinstance(attrs, dict) else []))}".lower())
         rows.append(
             f'<tr class="lr" data-filter="{ft}" data-level="{_esc(level)}">'
             f"<td>{ts_v}</td>"
             f"<td>{_level_badge(level)}</td>"
             f'<td class="sm mono">{logger}</td>'
-            f'<td class="lm">{msg}</td>'
-            f'<td class="mono sm">{tid}</td>'
+            f'<td class="lm">{msg}{chips_html}</td>'
+            f'<td class="mono sm">{tid_link}</td>'
             f'<td><button class="tb" onclick="td(this,1)">JSON</button>{_json_pre(r)}</td>'
             f"</tr>"
         )
@@ -487,7 +465,9 @@ def _render_compliance(recs: list[dict]) -> str:
         rule = _esc(r.get("rule_id") or r.get("event_type") or "?")
         ts_v = _esc(_ts(r.get("timestamp")))
         actor = _esc(r.get("actor") or "—")
-        tid = _esc(_norm_tid(r.get("trace_id"))[:16])
+        tid_raw = _norm_tid(r.get("trace_id"))
+        tid_short = tid_raw[:16]
+        tid = f'<a class="tl" onclick="jumpToTrace(\'{_esc(tid_raw)}\')" href="#">{_esc(tid_short)}</a>' if tid_raw else "—"
 
         if triggered:
             badge = '<span class="b be">TRIGGERED</span>'
@@ -508,6 +488,7 @@ def _render_compliance(recs: list[dict]) -> str:
             f'<td><button class="tb" onclick="td(this,1)">JSON</button>{_json_pre(r)}</td>'
             f"</tr>"
         )
+
     return "\n".join(rows)
 
 
@@ -538,6 +519,190 @@ def _render_metrics(recs: list[dict]) -> str:
     return "\n".join(rows)
 
 
+# ─── New render helpers ─────────────────────────────────────────────────────────
+
+def _compute_stats(data: dict, index: dict) -> dict:
+    """Compute summary stats for the dashboard header."""
+    spans = data["traces"]
+    n_total = sum(1 for e in index.values() if e["audit"] or e["spans"])
+    span_ids = {str(s.get("span_id") or "").strip() for s in spans}
+    root_spans = [
+        s for s in spans
+        if not str(s.get("parent_span_id") or "").strip()
+        or str(s.get("parent_span_id") or "").strip() in ("None", "0x0000000000000000", "0")
+        or str(s.get("parent_span_id") or "").strip() not in span_ids
+    ]
+    durations = sorted(
+        float(s.get("duration_ms") or 0) for s in root_spans if s.get("duration_ms") is not None
+    )
+    n_errors = sum(
+        1 for s in spans
+        if str(s.get("status") or "").upper() in ("ERROR", "FAILURE", "FAIL", "FAILED")
+    )
+    n_triggered = sum(1 for r in data["compliance"] if r.get("triggered"))
+    avg_lat = sum(durations) / len(durations) if durations else 0
+    p50 = durations[len(durations) // 2] if durations else 0
+    p95 = durations[min(int(len(durations) * 0.95), len(durations) - 1)] if durations else 0
+    return {
+        "n_total": n_total,
+        "n_errors": n_errors,
+        "n_triggered": n_triggered,
+        "avg_lat": avg_lat,
+        "p50": p50,
+        "p95": p95,
+        "error_rate": (n_errors / len(root_spans) * 100) if root_spans else 0,
+    }
+
+
+def _render_gantt_bars(spans: list[dict]) -> str:
+    """Pure-CSS Gantt timeline — each span is a bar scaled to the trace duration."""
+    if not spans:
+        return ""
+    timed = []
+    for sp in spans:
+        ts_raw = sp.get("ts") or sp.get("timestamp") or ""
+        try:
+            ts_dt = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
+            start_ms: float | None = ts_dt.timestamp() * 1000
+        except (ValueError, AttributeError, TypeError):
+            start_ms = None
+        dur = float(sp.get("duration_ms") or 0)
+        timed.append((start_ms, dur, sp))
+    valid_starts = [t[0] for t in timed if t[0] is not None]
+    if not valid_starts:
+        return ""
+    t0 = min(valid_starts)
+    total_dur = max((s - t0) + d for s, d, _ in timed if s is not None) or 1
+    bars = []
+    for start_ms, dur, sp in timed:
+        offset = (start_ms - t0) if start_ms is not None else 0
+        left_pct = min((offset / total_dur) * 100, 97)
+        width_pct = max((dur / total_dur) * 100, 0.5)
+        if left_pct + width_pct > 100:
+            width_pct = 100 - left_pct
+        name = sp.get("name") or sp.get("event_type") or "span"
+        attrs = sp.get("attributes") or {}
+        svc = (isinstance(attrs, dict) and attrs.get("service.name")) or sp.get("service_name") or ""
+        label = f"{svc} · {name}" if svc else name
+        status = str(sp.get("status") or "").upper()
+        err_cls = " ge" if status in ("ERROR", "FAILURE", "FAIL", "FAILED") else ""
+        dur_s = f"{dur:.0f}ms" if dur else ""
+        bars.append(
+            f'<div class="gl">'
+            f'<div class="gn" title="{_esc(label)}">{_esc(label[:55])}</div>'
+            f'<div class="gt"><div class="gb{err_cls}" style="left:{left_pct:.1f}%;width:{width_pct:.1f}%">'
+            f'<span class="gd">{_esc(dur_s)}</span></div></div>'
+            f'</div>'
+        )
+    total_s = f"{total_dur:.0f}ms"
+    return (
+        f'<div class="gc">'
+        f'<div class="gh"><span class="dim" style="font-size:11px">0ms</span>'
+        f'<span class="dim" style="font-size:11px">Total: {_esc(total_s)}</span></div>'
+        + "".join(bars) + '</div>'
+    )
+
+
+def _render_error_groups(spans: list[dict], logs: list[dict]) -> str:
+    """Group ERROR spans/logs by name — Sentry-style issue list."""
+    groups: dict[str, dict] = {}
+    for sp in spans:
+        if str(sp.get("status") or "").upper() not in ("ERROR", "FAILURE", "FAIL", "FAILED"):
+            continue
+        name = sp.get("name") or sp.get("event_type") or "unknown"
+        g = groups.setdefault(name, {"count": 0, "example_tid": "", "last_ts": ""})
+        g["count"] += 1
+        if not g["example_tid"]:
+            g["example_tid"] = _norm_tid(sp.get("trace_id"))
+        ts = str(sp.get("ts") or sp.get("timestamp") or "")
+        if ts > g["last_ts"]:
+            g["last_ts"] = ts
+    for lg in logs:
+        if str(lg.get("level") or "").upper() != "ERROR":
+            continue
+        name = f"[log] {lg.get('logger') or 'unknown'}"
+        g = groups.setdefault(name, {"count": 0, "example_tid": "", "last_ts": ""})
+        g["count"] += 1
+        if not g["example_tid"]:
+            g["example_tid"] = _norm_tid(lg.get("trace_id"))
+        ts = str(lg.get("ts") or lg.get("timestamp") or "")
+        if ts > g["last_ts"]:
+            g["last_ts"] = ts
+    if not groups:
+        return '<div class="empty"><div class="ic">✅</div><p>No errors in this session.</p></div>'
+    rows = []
+    for name, g in sorted(groups.items(), key=lambda x: -x[1]["count"]):
+        tid = g["example_tid"]
+        tid_short = (tid[:20] + "…") if len(tid) > 20 else tid
+        link = (
+            f'<a class="tl" onclick="jumpToTrace(\'{_esc(tid)}\')" href="#">{_esc(tid_short)}</a>'
+            if tid else "—"
+        )
+        rows.append(
+            f'<tr><td><strong>{_esc(name)}</strong></td>'
+            f'<td class="mono">{g["count"]}</td>'
+            f'<td class="mono sm">{link}</td>'
+            f'<td class="dim sm">{_esc(_ts(g["last_ts"]))}</td></tr>'
+        )
+    return (
+        '<table><thead><tr>'
+        '<th>Span / Event</th><th>Count</th><th>Example Trace</th><th>Last Seen</th>'
+        '</tr></thead>'
+        f'<tbody>{"".join(rows)}</tbody></table>'
+    )
+
+
+def _render_service_map(spans: list[dict]) -> str:
+    """Build a service call adjacency table from span parent→child relationships."""
+    span_to_svc: dict[str, str] = {}
+    for sp in spans:
+        sid = str(sp.get("span_id") or "").strip()
+        attrs = sp.get("attributes") or {}
+        svc = (isinstance(attrs, dict) and attrs.get("service.name")) or sp.get("service_name") or ""
+        if sid and svc:
+            span_to_svc[sid] = svc
+    edges: dict[tuple, dict] = {}
+    for sp in spans:
+        pid = str(sp.get("parent_span_id") or "").strip()
+        if not pid or pid in ("None", "0x0000000000000000", "0"):
+            continue
+        parent_svc = span_to_svc.get(pid, "")
+        attrs = sp.get("attributes") or {}
+        child_svc = (isinstance(attrs, dict) and attrs.get("service.name")) or sp.get("service_name") or ""
+        if not parent_svc or not child_svc or parent_svc == child_svc:
+            continue
+        key = (parent_svc, child_svc)
+        e = edges.setdefault(key, {"count": 0, "total_dur": 0.0, "errors": 0})
+        e["count"] += 1
+        e["total_dur"] += float(sp.get("duration_ms") or 0)
+        if str(sp.get("status") or "").upper() in ("ERROR", "FAILURE", "FAIL", "FAILED"):
+            e["errors"] += 1
+    if not edges:
+        return ""
+    rows = []
+    for (src, dst), e in sorted(edges.items()):
+        avg_dur = e["total_dur"] / e["count"] if e["count"] else 0
+        err_badge = (
+            f'<span class="b be">{e["errors"]} err</span>' if e["errors"]
+            else '<span class="b bs">OK</span>'
+        )
+        rows.append(
+            f'<tr><td class="mono sm">{_esc(src)}</td>'
+            f'<td class="dim" style="text-align:center;font-size:16px">→</td>'
+            f'<td class="mono sm">{_esc(dst)}</td>'
+            f'<td class="mono sm">{e["count"]}</td>'
+            f'<td class="mono sm">{avg_dur:.0f}ms</td>'
+            f'<td>{err_badge}</td></tr>'
+        )
+    return (
+        '<h4 style="color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">Service Call Graph</h4>'
+        '<table style="max-width:640px"><thead><tr>'
+        '<th>From</th><th></th><th>To</th><th>Calls</th><th>Avg Latency</th><th>Status</th>'
+        '</tr></thead>'
+        f'<tbody>{"".join(rows)}</tbody></table>'
+    )
+
+
 # ─── CSS and JS (raw strings — no brace escaping needed) ───────────────────────
 
 _CSS = """
@@ -551,18 +716,23 @@ _CSS = """
 body{background:var(--bg);color:var(--tx);font-family:var(--ff);font-size:14px}
 
 /* Header */
-.hdr{background:var(--bg2);border-bottom:1px solid var(--bd);padding:14px 24px;
-     display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:100}
-.hdr h1{font-size:17px;font-weight:600;color:var(--ac)}
-.hdr .meta{color:var(--dim);font-size:12px}
-.chips{display:flex;gap:8px;margin-left:auto;flex-wrap:wrap}
-.chip{background:var(--bg3);border:1px solid var(--bd);border-radius:20px;
-      padding:3px 10px;font-size:11px;color:var(--dim)}
-.chip.alert{border-color:var(--er);color:var(--er)}
+.hdr{background:var(--bg2);border-bottom:1px solid var(--bd);padding:12px 24px;
+     display:flex;align-items:center;gap:14px;flex-wrap:wrap;position:sticky;top:0;z-index:100}
+.hdr h1{font-size:17px;font-weight:600;color:var(--ac);white-space:nowrap}
+.hdr .meta{color:var(--dim);font-size:12px;white-space:nowrap}
+
+/* Stats bar */
+.sbar{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap}
+.sc{background:var(--bg3);border:1px solid var(--bd);border-radius:8px;
+    padding:6px 14px;min-width:90px;text-align:center}
+.sc.alert{border-color:var(--er)}
+.sv{display:block;font-size:18px;font-weight:700;font-family:var(--fm);line-height:1.2}
+.sv.ok{color:var(--ok)} .sv.er{color:var(--er)} .sv.wn{color:var(--wn)}
+.sl{display:block;font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-top:2px}
 
 /* Tabs */
 .tabs{background:var(--bg2);border-bottom:1px solid var(--bd);padding:0 24px;
-      display:flex;gap:2px;position:sticky;top:53px;z-index:99}
+      display:flex;gap:2px;flex-wrap:wrap;position:sticky;top:57px;z-index:99}
 .tab{background:none;border:none;border-bottom:3px solid transparent;color:var(--dim);
      padding:11px 15px;cursor:pointer;font-size:13px;font-family:var(--ff);transition:all .15s}
 .tab:hover{color:var(--tx)}
@@ -584,7 +754,7 @@ body{background:var(--bg);color:var(--tx);font-family:var(--ff);font-size:14px}
 table{width:100%;border-collapse:collapse;font-size:13px}
 thead th{background:var(--bg3);color:var(--dim);font-weight:500;text-align:left;
   padding:9px 11px;border-bottom:1px solid var(--bd);
-  position:sticky;top:100px;z-index:10;white-space:nowrap}
+  position:sticky;top:104px;z-index:10;white-space:nowrap}
 tbody tr{border-bottom:1px solid var(--bd);transition:background .1s}
 tbody tr:hover{background:var(--bg2)}
 td{padding:8px 11px;vertical-align:top}
@@ -622,6 +792,29 @@ td.lm{word-break:break-word}
     background:var(--bg2);border-radius:var(--r);border-left:2px solid var(--bd);flex-wrap:wrap}
 .sn{font-weight:500;font-size:12px}
 .sd{color:var(--dim);font-size:11px;font-family:var(--fm)}
+
+/* Gantt chart */
+.gc{display:flex;flex-direction:column;gap:4px;font-size:12px}
+.gh{display:flex;justify-content:space-between;margin-bottom:2px;padding:0 2px}
+.gl{display:grid;grid-template-columns:180px 1fr;gap:8px;align-items:center}
+.gn{color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px}
+.gt{position:relative;height:18px;background:var(--bg3);border-radius:3px;overflow:hidden}
+.gb{position:absolute;top:0;height:100%;background:var(--ac);border-radius:3px;
+    display:flex;align-items:center;padding:0 4px;min-width:2px;opacity:.85;transition:opacity .1s}
+.gb:hover{opacity:1}
+.gb.ge{background:var(--er)}
+.gd{font-size:10px;color:#fff;white-space:nowrap;overflow:hidden;font-family:var(--fm)}
+
+/* Attribute chips on log rows */
+.acs{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.ac{background:rgba(108,142,251,.12);border:1px solid rgba(108,142,251,.25);
+    color:var(--ac);border-radius:10px;padding:1px 7px;font-size:10px;
+    cursor:pointer;font-family:var(--fm);white-space:nowrap}
+.ac:hover{background:rgba(108,142,251,.25)}
+
+/* Trace link in logs/compliance */
+a.tl{color:var(--ac);cursor:pointer;font-family:var(--fm);font-size:12px;text-decoration:none}
+a.tl:hover{text-decoration:underline}
 
 /* Mini rows */
 .mr{display:flex;align-items:flex-start;gap:7px;padding:4px 0;
@@ -670,12 +863,43 @@ function td(btn, inline) {
   btn.textContent = pre.classList.contains('hidden') ? 'JSON' : 'Hide';
 }
 
+/* Jump from a log/compliance trace_id link to the expanded Requests row */
+function jumpToTrace(tid) {
+  const reqBtn = document.querySelector('.tab[onclick*="requests"]');
+  if (reqBtn) reqBtn.click();
+  const rows = document.querySelectorAll('#req-t .rr');
+  for (const row of rows) {
+    const ft = row.dataset.filter || '';
+    if (!ft.includes(tid.slice(0, 16).toLowerCase())) continue;
+    row.scrollIntoView({behavior:'smooth', block:'center'});
+    const eb = row.querySelector('.eb');
+    if (eb) {
+      const m = eb.getAttribute('onclick')?.match(/'([^']+)'/);
+      if (m) {
+        const dr = document.getElementById(m[1]);
+        if (dr && dr.classList.contains('hidden')) eb.click();
+      }
+    }
+    break;
+  }
+  return false;
+}
+
+/* Filter logs by a clicked attribute chip */
+function filterByAttr(key, val) {
+  const inp = document.getElementById('log-s');
+  if (!inp) return;
+  inp.value = key + '=' + val;
+  filterTable('logs');
+}
+
 const TBL = {
   requests:   {t:'req-t',  rc:'rr',  s:'req-s',  ff:[{sel:'req-sf',  at:'data-status'}, {sel:'req-af', at:'data-agent'}], c:'req-c'},
   logs:       {t:'log-t',  rc:'lr',  s:'log-s',  ff:[{sel:'log-lf',  at:'data-level'}],  c:'log-c'},
   spans:      {t:'sp-t',   rc:'srt', s:'sp-s',   ff:[],                                  c:'sp-c'},
   compliance: {t:'cmp-t',  rc:'cr',  s:'cmp-s',  ff:[{sel:'cmp-tf',  at:'data-triggered'}], c:'cmp-c'},
   metrics:    {t:'mtr-t',  rc:'mr2', s:'mtr-s',  ff:[],                                  c:'mtr-c'},
+  errors:     {t:'err-t',  rc:'err-r',s:'err-s', ff:[],                                  c:'err-c'},
 };
 
 function filterTable(key) {
@@ -731,22 +955,36 @@ def render_html(data: dict[str, list[dict]], index: dict[str, dict]) -> str:
     span_rows = _render_spans(data["traces"])
     comp_rows = _render_compliance(data["compliance"])
     mtr_rows = _render_metrics(data["metrics"])
+    err_html = _render_error_groups(data["traces"], data["logs"])
+    svc_map_html = _render_service_map(data["traces"])
+    stats = _compute_stats(data, index)
 
-    n_req = sum(1 for e in index.values() if e["audit"] or e["spans"])
+    n_req = stats["n_total"]
     n_logs = len(data["logs"])
     n_spans = len(data["traces"])
     n_comp = len(data["compliance"])
     n_mtr = len(data["metrics"])
-    n_trig = sum(1 for r in data["compliance"] if r.get("triggered"))
+    n_trig = stats["n_triggered"]
+    n_err = stats["n_errors"]
     gen_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
     agent_opts = "\n".join(f'<option value="{_esc(a)}">{_esc(a)}</option>' for a in all_agents)
     status_opts = "\n".join(f'<option value="{_esc(s)}">{_esc(s)}</option>' for s in all_statuses)
 
-    alert_chip = (
-        f'<span class="chip alert">⚠ {n_trig} guardrail(s)</span>'
-        if n_trig
-        else f'<span class="chip">{n_comp} compliance events</span>'
+    def _fmt_lat(ms: float) -> str:
+        return f"{ms/1000:.2f}s" if ms >= 1000 else f"{ms:.0f}ms"
+
+    err_rate_cls = "er" if stats["error_rate"] > 5 else ("wn" if stats["error_rate"] > 0 else "ok")
+    alert_cls = " alert" if n_trig else ""
+
+    stats_bar = (
+        '<div class="sbar">'
+        f'<div class="sc"><span class="sv">{n_req}</span><span class="sl">Requests</span></div>'
+        f'<div class="sc"><span class="sv {err_rate_cls}">{stats["error_rate"]:.1f}%</span><span class="sl">Error Rate</span></div>'
+        f'<div class="sc"><span class="sv">{_fmt_lat(stats["avg_lat"])}</span><span class="sl">Avg Latency</span></div>'
+        f'<div class="sc"><span class="sv">{_fmt_lat(stats["p95"])}</span><span class="sl">P95 Latency</span></div>'
+        f'<div class="sc{alert_cls}"><span class="sv {"er" if n_trig else "ok"}">{n_trig}</span><span class="sl">{"⚠ Alerts" if n_trig else "Alerts"}</span></div>'
+        '</div>'
     )
 
     def _table(tab_id: str, cols: list[str], rows: str, row_class: str, empty_icon: str, empty_msg: str) -> str:
@@ -762,11 +1000,11 @@ def render_html(data: dict[str, list[dict]], index: dict[str, dict]) -> str:
         "req",
         ["Trace ID", "Timestamp", "User", "Agents", "Status", "Latency", "Tokens", ""],
         req_rows, "rr", "📭",
-        "No request data found.<br><small>Check that data/audit_trail.jsonl is being written.</small>",
+        "No request data yet.<br><small>Run a query, then shut down to generate a session report.</small>",
     )
     log_table = _table(
         "log",
-        ["Timestamp", "Level", "Logger", "Message", "Trace ID", ""],
+        ["Timestamp", "Level", "Logger", "Message / Attributes", "Trace ID", ""],
         log_rows, "lr", "📋",
         "No log data found.<br><small>Set OTEL_FILE_OUTPUT_DIR and OBS_PROFILE=grafana_and_file.</small>",
     )
@@ -786,7 +1024,7 @@ def render_html(data: dict[str, list[dict]], index: dict[str, dict]) -> str:
         "mtr",
         ["Timestamp", "Metric", "Kind", "Value", "Unit", "Attributes"],
         mtr_rows, "mr2", "📊",
-        "No metrics data found.<br><small>Metrics export every 15–30 s. Wait for the flush interval.</small>",
+        "No metrics data found.<br><small>Metrics flush every 15–30 s. Wait for the interval.</small>",
     )
 
     return (
@@ -803,13 +1041,8 @@ def render_html(data: dict[str, list[dict]], index: dict[str, dict]) -> str:
         '<div class="hdr">'
         "<h1>Observability Report</h1>"
         f'<span class="meta">Generated {gen_ts}</span>'
-        '<div class="chips">'
-        f'<span class="chip">{n_req} requests</span>'
-        f'<span class="chip">{n_logs} logs</span>'
-        f'<span class="chip">{n_spans} spans</span>'
-        f"{alert_chip}"
-        f'<span class="chip">{n_mtr} metrics</span>'
-        "</div></div>\n"
+        f'{stats_bar}'
+        "</div>\n"
 
         '<nav class="tabs">'
         f'<button class="tab on" onclick="showTab(\'requests\',this)">Requests ({n_req})</button>'
@@ -817,10 +1050,12 @@ def render_html(data: dict[str, list[dict]], index: dict[str, dict]) -> str:
         f'<button class="tab" onclick="showTab(\'spans\',this)">Spans ({n_spans})</button>'
         f'<button class="tab" onclick="showTab(\'compliance\',this)">Compliance ({n_comp})</button>'
         f'<button class="tab" onclick="showTab(\'metrics\',this)">Metrics ({n_mtr})</button>'
+        f'<button class="tab" onclick="showTab(\'errors\',this)">Errors ({n_err})</button>'
         "</nav>\n"
 
         '<div id="p-requests" class="pnl on">'
-        '<div class="flt">'
+        + (f'<div style="margin-bottom:18px">{svc_map_html}</div>' if svc_map_html else "")
+        + '<div class="flt">'
         '<input id="req-s" placeholder="Search trace ID, user, agent…" oninput="filterTable(\'requests\')">'
         f'<select id="req-sf" onchange="filterTable(\'requests\')"><option value="">All statuses</option>{status_opts}</select>'
         f'<select id="req-af" onchange="filterTable(\'requests\')"><option value="">All agents</option>{agent_opts}</select>'
@@ -831,7 +1066,7 @@ def render_html(data: dict[str, list[dict]], index: dict[str, dict]) -> str:
 
         '<div id="p-logs" class="pnl">'
         '<div class="flt">'
-        '<input id="log-s" placeholder="Search message, logger, trace ID…" oninput="filterTable(\'logs\')">'
+        '<input id="log-s" placeholder="Search message, logger, trace ID, attribute…" oninput="filterTable(\'logs\')">'
         '<select id="log-lf" onchange="filterTable(\'logs\')">'
         '<option value="">All levels</option>'
         '<option value="ERROR">ERROR</option><option value="WARNING">WARNING</option>'
@@ -869,6 +1104,13 @@ def render_html(data: dict[str, list[dict]], index: dict[str, dict]) -> str:
         f"{mtr_table}"
         "</div>\n"
 
+        '<div id="p-errors" class="pnl">'
+        '<p style="color:var(--dim);font-size:12px;margin-bottom:14px">'
+        'All spans and log entries with ERROR status, grouped by name. '
+        'Click a trace ID to jump to the Requests tab.</p>'
+        f"{err_html}"
+        "</div>\n"
+
         f"<script>{_JS}</script>\n"
         "</body>\n</html>"
     )
@@ -879,27 +1121,20 @@ def render_html(data: dict[str, list[dict]], index: dict[str, dict]) -> str:
 def generate_html_report(
     config: Any = None,
     otel_dir: str = "",
-    audit_trail: str = "",
-    trace_log: str = "",
-    compliance_store: str = "",
     out_path: str = "",
 ) -> str:
     """Generate a self-contained HTML observability report from JSONL sources.
 
-    Output follows the same folder+timestamp convention as the JSONL exporters:
-        {OTEL_FILE_OUTPUT_DIR}/reports/{YYYYMMDD}_{HHMMSS}_{service_name}.html
+    Reads exclusively from the observability folder (otel_dir).
+    Output: {OTEL_FILE_OUTPUT_DIR}/reports/{YYYYMMDD}_{HHMMSS}_{service_name}.html
 
     Args:
-        config: Optional TelemetryConfig — resolves file_output_dir, compliance_store,
-                and the output path via config.report_path(). Callers typically only
-                need to pass this argument.
+        config: Optional TelemetryConfig — resolves file_output_dir and the output
+                path via config.report_path(). Callers typically only need this arg.
         otel_dir: Override the OTel file output dir (contains traces/, metrics/, logs/).
                   Falls back to config.file_output_dir, then OTEL_FILE_OUTPUT_DIR env var.
-        audit_trail: Path to audit_trail.jsonl. Defaults to data/audit_trail.jsonl.
-        trace_log: Path to trace_log.jsonl. Defaults to data/trace_log.jsonl.
-        compliance_store: Path to compliance JSONL. Falls back to config.compliance_store.
-        out_path: Override output HTML path. When empty (default), resolved via
-                  config.report_path() so the report lands inside the observability dir.
+        out_path: Override output HTML path. Defaults to config.report_path() so the
+                  report lands inside the observability dir alongside the JSONL files.
 
     Returns:
         Absolute path of the generated HTML file.
@@ -911,16 +1146,8 @@ def generate_html_report(
     if otel_dir:
         otel_dir = os.path.abspath(otel_dir)
 
-    if not compliance_store and config is not None:
-        compliance_store = getattr(config, "compliance_store", "")
-
-    # Extract the session timestamp from the config instance that was used at startup.
-    # This is the same prefix used on the JSONL filenames written during this session,
-    # so we can filter the glob to only this session's files.
     session_ts = getattr(config, "_file_ts", "") if config is not None else ""
 
-    # Resolve output path — config.report_path() is preferred so beacon_kit owns
-    # the naming convention ({otel_dir}/reports/{ts}_{service}.html)
     if not out_path:
         if config is not None and hasattr(config, "report_path"):
             out_path = config.report_path()
@@ -930,13 +1157,7 @@ def generate_html_report(
         else:
             out_path = "observability_report.html"
 
-    data = load_all_sources(
-        otel_dir=otel_dir,
-        audit_trail=audit_trail,
-        trace_log=trace_log,
-        compliance_store=compliance_store,
-        session_ts=session_ts,
-    )
+    data = load_all_sources(otel_dir=otel_dir, session_ts=session_ts)
     index = build_request_index(data)
     html = render_html(data, index)
 
@@ -966,32 +1187,14 @@ def main() -> None:
                         help="OTel file output dir (contains traces/, metrics/, logs/ subdirs)")
     parser.add_argument("--out", dest="out_path", default="",
                         help="Output HTML path (default: {otel_dir}/reports/{ts}_report.html)")
-    parser.add_argument("--audit-trail", default="", dest="audit_trail",
-                        help="Path to audit_trail.jsonl")
-    parser.add_argument("--trace-log", default="", dest="trace_log",
-                        help="Path to trace_log.jsonl")
-    parser.add_argument("--compliance-store", default="", dest="compliance_store",
-                        help="Path to compliance store JSONL")
     args = parser.parse_args()
 
-    out = generate_html_report(
-        otel_dir=args.otel_dir,
-        audit_trail=args.audit_trail,
-        trace_log=args.trace_log,
-        compliance_store=args.compliance_store,
-        out_path=args.out_path,
-    )
+    out = generate_html_report(otel_dir=args.otel_dir, out_path=args.out_path)
 
     otel_abs = os.path.abspath(args.otel_dir) if args.otel_dir else os.path.abspath(os.getenv("OTEL_FILE_OUTPUT_DIR", ""))
-    data = load_all_sources(
-        otel_dir=otel_abs if os.path.isdir(otel_abs) else "",
-        audit_trail=args.audit_trail,
-        trace_log=args.trace_log,
-        compliance_store=args.compliance_store,
-    )
+    data = load_all_sources(otel_dir=otel_abs if os.path.isdir(otel_abs) else "")
     n_trig = sum(1 for r in data["compliance"] if r.get("triggered"))
     print(f"Report generated: {out}")
-    print(f"  Requests (audit):  {len(data['audit'])}")
     print(f"  Spans:             {len(data['traces'])}")
     print(f"  Logs:              {len(data['logs'])}")
     print(f"  Compliance events: {len(data['compliance'])}")

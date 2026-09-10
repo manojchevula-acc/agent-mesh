@@ -4,7 +4,7 @@ fab-venv/
 .venv313/
 venv/
 env/
-
+.claude/
 # ── Python Bytecode & Caches ──────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
