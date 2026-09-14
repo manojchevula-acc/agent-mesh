@@ -103,6 +103,22 @@ class PerRequestFileHandler(logging.Handler):
         super().close()
 
 
+class _SafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    """RotatingFileHandler that skips rotation when Windows blocks the rename.
+
+    On Windows, multiple mesh processes sharing the same log file cause
+    PermissionError (WinError 32) when one process tries to rename the file
+    during rotation while another has it open. We catch that specific error and
+    keep writing to the current file rather than spamming stderr with tracebacks.
+    """
+
+    def doRollover(self) -> None:
+        try:
+            super().doRollover()
+        except PermissionError:
+            pass  # Another process holds the file; skip this rotation cycle.
+
+
 class TraceContextFilter(logging.Filter):
     """Stamps every log record with the active trace/span ids.
 
@@ -187,7 +203,7 @@ def configure_logging(service_name: str | None = None) -> None:
         # Rotating file sink (durable).
         log_path = Config.LOG_FILE
         os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
-        file_handler = logging.handlers.RotatingFileHandler(
+        file_handler = _SafeRotatingFileHandler(
             log_path,
             maxBytes=Config.LOG_MAX_BYTES,
             backupCount=Config.LOG_BACKUP_COUNT,
@@ -205,7 +221,7 @@ def configure_logging(service_name: str | None = None) -> None:
 
         # Avoid duplicate handlers if reconfigured.
         root.handlers = [h for h in root.handlers
-                         if not isinstance(h, (logging.handlers.RotatingFileHandler,
+                         if not isinstance(h, (_SafeRotatingFileHandler,
                                                PerRequestFileHandler))]
         root.addHandler(file_handler)
         # Only add a console handler if one isn't already present.

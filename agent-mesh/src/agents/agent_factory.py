@@ -44,6 +44,16 @@ def create_demo_agent(
         }
     client = OpenAIChatCompletionClient(**client_kwargs)
 
+    # Wire Opik to auto-instrument all OpenAI-compatible (Groq) LLM calls.
+    try:
+        from opik.integrations.openai import track_openai_usage
+        # OpenAIChatCompletionClient wraps an openai.AsyncOpenAI instance internally.
+        _inner = getattr(client, "_client", None) or getattr(client, "client", None)
+        if _inner is not None:
+            track_openai_usage(_inner)
+    except Exception:
+        pass
+
     # 2. Setup standard middleware:
     #    - AuditMiddleware: per agent-invocation audit trail.
     #    - ToolCallLogMiddleware: per REAL tool-call ground truth (fires only on

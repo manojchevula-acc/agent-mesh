@@ -32,14 +32,6 @@ from src.observability import get_logger, CAT_A2A
 
 _log = get_logger(CAT_A2A)
 
-try:
-    from beacon_kit import traced_a2a_hop, AgenticMetrics
-    _bk_metrics = AgenticMetrics()
-    _BK_AVAILABLE = True
-except Exception:
-    _BK_AVAILABLE = False
-    _bk_metrics = None
-
 
 def get_remote_agent(name: str) -> A2AAgent:
     """Returns an A2A client bound to the named agent node's URL.
@@ -75,13 +67,7 @@ async def ask_remote(
     result = ""
     try:
         remote = get_remote_agent(name)
-        if _BK_AVAILABLE:
-            @traced_a2a_hop(name)
-            async def _hop():
-                return await remote.run(prompt)
-            res = await _hop()
-        else:
-            res = await remote.run(prompt)
+        res = await remote.run(prompt)
         result = getattr(res, "text", str(res))
         return result
     except Exception as e:
@@ -120,13 +106,6 @@ async def ask_remote(
             )
         except Exception:
             pass
-        if _bk_metrics is not None:
-            try:
-                _bk_metrics.record_a2a_call(
-                    "error" if error else "success", name, latency_ms=float(duration_ms)
-                )
-            except Exception:
-                pass
         # Optional legacy JSONL sink (off by default; workflow/agent spans cover this).
         if Config.ENABLE_TRACE_JSONL:
             try:

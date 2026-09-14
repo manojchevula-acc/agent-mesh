@@ -1,6 +1,6 @@
 """Input hashing and output summarisation utilities.
 
-Inputs/outputs are never stored raw in telemetry — only hashes and structural summaries.
+Inputs/outputs are never stored raw in compliance events — only hashes.
 """
 from __future__ import annotations
 
@@ -17,17 +17,13 @@ def hash_inputs(data: Any) -> str:
 
 
 def summarize_output(data: Any) -> dict[str, Any]:
-    """Return a structural summary safe to store in telemetry spans.
-
-    Never includes actual field values — only shape, size, and error presence.
-    """
+    """Return a structural summary safe to store — never actual field values."""
     summary: dict[str, Any] = {
         "has_error": False,
         "size_bytes": 0,
         "field_count": 0,
         "schema_version": None,
     }
-
     try:
         serialized = json.dumps(data, default=str)
         summary["size_bytes"] = sys.getsizeof(serialized)
@@ -43,5 +39,4 @@ def summarize_output(data: Any) -> dict[str, Any]:
         summary["field_count"] = len(data)
     elif data is None:
         summary["has_error"] = True
-
     return summary

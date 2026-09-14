@@ -17,18 +17,19 @@ project_root = str(pathlib.Path(__file__).resolve().parent)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-# Load .env before beacon_kit reads OBS_PROFILE — otherwise exporter_type
-# defaults to "console" and every span/metric floods stdout.
 from dotenv import load_dotenv
 load_dotenv(pathlib.Path(__file__).resolve().parent / ".env", override=False)
 
-# BEACON_KIT: replaced by beacon_kit setup_telemetry (reads OBS_PROFILE from .env)
-# from src.observability import setup_observability
-# setup_observability(service_name="agent_mesh_cli")
-from beacon_kit import setup_telemetry, TelemetryConfig, set_default_compliance_config, generate_html_report, generate_audit_report
-_bk_cfg = TelemetryConfig.from_env(service_name="agent_mesh_cli")
-_bk_handle = setup_telemetry(_bk_cfg)
-set_default_compliance_config(TelemetryConfig.from_env())
+import opik
+# Opik auto-configures from ~/.opik.config (run `opik configure` once)
+# or from OPIK_API_KEY / OPIK_URL_OVERRIDE env vars for self-hosted.
+os.environ.setdefault("OPIK_PROJECT_NAME", os.getenv("OPIK_PROJECT_NAME", "agent-mesh-fab"))
+os.environ.setdefault("OPIK_WORKSPACE", os.getenv("OPIK_WORKSPACE", "default"))
+
+from src.compliance.config import ComplianceConfig
+from src.compliance.decorators import set_default_compliance_config
+_compliance_cfg = ComplianceConfig.from_env()
+set_default_compliance_config(_compliance_cfg)
 
 from rich.console import Console
 from rich.panel import Panel
@@ -179,13 +180,10 @@ async def main() -> None:
                 "'python launch_mesh.py'.[/dim]"
             )
 
-    _report = generate_html_report(config=_bk_cfg)
-    _console.print(f"\n[dim]Observability report: {_report}[/dim]")
-    try:  # BEACON_KIT: session audit/regulatory PDF (no-op on failure)
-        _audit = generate_audit_report(config=_bk_cfg)
-        _console.print(f"[dim]Audit report: {_audit}[/dim]")
-    except Exception as _e:  # pragma: no cover
-        _console.print(f"[dim]Audit report skipped: {_e}[/dim]")
+    _console.print(
+        "\n[dim]Traces available in Opik Cloud dashboard → "
+        "https://www.comet.com/opik/projects[/dim]"
+    )
 
 
 async def _run_query(user, user_input: str) -> None:

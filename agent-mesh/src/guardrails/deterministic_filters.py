@@ -16,11 +16,8 @@ import re
 from dataclasses import dataclass, field
 from typing import List
 
-try:
-    from beacon_kit import guardrail_check as _guardrail_check
-    _BK_AVAILABLE = True
-except Exception:
-    _BK_AVAILABLE = False
+from src.compliance.decorators import guardrail_check as _guardrail_check
+_BK_AVAILABLE = True
 
 # --- Pattern banks -----------------------------------------------------------
 

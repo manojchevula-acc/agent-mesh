@@ -22,6 +22,11 @@ class AnthropicLLM(BaseLLM):
         self._client = AsyncAnthropic(
             api_key=config.anthropic_api_key, timeout=float(config.timeout_seconds)
         )
+        try:
+            from opik.integrations.anthropic import track_anthropic_usage
+            track_anthropic_usage(self._client)
+        except Exception:
+            pass
 
     @async_retry(max_attempts=3, backoff_factor=2.0)
     async def generate(self, messages: list[Message]) -> str:

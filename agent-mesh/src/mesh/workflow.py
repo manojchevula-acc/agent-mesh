@@ -68,16 +68,7 @@ from src.config import Config
 
 _log = get_logger(CAT_WORKFLOW)
 
-try:
-    from beacon_kit import traced_agent, AgenticMetrics
-    _bk_metrics = AgenticMetrics()
-    _BK_AVAILABLE = True
-except Exception:
-    _BK_AVAILABLE = False
-    _bk_metrics = None
-    def traced_agent(name):  # type: ignore[misc]
-        def _d(fn): return fn
-        return _d
+import opik
 
 # Type alias for the injected dependency.
 AskRemote = Callable[..., Awaitable[str]]
@@ -278,7 +269,7 @@ class InputGuardrailExecutor(Executor):
     """Deterministic input screen (hard gate, pre-review). Workflow start node."""
 
     @handler
-    @traced_agent("input-guardrail")
+    @opik.track(name="input-guardrail", tags=["executor", "guardrail"])
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
         tracer = get_active_tracer()
         if tracer:
@@ -369,7 +360,7 @@ class RBACValidationExecutor(Executor):
     """
 
     @handler
-    @traced_agent("rbac-validator")
+    @opik.track(name="rbac-validator", tags=["executor", "rbac"])
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
         tracer = get_active_tracer()
         if tracer:
@@ -458,7 +449,7 @@ class CacheCheckExecutor(Executor):
     """
 
     @handler
-    @traced_agent("cache-check")
+    @opik.track(name="cache-check", tags=["executor", "cache"])
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
         tracer = get_active_tracer()
         if tracer:
@@ -914,7 +905,7 @@ class ComplianceExecutor(Executor):
         self._enabled = enabled
 
     @handler
-    @traced_agent("compliance-gate")
+    @opik.track(name="compliance-gate", tags=["executor", "compliance"])
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
         tracer = get_active_tracer()
 
@@ -1020,11 +1011,6 @@ class ComplianceExecutor(Executor):
                             rationale=[verdict[:120]],
                         )
                     record_compliance("FAILED", state.role, elapsed)
-                    if _bk_metrics is not None:
-                        try:
-                            _bk_metrics.record_agent_call("error", "compliance-gate", latency_ms=elapsed)
-                        except Exception:
-                            pass
                     _emit_stream_event({"stage": "compliance", "status": "blocked", "message": "Compliance check failed"})
                     log_state_handoff(
                         "compliance", "END", state, note="compliance failed -> early yield",
@@ -1058,11 +1044,6 @@ class ComplianceExecutor(Executor):
                         ],
                     )
                 record_compliance("PASSED", state.role, elapsed)
-                if _bk_metrics is not None:
-                    try:
-                        _bk_metrics.record_agent_call("success", "compliance-gate", latency_ms=elapsed)
-                    except Exception:
-                        pass
             except Exception as exc:
                 _set_error(span, str(exc)[:200])
                 raise
@@ -1149,7 +1130,7 @@ class DomainExecutor(Executor):
     _HALLUCINATION_RE = re.compile(r'\[(?![A-Z]{2,}[0-9])[A-Za-z][A-Za-z0-9 /-]{1,40}\]')
 
     @handler
-    @traced_agent("domain-processor")
+    @opik.track(name="domain-processor", tags=["executor", "domain"])
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState]) -> None:
         tracer = get_active_tracer()
         t0 = time.perf_counter()
@@ -1586,14 +1567,6 @@ class DomainExecutor(Executor):
             elif failed:
                 record_a2a_call(_target_node, "ERROR", float(total_ms))
 
-        if _bk_metrics is not None:
-            try:
-                _bk_metrics.record_agent_call(
-                    "error" if failed else "success", "domain-processor",
-                    latency_ms=float((time.perf_counter() - t0) * 1000),
-                )
-            except Exception:
-                pass
         _emit_stream_event({"stage": "domain", "status": "completed", "message": "Domain agent responded"})
         log_state_handoff(
             "domain", "output_redaction", state,
@@ -1607,7 +1580,7 @@ class OutputRedactionExecutor(Executor):
     """Deterministic output redaction (PII). Terminal node — yields the answer."""
 
     @handler
-    @traced_agent("output-redaction")
+    @opik.track(name="output-redaction", tags=["executor", "redaction"])
     async def run(self, state: MeshState, ctx: WorkflowContext[Never, MeshState]) -> None:
         _emit_stream_event({"stage": "output_redaction", "status": "started", "message": "Redacting output..."})
         otel = _mesh_tracer()

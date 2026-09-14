@@ -18,6 +18,11 @@ class GroqLLM(BaseLLM):
         self._client = AsyncGroq(
             api_key=config.groq_api_key, timeout=config.timeout_seconds
         )
+        try:
+            from opik.integrations.openai import track_openai_usage
+            track_openai_usage(self._client)
+        except Exception:
+            pass
 
     @async_retry(max_attempts=3, backoff_factor=2.0)
     async def generate(self, messages: list[Message]) -> str:

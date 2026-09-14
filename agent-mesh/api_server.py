@@ -41,19 +41,16 @@ if project_root not in sys.path:
 
 os.environ.setdefault("PYTHONWARNINGS", "ignore")
 
-# Load .env before beacon_kit reads OBS_PROFILE / COMPLIANCE_STORE — otherwise
-# those env vars are missing and exporters fall back to wrong defaults.
 from dotenv import load_dotenv
 load_dotenv(pathlib.Path(__file__).resolve().parent / ".env", override=False)
 
-# BEACON_KIT: replaced by beacon_kit setup_telemetry (reads OBS_PROFILE/GRAFANA_* from .env)
-# from src.observability import setup_observability
-# setup_observability(service_name="agent_mesh_api")
-from beacon_kit import setup_telemetry, TelemetryConfig, flush_telemetry, set_default_compliance_config, generate_html_report, generate_audit_report
-from beacon_kit.middleware.fastapi import TelemetryMiddleware
-_bk_cfg = TelemetryConfig.from_env(service_name="agent_mesh_api")
-_bk_handle = setup_telemetry(_bk_cfg)
-set_default_compliance_config(TelemetryConfig.from_env())
+import opik  # auto-reads OPIK_API_KEY / OPIK_PROJECT_NAME / OPIK_WORKSPACE from env
+
+from src.compliance.config import ComplianceConfig
+from src.compliance.decorators import set_default_compliance_config
+from src.middleware.opik_middleware import OpikContextMiddleware
+_compliance_cfg = ComplianceConfig.from_env()
+set_default_compliance_config(_compliance_cfg)
 
 import httpx
 import uvicorn
@@ -841,17 +838,8 @@ async def _lifespan(app):
         if restored:
             _log.info("UC-5: Restored %d pending HITL approval(s) from data/checkpoints/", restored)
     yield
-    _log.info("api_server shutting down — flushing beacon_kit exporters.")
-    # BEACON_KIT: flush_observability() replaced by flush_telemetry(_bk_handle)
-    # flush_observability()
-    flush_telemetry(_bk_handle)
-    _report_path = generate_html_report(config=_bk_cfg)
-    _log.info("Observability report written: %s", _report_path)
-    try:  # BEACON_KIT: session audit/regulatory PDF (no-op on failure)
-        _audit_path = generate_audit_report(config=_bk_cfg)
-        _log.info("Audit/regulatory report written: %s", _audit_path)
-    except Exception as _e:
-        _log.warning("Audit/regulatory report skipped: %s", _e)
+    _log.info("api_server shutting down — traces available in Opik dashboard.")
+    opik.flush()  # flush any buffered traces before exit
 
 
 _API_SERVER_HOST = os.getenv("API_SERVER_HOST", "127.0.0.1")
@@ -1144,7 +1132,7 @@ app = Starlette(
         ),
         Middleware(TraceContextMiddleware),
         # BEACON_KIT: enrich spans with run_id, service name, and route
-        Middleware(TelemetryMiddleware),
+        Middleware(OpikContextMiddleware),
     ],
     routes=[
         Route("/health",               health,              methods=["GET"]),
@@ -1176,7 +1164,6 @@ app = Starlette(
     ],
 )
 
-# BEACON_KIT: StarletteInstrumentor replaced by beacon_kit TelemetryMiddleware (added in Middleware list below)
 # try:
 #     from opentelemetry.instrumentation.starlette import StarletteInstrumentor
 #     StarletteInstrumentor().instrument_app(app)

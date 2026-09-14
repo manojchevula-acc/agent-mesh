@@ -46,12 +46,10 @@ project_root = str(pathlib.Path(__file__).resolve().parent)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-# BEACON_KIT: OBS_PROFILE=off is already set above; beacon_kit reads it and uses no-op exporters
-# from src.observability import setup_observability, get_logger, CAT_SYSTEM
-# setup_observability(service_name="agent_mesh_devui")
 from src.observability import get_logger, CAT_SYSTEM
-from beacon_kit import setup_telemetry, TelemetryConfig
-_bk_handle = setup_telemetry(TelemetryConfig.from_env(service_name="agent_mesh_devui"))
+# DevUI runs in a single process; Opik is configured but disabled for this mode
+# (traces are already captured by MAF's in-process DevUI collector)
+import opik  # auto-reads OPIK_API_KEY / OPIK_PROJECT_NAME / OPIK_WORKSPACE from env
 
 from agent_framework.devui import serve
 
