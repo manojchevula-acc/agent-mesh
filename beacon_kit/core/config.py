@@ -165,6 +165,24 @@ class TelemetryConfig:
         base = os.path.abspath(self.file_output_dir)
         return os.path.join(base, "reports", filename)
 
+    def audit_report_path(self, ext: str = "pdf") -> str:
+        """Return the output path for the session audit/regulatory report.
+
+        Pattern: {file_output_dir}/audit_regulatory/{YYYYMMDD}_{HHMMSS}_{service_name}[_{session_id}].{ext}
+        Reuses the same cached timestamp as file_path()/report_path() so the audit
+        report filename matches the JSONL filenames produced by the same process run.
+        """
+        if not hasattr(self, "_file_ts"):
+            object.__setattr__(
+                self, "_file_ts",
+                datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S"),
+            )
+        safe_name = self.service_name.replace(" ", "_").replace("/", "_")
+        suffix = f"_{self.file_session_id}" if self.file_session_id else ""
+        filename = f"{self._file_ts}_{safe_name}{suffix}.{ext}"
+        base = os.path.abspath(self.file_output_dir)
+        return os.path.join(base, "audit_regulatory", filename)
+
     @classmethod
     def from_env(cls, service_name: str | None = None) -> "TelemetryConfig":
         """Create config from environment. Optionally override service_name per-process."""

@@ -19,6 +19,7 @@ from beacon_kit.core.config import TelemetryConfig
 from beacon_kit.core.provider import TelemetryHandle, setup_telemetry, flush_telemetry
 from beacon_kit.core.file_exporters import FileSpanExporter, FileMetricExporter, FileLogExporter
 from beacon_kit.core.html_reporter import generate_html_report
+from beacon_kit.core.audit_report import generate_audit_report
 
 # ── Layer 2: Agentic Interaction Decorators ──────────────────────────────────
 from beacon_kit.decorators.trace import traced, traced_node, traced_pipeline
@@ -73,6 +74,7 @@ __all__ = [
     "FileMetricExporter",
     "FileLogExporter",
     "generate_html_report",
+    "generate_audit_report",
     # Layer 2 — Agentic Interactions
     "traced",
     "traced_node",

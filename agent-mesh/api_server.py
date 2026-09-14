@@ -49,7 +49,7 @@ load_dotenv(pathlib.Path(__file__).resolve().parent / ".env", override=False)
 # BEACON_KIT: replaced by beacon_kit setup_telemetry (reads OBS_PROFILE/GRAFANA_* from .env)
 # from src.observability import setup_observability
 # setup_observability(service_name="agent_mesh_api")
-from beacon_kit import setup_telemetry, TelemetryConfig, flush_telemetry, set_default_compliance_config, generate_html_report
+from beacon_kit import setup_telemetry, TelemetryConfig, flush_telemetry, set_default_compliance_config, generate_html_report, generate_audit_report
 from beacon_kit.middleware.fastapi import TelemetryMiddleware
 _bk_cfg = TelemetryConfig.from_env(service_name="agent_mesh_api")
 _bk_handle = setup_telemetry(_bk_cfg)
@@ -847,6 +847,11 @@ async def _lifespan(app):
     flush_telemetry(_bk_handle)
     _report_path = generate_html_report(config=_bk_cfg)
     _log.info("Observability report written: %s", _report_path)
+    try:  # BEACON_KIT: session audit/regulatory PDF (no-op on failure)
+        _audit_path = generate_audit_report(config=_bk_cfg)
+        _log.info("Audit/regulatory report written: %s", _audit_path)
+    except Exception as _e:
+        _log.warning("Audit/regulatory report skipped: %s", _e)
 
 
 _API_SERVER_HOST = os.getenv("API_SERVER_HOST", "127.0.0.1")

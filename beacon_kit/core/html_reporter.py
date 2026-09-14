@@ -654,11 +654,21 @@ def _render_error_groups(spans: list[dict], logs: list[dict]) -> str:
 
 def _render_service_map(spans: list[dict]) -> str:
     """Build a service call adjacency table from span parent→child relationships."""
+
+    def _svc_from_span(sp: dict) -> str:
+        attrs = sp.get("attributes") or {}
+        resource = sp.get("resource") or {}
+        return (
+            (isinstance(attrs, dict) and attrs.get("service.name"))
+            or sp.get("service_name")
+            or (isinstance(resource, dict) and resource.get("service.name"))
+            or ""
+        )
+
     span_to_svc: dict[str, str] = {}
     for sp in spans:
         sid = str(sp.get("span_id") or "").strip()
-        attrs = sp.get("attributes") or {}
-        svc = (isinstance(attrs, dict) and attrs.get("service.name")) or sp.get("service_name") or ""
+        svc = _svc_from_span(sp)
         if sid and svc:
             span_to_svc[sid] = svc
     edges: dict[tuple, dict] = {}
@@ -667,8 +677,7 @@ def _render_service_map(spans: list[dict]) -> str:
         if not pid or pid in ("None", "0x0000000000000000", "0"):
             continue
         parent_svc = span_to_svc.get(pid, "")
-        attrs = sp.get("attributes") or {}
-        child_svc = (isinstance(attrs, dict) and attrs.get("service.name")) or sp.get("service_name") or ""
+        child_svc = _svc_from_span(sp)
         if not parent_svc or not child_svc or parent_svc == child_svc:
             continue
         key = (parent_svc, child_svc)

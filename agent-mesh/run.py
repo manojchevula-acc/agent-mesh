@@ -25,7 +25,7 @@ load_dotenv(pathlib.Path(__file__).resolve().parent / ".env", override=False)
 # BEACON_KIT: replaced by beacon_kit setup_telemetry (reads OBS_PROFILE from .env)
 # from src.observability import setup_observability
 # setup_observability(service_name="agent_mesh_cli")
-from beacon_kit import setup_telemetry, TelemetryConfig, set_default_compliance_config, generate_html_report
+from beacon_kit import setup_telemetry, TelemetryConfig, set_default_compliance_config, generate_html_report, generate_audit_report
 _bk_cfg = TelemetryConfig.from_env(service_name="agent_mesh_cli")
 _bk_handle = setup_telemetry(_bk_cfg)
 set_default_compliance_config(TelemetryConfig.from_env())
@@ -181,6 +181,11 @@ async def main() -> None:
 
     _report = generate_html_report(config=_bk_cfg)
     _console.print(f"\n[dim]Observability report: {_report}[/dim]")
+    try:  # BEACON_KIT: session audit/regulatory PDF (no-op on failure)
+        _audit = generate_audit_report(config=_bk_cfg)
+        _console.print(f"[dim]Audit report: {_audit}[/dim]")
+    except Exception as _e:  # pragma: no cover
+        _console.print(f"[dim]Audit report skipped: {_e}[/dim]")
 
 
 async def _run_query(user, user_input: str) -> None:

@@ -22,6 +22,9 @@ dependencies = [
 azure = [
     "azure-monitor-opentelemetry-exporter==1.0.0b28",
 ]
+audit = [
+    "reportlab>=4.0",
+]
 fastapi = [
     "fastapi>=0.111",
     "starlette>=0.37",
@@ -36,6 +39,7 @@ dev = [
 
 [project.scripts]
 beacon-report = "beacon_kit.core.html_reporter:main"
+beacon-audit-report = "beacon_kit.core.audit_report:main"
 
 [tool.setuptools.packages.find]
 where = [".."]
