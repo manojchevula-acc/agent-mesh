@@ -1,0 +1,30 @@
+domain: ai
+owner: LLM Gateway
+brief: Model calls - OTel GenAI semantic conventions plus GERNAS performance signals.
+fields:
+  - {name: PROVIDER, key: gen_ai.provider.name, type: string, required: always, sensitivity: public, cardinality: bounded, rollup: true, action: keep, brief: Model provider, example: groq}
+  - {name: MODEL_ID, key: gen_ai.request.model, type: string, required: always, sensitivity: public, cardinality: bounded, rollup: true, action: keep, brief: Requested model, example: openai/gpt-oss-120b}
+  - {name: RESPONSE_MODEL, key: gen_ai.response.model, type: string, required: conditional, sensitivity: public, cardinality: bounded, rollup: true, action: keep, brief: Model that served the response, example: openai/gpt-oss-120b}
+  - {name: OPERATION_NAME, key: gen_ai.operation.name, type: string, required: conditional, sensitivity: public, cardinality: bounded, rollup: true, action: keep, enum: [chat, text_completion, embeddings, invoke_agent, execute_tool], brief: GenAI operation, example: chat}
+  - {name: DEPLOYMENT_ID, key: gernas.deployment_id, type: string, required: always, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Model deployment (PTU/paygo) id, example: paygo-uae}
+  - {name: MODEL_VERSION, key: gernas.model_version, type: string, required: conditional, sensitivity: public, cardinality: growing, rollup: true, action: keep, brief: Model version, example: "2025-01"}
+  - {name: INPUT_TOKENS, key: gen_ai.usage.input_tokens, type: int, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Prompt tokens, example: 1840}
+  - {name: OUTPUT_TOKENS, key: gen_ai.usage.output_tokens, type: int, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Completion tokens, example: 260}
+  - {name: FINISH_REASON, key: gen_ai.response.finish_reasons, type: "string[]", required: conditional, sensitivity: public, cardinality: bounded, rollup: true, action: keep, brief: Finish reasons, example: stop}
+  - {name: TTFT_MS, key: gernas.llm.ttft_ms, type: double, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Time to first token/chunk, example: 212.0}
+  - {name: TOKENS_PER_SEC, key: gernas.llm.tokens_per_sec, type: double, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Streaming throughput, example: 85.1}
+  - {name: GENERATION_LATENCY_MS, key: gernas.llm.latency_ms, type: double, required: always, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Model call latency, example: 1430.0}
+  - {name: STREAM_CHUNKS, key: gernas.llm.stream_chunks, type: int, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Chunks yielded by a stream, example: 120}
+  - {name: STREAM_OUTCOME, key: gernas.llm.stream_outcome, type: string, required: always, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, enum: [completed, cancelled, error], brief: How a stream ended (OTel has no CANCELLED status code), example: completed}
+  - {name: FALLBACK_USED, key: gernas.llm.fallback_used, type: boolean, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Fallback model served the call, example: false}
+  - {name: PROMPT, key: gen_ai.prompt, type: string, required: never, sensitivity: restricted, cardinality: unbounded, rollup: false, action: drop, brief: Raw prompt text (PDPL - never captured by default), example: "-"}
+  - {name: COMPLETION, key: gen_ai.completion, type: string, required: never, sensitivity: restricted, cardinality: unbounded, rollup: false, action: drop, brief: Raw completion text (PDPL - never captured by default), example: "-"}
+  - {name: INPUT_MESSAGES, key: gen_ai.input.messages, type: string, required: never, sensitivity: restricted, cardinality: unbounded, rollup: false, action: drop, brief: Framework-captured prompt messages, example: "-"}
+  - {name: OUTPUT_MESSAGES, key: gen_ai.output.messages, type: string, required: never, sensitivity: restricted, cardinality: unbounded, rollup: false, action: drop, brief: Framework-captured completion messages, example: "-"}
+  - {name: SYSTEM_INSTRUCTIONS, key: gen_ai.system_instructions, type: string, required: never, sensitivity: restricted, cardinality: unbounded, rollup: false, action: drop, brief: Framework-captured system prompt, example: "-"}
+  - {name: PROMPT_REDACTED, key: gen_ai.prompt.redacted, type: string, required: never, sensitivity: confidential, cardinality: unbounded, rollup: false, action: mask, brief: PII-scrubbed prompt (only under a payload-capture grant), example: "-"}
+  - {name: COMPLETION_REDACTED, key: gen_ai.completion.redacted, type: string, required: never, sensitivity: confidential, cardinality: unbounded, rollup: false, action: mask, brief: PII-scrubbed completion (only under a payload-capture grant), example: "-"}
+  - {name: EMBED_MODEL, key: gernas.embedding.model, type: string, required: always, sensitivity: public, cardinality: bounded, rollup: true, action: keep, brief: Embedding model, example: bge-m3}
+  - {name: EMBED_TOKEN_COUNT, key: gernas.embedding.token_count, type: int, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Tokens embedded, example: 512}
+  - {name: EMBED_BATCH_SIZE, key: gernas.embedding.batch_size, type: int, required: always, sensitivity: internal, cardinality: bounded, rollup: false, action: keep, brief: Texts per embedding call, example: 10}
+  - {name: EMBED_LATENCY_MS, key: gernas.embedding.latency_ms, type: double, required: always, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Embedding call latency, example: 40.2}

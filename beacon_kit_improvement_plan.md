@@ -1,3 +1,5 @@
+> **Historical document (2026-10-16).** Beacon Kit has since been evolved into the **Gernas SDK** (`gernas-sdk/`, package `gernas-telemetry`). Paths and APIs below refer to the former `beacon_kit/` package; see `gernas-sdk/docs/MIGRATION_FROM_BEACON_KIT.md` for the mapping and `gernas-sdk/docs/REQUIREMENTS_TRACEABILITY.md` for current coverage.
+
 # Beacon Kit ↔ POD 1 / POD 3 Observability Coverage Analysis & Development Plan
 
 ## Context

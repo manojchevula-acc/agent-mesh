@@ -26,17 +26,7 @@ if project_root not in sys.path:
 from agent_framework import tool
 from src.a2a.clients import ask_remote
 
-try:
-    from beacon_kit import traced_tool, compliance_gate
-    _BK_AVAILABLE = True
-except Exception:
-    _BK_AVAILABLE = False
-    def traced_tool(name):  # type: ignore[misc]
-        def _d(fn): return fn
-        return _d
-    def compliance_gate(event_type, **kw):  # type: ignore[misc]
-        def _d(fn): return fn
-        return _d
+from src.observability import gernas_telemetry as _gt
 
 # Bounds nested peer delegation within a single process.
 _peer_depth: contextvars.ContextVar[int] = contextvars.ContextVar("peer_call_depth", default=0)
@@ -88,6 +78,7 @@ async def _consult_peer(node: str, question: str, unavailable_label: str) -> str
             except Exception as _e:
                 _last_exc = _e
                 if _attempt < _A2A_RETRIES:
+                    _gt.record_retry()
                     await asyncio.sleep(_A2A_RETRY_DELAY)
         if result is None:
             raise _last_exc  # all retry attempts failed — fall into outer except
@@ -162,7 +153,7 @@ async def _consult_peer(node: str, question: str, unavailable_label: str) -> str
     "numeric or record lookup about a customer or deal (e.g. CUST001's recommended "
     "price, margin analysis, profitability tier, RWA impact)."
 ))
-@traced_tool("query_structured_data")
+@_gt.trace_tool("query_structured_data", tool_type="a2a")
 async def query_structured_data(question: str) -> str:
     """Agent-to-agent hop: Price Assist asks the Data Agent (over A2A)."""
     return await _consult_peer("data_agent", question, "DATA_UNAVAILABLE")
@@ -175,7 +166,7 @@ async def query_structured_data(question: str) -> str:
     "(RAG-as-a-Service knowledge base). Use to retrieve the rule or benchmark that "
     "a price or action must comply with."
 ))
-@traced_tool("query_knowledge_base")
+@_gt.trace_tool("query_knowledge_base", tool_type="a2a")
 async def query_knowledge_base(question: str) -> str:
     """Agent-to-agent hop: Price Assist asks the RAG Agent (over A2A)."""
     return await _consult_peer("rag_agent", question, "RAG_UNAVAILABLE")
@@ -191,8 +182,8 @@ APPROVAL_SIGNAL_PREFIX = "AWAITING_TOOL_APPROVAL:"
     "Requires supervisor approval before the change is applied. "
     "Use for explicit pricing updates (e.g. 'change pricing for CUST001 to 4.5%')."
 ))
-@compliance_gate("pricing_change", actor_key="customer_id")
-@traced_tool("submit_pricing_change")
+@_gt.compliance_gate("pricing_change", actor_key="customer_id")
+@_gt.trace_tool("submit_pricing_change")
 async def submit_pricing_change(customer_id: str, new_rate: float, effective_date: str) -> str:
     """Interceptor: creates an approval request and returns a signal string."""
     from src.hitl.approval_store import approval_store
@@ -211,8 +202,8 @@ async def submit_pricing_change(customer_id: str, new_rate: float, effective_dat
     "Requires supervisor approval before the limit is changed. "
     "Use for explicit credit limit adjustments (e.g. 'increase credit limit for CUST001 to 5M')."
 ))
-@compliance_gate("credit_limit_change", actor_key="customer_id")
-@traced_tool("adjust_credit_limit")
+@_gt.compliance_gate("credit_limit_change", actor_key="customer_id")
+@_gt.trace_tool("adjust_credit_limit")
 async def adjust_credit_limit(customer_id: str, new_limit: float, reason: str) -> str:
     """Interceptor: creates an approval request and returns a signal string."""
     from src.hitl.approval_store import approval_store

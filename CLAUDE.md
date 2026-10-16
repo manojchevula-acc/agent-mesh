@@ -180,7 +180,7 @@ Every hop writes to `data/audit_trail.jsonl` and emits OpenTelemetry spans with 
 - `agent-mesh/src/hitl/approval_store.py` — `asyncio.Event`-based HITL approval gate
 - `agent-mesh/src/memory/conversation_store.py` — JSONL conversation persistence
 - `agent-mesh/src/tracing/llm_reasoning.py` — `extract_reasoning()` / `strip_reasoning_markers()`
-- `beacon_kit/__init__.py` — public API for the custom OTel sidecar package
+- `gernas-sdk/gernas/__init__.py` — public API of the Gernas SDK (telemetry); `agent-mesh/src/observability/gernas_telemetry.py` — the mesh's single integration point
 
 ### Design Patterns to Know
 
@@ -200,7 +200,7 @@ Every hop writes to `data/audit_trail.jsonl` and emits OpenTelemetry spans with 
 
 **Retry + graceful degradation:** `DomainExecutor` detects tool-call echo, meta-response, and hallucinated placeholders via regex and retries once with a corrective prompt. Failed A2A/MCP hops soft-fail to an "unavailable" string rather than crashing the workflow.
 
-**beacon_kit observability sidecar:** A custom in-repo OTel package (`beacon_kit/`). One `setup_telemetry(TelemetryConfig.from_env())` call activates all exporters. Provides `@traced_agent`, `@traced_tool`, `@compliance_gate`, `@guardrail_check`, `@traced_a2a_hop` decorators.
+**Gernas SDK telemetry (`gernas-sdk/`, evolved from Beacon Kit):** `pip install -e ./gernas-sdk`; one `init_gernas()` call per process (via `gernas_telemetry.init_telemetry`), configured only by `GERNAS_*` env vars. Telemetry goes SDK → OTel Collector (`python gernas-sdk/scripts/run_collector.py`) → Opik + data plane. Sixteen `@trace_*` decorators plus MAF / A2A / ASGI / MCP adapters; PDPL redaction on every attribute. See `gernas-sdk/docs/sdk-developer-guide.md`.
 
 ---
 
@@ -244,8 +244,10 @@ All loaded from `agent-mesh/.env`. Key variables:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `OBS_PROFILE` | `dev` | `dev`=OTLP/Jaeger, `prod`=Azure Monitor, `grafana`=Grafana Cloud, `off`=file only |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` | Jaeger/Aspire OTLP receiver |
+| `GERNAS_OTLP_ENDPOINT` | *(unset = telemetry off)* | OTel Collector endpoint, e.g. `http://127.0.0.1:4317` |
+| `GERNAS_USE_CASE_ID` / `GERNAS_APPLICATION_ID` / `GERNAS_BUSINESS_DOMAIN` / `GERNAS_ENVIRONMENT` | — | Canonical context envelope on every span |
+| `GERNAS_EMIT_OPIK` / `GERNAS_EMIT_DATAPLANE` | `true` | Per-destination kill switches (routed by the Collector) |
+| `OPIK_API_KEY` / `OPIK_WORKSPACE` / `OPIK_PROJECT_NAME` | — | Read only by the Collector's Opik exporter |
 | `LOG_LEVEL` | `INFO` | Log verbosity |
 | `LOG_JSON` | `false` | Structured JSON logging |
 
@@ -284,7 +286,7 @@ Identity is mocked (username → role). Real SSO is not implemented.
 - **RAG:** Qdrant + BGE-M3 / FlagEmbedding, Redis cache, RAGAS evaluation
 - **Semantic cache:** ChromaDB + `sentence-transformers` (all-MiniLM-L6-v2) + cross-encoder rerank
 - **Database:** MySQL via PyMySQL + SQLAlchemy
-- **Observability:** OpenTelemetry SDK + `beacon_kit`, `structlog`, `rich`
+- **Observability:** OpenTelemetry SDK + Gernas SDK (`gernas-telemetry`), OTel Collector (`otelcol-contrib`), Opik, `structlog`, `rich`
 - **API servers:** Starlette (agent-mesh), FastAPI (RAG service)
 - **Frontend:** Vite + React 18 + TailwindCSS + TanStack Query
 - **Testing:** `pytest` + `pytest-asyncio`, `unittest`

@@ -36,6 +36,7 @@ from typing import FrozenSet, List, Optional
 import httpx
 
 from src.config import Config
+from src.observability import gernas_telemetry as _gt
 
 _log = logging.getLogger("agent_mesh.cache.entity")
 
@@ -261,7 +262,9 @@ async def extract_entities(query: str, role: str = "") -> EntitySignature:
     timeout = Config.CACHE_ENTITY_EXTRACT_TIMEOUT
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(url, json=_build_payload(query), headers=_build_headers())
+            payload = _build_payload(query)
+            resp = await _gt.chat_post(client, url, json=payload, headers=_build_headers(),
+                                       model=payload.get("model", ""), template_id="entity_extractor")
             resp.raise_for_status()
             raw = resp.json()["choices"][0]["message"]["content"].strip()
             sig = _parse_extractor_response(raw)
@@ -303,8 +306,10 @@ def _chat_completion_sync(payload: dict, timeout: float) -> str:
     for attempt in range(max_retries + 1):
         try:
             with httpx.Client(timeout=timeout) as client:
-                resp = client.post(url, json=payload, headers=_build_headers())
+                resp = _gt.chat_post_sync(client, url, json=payload, headers=_build_headers(),
+                                          model=payload.get("model", ""), template_id="entity_extractor")
                 if resp.status_code == 429 and attempt < max_retries:
+                    _gt.record_retry()
                     wait = _retry_after_seconds(resp)
                     time.sleep(wait if wait is not None else _backoff_seconds(attempt))
                     continue
@@ -313,6 +318,7 @@ def _chat_completion_sync(payload: dict, timeout: float) -> str:
         except Exception as exc:  # connection/SSL/timeout/HTTP error
             last_exc = exc
             if attempt < max_retries:
+                _gt.record_retry()
                 time.sleep(_backoff_seconds(attempt))
                 continue
             raise

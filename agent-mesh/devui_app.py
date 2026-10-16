@@ -46,12 +46,11 @@ project_root = str(pathlib.Path(__file__).resolve().parent)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-# BEACON_KIT: OBS_PROFILE=off is already set above; beacon_kit reads it and uses no-op exporters
-# from src.observability import setup_observability, get_logger, CAT_SYSTEM
-# setup_observability(service_name="agent_mesh_devui")
+# Gernas SDK in single-process DevUI mode: decorators stay active but export is "off"
+# (DevUI is its own tracing surface); unchanged from the previous behaviour.
 from src.observability import get_logger, CAT_SYSTEM
-from beacon_kit import setup_telemetry, TelemetryConfig
-_bk_handle = setup_telemetry(TelemetryConfig.from_env(service_name="agent_mesh_devui"))
+from src.observability import gernas_telemetry
+gernas_telemetry.init_telemetry("agent_mesh_devui", channel="devui", exporter="off")
 
 from agent_framework.devui import serve
 

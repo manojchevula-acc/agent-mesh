@@ -16,6 +16,7 @@ import logging
 import httpx
 
 from src.config import Config
+from src.observability import gernas_telemetry as _gt
 
 _log = logging.getLogger(__name__)
 
@@ -45,12 +46,14 @@ async def _call_groq(user_prompt: str) -> str:
         "Content-Type": "application/json",
     }
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(url, json=payload, headers=headers)
+        resp = await _gt.chat_post(client, url, json=payload, headers=headers, model=model,
+                                   template_id="conversation_summary")
         resp.raise_for_status()
         data = resp.json()
     return data["choices"][0]["message"]["content"].strip()
 
 
+@_gt.trace_memory("summarize", store="conversation_summary")
 async def summarize_and_persist(
     session_id: str,
     prior_summary: str,

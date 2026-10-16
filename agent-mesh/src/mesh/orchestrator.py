@@ -37,6 +37,7 @@ from src.a2a.clients import ask_remote
 from src.utils.console_logger import AgentLogger
 from src.observability import get_logger, CAT_SYSTEM
 from src.observability.baggage import set_request_baggage, detach_baggage
+from src.observability import gernas_telemetry as _gt
 from src.observability.metrics import record_mesh_request, record_cache
 from src.mesh.workflow import MeshState, build_mesh_workflow, build_hitl_resume_workflow, build_intent_resume_workflow, _stream_queue, _emit_stream_event
 from src.tracing.execution_trace import get_active_tracer
@@ -107,6 +108,7 @@ class MeshResult:
     intent_match_similarity: float = 0.0
 
 
+@_gt.trace_use_case(channel=_gt.current_channel, outcome_from=_gt.business_outcome)
 async def handle_request(user: User, query: str, session_id: str | None = None, request_id: str | None = None, bypass_cache: bool = False) -> MeshResult:
     """Runs one request through the full mesh workflow.
 
@@ -445,8 +447,9 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
             if Config.ENABLE_ROLLING_SUMMARIZATION:
                 try:
                     from src.memory.summarizer import summarize_and_persist
-                    asyncio.create_task(
-                        summarize_and_persist(session_id, _prior_summary, query, final.answer)
+                    _gt.spawn(  # Gernas: background task stays in this request's trace
+                        summarize_and_persist(session_id, _prior_summary, query, final.answer),
+                        name="rolling_summary",
                     )
                 except Exception as exc_sum:
                     _log.warning("summarization task creation failed session=%s: %s", session_id, exc_sum)

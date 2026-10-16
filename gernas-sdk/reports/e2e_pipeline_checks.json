@@ -1,0 +1,74 @@
+{
+  "run_ids": {
+    "normal": "run_bce0c8c2624d4b208b0a753f5bad4f17",
+    "kill_opik": "run_1f6fdc9c5e5245f09345e40eac681abf",
+    "kill_dataplane": "run_531270287d894ef39fda69469f4a3f60"
+  },
+  "checks": [
+    {
+      "check": "probe span reached the data plane",
+      "ok": true,
+      "detail": "1 span(s)"
+    },
+    {
+      "check": "raw gen_ai.prompt removed by the Collector (PDPL)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "unregistered attribute removed (deny-by-default)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "Emirates ID masked in a registered field",
+      "ok": true,
+      "detail": "id ****"
+    },
+    {
+      "check": "redaction summary recorded",
+      "ok": true,
+      "detail": "redaction.* attributes"
+    },
+    {
+      "check": "envelope + resource preserved",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "kill switch: dataplane=false keeps spans out of the data plane",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "kill switch: opik=false still reaches the data plane",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "signal routing: metrics in the metrics file only",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "signal routing: logs in the logs file only",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "normal run in Opik",
+      "ok": true,
+      "detail": "found=True"
+    },
+    {
+      "check": "opik=false run absent from Opik",
+      "ok": true,
+      "detail": "found=False"
+    },
+    {
+      "check": "dataplane=false run still in Opik",
+      "ok": true,
+      "detail": "found=True"
+    }
+  ]
+}

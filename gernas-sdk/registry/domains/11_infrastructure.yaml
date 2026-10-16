@@ -1,0 +1,18 @@
+domain: infrastructure
+owner: Platform SRE
+brief: Where the signal was produced, plus SDK/pipeline self-telemetry, routing switches and the OTel semconv keys GERNAS relies on.
+fields:
+  - {name: ENVIRONMENT, key: gernas.environment, type: string, required: always, sensitivity: public, cardinality: bounded, rollup: true, action: keep, enum: [dev, sit, uat, staging, prod], brief: Deployment environment, example: dev}
+  - {name: CLUSTER, key: gernas.cluster, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: AKS cluster, example: aks-gernas-dev}
+  - {name: NAMESPACE, key: gernas.namespace, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Kubernetes namespace, example: agents}
+  - {name: POD, key: gernas.pod, type: string, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Pod name, example: price-assist-5d9}
+  - {name: REGION, key: gernas.region, type: string, required: conditional, sensitivity: public, cardinality: bounded, rollup: true, action: keep, brief: Cloud region, example: uaenorth}
+  - {name: COMMIT_SHA, key: gernas.commit_sha, type: string, required: conditional, sensitivity: internal, cardinality: growing, rollup: false, action: keep, brief: Source commit of the deployed agent, example: 4a9de17}
+  - {name: SDK_VERSION, key: gernas.sdk.version, type: string, required: always, sensitivity: public, cardinality: bounded, rollup: true, action: keep, brief: Gernas SDK version that produced the signal, example: "0.3.0"}
+  - {name: ROUTE_OPIK, key: gernas.route.opik, type: boolean, required: always, sensitivity: public, cardinality: bounded, rollup: false, action: keep, brief: Kill switch - Opik destination enabled (GERNAS_EMIT_OPIK), example: true}
+  - {name: ROUTE_DATAPLANE, key: gernas.route.dataplane, type: boolean, required: always, sensitivity: public, cardinality: bounded, rollup: false, action: keep, brief: Kill switch - data-plane destination enabled (GERNAS_EMIT_DATAPLANE), example: true}
+  - {name: REGISTRY_MISS, key: gernas.registry_miss, type: boolean, required: never, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Collector enrichment could not find the agent, example: false}
+  - {name: HTTP_METHOD, key: http.request.method, type: string, required: conditional, sensitivity: public, cardinality: bounded, rollup: true, action: keep, brief: OTel semconv HTTP method, example: POST}
+  - {name: HTTP_ROUTE, key: http.route, type: string, required: conditional, sensitivity: public, cardinality: bounded, rollup: true, action: keep, brief: OTel semconv HTTP route, example: /api/query}
+  - {name: HTTP_STATUS_CODE, key: http.response.status_code, type: int, required: conditional, sensitivity: public, cardinality: bounded, rollup: true, action: keep, brief: OTel semconv HTTP status code, example: 200}
+  - {name: ERROR_TYPE, key: error.type, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: OTel semconv error class, example: TimeoutError}

@@ -29,7 +29,7 @@ if str(_SRC_DIR) not in sys.path:
 # Load project .env so this process shares the backend's config.
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
-from mcp.server.fastmcp import FastMCP  # noqa: E402 (after path setup)
+from mcp.server.fastmcp import Context, FastMCP  # noqa: E402 (after path setup)
 
 DEFAULT_GENERATE_ANSWER = os.getenv("RAG_GENERATE_ANSWER", "false").lower() in {
     "1",
@@ -42,6 +42,23 @@ MCP_HOST = os.getenv("MCP_HOST", "127.0.0.1")
 MCP_PORT = int(os.getenv("MCP_PORT", "9000"))
 
 mcp = FastMCP("gernas-rag-search", host=MCP_HOST, port=MCP_PORT)
+
+# ── Gernas SDK telemetry (GERNAS_* env; disabled with a warning if unconfigured) ──
+# search_documents continues the calling agent's trace from the MCP request _meta
+# and records a rag.retrieve span (result count, empty result, top score — never
+# the query text or document content).
+try:
+    import gernas as _gernas
+    from gernas.adapters.mcp import mcp_meta_context as _mcp_meta_context
+    _gernas.init_gernas(_gernas.GernasConfig.from_env(service_name="rag_mcp"))
+    _trace_rag = _gernas.trace_rag(index_id=os.getenv("RAG_COLLECTION", "fab_gernas_docs"), strategy="hybrid",
+                                   knowledge_domain="fab_policy",
+                                   results_from=lambda r: r.get("results", []) if isinstance(r, dict) else r)
+except Exception as _g_err:  # noqa: BLE001
+    import contextlib as _contextlib
+    print(f"[rag-mcp] Gernas SDK telemetry disabled: {_g_err}", file=sys.stderr)
+    _mcp_meta_context = lambda ctx: _contextlib.nullcontext()  # noqa: E731
+    _trace_rag = lambda fn: fn  # noqa: E731
 
 # ── Lazy pipeline singletons ───────────────────────────────────────────────────
 _pipeline = None
@@ -133,7 +150,7 @@ def _format_chunks(payload: dict) -> dict:
 
 @mcp.tool()
 async def search_documents(
-    query: str, top_k: int = 5
+    query: str, top_k: int = 5, ctx: Context | None = None
 ) -> dict:
     """Search FAB credit & regulatory policy documents for grounded context.
 
@@ -152,6 +169,12 @@ async def search_documents(
         ``answer`` string when the server is configured to generate answers. On
         error, ``{"error": <message>}``.
     """
+    with _mcp_meta_context(ctx):
+        return await _search_documents(query, top_k)
+
+
+@_trace_rag
+async def _search_documents(query: str, top_k: int = 5) -> dict:
     top_k = max(1, min(int(top_k), 20))
     generate_answer = DEFAULT_GENERATE_ANSWER
 

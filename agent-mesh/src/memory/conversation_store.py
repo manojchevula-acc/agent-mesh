@@ -18,6 +18,7 @@ from typing import List, Dict
 
 from src.config import Config
 from src.memory.base import ConversationBackend
+from src.observability import gernas_telemetry as _gt
 
 
 def _build_backend() -> ConversationBackend:
@@ -41,6 +42,7 @@ class ConversationStore:
     def __init__(self, backend: ConversationBackend | None = None) -> None:
         self._backend = backend or _build_backend()
 
+    @_gt.trace_memory("read", store="conversation", hit_from=lambda r: bool(r and (r[0] or r[1])))
     def load_with_summary(self, session_id: str) -> "tuple[str, List[Dict]]":
         """Return ``(summary_str, [])`` for the rolling-summarization prompt path.
 
@@ -51,6 +53,7 @@ class ConversationStore:
         summary = self._backend.load_summary(session_id)
         return summary, []
 
+    @_gt.trace_memory("write", store="conversation_summary")
     def save_summary(self, session_id: str, summary: str) -> None:
         """Persist a new rolling summary for ``session_id``."""
         self._backend.save_summary(session_id, summary)
@@ -75,6 +78,7 @@ class ConversationStore:
         self._backend.append(session_id, "user", user_query)
         self._backend.append(session_id, "assistant", assistant_answer)
 
+    @_gt.trace_memory("write", store="conversation")
     def append_turn_rich(
         self,
         session_id: str,

@@ -1,0 +1,56 @@
+# GERNAS agent-side sidecar Collector (WP2-A-01 step 3): buffer locally, never block
+# the agent, forward to the central gateway. No expensive processing here.
+# GERNAS_GATEWAY_ENDPOINT points at the HA gateway (otel-collector-config.yaml locally).
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:4317
+        max_recv_msg_size_mib: 8
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+    spike_limit_mib: 64
+  batch:
+    send_batch_size: 512
+    timeout: 1s
+
+exporters:
+  otlp/gateway:
+    endpoint: ${env:GERNAS_GATEWAY_ENDPOINT:-127.0.0.1:14317}
+    tls:
+      insecure: ${env:GERNAS_GATEWAY_INSECURE:-true}
+    sending_queue:
+      enabled: true
+      queue_size: 2048
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_elapsed_time: 300s
+
+service:
+  telemetry:
+    metrics:
+      level: normal
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 127.0.0.1
+                port: 8889
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/gateway]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/gateway]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/gateway]

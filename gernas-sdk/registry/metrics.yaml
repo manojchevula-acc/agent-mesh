@@ -1,0 +1,24 @@
+# Canonical GERNAS metric instruments. Dimensions must be bounded-cardinality
+# registry fields (never session/user/trace ids - WP1-CTX-06).
+metrics:
+  - {name: AGENT_CALLS, key: gernas.agent.calls.total, type: counter, unit: "{call}", brief: Agent runs by result}
+  - {name: AGENT_DURATION, key: gernas.agent.duration, type: histogram, unit: ms, brief: Agent run latency}
+  - {name: LLM_CALLS, key: gernas.llm.calls.total, type: counter, unit: "{call}", brief: Model calls by result}
+  - {name: LLM_DURATION, key: gernas.llm.duration, type: histogram, unit: ms, brief: Model call latency}
+  - {name: LLM_TOKENS, key: gernas.llm.tokens.total, type: counter, unit: "{token}", brief: Tokens by direction (input/output)}
+  - {name: LLM_COST, key: gernas.llm.cost_aed.total, type: counter, unit: AED, brief: Estimated model cost}
+  - {name: TOOL_CALLS, key: gernas.tool.calls.total, type: counter, unit: "{call}", brief: Tool calls by result}
+  - {name: MCP_CALLS, key: gernas.mcp.calls.total, type: counter, unit: "{call}", brief: MCP calls by result}
+  - {name: A2A_CALLS, key: gernas.a2a.calls.total, type: counter, unit: "{call}", brief: Delegations / A2A hops by result}
+  - {name: A2A_DURATION, key: gernas.a2a.duration, type: histogram, unit: ms, brief: Delegation latency}
+  - {name: RETRIEVAL_CALLS, key: gernas.retrieval.calls.total, type: counter, unit: "{call}", brief: RAG/retrieval calls by result and emptiness}
+  - {name: GUARDRAIL_DECISIONS, key: gernas.guardrail.decisions.total, type: counter, unit: "{decision}", brief: Guardrail / content-safety decisions}
+  - {name: HITL_OUTCOMES, key: gernas.hitl.outcomes.total, type: counter, unit: "{approval}", brief: Human approval outcomes (Human Intervention Rate)}
+  - {name: LOOP_DETECTIONS, key: gernas.loop_detected.total, type: counter, unit: "{run}", brief: Runs flagged for loops}
+  - {name: MAX_STEP_VIOLATIONS, key: gernas.max_step_violation.total, type: counter, unit: "{run}", brief: Runaway runs}
+  - {name: RETRIES, key: gernas.retry.total, type: counter, unit: "{retry}", brief: Retries}
+  - {name: ORPHANS, key: gernas.orphan_detected.total, type: counter, unit: "{run}", brief: Broken delegation chains}
+  - {name: DROPPED_ATTRIBUTES, key: gernas.sdk.dropped_attributes, type: counter, unit: "{attribute}", brief: Attribute writes that failed and were dropped}
+  - {name: DROPPED_SPANS, key: gernas.sdk.dropped_spans, type: counter, unit: "{span}", brief: Spans that could not be exported (Collector down/queue full)}
+  - {name: REDACTIONS, key: gernas.sdk.redactions.total, type: counter, unit: "{attribute}", brief: Attribute values dropped/masked/fingerprinted by the PDPL hook}
+  - {name: CIRCUIT_BREAKER_STATE, key: gernas.circuit_breaker.state, type: gauge, unit: "1", brief: Circuit breaker state 0=closed 1=half_open 2=open}

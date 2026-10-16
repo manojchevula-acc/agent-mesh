@@ -1,0 +1,9 @@
+domain: business
+owner: FAB DAI
+brief: Business context binding a signal to a use case, application and line of business.
+fields:
+  - {name: BUSINESS_DOMAIN, key: gernas.business_domain, type: string, required: always, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Line of business that owns the use case, example: retail_pricing}
+  - {name: USE_CASE_ID, key: gernas.use_case_id, type: string, required: always, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Registered GERNAS use-case identifier, example: UC-PRICING-001}
+  - {name: APPLICATION_ID, key: gernas.application_id, type: string, required: always, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Application hosting the use case, example: agent-mesh}
+  - {name: CHANNEL, key: gernas.channel, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, enum: [web, api, cli, devui, a2a, batch], brief: Channel through which the request arrived, example: api}
+  - {name: BUSINESS_OUTCOME, key: gernas.business_outcome, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, enum: [success, partial, failure, abandoned], brief: Use-case specific outcome of the request, example: success}

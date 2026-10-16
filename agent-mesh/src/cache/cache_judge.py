@@ -20,6 +20,7 @@ from typing import Tuple
 import httpx
 
 from src.config import Config
+from src.observability import gernas_telemetry as _gt
 
 _log = logging.getLogger("agent_mesh.cache.judge")
 
@@ -83,7 +84,8 @@ async def llm_cache_judge(
 
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.post(url, json=payload, headers=headers)
+            resp = await _gt.chat_post(client, url, json=payload, headers=headers,
+                                       model=Config.CACHE_JUDGE_MODEL, template_id="cache_judge")
             resp.raise_for_status()
             raw = resp.json()["choices"][0]["message"]["content"].strip()
             decision, reason = _parse_judge_response(raw)

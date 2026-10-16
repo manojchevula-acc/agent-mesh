@@ -1,0 +1,10 @@
+domain: identity
+owner: FAB Data Governance
+brief: Who or what initiated the work. Raw user identity never leaves the process (PDPL).
+fields:
+  - {name: USER_ID, key: gernas.user_id, type: string, required: never, sensitivity: restricted, cardinality: unbounded, rollup: false, action: drop, brief: Raw end-user identifier (never emitted), example: "alice"}
+  - {name: TOKENISED_USER_ID, key: gernas.tokenised_user_id, type: string, required: conditional, sensitivity: confidential, cardinality: unbounded, rollup: false, action: fingerprint, brief: Irreversible token for the end user, example: "u_3f9a"}
+  - {name: PRINCIPAL_TYPE, key: gernas.principal_type, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, enum: [human, agent, service], brief: Kind of principal that initiated the call, example: human}
+  - {name: USER_ROLE, key: gernas.user_role, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Business role of the caller (role only - never identity), example: relationship_manager}
+  - {name: TENANT, key: gernas.tenant, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Tenant or legal entity, example: fab-uae}
+  - {name: DEPARTMENT, key: gernas.department, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Owning department, example: corporate_banking}

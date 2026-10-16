@@ -29,6 +29,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import List, Optional
 
+from src.observability import gernas_telemetry as _gt
+
 from src.config import Config
 
 _log = logging.getLogger("agent_mesh.cache")
@@ -138,6 +140,7 @@ class SemanticCacheStore:
         results = self.lookup_top_n(query, role, n=1)
         return results[0] if results else None
 
+    @_gt.trace_retrieval(index_id="semantic_cache", strategy="semantic_cache")
     def lookup_top_n(self, query: str, role: str, n: int = 3) -> List[CacheEntry]:
         """Return up to n best-matching CacheEntries for query, sorted by similarity desc.
 

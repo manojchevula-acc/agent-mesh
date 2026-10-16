@@ -14,7 +14,7 @@ _configured = False
 def configure_telemetry(service_name: str) -> None:
     """Configure a global tracer provider for ``service_name``.
 
-    BEACON_KIT: function body commented out — beacon_kit setup_telemetry() is called
+    Gernas SDK: function body commented out — gernas.init_gernas() is called
     in main.py lifespan instead. Signature kept so any remaining imports don't break.
     """
     # global _configured
@@ -37,7 +37,7 @@ def configure_telemetry(service_name: str) -> None:
 def instrument_fastapi(app: object) -> None:
     """Instrument a FastAPI app if the instrumentation package is present.
 
-    BEACON_KIT: function body commented out — beacon_kit TelemetryMiddleware is added
+    Gernas SDK: function body commented out — gernas GernasASGIMiddleware is added
     in create_app() instead. Signature kept so any remaining imports don't break.
     """
     # try:

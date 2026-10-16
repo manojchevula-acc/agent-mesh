@@ -1,0 +1,8 @@
+domain: cost
+owner: FinOps
+brief: Directly metered cost signals computed in-process from the rate card.
+fields:
+  - {name: EST_COST_AED, key: gernas.est_cost_aed, type: double, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Estimated model-call cost in AED, example: 0.0265}
+  - {name: RATE_CARD_VERSION, key: gernas.cost.rate_card_version, type: string, required: conditional, sensitivity: internal, cardinality: growing, rollup: true, action: keep, brief: Rate card version used for the estimate, example: "2026-04-01"}
+  - {name: COMPUTE_UNITS, key: gernas.compute_units, type: double, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Compute units consumed, example: 1.0}
+  - {name: PTU_COST_AED, key: gernas.ptu.cost_aed, type: double, required: never, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: PTU amortised cost (WP1-PTU-01 - blocked on R4), example: 0.01}

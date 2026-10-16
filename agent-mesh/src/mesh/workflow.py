@@ -48,7 +48,7 @@ if project_root not in sys.path:
 
 from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
 
-from src.guardrails.deterministic_filters import screen_input, redact_pii, _emit_screen_guardrail
+from src.guardrails.deterministic_filters import screen_input, redact_pii, redact_output, _emit_screen_guardrail
 from src.auth.identity_provider import BankingRole
 from src.observability import get_logger, CAT_WORKFLOW
 from src.observability.metrics import (
@@ -68,16 +68,10 @@ from src.config import Config
 
 _log = get_logger(CAT_WORKFLOW)
 
-try:
-    from beacon_kit import traced_agent, AgenticMetrics
-    _bk_metrics = AgenticMetrics()
-    _BK_AVAILABLE = True
-except Exception:
-    _BK_AVAILABLE = False
-    _bk_metrics = None
-    def traced_agent(name):  # type: ignore[misc]
-        def _d(fn): return fn
-        return _d
+# Gernas SDK: every executor stage is an ``agent.run`` span (run id, termination
+# reason, step/loop/retry detection, gernas.agent.* metrics). Pass-through when
+# the SDK is unavailable.
+from src.observability import gernas_telemetry as _gt
 
 # Type alias for the injected dependency.
 AskRemote = Callable[..., Awaitable[str]]
@@ -278,7 +272,7 @@ class InputGuardrailExecutor(Executor):
     """Deterministic input screen (hard gate, pre-review). Workflow start node."""
 
     @handler
-    @traced_agent("input-guardrail")
+    @_gt.trace_stage("input-guardrail", agent_type="gate")
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
         tracer = get_active_tracer()
         if tracer:
@@ -312,6 +306,7 @@ class InputGuardrailExecutor(Executor):
 
                     state.blocked = True
                     state.block_stage = "input_guardrail"
+                    _gt.mark_policy_block()
                     state.answer = (
                         f"Request blocked by security guardrails ({', '.join(screen.categories)})."
                     )
@@ -369,7 +364,7 @@ class RBACValidationExecutor(Executor):
     """
 
     @handler
-    @traced_agent("rbac-validator")
+    @_gt.trace_stage("rbac-validator", agent_type="gate")
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
         tracer = get_active_tracer()
         if tracer:
@@ -393,6 +388,7 @@ class RBACValidationExecutor(Executor):
 
                     state.blocked = True
                     state.block_stage = "rbac_validation"
+                    _gt.mark_policy_block()
                     state.answer = (
                         f"Access denied: role '{state.role}' is not a recognised FAB banking role. "
                         "Please authenticate with valid FAB credentials."
@@ -458,7 +454,7 @@ class CacheCheckExecutor(Executor):
     """
 
     @handler
-    @traced_agent("cache-check")
+    @_gt.trace_stage("cache-check", agent_type="gate")
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
         tracer = get_active_tracer()
         if tracer:
@@ -914,7 +910,7 @@ class ComplianceExecutor(Executor):
         self._enabled = enabled
 
     @handler
-    @traced_agent("compliance-gate")
+    @_gt.trace_stage("compliance-gate", agent_type="gate")
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
         tracer = get_active_tracer()
 
@@ -1003,6 +999,7 @@ class ComplianceExecutor(Executor):
 
                     state.blocked = True
                     state.block_stage = "compliance"
+                    _gt.mark_policy_block()
                     state.answer = "Request blocked by the Compliance agent (semantic safety review)."
                     state.trail.append("compliance_failed")
                     from src.observability.baggage import get_request_id as _grid
@@ -1020,11 +1017,6 @@ class ComplianceExecutor(Executor):
                             rationale=[verdict[:120]],
                         )
                     record_compliance("FAILED", state.role, elapsed)
-                    if _bk_metrics is not None:
-                        try:
-                            _bk_metrics.record_agent_call("error", "compliance-gate", latency_ms=elapsed)
-                        except Exception:
-                            pass
                     _emit_stream_event({"stage": "compliance", "status": "blocked", "message": "Compliance check failed"})
                     log_state_handoff(
                         "compliance", "END", state, note="compliance failed -> early yield",
@@ -1058,11 +1050,6 @@ class ComplianceExecutor(Executor):
                         ],
                     )
                 record_compliance("PASSED", state.role, elapsed)
-                if _bk_metrics is not None:
-                    try:
-                        _bk_metrics.record_agent_call("success", "compliance-gate", latency_ms=elapsed)
-                    except Exception:
-                        pass
             except Exception as exc:
                 _set_error(span, str(exc)[:200])
                 raise
@@ -1149,7 +1136,7 @@ class DomainExecutor(Executor):
     _HALLUCINATION_RE = re.compile(r'\[(?![A-Z]{2,}[0-9])[A-Za-z][A-Za-z0-9 /-]{1,40}\]')
 
     @handler
-    @traced_agent("domain-processor")
+    @_gt.trace_stage("domain-processor", agent_type="orchestrator")
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState]) -> None:
         tracer = get_active_tracer()
         t0 = time.perf_counter()
@@ -1285,6 +1272,7 @@ class DomainExecutor(Executor):
                     answer_visible = strip_reasoning_markers(answer or "")
                     if self._TOOL_CALL_RE.search(answer_visible):
                         retry_reason = "tool_call_echo"
+                        _gt.record_retry()
                         _log.warning(
                             "price_assist returned bare tool-call text; retrying once.",
                             extra={"status": "RETRY"},
@@ -1294,6 +1282,7 @@ class DomainExecutor(Executor):
                         answer = await self._ask("price_assist", base_prompt)
                     elif self._META_RESPONSE_RE.search(answer_visible):
                         retry_reason = "meta_response"
+                        _gt.record_retry()
                         _log.warning(
                             "price_assist returned meta-response without data; retrying once.",
                             extra={"status": "RETRY"},
@@ -1310,6 +1299,7 @@ class DomainExecutor(Executor):
                         answer = await self._ask("price_assist", retry_prompt)
                     elif self._HALLUCINATION_RE.search(answer_visible):
                         retry_reason = "hallucination"
+                        _gt.record_retry()
                         _log.warning(
                             "price_assist returned hallucinated placeholder text; retrying once.",
                             extra={"status": "RETRY"},
@@ -1586,14 +1576,6 @@ class DomainExecutor(Executor):
             elif failed:
                 record_a2a_call(_target_node, "ERROR", float(total_ms))
 
-        if _bk_metrics is not None:
-            try:
-                _bk_metrics.record_agent_call(
-                    "error" if failed else "success", "domain-processor",
-                    latency_ms=float((time.perf_counter() - t0) * 1000),
-                )
-            except Exception:
-                pass
         _emit_stream_event({"stage": "domain", "status": "completed", "message": "Domain agent responded"})
         log_state_handoff(
             "domain", "output_redaction", state,
@@ -1607,7 +1589,7 @@ class OutputRedactionExecutor(Executor):
     """Deterministic output redaction (PII). Terminal node — yields the answer."""
 
     @handler
-    @traced_agent("output-redaction")
+    @_gt.trace_stage("output-redaction", agent_type="gate")
     async def run(self, state: MeshState, ctx: WorkflowContext[Never, MeshState]) -> None:
         _emit_stream_event({"stage": "output_redaction", "status": "started", "message": "Redacting output..."})
         otel = _mesh_tracer()
@@ -1615,9 +1597,10 @@ class OutputRedactionExecutor(Executor):
             original_len = len(state.answer or "")
             _set_attr(span, "redaction.input_length", original_len)
             try:
-                state.answer = redact_pii(state.answer)
+                redaction = redact_output(state.answer)
+                state.answer = redaction.text
                 output_len = len(state.answer or "")
-                pii_count = state.answer.count("[REDACTED_")
+                pii_count = redaction.pii_count
                 pii_found = original_len != output_len or pii_count > 0
 
                 _set_attr(span, "redaction.output_length", output_len)

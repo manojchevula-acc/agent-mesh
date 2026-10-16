@@ -1,0 +1,6 @@
+domain: outcome
+owner: GERNAS OS
+brief: Technical execution outcome (the business outcome lives in the business domain).
+fields:
+  - {name: EXECUTION_STATUS, key: gernas.execution_status, type: string, required: conditional, sensitivity: public, cardinality: bounded, rollup: true, action: keep, enum: [ok, error], brief: Technical status of the operation, example: ok}
+  - {name: ERROR_CATEGORY, key: gernas.error_category, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, enum: [timeout, policy, auth, dependency, validation, cancelled, internal], brief: Error taxonomy, example: dependency}

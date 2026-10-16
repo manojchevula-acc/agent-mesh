@@ -1,0 +1,37 @@
+version: "2026.10.0"
+
+# Canonical GERNAS span catalogue - one entry per decorator operation.
+# `required` lists Ctx constant names that MUST be present on every span of that
+# operation (contract tests + `gernas conformance` enforce this). The envelope is
+# required on every span in addition to the operation-specific list.
+envelope: [BUSINESS_DOMAIN, USE_CASE_ID, APPLICATION_ID, ENVIRONMENT, OPERATION]
+
+# Resource attributes stamped once per process by init_gernas().
+resource: [SDK_VERSION, ROUTE_OPIK, ROUTE_DATAPLANE, ENVIRONMENT, USE_CASE_ID, BUSINESS_DOMAIN, APPLICATION_ID]
+
+# The 13 canonical context fields `gernas doctor` checks on its test span. The
+# WP1 plan references "13 required canonical context fields" without listing them;
+# this is the interpretation: one field per Blueprint context domain that an
+# agent run can always supply (see docs/REQUIREMENTS_TRACEABILITY.md).
+canonical_context: [BUSINESS_DOMAIN, USE_CASE_ID, APPLICATION_ID, ENVIRONMENT, AGENT_ID, AGENT_NAME, AGENT_VERSION, FRAMEWORK, AGENT_RUN_ID, TERMINATION_REASON, OPERATION, SDK_VERSION, ROUTE_DATAPLANE]
+
+spans:
+  - {op: USE_CASE, name: use_case.request, decorator: trace_use_case, kind: SERVER, required: [USE_CASE_ID, APPLICATION_ID, BUSINESS_DOMAIN, EXECUTION_STATUS]}
+  - {op: AGENT, name: agent.run, decorator: trace_agent, kind: INTERNAL, required: [AGENT_ID, AGENT_NAME, AGENT_VERSION, FRAMEWORK, AGENT_RUN_ID, TERMINATION_REASON, DURATION_MS]}
+  - {op: LLM, name: llm.call, decorator: trace_llm, kind: CLIENT, required: [MODEL_ID, PROVIDER, DEPLOYMENT_ID, GENERATION_LATENCY_MS]}
+  - {op: STREAM, name: llm.stream, decorator: trace_stream, kind: CLIENT, required: [MODEL_ID, PROVIDER, STREAM_OUTCOME, STREAM_CHUNKS]}
+  - {op: TOOL, name: "tool.{tool_id}", decorator: trace_tool, kind: INTERNAL, required: [TOOL_ID, TOOL_TYPE, AUTH_DECISION, INPUT_HASH]}
+  - {op: MCP, name: mcp.call, decorator: trace_mcp, kind: CLIENT, required: [MCP_SERVER_ID, MCP_OPERATION, MCP_TOOL_NAME, INPUT_HASH]}
+  - {op: HITL, name: hitl.approval, decorator: trace_hitl, kind: INTERNAL, required: [HITL_TICKET_ID, HITL_ACTION, HITL_OUTCOME, HITL_WAITED_MS]}
+  - {op: RAG, name: rag.retrieve, decorator: trace_rag, kind: INTERNAL, required: [RETRIEVAL_DURATION_MS, RESULT_COUNT, EMPTY_RESULT, QUERY_HASH]}
+  - {op: RETRIEVAL, name: retrieval.search, decorator: trace_retrieval, kind: CLIENT, required: [QUERY_HASH, RESULT_COUNT, RETRIEVAL_DURATION_MS]}
+  - {op: EMBEDDING, name: embedding.create, decorator: trace_embedding, kind: CLIENT, required: [EMBED_MODEL, EMBED_BATCH_SIZE, EMBED_LATENCY_MS]}
+  - {op: MEMORY, name: "memory.{operation}", decorator: trace_memory, kind: INTERNAL, required: [MEMORY_OPERATION, MEMORY_SIZE_BYTES]}
+  - {op: PLANNING, name: agent.plan, decorator: trace_planning, kind: INTERNAL, required: [PLAN_ID, ATTEMPT_NUMBER, PLANNING_LATENCY_MS]}
+  - {op: PLAN_STEP, name: agent.plan.step, decorator: planning_step, kind: INTERNAL, required: [PLAN_ID, STEP_ID, STEP_TYPE, ATTEMPT_NUMBER]}
+  - {op: CHAIN, name: chain.run, decorator: trace_chain, kind: INTERNAL, required: [CHAIN_NAME]}
+  - {op: DELEGATION, name: agent.delegate, decorator: trace_delegation, kind: CLIENT, required: [PARENT_AGENT_ID, CHILD_AGENT_ID, DELEGATION_LATENCY_MS, DELEGATION_PROTOCOL]}
+  - {op: GUARDRAIL, name: guardrail.check, decorator: trace_guardrail, kind: INTERNAL, required: [POLICY_ID, POLICY_DECISION]}
+  - {op: CONTENT_SAFETY, name: content_safety.check, decorator: trace_content_safety, kind: INTERNAL, required: [SAFETY_CATEGORY, CONTENT_BLOCKED]}
+  - {op: HTTP, name: "{method} {route}", decorator: GernasASGIMiddleware, kind: SERVER, required: [HTTP_METHOD, HTTP_ROUTE, HTTP_STATUS_CODE]}
+  - {op: DOCTOR, name: gernas.doctor, decorator: gernas doctor, kind: INTERNAL, required: []}

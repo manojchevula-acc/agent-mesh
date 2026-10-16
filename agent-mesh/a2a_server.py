@@ -30,9 +30,7 @@ from dotenv import load_dotenv
 load_dotenv(pathlib.Path(__file__).resolve().parent / ".env", override=False)
 
 from src.config import Config
-# BEACON_KIT: replaced by beacon_kit setup_telemetry
-# from src.observability import setup_observability
-from beacon_kit import setup_telemetry, TelemetryConfig, set_default_compliance_config
+from src.observability import gernas_telemetry
 from src.agents.node_registry import build_node, NODE_NAMES, MCP_BACKED_NODES
 from src.a2a.hosting import build_agent_card, serve, build_starlette_app
 
@@ -111,10 +109,8 @@ def main():
     parser.add_argument("--port", type=int, default=None, help="Override the port (defaults to registry).")
     args = parser.parse_args()
 
-    # BEACON_KIT: per-node service name so each node is distinct in Grafana Tempo
-    # setup_observability(service_name=f"agent_mesh_{args.agent}")
-    _bk_handle = setup_telemetry(TelemetryConfig.from_env(service_name=f"agent_mesh_{args.agent}"))
-    set_default_compliance_config(TelemetryConfig.from_env())
+    # Gernas SDK: per-node service name so each node is a distinct service in the trace.
+    gernas_telemetry.init_telemetry(f"agent_mesh_{args.agent}", channel="a2a")
 
     Config.validate()
 

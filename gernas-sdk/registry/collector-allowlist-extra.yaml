@@ -1,0 +1,59 @@
+# Third-party attribute keys (OTel semantic conventions and the Microsoft Agent
+# Framework's own spans) that the Collector's deny-by-default redaction processor
+# lets through in addition to every registry key whose action != drop.
+# Payload-bearing framework keys (gen_ai.input.messages, gen_ai.output.messages,
+# gen_ai.system_instructions, gen_ai.tool.call.arguments/result, gen_ai.*.message)
+# are deliberately NOT listed: they never reach a store (PDPL).
+allowed_keys:
+  # OTel resource semconv (the redaction processor also filters resource attributes)
+  - service.name
+  - service.version
+  - service.namespace
+  - service.instance.id
+  - deployment.environment.name
+  - telemetry.sdk.name
+  - telemetry.sdk.language
+  - telemetry.sdk.version
+  - host.name
+  - k8s.pod.name
+  - k8s.namespace.name
+  # OTel GenAI semconv (framework invoke_agent / chat / execute_tool spans)
+  - gen_ai.agent.id
+  - gen_ai.agent.name
+  - gen_ai.agent.description
+  - gen_ai.conversation.id
+  - gen_ai.system
+  - gen_ai.request.max_tokens
+  - gen_ai.request.temperature
+  - gen_ai.request.top_p
+  - gen_ai.response.id
+  - gen_ai.output.type
+  - gen_ai.tool.call.id
+  - gen_ai.tool.type
+  - gen_ai.tool.description
+  - gen_ai.usage.cache_read.input_tokens
+  - gen_ai.usage.reasoning.output_tokens
+  - gen_ai.token.type
+  # Agent Framework workflow spans
+  - workflow.id
+  - workflow.name
+  - executor.id
+  - executor.type
+  - message.type
+  - message.source_id
+  - message.target_id
+  - edge_group.id
+  - edge_group.type
+  - agent_framework.function.name
+  # OTel semconv: network / errors / exceptions / opik-shape
+  - server.address
+  - server.port
+  - url.path
+  - error.message
+  - exception.type
+  - exception.message
+  - exception.stacktrace
+  - exception.escaped
+  - input
+  - output
+  - thread_id

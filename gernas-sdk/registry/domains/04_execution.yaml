@@ -1,0 +1,25 @@
+domain: execution
+owner: GERNAS OS
+brief: Run identifiers and run-level behaviour (termination, loops, retries, timeouts).
+fields:
+  - {name: AGENT_RUN_ID, key: gernas.agent_run_id, type: string, required: always, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Unique id of one agent run (new per run), example: run_7f3c}
+  - {name: PARENT_RUN_ID, key: gernas.parent_run_id, type: string, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: agent_run_id of the delegating run (delegated children only), example: run_19ab}
+  - {name: SESSION_ID, key: gernas.session_id, type: string, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Conversation session spanning many runs (created by the channel), example: sess_a1}
+  - {name: TASK_ID, key: gernas.task_id, type: string, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Work item possibly shared across agents, example: task_9}
+  - {name: REQUEST_ID, key: gernas.request_id, type: string, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Channel request id, example: req_51}
+  - {name: TRACE_ID, key: gernas.trace_id, type: string, required: never, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Trace id mirrored as attribute for cross-system joins, example: 4bf92f3577b34da6a3ce929d0e0e4736}
+  - {name: TERMINATION_REASON, key: gernas.termination_reason, type: string, required: always, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, enum: [completed, max_steps, timeout, policy_block, abandoned, error, human_rejected], brief: Why the run ended, example: completed}
+  - {name: RUN_STEPS, key: gernas.run.steps, type: int, required: conditional, sensitivity: internal, cardinality: bounded, rollup: false, action: keep, brief: Steps (LLM/tool calls) taken by the run, example: 4}
+  - {name: LOOP_DETECTED, key: gernas.loop_detected, type: boolean, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Same tool called with the same args at least GERNAS_LOOP_THRESHOLD times, example: false}
+  - {name: LOOP_REPEAT_COUNT, key: gernas.loop_repeat_count, type: int, required: conditional, sensitivity: internal, cardinality: bounded, rollup: false, action: keep, brief: Repeat count that tripped loop detection, example: 3}
+  - {name: MAX_STEP_VIOLATION, key: gernas.max_step_violation, type: boolean, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Run exceeded GERNAS_MAX_STEPS, example: false}
+  - {name: RETRY_COUNT, key: gernas.retry_count, type: int, required: conditional, sensitivity: internal, cardinality: bounded, rollup: false, action: keep, brief: Retries across the whole run, example: 0}
+  - {name: TIMED_OUT, key: gernas.timed_out, type: boolean, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Run terminated by a timeout, example: false}
+  - {name: ORPHAN_DETECTED, key: gernas.orphan_detected, type: boolean, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: parent_run_id present but the parent trace context is missing, example: false}
+  - {name: DURATION_MS, key: gernas.duration_ms, type: double, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Wall-clock duration of the operation, example: 1204.2}
+  - {name: INPUT_HASH, key: gernas.input_hash, type: string, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: SHA-256 of the operation input (never the raw input), example: 9f86d0}
+  - {name: OUTPUT_HASH, key: gernas.output_hash, type: string, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: SHA-256 of the operation output, example: 3c9a1e}
+  - {name: PROVENANCE_ID, key: gernas.provenance_id, type: string, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Join key to the provenance ledger, example: prov_1}
+  - {name: WORK_UNIT_ID, key: gernas.work_unit_id, type: string, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Join key to the workspace work unit, example: wu_1}
+  - {name: CHAIN_NAME, key: gernas.chain.name, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Name of a framework chain or runnable, example: RunnableSequence}
+  - {name: OPERATION, key: gernas.operation, type: string, required: always, sensitivity: public, cardinality: bounded, rollup: true, action: keep, brief: Canonical GERNAS operation of the span (stable even when the span name is templated), example: agent.run}

@@ -63,7 +63,11 @@ fastmcp>=2.0.0
 # -----------------------------------------------------------------------------
 # OpenTelemetry observability stack
 # Instrumentation versions track the SDK minor (0.63b1 = SDK 1.42.x)
+# Gernas SDK (telemetry for all three services; replaces the in-repo beacon_kit).
+# The SDK itself depends only on OTel SDK primitives; the instrumentation-*
+# packages below are kept for the Agent Framework's own optional tracing.
 # -----------------------------------------------------------------------------
+-e ./gernas-sdk
 opentelemetry-api>=1.42.1
 opentelemetry-sdk>=1.42.1
 opentelemetry-proto>=1.42.1

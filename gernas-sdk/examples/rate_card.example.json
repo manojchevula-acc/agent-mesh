@@ -1,0 +1,12 @@
+{
+  "version": "2026-10-example",
+  "currency": "AED",
+  "source": "EXAMPLE ONLY - not Finance-confirmed rates (WP3-D-02 owns the versioned rate card)",
+  "rates": [
+    {"model": "openai/gpt-oss-120b", "provider": "groq", "input_per_1k": 0.00055, "output_per_1k": 0.00275},
+    {"model": "openai/gpt-oss-20b", "provider": "groq", "input_per_1k": 0.00037, "output_per_1k": 0.00184},
+    {"model": "qwen/qwen3.6-27b", "provider": "groq", "input_per_1k": 0.00110, "output_per_1k": 0.00220},
+    {"model": "gpt-4o", "provider": "azure_openai", "input_per_1k": 0.0092, "output_per_1k": 0.0368},
+    {"model": "ref-model-1", "provider": "*", "input_per_1k": 0.001, "output_per_1k": 0.002}
+  ]
+}

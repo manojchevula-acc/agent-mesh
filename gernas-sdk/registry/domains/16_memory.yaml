@@ -1,0 +1,10 @@
+domain: memory
+owner: Agent Runtime
+brief: Agent memory reads and writes (gap-analysis domain).
+fields:
+  - {name: MEMORY_OPERATION, key: gernas.memory.operation, type: string, required: always, sensitivity: public, cardinality: bounded, rollup: true, action: keep, enum: [read, write, delete, summarize], brief: Memory operation, example: read}
+  - {name: MEMORY_STORE, key: gernas.memory.store, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Memory backend, example: conversation_jsonl}
+  - {name: MEMORY_HIT, key: gernas.memory.hit, type: boolean, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Read found data (read ops only), example: true}
+  - {name: MEMORY_STALE, key: gernas.memory.stale, type: boolean, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Data read was stale, example: false}
+  - {name: MEMORY_SIZE_BYTES, key: gernas.memory.size_bytes, type: int, required: always, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Size of the data read or written, example: 2048}
+  - {name: MEMORY_ITEM_COUNT, key: gernas.memory.item_count, type: int, required: conditional, sensitivity: internal, cardinality: bounded, rollup: false, action: keep, brief: Items read or written, example: 6}

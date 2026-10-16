@@ -1,0 +1,15 @@
+domain: tool
+owner: Skills/Tools platform
+brief: Tool and MCP invocations. Payloads are fingerprinted, never captured.
+fields:
+  - {name: TOOL_ID, key: gernas.tool_id, type: string, required: always, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Registered tool identifier, example: query_structured_data}
+  - {name: TOOL_TYPE, key: gernas.tool_type, type: string, required: always, sensitivity: public, cardinality: bounded, rollup: true, action: keep, enum: [function, mcp, a2a, api, retrieval], brief: Tool category, example: function}
+  - {name: TOOL_VERSION, key: gernas.tool_version, type: string, required: conditional, sensitivity: internal, cardinality: growing, rollup: true, action: keep, brief: Tool version, example: "1"}
+  - {name: AUTH_DECISION, key: gernas.tool.auth_decision, type: string, required: always, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, enum: [allow, deny, not_evaluated], brief: Authorization decision for the call, example: allow}
+  - {name: TOOL_FAILURE_REASON, key: gernas.tool.failure_reason, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Exception class of a failed call, example: TimeoutError}
+  - {name: API_OPERATION, key: gernas.api_operation, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Remote API operation, example: GET /customers}
+  - {name: MCP_SERVER_ID, key: gernas.mcp.server_id, type: string, required: always, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: MCP server identifier, example: datalayer}
+  - {name: MCP_OPERATION, key: gernas.mcp.operation, type: string, required: always, sensitivity: public, cardinality: bounded, rollup: true, action: keep, enum: [tool, resource, prompt], brief: MCP primitive used, example: tool}
+  - {name: MCP_TOOL_NAME, key: gernas.mcp.tool_name, type: string, required: always, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: MCP tool/resource/prompt name, example: customer_360}
+  - {name: MCP_TRANSPORT, key: gernas.mcp.transport, type: string, required: conditional, sensitivity: public, cardinality: bounded, rollup: true, action: keep, enum: [stdio, streamable_http, sse], brief: MCP transport (attribute, never in the span name), example: streamable_http}
+  - {name: GEN_AI_TOOL_NAME, key: gen_ai.tool.name, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: OTel GenAI semconv tool name, example: customer_360}

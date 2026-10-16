@@ -1,0 +1,9 @@
+domain: evaluation
+owner: MRM
+brief: Links runs to offline/online evaluation results and user feedback (gap-analysis domain).
+fields:
+  - {name: EVAL_ID, key: gernas.evaluation.id, type: string, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Evaluation run id, example: eval_1}
+  - {name: EVAL_METRIC, key: gernas.evaluation.metric, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Evaluation metric, example: faithfulness}
+  - {name: EVAL_SCORE, key: gernas.evaluation.score, type: double, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Evaluation score, example: 0.91}
+  - {name: EVAL_DATASET, key: gernas.evaluation.dataset, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Evaluation dataset, example: golden_pricing_v2}
+  - {name: FEEDBACK_SCORE, key: gernas.feedback.score, type: double, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: End-user feedback score, example: 1}

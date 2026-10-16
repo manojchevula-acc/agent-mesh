@@ -2,17 +2,17 @@
 
 Cross-process distributed tracing
 ---------------------------------
-Unlike MCP (where Agent Framework auto-injects trace context into
-``params._meta``), the A2A transport does not propagate W3C trace context on its
-own. We close that gap *without* replacing ``A2AAgent``'s HTTP client (passing a
-bare ``httpx.AsyncClient`` bypasses the A2A SDK's client-factory setup and breaks
-response parsing — the call ends up echoing the request). Instead,
-``setup_observability`` enables OpenTelemetry httpx instrumentation, which
-injects ``traceparent`` / ``tracestate`` onto every outbound httpx request,
-including the one ``A2AAgent`` makes internally. The receiving node extracts and
-attaches that context (see ``src/a2a/hosting.py``), so the remote agent's
-``invoke_agent`` / ``chat`` / ``execute_tool`` spans continue the SAME
-distributed trace as the caller.
+The A2A transport does not propagate W3C trace context on its own, and passing a
+bare ``httpx.AsyncClient`` to ``A2AAgent`` breaks the A2A SDK's client setup. The
+Gernas SDK closes the gap with an A2A *client interceptor*
+(``gernas.adapters.a2a.GernasA2AInterceptor``) that writes ``traceparent`` /
+``tracestate`` and GERNAS baggage (``gernas.parent_run_id``, ``gernas.session_id``)
+into every outgoing A2A request. The receiving node extracts them
+(``GernasASGIMiddleware`` in ``src/a2a/hosting.py``), so the remote agent's spans
+continue the SAME distributed trace and its ``agent.run`` links to the caller's run.
+
+Every hop is an ``agent.delegate`` span (``@trace_delegation``) carrying the
+parent/child agent ids and the inter-agent latency.
 """
 import sys
 import time
@@ -32,31 +32,30 @@ from src.observability import get_logger, CAT_A2A
 
 _log = get_logger(CAT_A2A)
 
-try:
-    from beacon_kit import traced_a2a_hop, AgenticMetrics
-    _bk_metrics = AgenticMetrics()
-    _BK_AVAILABLE = True
-except Exception:
-    _BK_AVAILABLE = False
-    _bk_metrics = None
+from src.observability import gernas_telemetry as _gt
 
 
 def get_remote_agent(name: str) -> A2AAgent:
     """Returns an A2A client bound to the named agent node's URL.
 
     Uses ``A2AAgent``'s own correctly-configured HTTP client. Trace context is
-    propagated via OpenTelemetry httpx instrumentation (enabled at startup), so
-    the remote node joins this caller's distributed trace.
+    propagated by the Gernas A2A interceptor, so the remote node joins this
+    caller's distributed trace.
     """
-    
+    kwargs = {}
+    interceptor = _gt.a2a_interceptor()
+    if interceptor is not None:
+        kwargs["auth_interceptor"] = interceptor
     return A2AAgent(
         name=name,
         url=Config.agent_url(name),
         supported_protocol_bindings=["JSONRPC"],
         timeout=httpx.Timeout(connect=10.0, read=Config.A2A_TIMEOUT, write=10.0, pool=5.0),
+        **kwargs,
     )
 
 
+@_gt.trace_delegation(child_arg="name", protocol="a2a")
 async def ask_remote(
     name: str,
     prompt: str,
@@ -65,23 +64,16 @@ async def ask_remote(
 ) -> str:
     """Sends a prompt to a remote agent node and returns its text response.
 
-    A2A trace context is propagated via the client's httpx hook (see module
-    docstring). The hop is also recorded to the centralized log, correlated with
-    the active trace/span. The remote ``invoke_agent`` span (emitted by the SDK's
-    AgentTelemetryLayer inside A2AAgent + the node server) provides the span tree.
+    The hop is an ``agent.delegate`` span; A2A trace context is propagated by the
+    Gernas A2A interceptor (see module docstring). The hop is also recorded to the
+    centralized log, correlated with the active trace/span.
     """
     t0 = time.perf_counter()
     error: str | None = None
     result = ""
     try:
         remote = get_remote_agent(name)
-        if _BK_AVAILABLE:
-            @traced_a2a_hop(name)
-            async def _hop():
-                return await remote.run(prompt)
-            res = await _hop()
-        else:
-            res = await remote.run(prompt)
+        res = await remote.run(prompt)
         result = getattr(res, "text", str(res))
         return result
     except Exception as e:
@@ -120,13 +112,6 @@ async def ask_remote(
             )
         except Exception:
             pass
-        if _bk_metrics is not None:
-            try:
-                _bk_metrics.record_a2a_call(
-                    "error" if error else "success", name, latency_ms=float(duration_ms)
-                )
-            except Exception:
-                pass
         # Optional legacy JSONL sink (off by default; workflow/agent spans cover this).
         if Config.ENABLE_TRACE_JSONL:
             try:

@@ -29,6 +29,7 @@ from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from agent_framework.a2a import A2AExecutor
 
 from src.config import Config
+from src.observability import gernas_telemetry as _gt
 
 
 class TraceContextMiddleware(BaseHTTPMiddleware):
@@ -109,8 +110,8 @@ def build_agent_card(
 def build_starlette_app(agent, card: AgentCard) -> Starlette:
     """Wraps an agent_framework Agent into a Starlette A2A application.
 
-    Installs ``TraceContextMiddleware`` so inbound A2A calls continue the
-    caller's distributed trace.
+    Installs ``GernasASGIMiddleware`` (or ``TraceContextMiddleware`` without the
+    Gernas SDK) so inbound A2A calls continue the caller's distributed trace.
 
     Adds a ``GET /health`` endpoint so the launcher and ``api_server`` mesh-status
     fan-out can liveness-check each A2A node independently.
@@ -130,8 +131,14 @@ def build_starlette_app(agent, card: AgentCard) -> Starlette:
         task_store=InMemoryTaskStore(),
         agent_card=card,
     )
+    # Gernas: the ASGI middleware extracts traceparent + GERNAS baggage and opens a
+    # SERVER span per A2A request, so the node's agent.run continues the caller's
+    # trace and links to the delegating run. Falls back to the local extractor.
+    gernas_mw = _gt.asgi_middleware()
+    middleware = ([Middleware(gernas_mw, channel="a2a")] if gernas_mw is not None
+                  else [Middleware(TraceContextMiddleware)])
     return Starlette(
-        middleware=[Middleware(TraceContextMiddleware)],
+        middleware=middleware,
         routes=[
             Route("/health", _health, methods=["GET"]),
             *create_agent_card_routes(card),

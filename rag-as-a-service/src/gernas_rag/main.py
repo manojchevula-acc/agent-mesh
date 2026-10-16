@@ -15,10 +15,6 @@ from .ingestion.pipeline import IngestionPipeline
 from .llm.factory import get_llm
 from .retrieval.pipeline import RetrievalPipeline
 from .utils.logging import configure_logging, get_logger
-# BEACON_KIT: replaced by beacon_kit setup_telemetry
-# from .utils.telemetry import configure_telemetry, instrument_fastapi
-from beacon_kit import setup_telemetry, TelemetryConfig
-from beacon_kit.middleware.fastapi import TelemetryMiddleware
 from .vectordb.factory import get_vectordb
 
 logger = get_logger(__name__)
@@ -29,9 +25,12 @@ async def lifespan(app: FastAPI):
     # ── Startup ────────────────────────────────────────────────────────
     settings = get_settings()
     configure_logging(settings.log_level)
-    # BEACON_KIT: configure_telemetry replaced by setup_telemetry
-    # configure_telemetry(settings.service_name)
-    _bk_handle = setup_telemetry(TelemetryConfig.from_env(service_name=settings.service_name))
+    # Gernas SDK: traces/metrics/logs to the OTel Collector (GERNAS_* env); never fatal.
+    try:
+        import gernas
+        gernas.init_gernas(gernas.GernasConfig.from_env(service_name=settings.service_name))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Gernas SDK telemetry disabled", error=str(exc))
     logger.info("Starting GERNAS RAG service", environment=settings.environment)
 
     embedder = get_embedder(settings.embedding)
@@ -86,9 +85,12 @@ def create_app() -> FastAPI:
     app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
     app.include_router(evaluate.router, prefix="/api/v1", tags=["evaluation"])
 
-    # BEACON_KIT: instrument_fastapi replaced by TelemetryMiddleware
-    # instrument_fastapi(app)
-    app.add_middleware(TelemetryMiddleware)
+    # Gernas SDK: one SERVER span per request + inbound trace-context extraction.
+    try:
+        from gernas.adapters.asgi import GernasASGIMiddleware
+        app.add_middleware(GernasASGIMiddleware, channel="api")
+    except ImportError:
+        pass
     return app
 
 

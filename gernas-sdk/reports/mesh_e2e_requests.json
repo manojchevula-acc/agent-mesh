@@ -1,0 +1,16 @@
+[
+  {
+    "blocked": false,
+    "block_stage": null,
+    "answer_chars": 1296,
+    "trail": [
+      "cache_miss",
+      "compliance_pass",
+      "domain_answer:price_assist",
+      "output_redacted"
+    ],
+    "label": "Q1-data",
+    "seconds": 22.5,
+    "trace_id": "050e62e93ff5d475d8124d93d3fb5393"
+  }
+]

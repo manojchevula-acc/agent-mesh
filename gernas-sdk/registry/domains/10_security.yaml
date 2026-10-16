@@ -1,0 +1,13 @@
+domain: security
+owner: CISO
+brief: Policy, guardrail and content-safety decisions. A deny is expected behaviour, not an error.
+fields:
+  - {name: POLICY_ID, key: gernas.policy_id, type: string, required: always, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Policy or guardrail rule id, example: input_screen}
+  - {name: POLICY_DECISION, key: gernas.policy_decision, type: string, required: always, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, enum: [allow, deny, warn, escalate], brief: Decision taken, example: allow}
+  - {name: RISK_CLASSIFICATION, key: gernas.risk_classification, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Risk class assigned by the policy, example: prompt_injection}
+  - {name: RISK_TIER, key: gernas.risk_tier, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, enum: ["0", "1", "2", "3", "4"], brief: Agent risk tier (Collector enrichment), example: "2"}
+  - {name: SAFETY_CATEGORY, key: gernas.safety.category, type: string, required: always, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Content-safety category evaluated, example: pii}
+  - {name: RISK_LEVEL, key: gernas.safety.risk_level, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, enum: [safe, low, medium, high], brief: Content-safety severity, example: low}
+  - {name: POLICY_TRIGGERED, key: gernas.safety.policy_triggered, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Safety policy that fired, example: output_redaction}
+  - {name: CONTENT_BLOCKED, key: gernas.safety.content_blocked, type: boolean, required: always, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Content was blocked or rewritten, example: false}
+  - {name: REDACTION_APPLIED, key: gernas.redaction.applied, type: boolean, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: The SDK redaction hook modified or dropped a value on this span, example: true}

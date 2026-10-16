@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
+from src.observability import gernas_telemetry as _gt
+
 if TYPE_CHECKING:
     from src.mesh.workflow import MeshState
 
@@ -66,6 +68,8 @@ class ApprovalStore:
             compliance_reasoning=compliance_reasoning or [],
             hitl_type="role_approval",
         )
+        # Gernas: long-lived hitl.approval span (role only, never the user's identity)
+        _gt.start_hitl(aid, "role_approval")
         return aid
 
     # ── Tool-level approval (UC-3) ───────────────────────────────────────────
@@ -95,6 +99,9 @@ class ApprovalStore:
             req.user_name = user_name
             req.role = role
             req.query = query
+            # Gernas: the tool approval becomes observable in the process that will
+            # receive the reviewer's decision (approve()/reject() below).
+            _gt.start_hitl(approval_id, req.tool_name or "tool_approval")
 
     # ── Wait / signal ────────────────────────────────────────────────────────
 
@@ -115,6 +122,7 @@ class ApprovalStore:
                 await req.event.wait()
             return req.approved is True
         except asyncio.TimeoutError:
+            _gt.complete_hitl(approval_id, "timed_out")
             return False
         finally:
             self._live_waiters.discard(approval_id)
@@ -132,6 +140,7 @@ class ApprovalStore:
             return False
         req.approved = approved
         req.event.set()
+        _gt.complete_hitl(approval_id, "approved" if approved else "rejected")
         return True
 
     def is_live(self, approval_id: str) -> bool:

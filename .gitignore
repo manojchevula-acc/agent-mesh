@@ -15,7 +15,7 @@ __pycache__/
 .ruff_cache/
 observability/
 agent-mesh/compliance_events.jsonl
-beacon_kit/examples/compliance_audit.jsonl
+gernas-sdk/examples/compliance_audit.jsonl
 # ── Secrets & Environment Files ───────────────────────────────────────────────
 .env
 .env.backup
@@ -51,3 +51,11 @@ Thumbs.db
 # *.jsonl
 *.tmp
 *.swp
+
+# Gernas SDK: downloaded Collector binary, Collector runtime output, build artefacts
+gernas-sdk/collector/bin/
+gernas-sdk/collector/out/
+gernas-sdk/dist/
+gernas-sdk/build/
+gernas-sdk/*.egg-info/
+gernas-sdk/.coverage*

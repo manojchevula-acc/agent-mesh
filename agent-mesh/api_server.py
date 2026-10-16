@@ -41,19 +41,13 @@ if project_root not in sys.path:
 
 os.environ.setdefault("PYTHONWARNINGS", "ignore")
 
-# Load .env before beacon_kit reads OBS_PROFILE / COMPLIANCE_STORE — otherwise
-# those env vars are missing and exporters fall back to wrong defaults.
+# Load .env before the Gernas SDK reads its GERNAS_* settings.
 from dotenv import load_dotenv
 load_dotenv(pathlib.Path(__file__).resolve().parent / ".env", override=False)
 
-# BEACON_KIT: replaced by beacon_kit setup_telemetry (reads OBS_PROFILE/GRAFANA_* from .env)
-# from src.observability import setup_observability
-# setup_observability(service_name="agent_mesh_api")
-from beacon_kit import setup_telemetry, TelemetryConfig, flush_telemetry, set_default_compliance_config, generate_html_report, generate_audit_report
-from beacon_kit.middleware.fastapi import TelemetryMiddleware
-_bk_cfg = TelemetryConfig.from_env(service_name="agent_mesh_api")
-_bk_handle = setup_telemetry(_bk_cfg)
-set_default_compliance_config(TelemetryConfig.from_env())
+# Gernas SDK: one startup call (GERNAS_* env) — traces/metrics/logs to the OTel Collector.
+from src.observability import gernas_telemetry
+gernas_telemetry.init_telemetry("agent_mesh_api", channel="api")
 
 import httpx
 import uvicorn
@@ -72,8 +66,6 @@ from src.mesh.orchestrator import handle_request, handle_request_stream
 from src.hitl.approval_store import approval_store, CHECKPOINT_DIR
 from src.memory import ConversationStore
 from src.observability import get_logger, CAT_SYSTEM
-# BEACON_KIT: flush_observability replaced by flush_telemetry (imported above with setup_telemetry)
-# from src.observability import get_logger, CAT_SYSTEM, flush_observability
 from src.tracing.execution_trace import ExecutionTracer, set_active_tracer, clear_active_tracer
 
 _log = get_logger(CAT_SYSTEM)
@@ -841,17 +833,10 @@ async def _lifespan(app):
         if restored:
             _log.info("UC-5: Restored %d pending HITL approval(s) from data/checkpoints/", restored)
     yield
-    _log.info("api_server shutting down — flushing beacon_kit exporters.")
-    # BEACON_KIT: flush_observability() replaced by flush_telemetry(_bk_handle)
-    # flush_observability()
-    flush_telemetry(_bk_handle)
-    _report_path = generate_html_report(config=_bk_cfg)
-    _log.info("Observability report written: %s", _report_path)
-    try:  # BEACON_KIT: session audit/regulatory PDF (no-op on failure)
-        _audit_path = generate_audit_report(config=_bk_cfg)
-        _log.info("Audit/regulatory report written: %s", _audit_path)
-    except Exception as _e:
-        _log.warning("Audit/regulatory report skipped: %s", _e)
+    _log.info("api_server shutting down — flushing Gernas SDK telemetry.")
+    for _report_path in gernas_telemetry.finalize():  # dev reports when GERNAS_FILE_OUTPUT_DIR is set
+        _log.info("Report written: %s", _report_path)
+    gernas_telemetry.shutdown()
 
 
 _API_SERVER_HOST = os.getenv("API_SERVER_HOST", "127.0.0.1")
@@ -1142,9 +1127,10 @@ app = Starlette(
             allow_methods=["GET", "POST", "OPTIONS"],
             allow_headers=["*"],
         ),
-        Middleware(TraceContextMiddleware),
-        # BEACON_KIT: enrich spans with run_id, service name, and route
-        Middleware(TelemetryMiddleware),
+        # Gernas SDK: one SERVER span per request (kept open across SSE streams),
+        # inbound traceparent/baggage extraction, x-run-id echo.
+        *([Middleware(gernas_telemetry.asgi_middleware(), channel="api", run_id_header="X-Run-ID")]
+          if gernas_telemetry.asgi_middleware() is not None else [Middleware(TraceContextMiddleware)]),
     ],
     routes=[
         Route("/health",               health,              methods=["GET"]),
@@ -1176,12 +1162,6 @@ app = Starlette(
     ],
 )
 
-# BEACON_KIT: StarletteInstrumentor replaced by beacon_kit TelemetryMiddleware (added in Middleware list below)
-# try:
-#     from opentelemetry.instrumentation.starlette import StarletteInstrumentor
-#     StarletteInstrumentor().instrument_app(app)
-# except Exception:
-#     pass
 
 
 def main() -> None:
