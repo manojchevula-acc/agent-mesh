@@ -1,0 +1,13 @@
+# Keys (beyond registry fields with action: drop) that must never reach a store (Blueprint §2 critical principle: no unrestricted
+# raw prompts, raw LLM responses, customer data, credentials, secrets, auth tokens).
+# The SDK never writes them; the Collector deletes them from any producer (e.g. the
+# Agent Framework's own spans when sensitive-data capture is switched on).
+denylist:
+  - {key: gen_ai.prompt, brief: raw prompt text}
+  - {key: gen_ai.completion, brief: raw completion text}
+  - {key: gen_ai.input.messages, brief: framework-captured prompt messages}
+  - {key: gen_ai.output.messages, brief: framework-captured completion messages}
+  - {key: gen_ai.system_instructions, brief: framework-captured system prompt}
+  - {key: gen_ai.tool.call.arguments, brief: framework-captured tool arguments}
+  - {key: gen_ai.tool.call.result, brief: framework-captured tool results}
+  - {key: enduser.id, brief: OTel semconv raw user id}

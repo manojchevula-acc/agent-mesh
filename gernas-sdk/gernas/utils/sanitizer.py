@@ -1,13 +1,15 @@
 """PII scrubbing utilities applied before any free text enters telemetry.
 
-Patterns follow the WP2-A-04 pattern classes (Emirates ID, UAE IBAN, Luhn-valid
-card numbers, API keys / bearer tokens) plus the generic patterns Beacon Kit
-already shipped. The Collector applies the same classes again at the gateway;
-this in-process pass is defence in depth, not the control of record.
+Pattern classes: secrets (bearer tokens, provider API keys, ``key=value``
+credentials), Emirates ID, IBAN, Luhn-valid card numbers, NI numbers, e-mail,
+phone and account numbers. The Collector masks the same classes again at the
+gateway; this in-process pass is defence in depth.
 """
+
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
 
 def _luhn_ok(digits: str) -> bool:
@@ -23,13 +25,13 @@ def _luhn_ok(digits: str) -> bool:
     return total % 10 == 0
 
 
-def _card(match: re.Match) -> str:
+def _card(match: re.Match[str]) -> str:
     digits = re.sub(r"[ -]", "", match.group(0))
     return "[CARD]" if _luhn_ok(digits) else match.group(0)
 
 
 # Ordered from most-specific to least-specific to avoid partial matches.
-_PII_PATTERNS: list[tuple[str, object]] = [
+_PII_PATTERNS: list[tuple[str, str | Callable[[re.Match[str]], str]]] = [
     # Secrets: bearer tokens, provider API keys, key=value credentials
     (r"Bearer\s+[A-Za-z0-9\-._~+/]+=*", "Bearer [REDACTED]"),
     (r"\b(?:sk|gsk|pk|rk)[-_][A-Za-z0-9_\-]{16,}", "[API_KEY]"),
@@ -53,6 +55,7 @@ _PII_PATTERNS: list[tuple[str, object]] = [
 ]
 
 _COMPILED = [(re.compile(p, re.IGNORECASE if not p.startswith("(?i)") else 0), r) for p, r in _PII_PATTERNS]
+_SECRETS = _COMPILED[:3]
 
 
 def scrub_pii(text: str) -> str:
@@ -60,5 +63,14 @@ def scrub_pii(text: str) -> str:
     if not text:
         return text
     for pattern, replacement in _COMPILED:
-        text = pattern.sub(replacement, text)  # type: ignore[arg-type]
+        text = pattern.sub(replacement, text)
+    return text
+
+
+def scrub_secrets(text: str) -> str:
+    """Replace credentials only (bearer tokens, API keys, ``secret=...``); identifiers are left intact."""
+    if not text:
+        return text
+    for pattern, replacement in _SECRETS:
+        text = pattern.sub(replacement, text)
     return text

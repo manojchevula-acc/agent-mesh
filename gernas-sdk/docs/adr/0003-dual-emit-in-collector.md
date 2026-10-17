@@ -1,16 +1,21 @@
 # ADR 0003 — Emit once, fan out in the Collector
 
-**Status:** accepted (2026-10-16)
+**Status:** accepted (2026-10-16). Revised in 0.4.0: SDK-side kill switches removed.
 
 **Decision.**
 - The SDK exports once, over OTLP, to the Collector.
-- The Collector runs two trace pipelines. The data-plane pipeline does tail sampling with always-keep policies. The Opik pipeline does probabilistic sampling, applies the Opik span shape and sends OTLP/HTTP protobuf. Opik accepts traces only, over HTTP.
+- The Collector runs two trace pipelines:
+  - The data-plane pipeline does tail sampling, always keeping errors, policy denials, high-risk content and HITL decisions.
+  - The Opik pipeline does probabilistic sampling, maps the GERNAS keys to the OTel GenAI keys that Opik displays (`gernas.model_id` → `gen_ai.request.model`, tokens, provider, `session_id` → `thread_id`), and sends OTLP/HTTP protobuf.
 - Metrics and logs go only to their data-plane destinations.
-- Kill switches: the SDK stamps `GERNAS_EMIT_OPIK` and `GERNAS_EMIT_DATAPLANE` as the resource attributes `gernas.route.opik` and `gernas.route.dataplane`. A `filter` processor in each pipeline drops the signal when its switch is false. Turning a destination off is an environment change and a restart, with no code change.
-- PDPL is enforced again at the Collector: the attributes processor deletes payload keys, the redaction processor is deny-by-default with a registry-generated allow-list, and PII value patterns are masked.
+- Destination selection is **Collector configuration**. 0.3.0 had SDK resource flags (`gernas.route.*` from `GERNAS_EMIT_*`); they were removed because the blueprint puts routing in the gateway and forbids coupling producers to a vendor.
+- PDPL is enforced again at the Collector:
+  - `attributes/pdpl` deletes the registry-generated denylist;
+  - the redaction processor is deny-by-default with a registry-generated allow-list;
+  - PII value patterns are masked.
 
 **Consequences.**
-- No signal is recorded twice: verified, one span per run id.
-- Destinations can change without touching agents.
-- The data-plane store is not yet selected (R1), so it is represented by per-signal `file` exporters, as WP2-A-06 step 7 allows.
-- The redaction processor also filters **resource** attributes, so OTel resource semconv keys must be on the allow-list. This was found and fixed during end-to-end testing.
+- No signal is recorded twice.
+- Destinations change without touching agents.
+- Vendor field shapes live in one place (the Collector).
+- The data-plane store is not yet selected, so it is represented by per-signal `file` exporters.

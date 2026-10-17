@@ -1,14 +1,10 @@
 {
-  "run_ids": {
-    "normal": "run_bce0c8c2624d4b208b0a753f5bad4f17",
-    "kill_opik": "run_1f6fdc9c5e5245f09345e40eac681abf",
-    "kill_dataplane": "run_531270287d894ef39fda69469f4a3f60"
-  },
+  "run_id": "run_e0de90c2dc6046d2a48141e2dadda838",
   "checks": [
     {
-      "check": "probe span reached the data plane",
+      "check": "probe run reached the data plane",
       "ok": true,
-      "detail": "1 span(s)"
+      "detail": "3 span(s) for the run"
     },
     {
       "check": "raw gen_ai.prompt removed by the Collector (PDPL)",
@@ -26,22 +22,12 @@
       "detail": "id ****"
     },
     {
-      "check": "redaction summary recorded",
-      "ok": true,
-      "detail": "redaction.* attributes"
-    },
-    {
       "check": "envelope + resource preserved",
       "ok": true,
       "detail": ""
     },
     {
-      "check": "kill switch: dataplane=false keeps spans out of the data plane",
-      "ok": true,
-      "detail": ""
-    },
-    {
-      "check": "kill switch: opik=false still reaches the data plane",
+      "check": "tool and llm spans carry the run context",
       "ok": true,
       "detail": ""
     },
@@ -56,19 +42,9 @@
       "detail": ""
     },
     {
-      "check": "normal run in Opik",
+      "check": "probe run delivered to Opik",
       "ok": true,
-      "detail": "found=True"
-    },
-    {
-      "check": "opik=false run absent from Opik",
-      "ok": true,
-      "detail": "found=False"
-    },
-    {
-      "check": "dataplane=false run still in Opik",
-      "ok": true,
-      "detail": "found=True"
+      "detail": ""
     }
   ]
 }

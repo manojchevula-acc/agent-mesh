@@ -1,6 +1,8 @@
 domain: outcome
+blueprint: true
 owner: GERNAS OS
-brief: Technical execution outcome (the business outcome lives in the business domain).
+brief: Outcome of every operation. execution_status is set on every span; error_category on every failure.
 fields:
-  - {name: EXECUTION_STATUS, key: gernas.execution_status, type: string, required: conditional, sensitivity: public, cardinality: bounded, rollup: true, action: keep, enum: [ok, error], brief: Technical status of the operation, example: ok}
-  - {name: ERROR_CATEGORY, key: gernas.error_category, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, enum: [timeout, policy, auth, dependency, validation, cancelled, internal], brief: Error taxonomy, example: dependency}
+  - {name: EXECUTION_STATUS, key: gernas.execution_status, type: string, required: always, sensitivity: public, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-018, enum: [ok, error, cancelled], brief: Technical status of the operation, example: ok}
+  - {name: BUSINESS_OUTCOME, key: gernas.business_outcome, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-018, enum: [success, partial, failure, abandoned], brief: Use-case specific outcome (set by the use case), example: success}
+  - {name: ERROR_CATEGORY, key: gernas.error_category, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-018, enum: [timeout, rate_limit, auth, policy, validation, dependency, cancelled, internal], brief: Error taxonomy derived from the exception, example: dependency}

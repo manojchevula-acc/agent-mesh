@@ -48,7 +48,7 @@ if project_root not in sys.path:
 
 from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
 
-from src.guardrails.deterministic_filters import screen_input, redact_pii, redact_output, _emit_screen_guardrail
+from src.guardrails.deterministic_filters import screen_input, redact_pii, redact_output
 from src.auth.identity_provider import BankingRole
 from src.observability import get_logger, CAT_WORKFLOW
 from src.observability.metrics import (
@@ -272,7 +272,7 @@ class InputGuardrailExecutor(Executor):
     """Deterministic input screen (hard gate, pre-review). Workflow start node."""
 
     @handler
-    @_gt.trace_stage("input-guardrail", agent_type="gate")
+    @_gt.trace_workflow_step("input-guardrail")
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
         tracer = get_active_tracer()
         if tracer:
@@ -286,10 +286,6 @@ class InputGuardrailExecutor(Executor):
             _set_attr(span, "guardrail.query_length", len(state.query))
             try:
                 screen = screen_input(state.query)
-                try:
-                    _emit_screen_guardrail(state.query)
-                except Exception:
-                    pass
                 elapsed = (time.perf_counter() - t0) * 1000
 
                 if not screen.allowed:
@@ -364,7 +360,7 @@ class RBACValidationExecutor(Executor):
     """
 
     @handler
-    @_gt.trace_stage("rbac-validator", agent_type="gate")
+    @_gt.trace_workflow_step("rbac-validator")
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
         tracer = get_active_tracer()
         if tracer:
@@ -454,7 +450,7 @@ class CacheCheckExecutor(Executor):
     """
 
     @handler
-    @_gt.trace_stage("cache-check", agent_type="gate")
+    @_gt.trace_workflow_step("cache-check")
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
         tracer = get_active_tracer()
         if tracer:
@@ -910,7 +906,7 @@ class ComplianceExecutor(Executor):
         self._enabled = enabled
 
     @handler
-    @_gt.trace_stage("compliance-gate", agent_type="gate")
+    @_gt.trace_workflow_step("compliance-gate")
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
         tracer = get_active_tracer()
 
@@ -1136,7 +1132,7 @@ class DomainExecutor(Executor):
     _HALLUCINATION_RE = re.compile(r'\[(?![A-Z]{2,}[0-9])[A-Za-z][A-Za-z0-9 /-]{1,40}\]')
 
     @handler
-    @_gt.trace_stage("domain-processor", agent_type="orchestrator")
+    @_gt.trace_workflow_step("domain-processor")
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState]) -> None:
         tracer = get_active_tracer()
         t0 = time.perf_counter()
@@ -1589,7 +1585,7 @@ class OutputRedactionExecutor(Executor):
     """Deterministic output redaction (PII). Terminal node — yields the answer."""
 
     @handler
-    @_gt.trace_stage("output-redaction", agent_type="gate")
+    @_gt.trace_workflow_step("output-redaction")
     async def run(self, state: MeshState, ctx: WorkflowContext[Never, MeshState]) -> None:
         _emit_stream_event({"stage": "output_redaction", "status": "started", "message": "Redacting output..."})
         otel = _mesh_tracer()

@@ -2,7 +2,7 @@
 
 **Status:** accepted (2026-10-16)
 
-**Decision.** Agent teams add `@trace_*` decorators and nothing else. One engine (`_core.wrap`) implements sync, async, generator and async-generator handling, so all sixteen decorators share the same guarantees:
+**Decision.** Agent teams add `@trace_*` decorators and nothing else. One engine (`_core.wrap`) implements sync, async, generator and async-generator handling, so every decorator shares the same guarantees:
 - the envelope is set first;
 - every attribute goes through `safe_set`;
 - spans are always ended;

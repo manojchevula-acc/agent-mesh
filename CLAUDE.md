@@ -200,7 +200,7 @@ Every hop writes to `data/audit_trail.jsonl` and emits OpenTelemetry spans with 
 
 **Retry + graceful degradation:** `DomainExecutor` detects tool-call echo, meta-response, and hallucinated placeholders via regex and retries once with a corrective prompt. Failed A2A/MCP hops soft-fail to an "unavailable" string rather than crashing the workflow.
 
-**Gernas SDK telemetry (`gernas-sdk/`, evolved from Beacon Kit):** `pip install -e ./gernas-sdk`; one `init_gernas()` call per process (via `gernas_telemetry.init_telemetry`), configured only by `GERNAS_*` env vars. Telemetry goes SDK → OTel Collector (`python gernas-sdk/scripts/run_collector.py`) → Opik + data plane. Sixteen `@trace_*` decorators plus MAF / A2A / ASGI / MCP adapters; PDPL redaction on every attribute. See `gernas-sdk/docs/sdk-developer-guide.md`.
+**Gernas SDK telemetry (`gernas-sdk/`, evolved from Beacon Kit):** `pip install -e ./gernas-sdk`; one `init_gernas()` call per process (via `gernas_telemetry.init_telemetry`), configured only by `GERNAS_*` env vars (mandatory identity is validated, never invented). Telemetry goes SDK → OTel Collector (`python gernas-sdk/scripts/run_collector.py`) → Opik + data plane. Blueprint-named attributes (`gernas.<field>`); request → `use_case.request` → `agent.run` (mesh orchestrator) → `agent.step` per workflow executor → A2A / MAF `agent.run` per node → `llm.call` / `tool.call` (MCP = `tool_type=mcp`). See `gernas-sdk/docs/sdk-developer-guide.md`.
 
 ---
 
@@ -244,9 +244,10 @@ All loaded from `agent-mesh/.env`. Key variables:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `GERNAS_OTLP_ENDPOINT` | *(unset = telemetry off)* | OTel Collector endpoint, e.g. `http://127.0.0.1:4317` |
-| `GERNAS_USE_CASE_ID` / `GERNAS_APPLICATION_ID` / `GERNAS_BUSINESS_DOMAIN` / `GERNAS_ENVIRONMENT` | — | Canonical context envelope on every span |
-| `GERNAS_EMIT_OPIK` / `GERNAS_EMIT_DATAPLANE` | `true` | Per-destination kill switches (routed by the Collector) |
+| `GERNAS_OTLP_ENDPOINT` | — | OTel Collector endpoint, e.g. `http://127.0.0.1:4317` |
+| `GERNAS_USE_CASE_ID` / `GERNAS_APPLICATION_ID` / `GERNAS_BUSINESS_DOMAIN` / `GERNAS_ENVIRONMENT` | *(required; missing = telemetry off with a warning)* | Blueprint business / infrastructure context on every span |
+| `GERNAS_USER_TOKEN_KEY` | *(unset = user identity not recorded)* | HMAC key for `tokenized_user_id` |
+| `LLM_PROVIDER` | `groq` | Provider label on `llm.call` spans |
 | `OPIK_API_KEY` / `OPIK_WORKSPACE` / `OPIK_PROJECT_NAME` | — | Read only by the Collector's Opik exporter |
 | `LOG_LEVEL` | `INFO` | Log verbosity |
 | `LOG_JSON` | `false` | Structured JSON logging |

@@ -4,7 +4,9 @@ One implementation handles sync functions, coroutines, generators and async
 generators, so each decorator only describes *what* to record (a :class:`Spec`).
 Guarantees, for every decorator:
 
-* the canonical envelope is set first, then operation attributes;
+* the canonical envelope is set first (Blueprint §2), then — inside an agent run —
+  ``agent_id`` / ``agent_run_id``, then operation attributes;
+* every span ends with ``execution_status``; failures add ``error_category``;
 * every write goes through :func:`gernas.tracer.safe_set` (redaction + isolation);
 * a failure inside telemetry code never reaches the wrapped function — if a span
   cannot even be started the function simply runs untraced;
@@ -12,6 +14,7 @@ Guarantees, for every decorator:
   ``close()`` or garbage collection (``finally``-based lifecycle);
 * exception messages are PII-scrubbed before they are recorded.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -19,22 +22,29 @@ import functools
 import inspect
 import time
 import traceback
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
 
 from opentelemetry import context as otel_context
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
 
-from gernas.attributes import Ctx
+from gernas.attributes import Ctx, SpanName
+from gernas.run_state import current_run, error_category
 from gernas.tracer import get_config, get_tracer, safe_set
-from gernas.utils.hashing import hash_inputs
+from gernas.utils.hashing import fingerprint
 from gernas.utils.sanitizer import scrub_pii
 
 F = TypeVar("F", bound=Callable[..., Any])
 
-_KINDS = {"INTERNAL": SpanKind.INTERNAL, "SERVER": SpanKind.SERVER, "CLIENT": SpanKind.CLIENT,
-          "PRODUCER": SpanKind.PRODUCER, "CONSUMER": SpanKind.CONSUMER}
+_KINDS = {
+    "INTERNAL": SpanKind.INTERNAL,
+    "SERVER": SpanKind.SERVER,
+    "CLIENT": SpanKind.CLIENT,
+    "PRODUCER": SpanKind.PRODUCER,
+    "CONSUMER": SpanKind.CONSUMER,
+}
 
 
 @functools.lru_cache(maxsize=4096)
@@ -45,9 +55,18 @@ def _param_names(fn: Callable[..., Any]) -> tuple[str, ...]:
         return ()
 
 
+@functools.lru_cache(maxsize=4096)
+def _param_defaults(fn: Callable[..., Any]) -> dict[str, Any]:
+    try:
+        return {n: p.default for n, p in inspect.signature(fn).parameters.items() if p.default is not p.empty}
+    except (TypeError, ValueError):
+        return {}
+
+
 @dataclass
 class Call:
     """One invocation of a decorated function."""
+
     fn: Callable[..., Any]
     args: tuple
     kwargs: dict
@@ -58,7 +77,7 @@ class Call:
         return round((time.perf_counter() - self.t0) * 1000.0, 3)
 
     def arg(self, name: str, position: int | None = None, default: Any = None) -> Any:
-        """Fetch a named argument whether passed by keyword or position."""
+        """Fetch a named argument whether passed by keyword or position (else its signature default)."""
         if name in self.kwargs:
             return self.kwargs[name]
         params = _param_names(self.fn)
@@ -68,24 +87,27 @@ class Call:
                 return self.args[idx]
         if position is not None and position < len(self.args):
             return self.args[position]
-        return default
+        return _param_defaults(self.fn).get(name, default)
 
-    def input_hash(self) -> str:
-        if "input_hash" in self.state:  # adapters supply the business payload hash directly
-            return self.state["input_hash"]
+    def payload(self) -> Any:
+        """The business input of the call (adapters supply it; a bound ``self`` is skipped)."""
+        if "payload" in self.state:
+            return self.state["payload"]
         args = self.args
-        # drop a bound `self`/`cls` so the hash reflects the business input only
         if args and hasattr(args[0], "__dict__") and getattr(self.fn, "__qualname__", "").count("."):
             args = args[1:]
-        return hash_inputs({"args": [repr(a) for a in args], "kwargs": {k: repr(v) for k, v in self.kwargs.items()}})
+        return {"args": [repr(a) for a in args], "kwargs": {k: repr(v) for k, v in self.kwargs.items()}}
+
+    def input_fingerprint(self) -> str:
+        return fingerprint(self.payload())
 
 
 class Spec:
     """What a decorator records. Subclasses override the hooks they need."""
 
-    op: str = ""                 # canonical operation (SpanName constant value)
+    op: str = ""  # canonical operation (SpanName constant value)
     kind: str = "INTERNAL"
-    new_trace: bool = False      # start a fresh trace (never inherit a parent)
+    new_trace: bool = False  # start a fresh trace (never inherit a parent)
 
     def span_name(self, call: Call) -> str:
         return self.op
@@ -96,15 +118,19 @@ class Spec:
     def failure(self, span: Any, call: Call, exc: BaseException) -> bool:
         """Record *exc*; return True if the span status must be ERROR."""
         return not isinstance(exc, (asyncio.CancelledError, GeneratorExit))
+
     def finish(self, span: Any, call: Call, exc: BaseException | None) -> None: ...
     def on_item(self, span: Any, call: Call, item: Any, index: int) -> None: ...
     def on_stream_end(self, span: Any, call: Call, outcome: str) -> None: ...
     # context hooks around each resume of the wrapped code (bind ContextVars)
-    def activate(self, span: Any, call: Call) -> Any: return None
+    def activate(self, span: Any, call: Call) -> Any:
+        return None
+
     def deactivate(self, call: Call, token: Any) -> None: ...
 
 
 # ── guarded primitives ───────────────────────────────────────────────────────
+
 
 def _guard(fn: Callable[..., Any], *args: Any) -> Any:
     try:
@@ -119,7 +145,6 @@ def record_exception(span: Any, exc: BaseException) -> None:
         message = scrub_pii(str(exc))
         stack = scrub_pii("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
         span.record_exception(exc, attributes={"exception.message": message, "exception.stacktrace": stack})
-        safe_set(span, Ctx.ERROR_TYPE, type(exc).__name__)
     except Exception:  # noqa: BLE001
         pass
 
@@ -128,14 +153,38 @@ def _begin(spec: Spec, call: Call) -> tuple[Any, Any]:
     parent = otel_context.Context() if spec.new_trace else None
     span = get_tracer().start_span(spec.span_name(call), context=parent, kind=_KINDS.get(spec.kind, SpanKind.INTERNAL))
     token = otel_context.attach(trace.set_span_in_context(span))
-    try:
-        for key, value in get_config().envelope.items():
-            safe_set(span, key, value)
-        safe_set(span, Ctx.OPERATION, spec.op)
-    except Exception:  # noqa: BLE001
-        pass
+    stamp_context(span, spec.op)
     _guard(spec.start, span, call)
     return span, token
+
+
+def stamp_context(span: Any, op: str, run: Any = None) -> None:
+    """Envelope + operation + (inside a run) agent_id / agent_run_id. Used by every span producer.
+
+    ``run`` is passed explicitly by framework callbacks, where no RunState is bound.
+    """
+    try:
+        cfg = get_config()
+        if cfg is not None:
+            for key, value in cfg.envelope.items():
+                safe_set(span, key, value)
+        safe_set(span, Ctx.OPERATION, op)
+        run = run if run is not None else current_run()
+        if run is not None and op != SpanName.AGENT:
+            safe_set(span, Ctx.AGENT_ID, run.agent_id)
+            safe_set(span, Ctx.AGENT_RUN_ID, run.agent_run_id)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def stamp_outcome(span: Any, exc: BaseException | None) -> None:
+    """Blueprint §2 outcome: execution_status always, error_category on failure."""
+    if exc is None:
+        safe_set(span, Ctx.EXECUTION_STATUS, "ok")
+        return
+    category = error_category(exc)
+    safe_set(span, Ctx.EXECUTION_STATUS, "cancelled" if category == "cancelled" else "error")
+    safe_set(span, Ctx.ERROR_CATEGORY, category)
 
 
 _marked: set[int] = set()
@@ -144,6 +193,8 @@ _marked: set[int] = set()
 def _end(spec: Spec, span: Any, call: Call, exc: BaseException | None, token: Any) -> None:
     try:
         _guard(spec.finish, span, call, exc)
+        if "execution_status" not in call.state:
+            stamp_outcome(span, exc)
         if exc is None:
             if id(span) not in _marked:
                 _guard(span.set_status, Status(StatusCode.OK))
@@ -154,7 +205,8 @@ def _end(spec: Spec, span: Any, call: Call, exc: BaseException | None, token: An
             if is_error:
                 record_exception(span, exc)
                 _guard(span.set_status, Status(StatusCode.ERROR, scrub_pii(f"{type(exc).__name__}: {exc}")[:256]))
-            elif id(span) not in _marked:
+            elif id(span) not in _marked and error_category(exc) != "cancelled":
+                # expected outcome (policy deny, auth deny): OK. Cancellation stays UNSET.
                 _guard(span.set_status, Status(StatusCode.OK))
     finally:
         _marked.discard(id(span))
@@ -176,6 +228,7 @@ def mark_status(span: Any, code: StatusCode, description: str | None = None) -> 
 
 
 # ── wrappers ─────────────────────────────────────────────────────────────────
+
 
 def wrap(fn: F, spec: Spec) -> F:
     if inspect.isasyncgenfunction(fn):
@@ -207,6 +260,7 @@ def _wrap_sync(fn: Callable[..., Any], spec: Spec) -> Callable[..., Any]:
         finally:
             _guard(spec.deactivate, call, ctx_token)
             _end(spec, span, call, exc, token)
+
     wrapper.__gernas_spec__ = spec  # type: ignore[attr-defined]
     return wrapper
 
@@ -231,6 +285,7 @@ def _wrap_async(fn: Callable[..., Any], spec: Spec) -> Callable[..., Any]:
         finally:
             _guard(spec.deactivate, call, ctx_token)
             _end(spec, span, call, exc, token)
+
     wrapper.__gernas_spec__ = spec  # type: ignore[attr-defined]
     return wrapper
 
@@ -252,6 +307,7 @@ def _wrap_gen(fn: Callable[..., Any], spec: Spec) -> Callable[..., Any]:
             yield from fn(*args, **kwargs)
             return
         yield from iterate_sync(spec, span, call, fn(*args, **kwargs))
+
     wrapper.__gernas_spec__ = spec  # type: ignore[attr-defined]
     return wrapper
 
@@ -272,6 +328,7 @@ def _wrap_async_gen(fn: Callable[..., Any], spec: Spec) -> Callable[..., Any]:
                 yield item
         finally:
             await inner.aclose()  # propagate aclose()/cancellation so the span closes now, not at GC
+
     wrapper.__gernas_spec__ = spec  # type: ignore[attr-defined]
     return wrapper
 
@@ -311,7 +368,8 @@ def iterate_sync(spec: Spec, span: Any, call: Call, iterator: Any):
 
 
 async def iterate_async(spec: Spec, span: Any, call: Call, iterator: Any):
-    outcome, exc, index = "cancelled", None, 0
+    outcome, index = "cancelled", 0
+    exc: BaseException | None = None
     ctx = trace.set_span_in_context(span)
     it = iterator.__aiter__()
     try:
@@ -347,13 +405,6 @@ async def iterate_async(spec: Spec, span: Any, call: Call, iterator: Any):
                 pass
         _guard(spec.on_stream_end, span, call, outcome)
         _end(spec, span, call, exc, None)
-
-
-def decorator(spec_factory: Callable[[], Spec]) -> Callable[[F], F]:
-    """Build a decorator that instantiates a fresh Spec per decorated function."""
-    def apply(fn: F) -> F:
-        return wrap(fn, spec_factory())
-    return apply
 
 
 def as_list(value: Any) -> list | None:

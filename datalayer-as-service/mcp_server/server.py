@@ -65,8 +65,8 @@ logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Gernas SDK — traces/metrics/logs to the OTel Collector (GERNAS_* env).
-# Each tool call becomes a server-side mcp.call span that continues the calling
-# agent's trace (traceparent arrives in the MCP request _meta).
+# Each tool call becomes a server-side tool.call span (tool_type=mcp) that continues
+# the calling agent's trace (traceparent arrives in the MCP request _meta).
 # ---------------------------------------------------------------------------
 _gernas_mw = None
 try:

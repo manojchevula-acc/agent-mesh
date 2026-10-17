@@ -1,10 +1,10 @@
 domain: identity
+blueprint: true
 owner: FAB Data Governance
-brief: Who or what initiated the work. Raw user identity never leaves the process (PDPL).
+brief: Who initiated the work. The raw user id never leaves the process; only a keyed token does (Blueprint §2 critical principle).
 fields:
-  - {name: USER_ID, key: gernas.user_id, type: string, required: never, sensitivity: restricted, cardinality: unbounded, rollup: false, action: drop, brief: Raw end-user identifier (never emitted), example: "alice"}
-  - {name: TOKENISED_USER_ID, key: gernas.tokenised_user_id, type: string, required: conditional, sensitivity: confidential, cardinality: unbounded, rollup: false, action: fingerprint, brief: Irreversible token for the end user, example: "u_3f9a"}
-  - {name: PRINCIPAL_TYPE, key: gernas.principal_type, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, enum: [human, agent, service], brief: Kind of principal that initiated the call, example: human}
-  - {name: USER_ROLE, key: gernas.user_role, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Business role of the caller (role only - never identity), example: relationship_manager}
-  - {name: TENANT, key: gernas.tenant, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Tenant or legal entity, example: fab-uae}
-  - {name: DEPARTMENT, key: gernas.department, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Owning department, example: corporate_banking}
+  - {name: USER_ID, key: gernas.user_id, type: string, required: never, sensitivity: restricted, cardinality: unbounded, rollup: false, action: drop, source: GERNAS-REQ-007, brief: Raw end-user identifier - accepted by request_context() but never emitted, example: "alice"}
+  - {name: TOKENIZED_USER_ID, key: gernas.tokenized_user_id, type: string, required: conditional, sensitivity: confidential, cardinality: unbounded, rollup: false, action: keep, source: GERNAS-REQ-007, brief: HMAC-SHA256 token of the user id (key from GERNAS_USER_TOKEN_KEY), example: "9f2c…"}
+  - {name: PRINCIPAL_TYPE, key: gernas.principal_type, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-007, enum: [human, agent, service], brief: Kind of principal that initiated the call, example: human}
+  - {name: TENANT, key: gernas.tenant, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-007, brief: Tenant or legal entity, example: fab-uae}
+  - {name: DEPARTMENT, key: gernas.department, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-007, brief: Department of the initiator, example: corporate_banking}

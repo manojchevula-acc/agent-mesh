@@ -6,6 +6,7 @@ the foreground from the SDK root so relative output paths resolve to collector/o
 
     python scripts/run_collector.py [--env ../agent-mesh/.env] [--validate]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -43,16 +44,20 @@ def main() -> int:
     args = ap.parse_args()
     exe = BIN if BIN.exists() else shutil.which("otelcol-contrib")
     if not exe:
-        print("otelcol-contrib not found: download it into collector/bin/ (see docs/onboarding-runbook.md)",
-              file=sys.stderr)
+        print(
+            "otelcol-contrib not found: download it into collector/bin/ (see docs/onboarding-runbook.md)",
+            file=sys.stderr,
+        )
         return 2
     env = dict(os.environ)
     loaded = load_env(Path(args.env))
     env.update(loaded)
     missing = [k for k in ("OPIK_API_KEY", "OPIK_WORKSPACE", "OPIK_PROJECT_NAME") if not env.get(k)]
     if missing:
-        print(f"warning: {', '.join(missing)} not set — the Opik exporter will fail; data plane still works",
-              file=sys.stderr)
+        print(
+            f"warning: {', '.join(missing)} not set — the Opik exporter will fail; data plane still works",
+            file=sys.stderr,
+        )
         for k in missing:
             env.setdefault(k, "unset")
     (ROOT / "collector" / "out").mkdir(parents=True, exist_ok=True)

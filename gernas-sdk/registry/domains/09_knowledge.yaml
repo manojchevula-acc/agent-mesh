@@ -1,15 +1,9 @@
 domain: knowledge
+blueprint: true
 owner: RAG/Search platform
-brief: Retrieval and RAG signals. Query text is hashed, never captured.
+brief: Knowledge / retrieval context (query text is never captured).
 fields:
-  - {name: KNOWLEDGE_DOMAIN, key: gernas.knowledge_domain, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Knowledge domain searched, example: pricing_policy}
-  - {name: SOURCE_ID, key: gernas.retrieval.source_id, type: string, required: conditional, sensitivity: internal, cardinality: growing, rollup: false, action: keep, brief: Top source document id, example: doc_12}
-  - {name: INDEX_ID, key: gernas.retrieval.index_id, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Vector index / collection, example: fab_gernas_docs}
-  - {name: RETRIEVAL_STRATEGY, key: gernas.retrieval.strategy, type: string, required: conditional, sensitivity: public, cardinality: bounded, rollup: true, action: keep, enum: [dense, sparse, hybrid, semantic_cache, keyword, rerank], brief: Retrieval strategy, example: hybrid}
-  - {name: RETRIEVAL_DURATION_MS, key: gernas.retrieval.duration_ms, type: double, required: always, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Retrieval latency, example: 88.0}
-  - {name: TOP_K, key: gernas.retrieval.top_k, type: int, required: conditional, sensitivity: internal, cardinality: bounded, rollup: false, action: keep, brief: Requested result count, example: 5}
-  - {name: RESULT_COUNT, key: gernas.retrieval.result_count, type: int, required: always, sensitivity: internal, cardinality: bounded, rollup: false, action: keep, brief: Results returned, example: 5}
-  - {name: EMPTY_RESULT, key: gernas.retrieval.empty_result, type: boolean, required: always, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: No results returned, example: false}
-  - {name: QUERY_REWRITTEN, key: gernas.retrieval.query_rewritten, type: boolean, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Query was rewritten before search, example: false}
-  - {name: QUERY_HASH, key: gernas.retrieval.query_hash, type: string, required: always, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: SHA-256 of the query text, example: 2c26b4}
-  - {name: RANKING_SCORE, key: gernas.retrieval.ranking_score, type: double, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Score of the first result, example: 0.83}
+  - {name: KNOWLEDGE_DOMAIN, key: gernas.knowledge_domain, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-014, brief: Knowledge domain searched, example: pricing_policy}
+  - {name: SOURCE_ID, key: gernas.source_id, type: string, required: conditional, sensitivity: internal, cardinality: growing, rollup: false, action: keep, source: GERNAS-REQ-014, brief: Source of the top result, example: doc_12}
+  - {name: INDEX_ID, key: gernas.index_id, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-014, brief: Index / collection searched, example: fab_policies}
+  - {name: RETRIEVAL_STRATEGY, key: gernas.retrieval_strategy, type: string, required: conditional, sensitivity: public, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-014, brief: Retrieval strategy (e.g. dense / sparse / hybrid), example: hybrid}

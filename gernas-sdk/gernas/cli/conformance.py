@@ -1,10 +1,11 @@
-"""``gernas conformance`` — check exported spans against the attribute registry.
+"""``gernas conformance`` — check exported spans against the GERNAS semantic conventions.
 
 Exit code 0 = conformant, 1 = violations (machine-readable JSON report with
 ``--json``), 2 = usage/input error. Designed for the agent-team CI template::
 
     gernas conformance --file collector/out/dataplane-traces.json --service agent_mesh_cli
 """
+
 from __future__ import annotations
 
 import argparse

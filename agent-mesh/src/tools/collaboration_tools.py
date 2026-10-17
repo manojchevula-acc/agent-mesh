@@ -182,7 +182,6 @@ APPROVAL_SIGNAL_PREFIX = "AWAITING_TOOL_APPROVAL:"
     "Requires supervisor approval before the change is applied. "
     "Use for explicit pricing updates (e.g. 'change pricing for CUST001 to 4.5%')."
 ))
-@_gt.compliance_gate("pricing_change", actor_key="customer_id")
 @_gt.trace_tool("submit_pricing_change")
 async def submit_pricing_change(customer_id: str, new_rate: float, effective_date: str) -> str:
     """Interceptor: creates an approval request and returns a signal string."""
@@ -202,7 +201,6 @@ async def submit_pricing_change(customer_id: str, new_rate: float, effective_dat
     "Requires supervisor approval before the limit is changed. "
     "Use for explicit credit limit adjustments (e.g. 'increase credit limit for CUST001 to 5M')."
 ))
-@_gt.compliance_gate("credit_limit_change", actor_key="customer_id")
 @_gt.trace_tool("adjust_credit_limit")
 async def adjust_credit_limit(customer_id: str, new_limit: float, reason: str) -> str:
     """Interceptor: creates an approval request and returns a signal string."""

@@ -53,7 +53,7 @@ async def _call_groq(user_prompt: str) -> str:
     return data["choices"][0]["message"]["content"].strip()
 
 
-@_gt.trace_memory("summarize", store="conversation_summary")
+@_gt.trace_step("conversation_summary", step_type="background_task")
 async def summarize_and_persist(
     session_id: str,
     prior_summary: str,

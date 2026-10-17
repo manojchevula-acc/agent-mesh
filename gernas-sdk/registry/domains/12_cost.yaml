@@ -1,8 +1,9 @@
 domain: cost
+blueprint: true
 owner: FinOps
-brief: Directly metered cost signals computed in-process from the rate card.
+brief: Directly metered consumption of a model / embedding call. estimated_cost is in the rate-card currency (AED for FAB).
 fields:
-  - {name: EST_COST_AED, key: gernas.est_cost_aed, type: double, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Estimated model-call cost in AED, example: 0.0265}
-  - {name: RATE_CARD_VERSION, key: gernas.cost.rate_card_version, type: string, required: conditional, sensitivity: internal, cardinality: growing, rollup: true, action: keep, brief: Rate card version used for the estimate, example: "2026-04-01"}
-  - {name: COMPUTE_UNITS, key: gernas.compute_units, type: double, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Compute units consumed, example: 1.0}
-  - {name: PTU_COST_AED, key: gernas.ptu.cost_aed, type: double, required: never, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: PTU amortised cost (WP1-PTU-01 - blocked on R4), example: 0.01}
+  - {name: TOKEN_INPUT, key: gernas.token_input, type: int, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, source: GERNAS-REQ-017, brief: Input (prompt / context) tokens, example: 1840}
+  - {name: TOKEN_OUTPUT, key: gernas.token_output, type: int, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, source: GERNAS-REQ-017, brief: Output (completion) tokens, example: 260}
+  - {name: COMPUTE_UNITS, key: gernas.compute_units, type: double, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, source: GERNAS-REQ-017, brief: Compute units consumed (set by the caller when metered), example: 1.0}
+  - {name: ESTIMATED_COST, key: gernas.estimated_cost, type: double, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, source: GERNAS-REQ-017, brief: Estimated cost from the rate card (GERNAS_RATE_CARD_PATH), example: 0.0265}

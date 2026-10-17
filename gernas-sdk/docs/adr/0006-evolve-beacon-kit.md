@@ -10,3 +10,5 @@
 - No `beacon_kit` import shim is shipped. All in-repo callers were migrated. The deprecated `traced_*` aliases remain inside `gernas`.
 
 **Consequences.** External code importing `beacon_kit` must migrate using `docs/MIGRATION_FROM_BEACON_KIT.md`.
+
+**Update (0.4.0).** The blueprint-driven cleanup removed the kept Beacon parts that the GERNAS blueprint does not require: the audit chain, the compliance decorators, the file and pretty sinks, the reports, the structured and request logging, the circuit breaker and the generic decorators. See `docs/BLUEPRINT_TRACEABILITY.md`, §5.

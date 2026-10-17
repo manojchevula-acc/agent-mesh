@@ -75,7 +75,6 @@ async def main(username: str) -> int:
                        trace_id=capture.trace_ids[-1] if capture.trace_ids else None)
         results.append(outcome)
         print(json.dumps(outcome), flush=True)
-    gernas_telemetry.finalize(reports=False)
     gernas_telemetry.shutdown()
     out = ROOT.parent / "gernas-sdk" / "reports" / "mesh_e2e_requests.json"
     out.parent.mkdir(exist_ok=True)

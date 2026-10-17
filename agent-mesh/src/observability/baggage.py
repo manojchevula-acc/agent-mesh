@@ -51,10 +51,6 @@ def set_request_baggage(
         ctx = baggage.set_baggage(_KEYS["user"],       user,        context=ctx)
         ctx = baggage.set_baggage(_KEYS["role"],       role,        context=ctx)
         ctx = baggage.set_baggage(_KEYS["session_id"], session_id,  context=ctx)
-        # Gernas canonical keys (role only — user identity is never a span attribute)
-        from src.observability import gernas_telemetry as _gt
-        for key, value in _gt.request_baggage(request_id, session_id, role, _gt.current_channel()).items():
-            ctx = baggage.set_baggage(key, value, context=ctx)
         token = otel_context.attach(ctx)
         return ctx, token
     except Exception:

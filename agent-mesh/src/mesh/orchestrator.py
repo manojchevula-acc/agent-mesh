@@ -108,6 +108,12 @@ class MeshResult:
     intent_match_similarity: float = 0.0
 
 
+@_gt.trace_mesh_run()
+async def _run_workflow(workflow, state):
+    """One workflow execution = one ``agent.run`` of the mesh orchestrator (executors are its steps)."""
+    return await workflow.run(state)
+
+
 @_gt.trace_use_case(channel=_gt.current_channel, outcome_from=_gt.business_outcome)
 async def handle_request(user: User, query: str, session_id: str | None = None, request_id: str | None = None, bypass_cache: bool = False) -> MeshResult:
     """Runs one request through the full mesh workflow.
@@ -133,6 +139,8 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
         role=user.role.value,
         session_id=session_id,
     )
+    _gernas_ctx = _gt.request_context(request_id=request_id, session_id=session_id, user=user.username)
+    _gernas_ctx.__enter__()
 
     # Emit input_processing events to the active tracer (set by the CLI/API caller).
     tracer = get_active_tracer()
@@ -185,7 +193,7 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
                       user.username, user.role.value, request_id, query[:150],
                       extra={"user": user.username, "role": user.role.value,
                              "request_id": request_id, "session_id": session_id})
-            events = await workflow.run(initial)
+            events = await _run_workflow(workflow, initial)
 
         final = _final_state(events)
         _enrich_root_span(root_span, final, request_id)
@@ -211,6 +219,7 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
                       (final.answer or "")[:200],
                       extra={"request_id": request_id, "user": user.username,
                              "outcome": "SUCCESS", "duration_ms": int(duration_ms)})
+        _gernas_ctx.__exit__(None, None, None)
         detach_baggage(_baggage_token)
 
     if final is None:
@@ -254,7 +263,7 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
             else:
                 # Standard role-level approval resume — run Domain → Redact
                 resume_wf = build_hitl_resume_workflow(ask=ask_remote)
-                resume_events = await resume_wf.run(final)
+                resume_events = await _run_workflow(resume_wf, final)
                 resumed = _final_state(resume_events)
                 if resumed is not None:
                     final = resumed
@@ -341,7 +350,7 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
                     similarity=primary_sim, confidence=primary_conf,
                 )
             resume_wf = build_intent_resume_workflow(ask=ask_remote)
-            resume_events = await resume_wf.run(final)
+            resume_events = await _run_workflow(resume_wf, final)
             resumed = _final_state(resume_events)
             if resumed is not None:
                 final = resumed

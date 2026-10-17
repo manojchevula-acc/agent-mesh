@@ -1,4 +1,4 @@
-# GERNAS agent-side sidecar Collector (WP2-A-01 step 3): buffer locally, never block
+# GERNAS agent-side sidecar Collector: buffer locally, never block
 # the agent, forward to the central gateway. No expensive processing here.
 # GERNAS_GATEWAY_ENDPOINT points at the HA gateway (otel-collector-config.yaml locally).
 

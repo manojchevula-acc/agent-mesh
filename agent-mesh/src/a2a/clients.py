@@ -55,7 +55,7 @@ def get_remote_agent(name: str) -> A2AAgent:
     )
 
 
-@_gt.trace_delegation(child_arg="name", protocol="a2a")
+@_gt.trace_delegation(child_arg="name")
 async def ask_remote(
     name: str,
     prompt: str,

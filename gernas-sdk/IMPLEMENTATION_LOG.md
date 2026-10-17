@@ -474,4 +474,31 @@ Yes
 ### Known Issues
 Environment: DATA_AGENT_MODEL / RAG_AGENT_MODEL qwen/qwen3.6-27b returns 404 from Groq (validation used a harness override; .env not modified); RAG knowledge base not ingested.
 
+## 2026-10-17 · Blueprint alignment cleanup (0.4.0)
+
+**Scope:** a full code-level cleanup of the SDK against `docs/GERNAS Enterprise Telemetry Observability Blueprint.docx` (the blueprint itself is not modified). The requirements baseline and the initial and final traceability matrix are in `docs/BLUEPRINT_TRACEABILITY.md`.
+
+**Changes:**
+- Registry rebuilt on the 13 blueprint domains, with exact field names.
+- Mandatory identity configuration (`GernasConfigError`).
+- Execution status and error category on every span; run context on every child span.
+- `trace_step` added. MCP, streaming and RAG consolidated into `trace_tool` / `trace_llm` / `trace_retrieval`.
+- LangChain adapter rewritten; LangGraph adapter added.
+- `request_context` with HMAC user tokenization.
+- Non-blueprint subsystems removed (§5 of the traceability doc).
+- Collector: denylist block and Opik GenAI mapping added; kill switches removed.
+- Agent Mesh integration migrated.
+
+**Tests run:**
+- `pytest tests --cov=gernas`: 180 passed, 91.1 % coverage.
+- `ruff check` and `ruff format --check` clean; `mypy gernas` clean; `registry/generate.py --check` OK; `otelcol-contrib validate` VALID.
+- `python -m build` plus a clean-venv install, import and `pip check` OK.
+- `benchmarks/bench_overhead.py --iterations 3000`: all PASS.
+- `scripts/e2e_pipeline_checks.py`: PASS, including Opik.
+- `gernas conformance` PASS on the four examples and on the in-process Agent Mesh run.
+- Agent Mesh offline suite: same 5 pre-existing failures as the baseline; rbac_matrix still hangs, as in the baseline.
+
+### Known Issues
+See `docs/BLUEPRINT_TRACEABILITY.md` §7 (naming-namespace sign-off, partial §11 cost attribution, MAF native spans).
+
 <!-- END ENTRIES -->

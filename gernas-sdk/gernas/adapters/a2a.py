@@ -7,12 +7,13 @@ auth_interceptor=GernasA2AInterceptor())`` in the Agent Framework) writes
 headers, so the remote node's spans join the caller's trace. The server side
 extracts them with :class:`gernas.adapters.asgi.GernasASGIMiddleware`.
 """
+
 from __future__ import annotations
 
 from a2a.client.client import ClientCallContext
 from a2a.client.interceptors import AfterArgs, BeforeArgs, ClientCallInterceptor
 
-from gernas.async_context import inject_context
+from gernas.context import inject_context
 
 
 class GernasA2AInterceptor(ClientCallInterceptor):

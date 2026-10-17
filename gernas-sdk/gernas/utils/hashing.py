@@ -1,47 +1,30 @@
-"""Input hashing and output summarisation utilities.
+"""Payload fingerprints and sizes — the only things recorded about tool / model payloads."""
 
-Inputs/outputs are never stored raw in telemetry — only hashes and structural summaries.
-"""
 from __future__ import annotations
 
 import hashlib
 import json
-import sys
 from typing import Any
 
 
-def hash_inputs(data: Any) -> str:
-    """Return SHA-256 hex digest of the canonical JSON representation of *data*."""
-    canonical = json.dumps(data, sort_keys=True, default=str)
-    return hashlib.sha256(canonical.encode()).hexdigest()
-
-
-def summarize_output(data: Any) -> dict[str, Any]:
-    """Return a structural summary safe to store in telemetry spans.
-
-    Never includes actual field values — only shape, size, and error presence.
-    """
-    summary: dict[str, Any] = {
-        "has_error": False,
-        "size_bytes": 0,
-        "field_count": 0,
-        "schema_version": None,
-    }
-
+def _canonical(data: Any) -> str:
     try:
-        serialized = json.dumps(data, default=str)
-        summary["size_bytes"] = sys.getsizeof(serialized)
-    except Exception:
-        summary["has_error"] = True
-        return summary
+        return json.dumps(data, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        return repr(data)
 
-    if isinstance(data, dict):
-        summary["field_count"] = len(data)
-        summary["schema_version"] = data.get("schema_version") or data.get("version")
-        summary["has_error"] = "error" in data or "errors" in data
-    elif isinstance(data, list):
-        summary["field_count"] = len(data)
-    elif data is None:
-        summary["has_error"] = True
 
-    return summary
+def fingerprint(data: Any) -> str:
+    """SHA-256 of the canonical JSON form of *data* (used internally for loop detection)."""
+    return hashlib.sha256(_canonical(data).encode("utf-8", "replace")).hexdigest()
+
+
+def payload_size(data: Any) -> int:
+    """UTF-8 size in bytes of the canonical JSON form of *data* (Blueprint §3 tool payload size)."""
+    if data is None:
+        return 0
+    if isinstance(data, (bytes, bytearray)):
+        return len(data)
+    if isinstance(data, str):
+        return len(data.encode("utf-8", "replace"))
+    return len(_canonical(data).encode("utf-8", "replace"))

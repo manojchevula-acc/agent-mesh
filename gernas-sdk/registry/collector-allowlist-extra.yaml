@@ -45,7 +45,7 @@ allowed_keys:
   - edge_group.id
   - edge_group.type
   - agent_framework.function.name
-  # OTel semconv: network / errors / exceptions / opik-shape
+  # OTel semconv: network / errors / exceptions
   - server.address
   - server.port
   - url.path
@@ -54,6 +54,3 @@ allowed_keys:
   - exception.message
   - exception.stacktrace
   - exception.escaped
-  - input
-  - output
-  - thread_id

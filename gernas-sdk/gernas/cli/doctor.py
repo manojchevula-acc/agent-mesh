@@ -1,15 +1,16 @@
-"""``gernas doctor`` — onboarding preflight (WP1-CORE-08 step 3).
+"""``gernas doctor`` — onboarding preflight.
 
 Checks, in the order a team onboards:
 
-1. configuration — GERNAS_* variables parse; required ones are present;
+1. configuration — GERNAS_* variables parse and every mandatory one is present;
 2. collector     — the OTLP endpoint accepts a TCP connection (with latency);
 3. export        — a test ``agent.run`` span is exported and accepted;
-4. context       — the test span carries all 13 canonical context fields;
+4. context       — the test span carries the GERNAS identity / execution context;
 5. opik          — (optional, ``--opik``) the test trace is visible in Opik.
 
 Prints PASS/FAIL per check; exit code 0 = all pass, 1 = any fail.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -20,22 +21,22 @@ import sys
 import time
 import urllib.parse
 import urllib.request
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 
-from gernas.attributes import CANONICAL_CONTEXT, Ctx
-
-_RECOMMENDED = ("GERNAS_SERVICE_NAME", "GERNAS_USE_CASE_ID", "GERNAS_APPLICATION_ID", "GERNAS_BUSINESS_DOMAIN",
-                "GERNAS_ENVIRONMENT")
+from gernas.attributes import DOCTOR_CONTEXT
 
 
 class _Probe(SpanExporter):
     """Exports to the real exporter and remembers what happened."""
 
     def __init__(self, inner: SpanExporter) -> None:
-        self.inner, self.spans, self.results = inner, [], []
+        self.inner = inner
+        self.spans: list[ReadableSpan] = []
+        self.results: list[Any] = []
 
     def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
         self.spans.extend(spans)
@@ -76,7 +77,9 @@ def _opik_has(run_id: str, timeout_s: float) -> tuple[bool, str]:
         except Exception as exc:  # noqa: BLE001
             last = str(exc)
         time.sleep(3)
-    return False, f"not found in project {project!r} within {timeout_s:.0f}s" + (f" (last error: {last})" if last else "")
+    return False, f"not found in project {project!r} within {timeout_s:.0f}s" + (
+        f" (last error: {last})" if last else ""
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -91,13 +94,13 @@ def main(argv: list[str] | None = None) -> int:
         results.append({"check": name, "ok": ok, "detail": detail})
 
     # 1. configuration
-    from gernas.config import GernasConfig
+    from gernas.config import GernasConfig, GernasConfigError
+
     try:
         cfg = GernasConfig.from_env()
-        missing = [v for v in _RECOMMENDED if not os.getenv(v)]
-        record("configuration", True, "GERNAS_* parsed" + (f"; defaults used for {', '.join(missing)}" if missing else ""))
-    except (KeyError, ValueError) as exc:
-        record("configuration", False, str(exc).strip("'\""))
+        record("configuration", True, f"GERNAS_* valid (service {cfg.service_name!r}, exporter {cfg.exporter})")
+    except GernasConfigError as exc:
+        record("configuration", False, str(exc))
         return _finish(results, args.json)
 
     # 2. collector reachability
@@ -110,28 +113,32 @@ def main(argv: list[str] | None = None) -> int:
         except OSError as exc:
             record("collector", False, f"{host}:{port} unreachable: {exc}")
     else:
-        record("collector", True, f"skipped (local sink GERNAS_EXPORTER={cfg.exporter})")
+        record("collector", True, f"skipped (GERNAS_EXPORTER={cfg.exporter})")
 
     # 3. test span export
     import gernas
     from gernas.exporters import build_span_exporter
+    from gernas.run_state import current_run
+    from gernas.tracer import get_handle
 
     probe = _Probe(build_span_exporter(cfg))
     gernas.init_gernas(cfg, span_exporter=probe)
     run_id: dict[str, str] = {}
 
-    @gernas.trace_agent("gernas-doctor", name="Gernas Doctor", framework="gernas-cli")
+    @gernas.trace_agent("gernas-doctor", agent_type="diagnostic", name="Gernas Doctor")
     def _doctor_run() -> str:
-        run_id["id"] = gernas.current_run().agent_run_id  # type: ignore[union-attr]
+        run = current_run()
+        run_id["id"] = run.agent_run_id if run is not None else ""
         return "ok"
 
     _doctor_run()
-    handle = gernas.get_handle()
+    handle = get_handle()
     if handle is not None:
         handle.flush(10_000)
     ok = bool(probe.results) and all(r is SpanExportResult.SUCCESS for r in probe.results)
-    record("export", ok, f"test span {'accepted' if ok else 'rejected'} ({probe.results})"
-                         f" agent_run_id={run_id.get('id')}")
+    record(
+        "export", ok, f"test span {'accepted' if ok else 'rejected'} ({probe.results}) agent_run_id={run_id.get('id')}"
+    )
 
     # 4. canonical context
     span = probe.spans[-1] if probe.spans else None
@@ -139,13 +146,13 @@ def main(argv: list[str] | None = None) -> int:
         record("context", False, "no test span captured")
     else:
         present = {**dict(span.resource.attributes), **dict(span.attributes or {})}
-        absent = [k for k in CANONICAL_CONTEXT if k not in present]
-        record("context", not absent,
-               f"{len(CANONICAL_CONTEXT) - len(absent)}/{len(CANONICAL_CONTEXT)} canonical fields present"
-               + (f"; missing {absent}" if absent else ""))
-        env_value = present.get(Ctx.ENVIRONMENT)
-        if env_value not in ("dev", "sit", "uat", "staging", "prod"):
-            record("environment", False, f"GERNAS_ENVIRONMENT={env_value!r} is not a registered value")
+        absent = [k for k in DOCTOR_CONTEXT if k not in present]
+        record(
+            "context",
+            not absent,
+            f"{len(DOCTOR_CONTEXT) - len(absent)}/{len(DOCTOR_CONTEXT)} context fields present"
+            + (f"; missing {absent}" if absent else ""),
+        )
 
     # 5. opik (optional)
     if args.opik:

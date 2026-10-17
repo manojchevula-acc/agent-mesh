@@ -1,10 +1,9 @@
 domain: planning
+blueprint: true
 owner: GERNAS OS
-brief: Plans and plan steps produced by planning agents.
+brief: Plans and executed steps (workflow executors, graph nodes, plan steps) - the "Step" level of the Blueprint §10 drill-down.
 fields:
-  - {name: PLAN_ID, key: gernas.plan_id, type: string, required: always, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Plan identifier, example: plan_1}
-  - {name: STEP_ID, key: gernas.step_id, type: string, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Plan step identifier, example: step_2}
-  - {name: STEP_TYPE, key: gernas.step_type, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Kind of plan step, example: tool_call}
-  - {name: ATTEMPT_NUMBER, key: gernas.attempt_number, type: int, required: always, sensitivity: internal, cardinality: bounded, rollup: false, action: keep, brief: 1-based attempt number, example: 1}
-  - {name: PLANNING_LATENCY_MS, key: gernas.planning.latency_ms, type: double, required: always, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Time spent producing the plan, example: 320.0}
-  - {name: PLAN_STEP_COUNT, key: gernas.plan.step_count, type: int, required: conditional, sensitivity: internal, cardinality: bounded, rollup: false, action: keep, brief: Number of steps in the plan, example: 3}
+  - {name: PLAN_ID, key: gernas.plan_id, type: string, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, source: GERNAS-REQ-010, brief: Plan identifier, example: plan_1}
+  - {name: STEP_ID, key: gernas.step_id, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-010, brief: Step identifier (executor / graph node / plan step name), example: compliance}
+  - {name: STEP_TYPE, key: gernas.step_type, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-010, brief: Kind of step, example: graph_node}
+  - {name: ATTEMPT_NUMBER, key: gernas.attempt_number, type: int, required: conditional, sensitivity: internal, cardinality: bounded, rollup: false, action: keep, source: GERNAS-REQ-010, brief: 1-based attempt number of the step or plan, example: 1}

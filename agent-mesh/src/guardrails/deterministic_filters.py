@@ -122,18 +122,11 @@ def _screen_input(text: str) -> GuardrailResult:
 
 
 # Gernas: one guardrail.check span per screen (deny keeps status OK; categories become
-# the risk classification). The audit-chain GuardrailEvent below reuses the
-# undecorated check so it does not emit a second span.
+# the risk classification).
 screen_input = _gt.trace_guardrail(
     "input_screen",
     decision_from=lambda r: ("allow" if r.allowed else "deny", ",".join(r.categories) or None),
 )(_screen_input)
-
-
-@_gt.guardrail_check(rule_id="input_screen", action_on_block="warn")
-def _emit_screen_guardrail(text: str) -> tuple:
-    r = _screen_input(text)
-    return (not r.allowed, r.reason)
 
 
 @dataclass

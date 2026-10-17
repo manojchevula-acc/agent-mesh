@@ -1,23 +1,23 @@
-"""Microsoft Agent Framework (MAF) middlewares → GERNAS spans.
+"""Microsoft Agent Framework (MAF) adapter — maps MAF execution onto the common GERNAS model.
 
-Add them to any ``agent_framework.Agent``::
+| MAF concept                    | GERNAS span   | Middleware                  |
+|--------------------------------|---------------|-----------------------------|
+| agent invocation               | ``agent.run`` | :class:`GernasAgentMiddleware` |
+| chat-client request            | ``llm.call``  | :class:`GernasChatMiddleware`  |
+| function / MCP tool execution  | ``tool.call`` | :class:`GernasFunctionMiddleware` |
+| workflow executor              | ``agent.step``| ``@gernas.trace_step`` on the executor handler |
 
     from gernas.adapters.agent_framework import gernas_middleware
-    Agent(client, name="data_agent", middleware=[*gernas_middleware("data_agent", mcp_server_id="datalayer")])
+    Agent(client, name="DataAgent", middleware=[*gernas_middleware("data_agent", agent_type="worker",
+                                                                    provider="azure_openai", mcp_server="datalayer")])
 
-* :class:`GernasAgentMiddleware` → ``agent.run`` per agent invocation (run id,
-  termination reason, loop/step/retry detection);
-* :class:`GernasChatMiddleware` → ``llm.call`` per model request (tokens from
-  ``usage_details``, finish reason, cost);
-* :class:`GernasFunctionMiddleware` → ``tool.{name}`` per tool call, or
-  ``mcp.call`` when the agent's tools come from an MCP server.
-
-Built on the framework's public middleware API — no auto-instrumentation package.
+Requires ``agent-framework`` (``pip install gernas-telemetry[agent-framework]``).
 """
+
 from __future__ import annotations
 
-import json
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from agent_framework import (
     AgentContext,
@@ -31,46 +31,26 @@ from agent_framework import (
 from gernas.decorators._core import Call, wrap
 from gernas.decorators.agent import AgentSpec
 from gernas.decorators.llm import LLMSpec
-from gernas.decorators.tool import MCPSpec, ToolSpec
-from gernas.utils.hashing import hash_inputs
+from gernas.decorators.tool import ToolSpec
 
 Next = Callable[[], Awaitable[None]]
 
 
-def _args_hash(arguments: Any) -> str:
-    try:
-        if hasattr(arguments, "model_dump"):
-            arguments = arguments.model_dump()
-        return hash_inputs(json.loads(json.dumps(arguments, default=str, sort_keys=True)))
-    except Exception:  # noqa: BLE001
-        return hash_inputs(str(arguments))
-
-
-def _messages_hash(messages: Any) -> str:
-    try:
-        return hash_inputs([getattr(m, "text", str(m)) for m in (messages or [])])
-    except Exception:  # noqa: BLE001
-        return hash_inputs(str(messages))
-
-
-class _AdapterAgentSpec(AgentSpec):
+class _AgentSpec(AgentSpec):
     def start(self, span: Any, call: Call) -> None:
         context: AgentContext = call.args[0]
-        call.state["input_hash"] = _messages_hash(getattr(context, "messages", None))
+        call.state["payload"] = [getattr(m, "text", str(m)) for m in (getattr(context, "messages", None) or [])]
         super().start(span, call)
 
 
 class GernasAgentMiddleware(AgentMiddleware):
     """One ``agent.run`` span per MAF agent invocation."""
 
-    def __init__(self, agent_id: str | None = None, *, version: str | None = None,
-                 agent_type: str | None = None) -> None:
-        def framework_name(context: AgentContext, call_next: Next) -> str:
-            return getattr(context.agent, "name", None) or agent_id or "agent"
+    def __init__(self, agent_id: str, *, agent_type: str, version: str | None = None) -> None:
+        def agent_name(context: AgentContext, call_next: Next) -> str:
+            return getattr(context.agent, "name", None) or agent_id
 
-        spec = _AdapterAgentSpec(agent_id or framework_name, framework_name, version, "agent_framework",
-                                 agent_type, None, None)
-        self._run = wrap(self._invoke, spec)
+        self._run = wrap(self._invoke, _AgentSpec(agent_id, agent_name, version, agent_type, "agent_framework"))
 
     @staticmethod
     async def _invoke(context: AgentContext, call_next: Next) -> Any:
@@ -81,25 +61,30 @@ class GernasAgentMiddleware(AgentMiddleware):
         await self._run(context, call_next)
 
 
-class _AdapterLLMSpec(LLMSpec):
-    def _model(self, call: Call) -> str:
+class _ChatSpec(LLMSpec):
+    def _model(self, call: Call) -> str | None:
         context: ChatContext = call.args[0]
         options = getattr(context, "options", None) or {}
         model = (options.get("model_id") or options.get("model")) if isinstance(options, dict) else None
         client = getattr(context, "client", None)
-        model = model or self.model or getattr(client, "model_id", None) or getattr(client, "model", None)
-        return str(model) if model else "unknown"
+        model = model or self.model_id or getattr(client, "model_id", None) or getattr(client, "model", None)
+        return None if model is None else str(model)
 
 
 class GernasChatMiddleware(ChatMiddleware):
-    """One ``llm.call`` span per chat-client request."""
+    """One ``llm.call`` span per chat-client request (tokens from ``usage_details``)."""
 
-    def __init__(self, provider: str | None = None, *, deployment_id: str | None = None,
-                 prompt_template_id: str | None = None, prompt_version: str | None = None) -> None:
-        spec = _AdapterLLMSpec(None, provider, deployment_id, "chat", prompt_template_id, prompt_version,
-                               None, None, None)
-        self._spec = spec
-        self._run = wrap(self._invoke, spec)
+    def __init__(
+        self,
+        *,
+        provider: str,
+        deployment_id: str | None = None,
+        prompt_template_id: str | None = None,
+        prompt_version: str | None = None,
+    ) -> None:
+        self._run = wrap(
+            self._invoke, _ChatSpec(None, provider, deployment_id, prompt_template_id, prompt_version, None)
+        )
 
     @staticmethod
     async def _invoke(context: ChatContext, call_next: Next) -> Any:
@@ -110,15 +95,11 @@ class GernasChatMiddleware(ChatMiddleware):
         await self._run(context, call_next)
 
 
-class _AdapterToolSpec(ToolSpec):
+class _FunctionSpec(ToolSpec):
     def start(self, span: Any, call: Call) -> None:
-        call.state["input_hash"] = _args_hash(getattr(call.args[0], "arguments", None))
-        super().start(span, call)
-
-
-class _AdapterMCPSpec(MCPSpec):
-    def start(self, span: Any, call: Call) -> None:
-        call.state["input_hash"] = _args_hash(getattr(call.args[0], "arguments", None))
+        arguments = getattr(call.args[0], "arguments", None)
+        dump = getattr(arguments, "model_dump", None)
+        call.state["payload"] = dump() if callable(dump) else arguments
         super().start(span, call)
 
 
@@ -127,15 +108,11 @@ def _function_name(context: FunctionInvocationContext, call_next: Next) -> str:
 
 
 class GernasFunctionMiddleware(FunctionMiddleware):
-    """One span per real tool execution (``mcp.call`` when ``mcp_server_id`` is set)."""
+    """One ``tool.call`` span per real tool execution (``tool_type="mcp"`` with an MCP server)."""
 
-    def __init__(self, mcp_server_id: str | None = None, *, transport: str | None = "streamable_http",
-                 tool_type: str = "function") -> None:
-        if mcp_server_id:
-            spec: Any = _AdapterMCPSpec(mcp_server_id, "tool", _function_name, transport)
-        else:
-            spec = _AdapterToolSpec(_function_name, tool_type, None, None)
-        self._run = wrap(self._invoke, spec)
+    def __init__(self, *, mcp_server: str | None = None) -> None:
+        tool_type = "mcp" if mcp_server else "function"
+        self._run = wrap(self._invoke, _FunctionSpec(_function_name, tool_type, None, None, mcp_server, None))
 
     @staticmethod
     async def _invoke(context: FunctionInvocationContext, call_next: Next) -> Any:
@@ -146,12 +123,24 @@ class GernasFunctionMiddleware(FunctionMiddleware):
         await self._run(context, call_next)
 
 
-def gernas_middleware(agent_id: str | None = None, *, provider: str | None = None,
-                      mcp_server_id: str | None = None, version: str | None = None,
-                      agent_type: str | None = None) -> list[Any]:
-    """The three middlewares, ready to splat into ``Agent(middleware=[...])``."""
-    return [
-        GernasAgentMiddleware(agent_id, version=version, agent_type=agent_type),
-        GernasChatMiddleware(provider),
-        GernasFunctionMiddleware(mcp_server_id),
+def gernas_middleware(
+    agent_id: str,
+    *,
+    agent_type: str,
+    provider: str,
+    mcp_server: str | None = None,
+    version: str | None = None,
+    trace_functions: bool = True,
+) -> list[Any]:
+    """Agent + Chat (+ Function) middlewares for ``Agent(middleware=[...])``.
+
+    Set ``trace_functions=False`` when the agent's function tools already carry
+    ``@gernas.trace_tool`` (avoids duplicate tool spans).
+    """
+    mws: list[Any] = [
+        GernasAgentMiddleware(agent_id, agent_type=agent_type, version=version),
+        GernasChatMiddleware(provider=provider),
     ]
+    if trace_functions:
+        mws.append(GernasFunctionMiddleware(mcp_server=mcp_server))
+    return mws

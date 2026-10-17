@@ -174,9 +174,7 @@ async def main() -> None:
                 "'python launch_mesh.py'.[/dim]"
             )
 
-    # Flush telemetry; dev HTML + audit reports are written when GERNAS_FILE_OUTPUT_DIR is set.
-    for _report in gernas_telemetry.finalize():
-        _console.print(f"[dim]Report: {_report}[/dim]")
+    # Flush and close telemetry.
     gernas_telemetry.shutdown()
 
 

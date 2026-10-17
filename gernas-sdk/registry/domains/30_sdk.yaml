@@ -1,0 +1,13 @@
+domain: sdk
+blueprint: false        # technical necessities (see docs/BLUEPRINT_TRACEABILITY.md §5)
+owner: GERNAS telemetry pod
+brief: Keys the SDK needs to operate - span classification, multi-framework comparability, metric dimensions, OTel HTTP semantics.
+fields:
+  - {name: OPERATION, key: gernas.operation, type: string, required: always, sensitivity: public, cardinality: bounded, rollup: true, action: keep, source: TN-01, brief: Canonical operation of the span (conformance + Collector routing), example: agent.run}
+  - {name: FRAMEWORK, key: gernas.framework, type: string, required: conditional, sensitivity: public, cardinality: bounded, rollup: true, action: keep, source: TN-02, enum: [agent_framework, langchain, langgraph, custom], brief: Framework that produced the run, example: langgraph}
+  - {name: SDK_VERSION, key: gernas.sdk_version, type: string, required: always, sensitivity: public, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-030, brief: Gernas SDK version (resource attribute; telemetry-platform health), example: "0.4.0"}
+  - {name: REDACTION_APPLIED, key: gernas.redaction_applied, type: boolean, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-019, brief: The SDK redacted or dropped a value on this span (sensitive data events), example: true}
+  - {name: TOKEN_TYPE, key: gernas.token_type, type: string, required: never, sensitivity: public, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-017, enum: [input, output, cached], brief: Metric dimension of gernas.llm.tokens, example: input}
+  - {name: HTTP_METHOD, key: http.request.method, type: string, required: conditional, sensitivity: public, cardinality: bounded, rollup: true, action: keep, source: TN-03, brief: OTel semconv HTTP method (server span of the ASGI adapter), example: POST}
+  - {name: HTTP_ROUTE, key: http.route, type: string, required: conditional, sensitivity: public, cardinality: bounded, rollup: true, action: keep, source: TN-03, brief: OTel semconv HTTP route template, example: /api/query}
+  - {name: HTTP_STATUS_CODE, key: http.response.status_code, type: int, required: conditional, sensitivity: public, cardinality: bounded, rollup: true, action: keep, source: TN-03, brief: OTel semconv HTTP status code, example: 200}

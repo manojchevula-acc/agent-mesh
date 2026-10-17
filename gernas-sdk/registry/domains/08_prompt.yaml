@@ -1,7 +1,7 @@
 domain: prompt
+blueprint: true
 owner: Prompt registry
-brief: Prompt provenance - the hash changes if anyone edits a prompt in production even when name and version do not.
+brief: Which prompt template produced a model call (never the prompt text).
 fields:
-  - {name: PROMPT_TEMPLATE_ID, key: gernas.prompt.template_id, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Prompt template identifier, example: compliance_system}
-  - {name: PROMPT_VERSION, key: gernas.prompt.version, type: string, required: conditional, sensitivity: internal, cardinality: growing, rollup: true, action: keep, brief: Prompt template version, example: "3"}
-  - {name: PROMPT_SHA256, key: gernas.prompt.sha256, type: string, required: conditional, sensitivity: internal, cardinality: growing, rollup: false, action: keep, brief: SHA-256 of the prompt text actually sent, example: e3b0c4}
+  - {name: PROMPT_TEMPLATE_ID, key: gernas.prompt_template_id, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-013, brief: Prompt template identifier, example: answer_v}
+  - {name: PROMPT_VERSION, key: gernas.prompt_version, type: string, required: conditional, sensitivity: internal, cardinality: growing, rollup: true, action: keep, source: GERNAS-REQ-013, brief: Prompt template version, example: "3"}

@@ -834,8 +834,6 @@ async def _lifespan(app):
             _log.info("UC-5: Restored %d pending HITL approval(s) from data/checkpoints/", restored)
     yield
     _log.info("api_server shutting down — flushing Gernas SDK telemetry.")
-    for _report_path in gernas_telemetry.finalize():  # dev reports when GERNAS_FILE_OUTPUT_DIR is set
-        _log.info("Report written: %s", _report_path)
     gernas_telemetry.shutdown()
 
 
@@ -1128,8 +1126,8 @@ app = Starlette(
             allow_headers=["*"],
         ),
         # Gernas SDK: one SERVER span per request (kept open across SSE streams),
-        # inbound traceparent/baggage extraction, x-run-id echo.
-        *([Middleware(gernas_telemetry.asgi_middleware(), channel="api", run_id_header="X-Run-ID")]
+        # inbound traceparent/baggage extraction.
+        *([Middleware(gernas_telemetry.asgi_middleware(), channel="api")]
           if gernas_telemetry.asgi_middleware() is not None else [Middleware(TraceContextMiddleware)]),
     ],
     routes=[

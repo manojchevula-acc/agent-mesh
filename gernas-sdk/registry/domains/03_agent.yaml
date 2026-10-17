@@ -1,15 +1,9 @@
 domain: agent
+blueprint: true
 owner: GERNAS OS
-brief: Identity of the agent and its position in a multi-agent topology.
+brief: Identity of the agent producing the run.
 fields:
-  - {name: AGENT_ID, key: gernas.agent_id, type: string, required: always, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Registered agent identifier, example: price_assist}
-  - {name: AGENT_NAME, key: gernas.agent_name, type: string, required: always, sensitivity: internal, cardinality: bounded, rollup: false, action: keep, brief: Human-readable agent name, example: PriceAssist}
-  - {name: AGENT_VERSION, key: gernas.agent_version, type: string, required: always, sensitivity: internal, cardinality: growing, rollup: true, action: keep, brief: Deployed agent version, example: "1.4.0"}
-  - {name: AGENT_TYPE, key: gernas.agent_type, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, enum: [orchestrator, worker, gate, tool_agent], brief: Role of the agent in the topology, example: worker}
-  - {name: FRAMEWORK, key: gernas.framework, type: string, required: always, sensitivity: public, cardinality: bounded, rollup: true, action: keep, brief: Agent framework, example: agent_framework}
-  - {name: AGENT_OWNER, key: gernas.agent_owner, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Owning squad (set by Collector enrichment), example: pricing-squad}
-  - {name: PARENT_AGENT_ID, key: gernas.parent_agent_id, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Delegating agent, example: orchestrator}
-  - {name: CHILD_AGENT_ID, key: gernas.child_agent_id, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, brief: Agent receiving the delegation, example: data_agent}
-  - {name: DELEGATION_LATENCY_MS, key: gernas.delegation.latency_ms, type: double, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, brief: Inter-agent round-trip latency, example: 812.4}
-  - {name: DELEGATION_DEPTH, key: gernas.delegation.depth, type: int, required: conditional, sensitivity: internal, cardinality: bounded, rollup: false, action: keep, brief: Nesting depth of the delegation chain, example: 1}
-  - {name: DELEGATION_PROTOCOL, key: gernas.delegation.protocol, type: string, required: conditional, sensitivity: public, cardinality: bounded, rollup: true, action: keep, enum: [a2a, in_process, queue], brief: Transport of the hand-off, example: a2a}
+  - {name: AGENT_ID, key: gernas.agent_id, type: string, required: always, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-008, brief: Registered agent identifier, example: price_assist}
+  - {name: AGENT_NAME, key: gernas.agent_name, type: string, required: always, sensitivity: internal, cardinality: bounded, rollup: false, action: keep, source: GERNAS-REQ-008, brief: Human-readable agent name, example: PriceAssist}
+  - {name: AGENT_VERSION, key: gernas.agent_version, type: string, required: always, sensitivity: internal, cardinality: growing, rollup: true, action: keep, source: GERNAS-REQ-008, brief: Deployed agent version, example: "1.4.0"}
+  - {name: AGENT_TYPE, key: gernas.agent_type, type: string, required: always, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-008, brief: Role of the agent (e.g. orchestrator / worker / gate), example: worker}

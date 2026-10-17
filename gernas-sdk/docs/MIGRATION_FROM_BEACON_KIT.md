@@ -1,5 +1,40 @@
 # Migrating from Beacon Kit to the Gernas SDK
 
+> **0.4.0 supersedes the 0.3.0 API described further down.** Read §0 first. The Beacon Kit → 0.3.0 tables below are kept as history.
+
+## 0. Migrating from 0.3.0 to 0.4.0 (blueprint alignment)
+
+0.4.0 aligns names and scope with the GERNAS Enterprise Telemetry Blueprint (see `docs/BLUEPRINT_TRACEABILITY.md`). It is a breaking release. No aliases are shipped, because the blueprint requires one set of names.
+
+| 0.3.0 | 0.4.0 |
+|---|---|
+| Optional identity with invented defaults (`unassigned`, `dev`) | `GERNAS_SERVICE_NAME`, `GERNAS_USE_CASE_ID`, `GERNAS_APPLICATION_ID`, `GERNAS_BUSINESS_DOMAIN`, `GERNAS_ENVIRONMENT` are **mandatory** (`GernasConfigError`) |
+| `KeyError` for config | `gernas.GernasConfigError` (a `ValueError`) |
+| `gen_ai.request.model`, `gen_ai.provider.name`, `gen_ai.usage.input_tokens` / `output_tokens` | `gernas.model_id`, `gernas.provider`, `gernas.token_input` / `gernas.token_output` (the Collector maps them back for Opik) |
+| `gernas.est_cost_aed` | `gernas.estimated_cost` (rate-card currency) |
+| `gernas.tokenised_user_id` | `gernas.tokenized_user_id`, via `gernas.request_context(user_id=...)` + `GERNAS_USER_TOKEN_KEY` |
+| dotted keys (`gernas.prompt.template_id`, `gernas.retrieval.index_id`, `gernas.hitl.outcome`, …) | flat blueprint keys (`gernas.prompt_template_id`, `gernas.index_id`, `gernas.hitl_outcome`, …) |
+| `trace_agent(agent_id)` | `trace_agent(agent_id, *, agent_type=...)`; `agent_type` is a mandatory blueprint field |
+| `trace_mcp(server_id, ...)` → `mcp.call` | `trace_tool(tool_id, tool_type="mcp", dependency=server_id)` → `tool.call` |
+| `trace_stream(model)` → `llm.stream` | `trace_llm(model)` on a generator (or `stream=True`) → `llm.call` |
+| `trace_rag(...)` → `rag.retrieve` | `trace_retrieval(...)` → `retrieval.search` |
+| `tool.{tool_id}`, `memory.{operation}` span names | fixed `tool.call`, `memory.access` (identity is an attribute) |
+| `trace_chain`, `chain.run`, `GernasLangChainCallback` | `gernas.adapters.langchain.instrument(runnable, agent_id=..., agent_type=...)` / `GernasCallbackHandler` |
+| — | `trace_step` (`agent.step`) for workflow executors and graph nodes; `gernas.adapters.langgraph.instrument_graph` |
+| `planning_step(...)` | `trace_step(..., step_type="plan_step", plan_id=...)` |
+| `trace_memory(op, store=...)` | `trace_memory("read" \| "write")`; `store` removed |
+| `trace_delegation(..., protocol=...)` | `protocol` removed |
+| `gernas_middleware(agent_id, provider=, mcp_server_id=)` | `gernas_middleware(agent_id, *, agent_type, provider, mcp_server=, trace_functions=True)` |
+| `GernasASGIMiddleware(run_id_header=...)`, `gernas.request_id` | removed (task correlation uses `request_context(task_id=...)`) |
+| `inject_context(headers, session_id=...)` | `with gernas.request_context(session_id=...): gernas.inject_context(headers)` |
+| `record_prompt`, `gernas.prompt.sha256` | removed: not a blueprint field |
+| `gernas.input_hash` / `output_hash` | removed: payload **sizes** only (`request_size_bytes` / `response_size_bytes`) |
+| `GERNAS_EXPORTER=pretty\|file\|memory` | removed: `otlp`, `console`, `off` only |
+| `GERNAS_EMIT_OPIK` / `GERNAS_EMIT_DATAPLANE`, `gernas.route.*` | removed: routing is Collector configuration |
+| `GERNAS_CAPTURE_PAYLOADS`, `GERNAS_BAGGAGE_ATTRIBUTES`, `GERNAS_ROLE_BAGGAGE_KEYS`, `GERNAS_LLM_PROVIDER`, `GERNAS_FILE_OUTPUT_DIR`, `GERNAS_COMMIT_SHA`, `GERNAS_PROVENANCE_ID`, `GERNAS_WORK_UNIT_ID`, `GERNAS_COMPLIANCE_*` | removed |
+| `compliance_gate`, `guardrail_check`, `rbac_check`, HMAC audit chain, `gernas report` / `audit-report`, circuit breaker, `traced*`, `log_calls`, `track_latency`, `count_calls`, `AgenticMetrics`, `StructuredLogger` | removed: not blueprint telemetry. Use `trace_guardrail` for policy decisions. |
+| extras `pretty`, `audit`, `breaker` | removed. Extras are now `agent-framework`, `a2a`, `langchain`, `langgraph`, `dev`. |
+
 Beacon Kit (`beacon_kit/`, version 0.2.0) has been evolved into the **Gernas SDK**. The new package is `gernas-sdk/`, the distribution is `gernas-telemetry` 0.3.0, and the import name is `gernas`. The git history is preserved: the files were moved with `git mv`. No `beacon_kit` compatibility package is shipped. In-repo callers (Agent Mesh, DataLayer, RAG) have been migrated.
 
 ## Install

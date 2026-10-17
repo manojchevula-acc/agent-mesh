@@ -1,14 +1,15 @@
-"""Rate-card cost enrichment for model calls (WP1-CORE-02a step 4).
+"""Rate-card cost estimation (Blueprint §2 cost context ``estimated_cost``, §11 cost model).
 
-The rate card is a JSON file named by ``GERNAS_RATE_CARD_PATH``::
+The rate card is a JSON file named by ``GERNAS_RATE_CARD_PATH``; costs are in its
+``currency`` (AED for FAB)::
 
     {"version": "2026-04-01", "currency": "AED",
-     "rates": [{"model": "openai/gpt-oss-120b", "provider": "groq",
-                "input_per_1k": 0.0092, "output_per_1k": 0.0368}]}
+     "rates": [{"model": "gpt-4o", "provider": "azure_openai", "input_per_1k": 0.0092, "output_per_1k": 0.0368}]}
 
-``provider`` may be ``"*"``. If the card is absent, unreadable, or has no entry
-for ``(model, provider)`` the cost is simply not recorded — never an error.
+``provider`` may be ``"*"``. Without a card, or without a matching entry, no cost is
+recorded — never an invented value and never an error.
 """
+
 from __future__ import annotations
 
 import json
@@ -27,8 +28,8 @@ def _load(path: str) -> dict | None:
         return None
     with _lock:
         hit = _cache.get(path)
-        if hit and hit[0] == mtime:
-            return hit[1]
+    if hit and hit[0] == mtime:
+        return hit[1]
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -38,29 +39,29 @@ def _load(path: str) -> dict | None:
     return data
 
 
-def estimate_cost_aed(model_id: str | None, provider: str | None, input_tokens: int | None,
-                      output_tokens: int | None, rate_card_path: str | None = None) -> tuple[float, str] | None:
-    """Return ``(cost_aed, rate_card_version)`` or ``None`` when it cannot be priced."""
-    if not model_id or (input_tokens is None and output_tokens is None):
+def estimate_cost(
+    model_id: str | None,
+    provider: str | None,
+    token_input: int | None,
+    token_output: int | None,
+    rate_card_path: str | None,
+) -> float | None:
+    """Estimated cost of one call, or None when it cannot be priced."""
+    if not model_id or not rate_card_path or (token_input is None and token_output is None):
         return None
-    path = rate_card_path if rate_card_path is not None else os.getenv("GERNAS_RATE_CARD_PATH", "")
-    if not path:
-        return None
-    card = _load(path)
+    card = _load(rate_card_path)
     if not card:
         return None
-    model = model_id.lower()
-    prov = (provider or "").lower()
     for rate in card.get("rates", []):
-        if str(rate.get("model", "")).lower() != model:
+        if str(rate.get("model", "")).lower() != model_id.lower():
             continue
-        rprov = str(rate.get("provider", "*")).lower()
-        if rprov not in ("*", prov):
+        if str(rate.get("provider", "*")).lower() not in ("*", (provider or "").lower()):
             continue
         try:
-            cost = ((input_tokens or 0) / 1000.0) * float(rate["input_per_1k"]) + \
-                   ((output_tokens or 0) / 1000.0) * float(rate["output_per_1k"])
+            cost = (token_input or 0) / 1000.0 * float(rate["input_per_1k"]) + (token_output or 0) / 1000.0 * float(
+                rate.get("output_per_1k", 0.0)
+            )
         except (KeyError, TypeError, ValueError):
             return None
-        return round(cost, 8), str(card.get("version", "unversioned"))
+        return round(cost, 8)
     return None

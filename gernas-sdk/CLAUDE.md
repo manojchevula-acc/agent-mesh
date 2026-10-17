@@ -9,10 +9,11 @@ Built on OpenTelemetry SDK primitives. All artefacts are FAB-owned intellectual 
 |---|---|
 | `IMPLEMENTATION_PLAN.md` | Authoritative task list — work from this, never invent tasks |
 | `IMPLEMENTATION_LOG.md` | Record every completed step here before stopping |
-| `docs/REQUIREMENTS_TRACEABILITY.md` | Requirement → implementation → evidence map (keep current) |
+| `docs/BLUEPRINT_TRACEABILITY.md` | Blueprint requirement → code → test matrix (keep current) |
 | `docs/sdk-developer-guide.md` · `docs/onboarding-runbook.md` | Public API and onboarding |
 | `registry/domains/*.yaml` | The attribute contract — edit here, then `python registry/generate.py` |
-| `../md_files/` · `../docs/` | Original WP1/WP2 plans, Blueprint (SOW) |
+| `../docs/GERNAS Enterprise Telemetry Observability Blueprint.docx` | The naming and scope contract (never modify) |
+| `../md_files/` | Original WP1/WP2 plans (history) |
 
 ## Non-Negotiable Engineering Principles
 
@@ -21,9 +22,11 @@ Built on OpenTelemetry SDK primitives. All artefacts are FAB-owned intellectual 
 3. **Decorators are the only interface.** Agent teams add one decorator. Zero boilerplate.
 4. **Telemetry never breaks the application.** Wrap every `span.set_attribute()` in try/except. A Collector outage produces a dropped counter, never an agent exception.
 5. **Collector is the backbone.** Never export directly from application to a backend: SDK → Collector → exporters always.
-6. **Span hierarchy must be preserved.** `trace → agent_run → chain → llm_call / tool_call` via OTel context propagation, not custom IDs alone.
+6. **Span hierarchy must be preserved.** `use_case.request → agent.run → agent.step → llm.call / tool.call` via OTel context propagation, not custom IDs alone.
 7. **Environment variables only.** No hardcoded endpoints, API keys, model names, or deployment IDs anywhere in source code.
-8. **PDPL by default.** Never capture raw prompt text, completion text, user identity, or credentials. The redaction hook must run before any span attribute is emitted.
+8. **PDPL by default.** Never capture raw prompt text, completion text, payloads, user identity, or credentials. The redaction hook must run before any span attribute is emitted.
+9. **Blueprint names only.** Blueprint §2 field names are used verbatim (`gernas.<field>`); no aliases. Never invent identity values — missing mandatory config raises `GernasConfigError`.
+10. **One model for every framework.** Adapters (MAF, LangChain, LangGraph) map onto the same spans; framework packages stay optional extras.
 
 ## Gate Protocol — Highest Priority Rule
 
@@ -71,5 +74,6 @@ Please review this step. I will not proceed until you approve.
 - Test runner: `pytest` with `pytest-asyncio` for all async tests
 - Full dependency list in `pyproject.toml`
 - Package name: `gernas-telemetry` (import as `gernas`); evolved from Beacon Kit (`docs/MIGRATION_FROM_BEACON_KIT.md`)
-- Before finishing any change: `pytest tests --cov=gernas --cov-fail-under=90` and `python registry/generate.py --check`
-- Never edit `gernas/attributes.py` or the Collector allow-list block by hand — they are generated
+- Lint/format/types: `ruff check`, `ruff format --check`, `mypy gernas`
+- Before finishing any change: `pytest tests --cov=gernas` (fail-under 90 in pyproject) and `python registry/generate.py --check`
+- Never edit `gernas/attributes.py` or the Collector allow-list / denylist blocks by hand — they are generated

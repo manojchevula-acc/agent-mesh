@@ -1,17 +1,13 @@
-"""End-to-end Collector checks: PDPL controls, kill switches, signal routing, Opik delivery.
+"""End-to-end Collector checks: PDPL controls, signal routing, Opik delivery.
 
-Requires the local Collector to be running (scripts/run_collector.py). Emits
-probe telemetry from three processes:
-
-* ``e2e-probe``       — normal routing; leaks a raw ``gen_ai.prompt`` and an
-  unregistered attribute through the *raw OTel API* (simulating a framework that
-  bypasses the SDK), plus a registered field carrying an Emirates ID;
-* ``e2e-kill-opik``   — ``GERNAS_EMIT_OPIK=false``;
-* ``e2e-kill-dataplane`` — ``GERNAS_EMIT_DATAPLANE=false``.
-
-Then inspects collector/out/*.json and (if OPIK_* env is present) the Opik REST
-API, printing PASS/FAIL per check and writing reports/e2e_pipeline_checks.json.
+Requires the local Collector to be running (scripts/run_collector.py). Emits probe
+telemetry from a separate process that leaks a raw ``gen_ai.prompt``, an unregistered
+attribute and an Emirates ID in a registered field through the *raw OTel API*
+(simulating a framework that bypasses the SDK), then inspects collector/out/*.json and
+(if OPIK_* env is present) the Opik REST API. Prints PASS/FAIL per check and writes
+reports/e2e_pipeline_checks.json.
 """
+
 from __future__ import annotations
 
 import json
@@ -25,35 +21,57 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "collector" / "out"
+sys.path.insert(0, str(ROOT))
 
-PROBE = r'''
-import json, logging, sys, gernas
+from gernas.attributes import Ctx, Metric, SpanName  # noqa: E402
+
+PROBE = r"""
+import json, logging, gernas
 from opentelemetry import trace
+from gernas import Ctx
+from gernas.run_state import current_run
 h = gernas.init_gernas()
 log = logging.getLogger("gernas.e2e")
 
-@gernas.trace_agent("e2e_probe_agent")
+@gernas.trace_tool("e2e_tool")
+def tool():
+    return 1
+
+@gernas.trace_llm("gpt-4o", provider="azure_openai")
+def chat():
+    return {"usage": {"prompt_tokens": 12, "completion_tokens": 4}}
+
+@gernas.trace_agent("e2e_probe_agent", agent_type="diagnostic")
 def run():
     span = trace.get_current_span()
     span.set_attribute("gen_ai.prompt", "RAW PROMPT customer alice@fab.ae")      # bypasses the SDK hook
     span.set_attribute("app.unregistered_note", "should never reach a store")     # not in the registry
-    span.set_attribute("gernas.tool.failure_reason", "id 784-1985-1234567-1")      # registered key, PII value
-    log.warning("e2e probe log record for %s", gernas.current_run().agent_run_id)
-    return gernas.current_run().agent_run_id
+    span.set_attribute(Ctx.API_OPERATION, "id 784-1985-1234567-1")                # registered key, PII value
+    tool()
+    chat()
+    log.warning("e2e probe log record for %s", current_run().agent_run_id)
+    return current_run().agent_run_id
 
 run_id = run()
-gernas.AgenticMetrics().record_tool_call("success", "e2e_tool")
 h.flush(10000); h.shutdown()
 print(json.dumps({"run_id": run_id}))
-'''
+"""
 
 
-def emit(service: str, extra: dict) -> str:
+def emit(service: str) -> str:
     env = {k: v for k, v in os.environ.items() if not k.startswith("GERNAS_")}
-    env.update({"GERNAS_OTLP_ENDPOINT": "http://127.0.0.1:4317", "GERNAS_SERVICE_NAME": service,
-                "GERNAS_USE_CASE_ID": "UC-E2E-001", "GERNAS_APPLICATION_ID": "gernas-e2e",
-                "GERNAS_BUSINESS_DOMAIN": "testing", "GERNAS_ENVIRONMENT": "dev",
-                "GERNAS_METRIC_INTERVAL_MS": "1000", "PYTHONPATH": str(ROOT), **extra})
+    env.update(
+        {
+            "GERNAS_OTLP_ENDPOINT": "http://127.0.0.1:4317",
+            "GERNAS_SERVICE_NAME": service,
+            "GERNAS_USE_CASE_ID": "UC-E2E-001",
+            "GERNAS_APPLICATION_ID": "gernas-e2e",
+            "GERNAS_BUSINESS_DOMAIN": "testing",
+            "GERNAS_ENVIRONMENT": "dev",
+            "GERNAS_METRIC_INTERVAL_MS": "1000",
+            "PYTHONPATH": str(ROOT),
+        }
+    )
     res = subprocess.run([sys.executable, "-c", PROBE], capture_output=True, text=True, env=env, timeout=120)
     if res.returncode != 0:
         raise SystemExit(f"probe {service} failed: {res.stderr[-2000:]}")
@@ -87,8 +105,7 @@ def opik_contains(run_id: str, timeout_s: float = 60) -> bool | None:
     project = os.getenv("OPIK_PROJECT_NAME")
     if not (key and ws and project):
         return None
-    url = (f"https://www.comet.com/opik/api/v1/private/spans?project_name={urllib.parse.quote(project)}"
-           f"&size=200")
+    url = f"https://www.comet.com/opik/api/v1/private/spans?project_name={urllib.parse.quote(project)}&size=200"
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         try:
@@ -102,52 +119,52 @@ def opik_contains(run_id: str, timeout_s: float = 60) -> bool | None:
     return False
 
 
+def _read(name: str) -> str:
+    path = OUT / name
+    return path.read_text(encoding="utf-8") if path.exists() else ""
+
+
 def main() -> int:
-    ids = {
-        "normal": emit("e2e-probe", {}),
-        "kill_opik": emit("e2e-kill-opik", {"GERNAS_EMIT_OPIK": "false"}),
-        "kill_dataplane": emit("e2e-kill-dataplane", {"GERNAS_EMIT_DATAPLANE": "false"}),
-    }
+    run_id = emit("e2e-probe")
     time.sleep(15)  # tail-sampling decision_wait + batch + file flush
-    spans = read_spans()
-    probe = [s for s in spans if s["attributes"].get("gernas.agent_run_id") == ids["normal"]]
-    metrics_text = (OUT / "dataplane-metrics.json").read_text(encoding="utf-8") if (OUT / "dataplane-metrics.json").exists() else ""
-    logs_text = (OUT / "dataplane-logs.json").read_text(encoding="utf-8") if (OUT / "dataplane-logs.json").exists() else ""
-    traces_text = (OUT / "dataplane-traces.json").read_text(encoding="utf-8")
+    spans = [s for s in read_spans() if s["attributes"].get(Ctx.AGENT_RUN_ID) == run_id]
+    agent = [s for s in spans if s["name"] == SpanName.AGENT]
+    metrics_text, logs_text, traces_text = (_read(f"dataplane-{k}.json") for k in ("metrics", "logs", "traces"))
     checks: list[tuple[str, bool, str]] = []
 
     def check(name: str, ok: bool, detail: str = "") -> None:
         checks.append((name, bool(ok), detail))
 
-    check("probe span reached the data plane", len(probe) == 1, f"{len(probe)} span(s)")
-    a = probe[0]["attributes"] if probe else {}
+    check("probe run reached the data plane", len(agent) == 1, f"{len(spans)} span(s) for the run")
+    a = agent[0]["attributes"] if agent else {}
     check("raw gen_ai.prompt removed by the Collector (PDPL)", "gen_ai.prompt" not in a)
     check("unregistered attribute removed (deny-by-default)", "app.unregistered_note" not in a)
-    check("Emirates ID masked in a registered field", "784-1985-1234567-1" not in traces_text,
-          str(a.get("gernas.tool.failure_reason")))
-    check("redaction summary recorded", any(k.startswith("redaction.") for k in a), "redaction.* attributes")
-    check("envelope + resource preserved", a.get("gernas.use_case_id") == "UC-E2E-001" and
-          probe[0]["resource"].get("service.name") == "e2e-probe" if probe else False)
-    check("kill switch: dataplane=false keeps spans out of the data plane",
-          not any(s["attributes"].get("gernas.agent_run_id") == ids["kill_dataplane"] for s in spans))
-    check("kill switch: opik=false still reaches the data plane",
-          any(s["attributes"].get("gernas.agent_run_id") == ids["kill_opik"] for s in spans))
-    check("signal routing: metrics in the metrics file only",
-          "gernas.tool.calls.total" in metrics_text and "gernas.tool.calls.total" not in traces_text)
-    check("signal routing: logs in the logs file only",
-          ids["normal"] in logs_text and "e2e probe log record" not in traces_text)
-    for label, key, expected in (("normal run in Opik", "normal", True), ("opik=false run absent from Opik", "kill_opik", False),
-                                 ("dataplane=false run still in Opik", "kill_dataplane", True)):
-        found = opik_contains(ids[key], timeout_s=60 if expected else 25)
-        if found is None:
-            check(label, False, "OPIK_* not set — skipped")
-        else:
-            check(label, found is expected, f"found={found}")
+    check(
+        "Emirates ID masked in a registered field",
+        "784-1985-1234567-1" not in traces_text,
+        str(a.get(Ctx.API_OPERATION)),
+    )
+    check(
+        "envelope + resource preserved",
+        bool(agent)
+        and a.get(Ctx.USE_CASE_ID) == "UC-E2E-001"
+        and agent[0]["resource"].get("service.name") == "e2e-probe",
+    )
+    check("tool and llm spans carry the run context", {s["name"] for s in spans} >= {SpanName.TOOL, SpanName.LLM})
+    check(
+        "signal routing: metrics in the metrics file only",
+        Metric.TOOL_CALLS in metrics_text and Metric.TOOL_CALLS not in traces_text,
+    )
+    check(
+        "signal routing: logs in the logs file only", run_id in logs_text and "e2e probe log record" not in traces_text
+    )
+    found = opik_contains(run_id, timeout_s=60)
+    check("probe run delivered to Opik", bool(found), "OPIK_* not set - skipped" if found is None else "")
 
     width = max(len(c[0]) for c in checks)
     for name, ok, detail in checks:
         print(f"[{'PASS' if ok else 'FAIL'}] {name:<{width}}  {detail}")
-    report = {"run_ids": ids, "checks": [{"check": n, "ok": ok, "detail": d} for n, ok, d in checks]}
+    report = {"run_id": run_id, "checks": [{"check": n, "ok": ok, "detail": d} for n, ok, d in checks]}
     (ROOT / "reports").mkdir(exist_ok=True)
     (ROOT / "reports" / "e2e_pipeline_checks.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     ok = all(c[1] for c in checks)

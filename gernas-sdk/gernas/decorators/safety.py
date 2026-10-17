@@ -1,17 +1,19 @@
-"""@trace_guardrail and @trace_content_safety (WP1-CORE-02d steps 5-6).
+"""@trace_guardrail and @trace_content_safety (Blueprint §2 security context, §3 Content Safety).
 
 A deny/block is expected behaviour: the span status stays OK and the decision
 is an attribute. A guardrail that raises ``GuardrailBlockedError`` (or any
 ``*Blocked*`` error) is recorded as ``deny`` without an ERROR status, and the
 active run's ``termination_reason`` becomes ``policy_block``.
 """
+
 from __future__ import annotations
 
-from typing import Any, Callable, TypeVar
+from collections.abc import Callable
+from typing import Any, TypeVar
 
+from gernas._metrics import record
 from gernas.attributes import Ctx, Metric, SpanName
 from gernas.decorators._core import Call, Spec, get_field, resolve, wrap
-from gernas.metrics.agentic import record
 from gernas.run_state import current_run
 from gernas.tracer import safe_set
 
@@ -29,7 +31,7 @@ def infer_decision(result: Any) -> tuple[str, str | None]:
     """Return ``(decision, reason_category)`` from common guardrail return shapes.
 
     * ``("allow"|"deny"|"warn"|"escalate", category)`` tuples
-    * ``(triggered: bool, reason)`` tuples (Beacon Kit / ``guardrail_check``)
+    * ``(triggered: bool, reason)`` tuples
     * ``bool`` — True means the guardrail *triggered* (deny)
     * dicts / objects with ``decision``, ``allowed``, ``blocked`` or ``triggered``
     """
@@ -56,8 +58,13 @@ def infer_decision(result: Any) -> tuple[str, str | None]:
 class GuardrailSpec(Spec):
     op = SpanName.GUARDRAIL
 
-    def __init__(self, policy_id: str, risk_classification: str | Callable[[Any], str] | None,
-                 decision_from: Callable[[Any], Any] | None, blocks_run: bool) -> None:
+    def __init__(
+        self,
+        policy_id: str,
+        risk_classification: str | Callable[[Any], str] | None,
+        decision_from: Callable[[Any], Any] | None,
+        blocks_run: bool,
+    ) -> None:
         self.policy_id, self.risk_classification = policy_id, risk_classification
         self.decision_from, self.blocks_run = decision_from, blocks_run
 
@@ -95,32 +102,41 @@ class GuardrailSpec(Spec):
     def finish(self, span: Any, call: Call, exc: BaseException | None) -> None:
         if "decision" not in call.state:
             safe_set(span, Ctx.POLICY_DECISION, "allow" if exc is None else "escalate")
-        record(Metric.GUARDRAIL_DECISIONS, {Ctx.POLICY_ID: self.policy_id,
-                                            Ctx.POLICY_DECISION: call.state.get("decision", "allow")})
+        record(
+            Metric.POLICY_DECISIONS,
+            {Ctx.POLICY_ID: self.policy_id, Ctx.POLICY_DECISION: call.state.get("decision", "allow")},
+        )
 
 
-def trace_guardrail(policy_id: str, *, risk_classification: str | Callable[[Any], str] | None = None,
-                    decision_from: Callable[[Any], Any] | None = None, blocks_run: bool = True) -> Callable[[F], F]:
+def trace_guardrail(
+    policy_id: str,
+    *,
+    risk_classification: str | Callable[[Any], str] | None = None,
+    decision_from: Callable[[Any], Any] | None = None,
+    blocks_run: bool = True,
+) -> Callable[[F], F]:
     """Trace a policy / guardrail evaluation as ``guardrail.check``.
 
     The decision is inferred from the return value (see :func:`infer_decision`)
     or computed by ``decision_from(result)``.
     """
+
     def decorator(fn: F) -> F:
         return wrap(fn, GuardrailSpec(policy_id, risk_classification, decision_from, blocks_run))
+
     return decorator
 
 
 class ContentSafetySpec(Spec):
     op = SpanName.CONTENT_SAFETY
 
-    def __init__(self, category: str | None, policy: str | None, risk_level: str | None,
-                 result_from: Callable[[Any], Any] | None) -> None:
+    def __init__(
+        self, category: str | None, policy: str | None, risk_level: str | None, result_from: Callable[[Any], Any] | None
+    ) -> None:
         self.category, self.policy, self.risk_level, self.result_from = category, policy, risk_level, result_from
 
     def start(self, span: Any, call: Call) -> None:
-        safe_set(span, Ctx.SAFETY_CATEGORY, self.category or "general")
-        safe_set(span, Ctx.POLICY_TRIGGERED, None)
+        safe_set(span, Ctx.SAFETY_CATEGORY, self.category)
 
     def success(self, span: Any, call: Call, result: Any) -> None:
         raw = resolve(self.result_from, call, result) if self.result_from else result
@@ -158,13 +174,25 @@ class ContentSafetySpec(Spec):
     def finish(self, span: Any, call: Call, exc: BaseException | None) -> None:
         if "blocked" not in call.state:
             safe_set(span, Ctx.CONTENT_BLOCKED, False)
-        record(Metric.GUARDRAIL_DECISIONS, {Ctx.POLICY_ID: self.policy or self.category or "content_safety",
-                                            Ctx.POLICY_DECISION: "deny" if call.state.get("blocked") else "allow"})
+        record(
+            Metric.POLICY_DECISIONS,
+            {
+                Ctx.POLICY_ID: self.policy or self.category,
+                Ctx.POLICY_DECISION: "deny" if call.state.get("blocked") else "allow",
+            },
+        )
 
 
-def trace_content_safety(category: str | None = None, *, policy: str | None = None, risk_level: str | None = None,
-                         result_from: Callable[[Any], Any] | None = None) -> Callable[[F], F]:
+def trace_content_safety(
+    category: str | None = None,
+    *,
+    policy: str | None = None,
+    risk_level: str | None = None,
+    result_from: Callable[[Any], Any] | None = None,
+) -> Callable[[F], F]:
     """Trace a content-safety check as ``content_safety.check``; blocks set ``content_blocked``."""
+
     def decorator(fn: F) -> F:
         return wrap(fn, ContentSafetySpec(category, policy, risk_level, result_from))
+
     return decorator

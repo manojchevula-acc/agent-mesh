@@ -1,5 +1,7 @@
 # Gernas SDK — implementation and end-to-end validation report
 
+> **Historical (0.3.0).** This report validates the 0.3.0 API and attribute names. Release 0.4.0 (blueprint alignment) renamed attributes and consolidated decorators. Its requirements and verification evidence are in `docs/BLUEPRINT_TRACEABILITY.md` §3, and the migration is in `docs/MIGRATION_FROM_BEACON_KIT.md` §0.
+
 **Date:** 2026-10-16
 **SDK:** `gernas-telemetry` 0.3.0, evolved from Beacon Kit 0.2.0
 **Reference application:** Agent Mesh 15.0.6

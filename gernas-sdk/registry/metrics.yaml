@@ -1,24 +1,22 @@
-# Canonical GERNAS metric instruments. Dimensions must be bounded-cardinality
-# registry fields (never session/user/trace ids - WP1-CTX-06).
+# Metric instruments (SDK convention; the Blueprint defines KPIs, not metric names).
+# Each instrument feeds a Blueprint §5/§6 KPI. Dimensions are bounded registry keys only.
 metrics:
-  - {name: AGENT_CALLS, key: gernas.agent.calls.total, type: counter, unit: "{call}", brief: Agent runs by result}
-  - {name: AGENT_DURATION, key: gernas.agent.duration, type: histogram, unit: ms, brief: Agent run latency}
-  - {name: LLM_CALLS, key: gernas.llm.calls.total, type: counter, unit: "{call}", brief: Model calls by result}
-  - {name: LLM_DURATION, key: gernas.llm.duration, type: histogram, unit: ms, brief: Model call latency}
-  - {name: LLM_TOKENS, key: gernas.llm.tokens.total, type: counter, unit: "{token}", brief: Tokens by direction (input/output)}
-  - {name: LLM_COST, key: gernas.llm.cost_aed.total, type: counter, unit: AED, brief: Estimated model cost}
-  - {name: TOOL_CALLS, key: gernas.tool.calls.total, type: counter, unit: "{call}", brief: Tool calls by result}
-  - {name: MCP_CALLS, key: gernas.mcp.calls.total, type: counter, unit: "{call}", brief: MCP calls by result}
-  - {name: A2A_CALLS, key: gernas.a2a.calls.total, type: counter, unit: "{call}", brief: Delegations / A2A hops by result}
-  - {name: A2A_DURATION, key: gernas.a2a.duration, type: histogram, unit: ms, brief: Delegation latency}
-  - {name: RETRIEVAL_CALLS, key: gernas.retrieval.calls.total, type: counter, unit: "{call}", brief: RAG/retrieval calls by result and emptiness}
-  - {name: GUARDRAIL_DECISIONS, key: gernas.guardrail.decisions.total, type: counter, unit: "{decision}", brief: Guardrail / content-safety decisions}
-  - {name: HITL_OUTCOMES, key: gernas.hitl.outcomes.total, type: counter, unit: "{approval}", brief: Human approval outcomes (Human Intervention Rate)}
-  - {name: LOOP_DETECTIONS, key: gernas.loop_detected.total, type: counter, unit: "{run}", brief: Runs flagged for loops}
-  - {name: MAX_STEP_VIOLATIONS, key: gernas.max_step_violation.total, type: counter, unit: "{run}", brief: Runaway runs}
-  - {name: RETRIES, key: gernas.retry.total, type: counter, unit: "{retry}", brief: Retries}
-  - {name: ORPHANS, key: gernas.orphan_detected.total, type: counter, unit: "{run}", brief: Broken delegation chains}
-  - {name: DROPPED_ATTRIBUTES, key: gernas.sdk.dropped_attributes, type: counter, unit: "{attribute}", brief: Attribute writes that failed and were dropped}
-  - {name: DROPPED_SPANS, key: gernas.sdk.dropped_spans, type: counter, unit: "{span}", brief: Spans that could not be exported (Collector down/queue full)}
-  - {name: REDACTIONS, key: gernas.sdk.redactions.total, type: counter, unit: "{attribute}", brief: Attribute values dropped/masked/fingerprinted by the PDPL hook}
-  - {name: CIRCUIT_BREAKER_STATE, key: gernas.circuit_breaker.state, type: gauge, unit: "1", brief: Circuit breaker state 0=closed 1=half_open 2=open}
+  - {name: AGENT_RUNS, key: gernas.agent.runs, type: counter, unit: "{run}", source: GERNAS-REQ-022, dims: [AGENT_ID, AGENT_VERSION, TERMINATION_REASON], brief: Agent executions, success / abandonment / timeout / policy-block rates}
+  - {name: AGENT_RUN_DURATION, key: gernas.agent.run.duration, type: histogram, unit: ms, source: GERNAS-REQ-022, dims: [AGENT_ID, TERMINATION_REASON], brief: Agent run latency}
+  - {name: AGENT_RETRIES, key: gernas.agent.retries, type: counter, unit: "{retry}", source: GERNAS-REQ-032, dims: [AGENT_ID], brief: Retry rate}
+  - {name: AGENT_LOOPS, key: gernas.agent.loops, type: counter, unit: "{run}", source: GERNAS-REQ-032, dims: [AGENT_ID], brief: Agent loop rate}
+  - {name: AGENT_DELEGATIONS, key: gernas.agent.delegations, type: counter, unit: "{delegation}", source: GERNAS-REQ-023, dims: [PARENT_AGENT_ID, CHILD_AGENT_ID, EXECUTION_STATUS], brief: Delegation count / inter-agent failures}
+  - {name: AGENT_DELEGATION_DURATION, key: gernas.agent.delegation.duration, type: histogram, unit: ms, source: GERNAS-REQ-023, dims: [PARENT_AGENT_ID, CHILD_AGENT_ID], brief: Agent hand-off latency}
+  - {name: LLM_CALLS, key: gernas.llm.calls, type: counter, unit: "{call}", source: GERNAS-REQ-025, dims: [PROVIDER, MODEL_ID, OPERATION, EXECUTION_STATUS, ERROR_CATEGORY], brief: Model request volume, failures, rate limits, timeouts}
+  - {name: LLM_DURATION, key: gernas.llm.duration, type: histogram, unit: ms, source: GERNAS-REQ-025, dims: [PROVIDER, MODEL_ID, OPERATION], brief: Model / embedding latency}
+  - {name: LLM_TOKENS, key: gernas.llm.tokens, type: counter, unit: "{token}", source: GERNAS-REQ-017, dims: [PROVIDER, MODEL_ID, OPERATION, TOKEN_TYPE], brief: Token consumption (input / output / cached)}
+  - {name: LLM_ESTIMATED_COST, key: gernas.llm.estimated_cost, type: counter, unit: "{currency}", source: GERNAS-REQ-035, dims: [PROVIDER, MODEL_ID, OPERATION], brief: Estimated model cost (rate-card currency)}
+  - {name: TOOL_CALLS, key: gernas.tool.calls, type: counter, unit: "{call}", source: GERNAS-REQ-024, dims: [TOOL_ID, TOOL_TYPE, EXECUTION_STATUS, AUTHORIZATION_DECISION], brief: Tool invocation count and failed tool calls}
+  - {name: TOOL_DURATION, key: gernas.tool.duration, type: histogram, unit: ms, source: GERNAS-REQ-024, dims: [TOOL_ID, TOOL_TYPE], brief: Tool request latency}
+  - {name: RETRIEVAL_CALLS, key: gernas.retrieval.calls, type: counter, unit: "{call}", source: GERNAS-REQ-028, dims: [INDEX_ID, EMPTY_RESULT, EXECUTION_STATUS], brief: Retrieval volume, failed and empty retrievals}
+  - {name: POLICY_DECISIONS, key: gernas.policy.decisions, type: counter, unit: "{decision}", source: GERNAS-REQ-015, dims: [POLICY_ID, POLICY_DECISION], brief: Policy block rate (guardrail and content safety)}
+  - {name: HITL_INTERVENTIONS, key: gernas.hitl.interventions, type: counter, unit: "{intervention}", source: GERNAS-REQ-031, dims: [HITL_ACTION, HITL_OUTCOME], brief: Human intervention rate}
+  - {name: SDK_DROPPED_SPANS, key: gernas.sdk.dropped_spans, type: observable_counter, unit: "{span}", source: GERNAS-REQ-030, dims: [], brief: Spans that could not be exported}
+  - {name: SDK_DROPPED_LOGS, key: gernas.sdk.dropped_logs, type: observable_counter, unit: "{log}", source: GERNAS-REQ-030, dims: [], brief: Log records that could not be exported}
+  - {name: SDK_DROPPED_ATTRIBUTES, key: gernas.sdk.dropped_attributes, type: observable_counter, unit: "{attribute}", source: GERNAS-REQ-030, dims: [], brief: Attribute writes that failed}
+  - {name: SDK_REDACTIONS, key: gernas.sdk.redactions, type: observable_counter, unit: "{attribute}", source: GERNAS-REQ-019, dims: [], brief: Attribute values dropped or scrubbed by the PDPL hook (sensitive data events)}

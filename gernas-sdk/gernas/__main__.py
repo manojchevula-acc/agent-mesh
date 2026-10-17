@@ -1,4 +1,5 @@
 """``python -m gernas`` == the ``gernas`` CLI."""
+
 import sys
 
 from gernas.cli import main

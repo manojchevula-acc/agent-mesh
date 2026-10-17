@@ -5,21 +5,22 @@ put ``traceparent`` / ``baggage`` into the request ``_meta``. These helpers read
 it back so the server's spans join the agent's trace:
 
 * :class:`GernasFastMCPMiddleware` — ``fastmcp`` (v2+) middleware: one server-side
-  ``mcp.call`` span (kind SERVER) per tool call, parented to the caller;
+  ``tool.call`` span (``tool_type="mcp"``, kind SERVER) per tool call, parented to the caller;
 * :func:`mcp_meta_context` — context manager for the low-level ``mcp`` SDK
   (``mcp.server.fastmcp``): ``with mcp_meta_context(ctx): ...``.
 
-No MCP payloads are recorded — only fingerprints (principle 8).
+No MCP payloads are recorded — only their sizes (Blueprint §3 payload size).
 """
+
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any
 
-from gernas.async_context import attach_headers
+from gernas.context import attach_headers
 from gernas.decorators._core import Call, wrap
-from gernas.decorators.tool import MCPSpec
-from gernas.utils.hashing import hash_inputs
+from gernas.decorators.tool import ToolSpec
 
 
 def meta_carrier(meta: Any) -> dict[str, str]:
@@ -48,23 +49,22 @@ def mcp_meta_context(ctx: Any) -> Iterator[None]:
         yield
 
 
-class _ServerMCPSpec(MCPSpec):
+class _ServerToolSpec(ToolSpec):
     kind = "SERVER"
 
     def start(self, span: Any, call: Call) -> None:
-        params = call.args[0].message
-        call.state["input_hash"] = hash_inputs(getattr(params, "arguments", None) or {})
+        call.state["payload"] = getattr(call.args[0].message, "arguments", None) or {}
         super().start(span, call)
 
 
 class GernasFastMCPMiddleware:
-    """``fastmcp`` server middleware producing a server-side ``mcp.call`` span per tool call."""
+    """``fastmcp`` server middleware producing a server-side ``tool.call`` span per tool call."""
 
-    def __init__(self, server_id: str, *, transport: str | None = "streamable_http") -> None:
+    def __init__(self, server_id: str) -> None:
         def tool_name(context: Any, call_next: Any) -> str:
             return str(getattr(context.message, "name", "tool"))
 
-        self._run = wrap(self._invoke, _ServerMCPSpec(server_id, "tool", tool_name, transport))
+        self._run = wrap(self._invoke, _ServerToolSpec(tool_name, "mcp", None, None, server_id, None))
 
     @staticmethod
     async def _invoke(context: Any, call_next: Any) -> Any:
@@ -95,6 +95,7 @@ def _request_meta(context: Any) -> dict[str, str]:
         return carrier
     try:
         from mcp.server.lowlevel.server import request_ctx
+
         return meta_carrier(getattr(request_ctx.get(), "meta", None))
     except Exception:  # noqa: BLE001 - mcp not installed / outside a request
         return {}

@@ -9,7 +9,7 @@
 - The span's context is attached only while the wrapped generator runs. It is detached before each `yield`, so the caller's context never leaks.
 - The span ends in a `finally` block that covers all four exits.
 - The async wrapper explicitly closes the inner iterator, so `aclose()` closes the span immediately rather than waiting for garbage collection.
-- OTel has no CANCELLED status code. A cancellation is recorded as `gernas.llm.stream_outcome=cancelled` with status UNSET. It is neither OK nor ERROR, so error-rate SLIs are not polluted.
+- OTel has no CANCELLED status code. A cancellation is recorded as `gernas.execution_status=cancelled` (`error_category=cancelled`) with status UNSET. It is neither OK nor ERROR, so error-rate SLIs are not polluted.
 
 **Consequences.**
 - TTFT is recorded only when a first chunk is produced.

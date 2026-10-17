@@ -1,13 +1,14 @@
-"""Human-in-the-loop approval spans (WP1-CORE-02b steps 5-6, WP1-CORE-04 steps 1-2).
+"""Human-in-the-loop approval spans (Blueprint §5 Human Intervention Rate).
 
 An approval can wait for hours. The span is started with ``tracer.start_span``
 (never held open in a ``with`` block or attached to a context), the span object
 is kept in a bounded correlation table keyed by ticket id, and nothing blocks.
 :func:`complete_hitl` closes it with the outcome, waited time and approver
-*role* (never identity). A timeout ends with a distinct ERROR status
-``hitl.timed_out`` so it can be told apart from a rejection (status OK).
-Human Intervention Rate = count(hitl.approval) / count(agent.run) from records alone.
+*role* (never identity); the wait is the span duration. A timeout ends with
+ERROR status ``hitl.timed_out`` (``error_category=timeout``) so it can be told apart
+from a rejection (status OK). Human Intervention Rate = interventions / agent runs.
 """
+
 from __future__ import annotations
 
 import functools
@@ -15,18 +16,19 @@ import inspect
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
 
 from opentelemetry import context as otel_context
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
 
+from gernas._metrics import record
 from gernas.attributes import Ctx, Metric, SpanName
-from gernas.decorators._core import get_field
-from gernas.metrics.agentic import record
+from gernas.decorators._core import get_field, stamp_context
 from gernas.run_state import RunState, current_run
-from gernas.tracer import get_config, get_tracer, safe_set
+from gernas.tracer import get_tracer, safe_set
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -47,8 +49,9 @@ _open: dict[str, _Open] = {}
 _lock = threading.Lock()
 
 
-def start_hitl(ticket_id: str, action: str, *, timeout_s: float | None = None,
-               approver_role: str | None = None, parent: Any = None) -> Any:
+def start_hitl(
+    ticket_id: str, action: str, *, timeout_s: float | None = None, approver_role: str | None = None, parent: Any = None
+) -> Any:
     """Open a long-lived ``hitl.approval`` span for *ticket_id* and return it.
 
     The span is a child of the current span (or *parent* context) but is not made
@@ -58,16 +61,11 @@ def start_hitl(ticket_id: str, action: str, *, timeout_s: float | None = None,
     try:
         ctx = parent if parent is not None else otel_context.get_current()
         span = get_tracer().start_span(SpanName.HITL, context=ctx, kind=SpanKind.INTERNAL)
-        for key, value in get_config().envelope.items():
-            safe_set(span, key, value)
-        safe_set(span, Ctx.OPERATION, SpanName.HITL)
+        stamp_context(span, SpanName.HITL)
         safe_set(span, Ctx.HITL_TICKET_ID, ticket_id)
         safe_set(span, Ctx.HITL_ACTION, action)
-        safe_set(span, Ctx.HITL_TIMEOUT_S, timeout_s)
         safe_set(span, Ctx.HITL_APPROVER_ROLE, approver_role)
         run = current_run()
-        if run is not None:
-            safe_set(span, Ctx.AGENT_RUN_ID, run.agent_run_id)
         with _lock:
             if len(_open) >= _MAX_OPEN:  # bound memory: force-close the oldest as timed out
                 oldest = min(_open, key=lambda k: _open[k].started)
@@ -93,17 +91,18 @@ def complete_hitl(ticket_id: str, outcome: str, *, approver_role: str | None = N
 def _close(ticket_id: str, entry: _Open, outcome: str, approver_role: str | None) -> None:
     span = entry.span
     try:
-        waited = round((time.monotonic() - entry.started) * 1000.0, 3)
         safe_set(span, Ctx.HITL_OUTCOME, outcome)
-        safe_set(span, Ctx.HITL_WAITED_MS, waited)
         safe_set(span, Ctx.HITL_APPROVER_ROLE, approver_role)
         if outcome == "timed_out":
+            safe_set(span, Ctx.EXECUTION_STATUS, "error")
+            safe_set(span, Ctx.ERROR_CATEGORY, "timeout")
             span.set_status(Status(StatusCode.ERROR, "hitl.timed_out"))
         else:
+            safe_set(span, Ctx.EXECUTION_STATUS, "ok")
             span.set_status(Status(StatusCode.OK))
         if outcome == "rejected" and entry.run is not None and entry.run.termination_override is None:
             entry.run.set_termination("human_rejected")
-        record(Metric.HITL_OUTCOMES, {Ctx.HITL_ACTION: entry.action, Ctx.HITL_OUTCOME: outcome})
+        record(Metric.HITL_INTERVENTIONS, {Ctx.HITL_ACTION: entry.action, Ctx.HITL_OUTCOME: outcome})
     except Exception:  # noqa: BLE001
         pass
     finally:
@@ -142,9 +141,13 @@ def _ticket(result: Any, ticket_from: Callable[[Any], str] | None) -> str | None
     return None if value is None else str(value)
 
 
-def trace_hitl(action: str | None = None, *, timeout_s: float | None = None,
-               ticket_from: Callable[[Any], str] | None = None,
-               outcome_from: Callable[[Any], str] | None = None) -> Callable[[F], F]:
+def trace_hitl(
+    action: str | None = None,
+    *,
+    timeout_s: float | None = None,
+    ticket_from: Callable[[Any], str] | None = None,
+    outcome_from: Callable[[Any], str] | None = None,
+) -> Callable[[F], F]:
     """Trace a human approval as ``hitl.approval``.
 
     Two modes:
@@ -155,6 +158,7 @@ def trace_hitl(action: str | None = None, *, timeout_s: float | None = None,
     * **wait mode** — with ``outcome_from``, the decorated function waits for the
       decision itself and the span closes with ``outcome_from(result)``.
     """
+
     def decorator(fn: F) -> F:
         act = action or fn.__name__
 
@@ -192,6 +196,7 @@ def trace_hitl(action: str | None = None, *, timeout_s: float | None = None,
                     _close(pending, entry, "timed_out" if timed_out else "rejected", None)
 
         if inspect.iscoroutinefunction(fn):
+
             @functools.wraps(fn)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 ctx, pending = _before(args, kwargs)
@@ -202,6 +207,7 @@ def trace_hitl(action: str | None = None, *, timeout_s: float | None = None,
                     raise
                 _after(result, ctx, pending)
                 return result
+
             return async_wrapper  # type: ignore[return-value]
 
         @functools.wraps(fn)
@@ -214,5 +220,7 @@ def trace_hitl(action: str | None = None, *, timeout_s: float | None = None,
                 raise
             _after(result, ctx, pending)
             return result
+
         return sync_wrapper  # type: ignore[return-value]
+
     return decorator

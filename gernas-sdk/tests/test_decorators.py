@@ -1,495 +1,478 @@
-"""WP1-CORE-02a..d: behaviour of each of the sixteen decorators."""
+"""Every decorator: span name, envelope, required attributes, run context, outcome, status, hierarchy."""
+
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
 
 import pytest
-from opentelemetry.trace import StatusCode
+from opentelemetry.trace import SpanKind, StatusCode
 
 import gernas
 from gernas import Ctx, SpanName
-from gernas.compliance.decorators import GuardrailBlockedError
+from gernas.attributes import ENVELOPE, REQUIRED_ATTRIBUTES
+from gernas.conformance import check, from_readable
+
+from conftest import attrs
 
 
-# ── @trace_agent ─────────────────────────────────────────────────────────────
-
-def test_trace_agent_happy_path(spans):
-    @gernas.trace_agent("triage", name="Triage", version="1.0", framework="custom", agent_type="worker")
-    def run(query):
-        return {"answer": 42}
-
-    assert run("q") == {"answer": 42}
-    span = spans(SpanName.AGENT)[0]
-    a = span.attributes
-    assert a[Ctx.AGENT_ID] == "triage" and a[Ctx.AGENT_NAME] == "Triage" and a[Ctx.AGENT_VERSION] == "1.0"
-    assert a[Ctx.FRAMEWORK] == "custom" and a[Ctx.TERMINATION_REASON] == "completed"
-    assert a[Ctx.AGENT_RUN_ID].startswith("run_") and len(a[Ctx.INPUT_HASH]) == 64
-    assert a[Ctx.USE_CASE_ID] == "UC-TEST" and a[Ctx.BUSINESS_DOMAIN] == "testing"
-    assert a[Ctx.APPLICATION_ID] == "gernas-tests-app" and a[Ctx.ENVIRONMENT] == "dev"
-    assert a[Ctx.TRACE_ID] == format(span.context.trace_id, "032x")
-    assert span.status.status_code == StatusCode.OK
+def conformant(finished) -> None:
+    report = check(from_readable(finished))
+    assert report.passed, [(v.rule, v.span, v.key) for v in report.violations]
 
 
-async def test_trace_agent_async_exception_path(spans):
-    @gernas.trace_agent("failing")
-    async def run():
-        raise ValueError("account 12345678901234 missing")
-
-    with pytest.raises(ValueError):
-        await run()
-    span = spans(SpanName.AGENT)[0]
-    assert span.status.status_code == StatusCode.ERROR
-    assert span.attributes[Ctx.TERMINATION_REASON] == "error"
-    assert span.attributes[Ctx.ERROR_TYPE] == "ValueError"
-    event = span.events[0]
-    assert event.name == "exception"
-    assert "12345678901234" not in event.attributes["exception.message"]  # PII scrubbed
+class Usage:
+    def __init__(self, i, o):
+        self.prompt_tokens, self.completion_tokens = i, o
 
 
-def test_trace_agent_each_run_gets_a_fresh_run_id(spans):
-    @gernas.trace_agent("a")
+class Resp:
+    def __init__(self, i=10, o=5, reason="stop"):
+        self.usage = Usage(i, o)
+        self.choices = [type("C", (), {"finish_reason": reason})()]
+
+
+# ── agent / step / plan ──────────────────────────────────────────────────────
+
+
+def test_agent_run_required_attributes_and_envelope(spans):
+    @gernas.trace_agent("faq_agent", agent_type="worker", name="FAQ Agent", version="2.0")
+    def run():
+        return "ok"
+
+    assert run() == "ok"
+    (span,) = spans(SpanName.AGENT)
+    a = attrs(span)
+    for key in (*ENVELOPE, *REQUIRED_ATTRIBUTES[SpanName.AGENT]):
+        assert key in a, key
+    assert a[Ctx.AGENT_ID] == "faq_agent" and a[Ctx.AGENT_NAME] == "FAQ Agent" and a[Ctx.AGENT_VERSION] == "2.0"
+    assert a[Ctx.AGENT_TYPE] == "worker" and a[Ctx.FRAMEWORK] == "custom" and a[Ctx.AGENT_RUN_ID].startswith("run_")
+    assert a[Ctx.EXECUTION_STATUS] == "ok" and a[Ctx.TERMINATION_REASON] == "completed"
+    assert a[Ctx.OPERATION] == SpanName.AGENT and a[Ctx.BUSINESS_DOMAIN] == "testing"
+    assert span.status.status_code == StatusCode.OK and span.kind == SpanKind.INTERNAL
+    conformant(spans())
+
+
+def test_agent_type_is_mandatory():
+    with pytest.raises(TypeError):
+        gernas.trace_agent("x")  # type: ignore[call-arg]
+
+
+def test_agent_version_defaults_to_service_version(spans):
+    @gernas.trace_agent("a", agent_type="worker")
     def run():
         return 1
 
-    run(), run()
-    ids = {s.attributes[Ctx.AGENT_RUN_ID] for s in spans(SpanName.AGENT)}
-    assert len(ids) == 2
+    run()
+    assert attrs(spans(SpanName.AGENT)[0])[Ctx.AGENT_VERSION] == "9.9.9"
 
 
-def test_trace_agent_resolves_dynamic_agent_id(spans):
-    class Executor:
-        name = "compliance"
+def test_children_carry_run_context_and_nest_under_the_run(spans):
+    @gernas.trace_tool("lookup")
+    def lookup(q):
+        return {"q": q}
 
-        @gernas.trace_agent(lambda self, *a, **k: self.name)
-        def run(self, msg):
-            return msg
+    @gernas.trace_step("classify", step_type="plan_step")
+    def classify():
+        return lookup("x")
 
-    Executor().run("x")
-    assert spans(SpanName.AGENT)[0].attributes[Ctx.AGENT_ID] == "compliance"
+    @gernas.trace_agent("orchestrator", agent_type="orchestrator")
+    def run():
+        return classify()
+
+    run()
+    agent, step, tool = spans(SpanName.AGENT)[0], spans(SpanName.STEP)[0], spans(SpanName.TOOL)[0]
+    assert step.parent.span_id == agent.context.span_id and tool.parent.span_id == step.context.span_id
+    assert len({s.context.trace_id for s in spans()}) == 1
+    run_id = attrs(agent)[Ctx.AGENT_RUN_ID]
+    for child in (step, tool):
+        assert attrs(child)[Ctx.AGENT_ID] == "orchestrator" and attrs(child)[Ctx.AGENT_RUN_ID] == run_id
+    assert attrs(step)[Ctx.STEP_ID] == "classify" and attrs(step)[Ctx.STEP_TYPE] == "plan_step"
+    assert attrs(step)[Ctx.ATTEMPT_NUMBER] == 1
+    assert attrs(agent)[Ctx.STEP_COUNT] == 2  # the step and the tool call
+    conformant(spans())
 
 
-def test_nested_agents_link_parent_run(spans):
-    @gernas.trace_agent("child")
+def test_nested_agent_records_parent_run_and_delegation_path(spans):
+    @gernas.trace_agent("child", agent_type="worker")
     def child():
-        return gernas.current_run().agent_run_id
+        return 1
 
-    @gernas.trace_agent("parent")
+    @gernas.trace_delegation("child")
+    def hand_off():
+        return child()
+
+    @gernas.trace_agent("parent", agent_type="orchestrator")
     def parent():
-        return gernas.current_run().agent_run_id, child()
+        return hand_off()
 
-    parent_id, child_id = parent()
-    by_agent = {s.attributes[Ctx.AGENT_ID]: s for s in spans(SpanName.AGENT)}
-    assert by_agent["child"].attributes[Ctx.PARENT_RUN_ID] == parent_id
-    assert by_agent["child"].attributes[Ctx.AGENT_RUN_ID] == child_id != parent_id
-    assert by_agent["child"].attributes[Ctx.DELEGATION_DEPTH] == 1
-
-
-# ── @trace_llm ───────────────────────────────────────────────────────────────
-
-def test_trace_llm_azure_openai_shape_with_cost(spans):
-    @gernas.trace_llm("gpt-4o", provider="azure_openai", deployment_id="paygo-uae")
-    def call(prompt):
-        return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=1840, completion_tokens=260),
-                               choices=[SimpleNamespace(finish_reason="stop")], model="gpt-4o-2024")
-
-    call("hello")
-    a = spans(SpanName.LLM)[0].attributes
-    assert a[Ctx.MODEL_ID] == "gpt-4o" and a[Ctx.PROVIDER] == "azure_openai" and a[Ctx.DEPLOYMENT_ID] == "paygo-uae"
-    assert a[Ctx.INPUT_TOKENS] == 1840 and a[Ctx.OUTPUT_TOKENS] == 260
-    assert tuple(a[Ctx.FINISH_REASON]) == ("stop",) and a[Ctx.RESPONSE_MODEL] == "gpt-4o-2024"
-    assert a[Ctx.EST_COST_AED] == pytest.approx(1.84 * 0.0092 + 0.26 * 0.0368)
-    assert a[Ctx.RATE_CARD_VERSION] == "2026-04-01"
-    assert Ctx.PROMPT not in a and Ctx.COMPLETION not in a
+    parent()
+    p, c = spans(SpanName.AGENT)[1], spans(SpanName.AGENT)[0]
+    assert attrs(p)[Ctx.AGENT_ID] == "parent" and attrs(c)[Ctx.AGENT_ID] == "child"
+    assert attrs(c)[Ctx.PARENT_RUN_ID] == attrs(p)[Ctx.AGENT_RUN_ID]
+    assert attrs(c)[Ctx.DELEGATION_PATH] == "parent>child"
+    d = attrs(spans(SpanName.DELEGATION)[0])
+    assert d[Ctx.PARENT_AGENT_ID] == "parent" and d[Ctx.CHILD_AGENT_ID] == "child"
+    assert d[Ctx.DELEGATION_PATH] == "parent>child"
+    conformant(spans())
 
 
-async def test_trace_llm_anthropic_shape(spans):
-    @gernas.trace_llm("claude-x", provider="anthropic")
-    async def call():
-        return SimpleNamespace(usage=SimpleNamespace(input_tokens=100, output_tokens=50), stop_reason="end_turn")
+def test_planning(spans):
+    @gernas.trace_planning(plan_id="p-1")
+    def plan(goal, attempt=2):
+        return ["a", "b", "c"]
 
-    await call()
-    a = spans(SpanName.LLM)[0].attributes
-    assert (a[Ctx.INPUT_TOKENS], a[Ctx.OUTPUT_TOKENS]) == (100, 50)
-    assert tuple(a[Ctx.FINISH_REASON]) == ("end_turn",)
-    assert a[Ctx.EST_COST_AED] > 0  # wildcard provider rate
+    @gernas.trace_agent("planner", agent_type="planner")
+    def run():
+        return plan("g", attempt=2)
 
-
-def test_trace_llm_agent_framework_and_dict_shapes(spans):
-    @gernas.trace_llm(provider="groq")
-    def maf(model):
-        return SimpleNamespace(usage_details={"input_token_count": 7, "output_token_count": 3}, finish_reason="stop")
-
-    @gernas.trace_llm("m", provider="groq")
-    def raw():
-        return {"usage": {"prompt_tokens": 5, "completion_tokens": 2}, "choices": [{"finish_reason": "length"}]}
-
-    maf(model="openai/gpt-oss-20b")
-    raw()
-    first, second = spans(SpanName.LLM)
-    assert first.attributes[Ctx.MODEL_ID] == "openai/gpt-oss-20b"
-    assert (first.attributes[Ctx.INPUT_TOKENS], first.attributes[Ctx.OUTPUT_TOKENS]) == (7, 3)
-    assert (second.attributes[Ctx.INPUT_TOKENS], tuple(second.attributes[Ctx.FINISH_REASON])) == (5, ("length",))
+    run()
+    a = attrs(spans(SpanName.PLANNING)[0])
+    assert a[Ctx.PLAN_ID] == "p-1" and a[Ctx.ATTEMPT_NUMBER] == 2 and a[Ctx.PLAN_STEP_COUNT] == 3
+    conformant(spans())
 
 
-def test_trace_llm_missing_usage_and_unknown_model_do_not_raise(spans):
-    @gernas.trace_llm("not-in-rate-card", provider="x")
-    def call():
-        return "plain text"
-
-    assert call() == "plain text"
-    a = spans(SpanName.LLM)[0].attributes
-    assert Ctx.INPUT_TOKENS not in a and Ctx.EST_COST_AED not in a
-    assert a[Ctx.GENERATION_LATENCY_MS] >= 0
+# ── exceptions and status ────────────────────────────────────────────────────
 
 
-def test_trace_llm_prompt_provenance(spans):
-    @gernas.trace_llm("gpt-4o", provider="azure_openai", prompt_template_id="greeting", prompt_version="2",
-                      prompt_arg="prompt")
-    def call(prompt):
-        return "ok"
+def test_exception_sets_error_status_category_and_scrubbed_event(spans):
+    @gernas.trace_tool("pay")
+    def pay():
+        raise ConnectionError("upstream down for jane@example.com")
 
-    call("Hello v1")
-    call("Hello v1 edited in prod")
-    first, second = spans(SpanName.LLM)
-    for s in (first, second):
-        assert s.attributes[Ctx.PROMPT_TEMPLATE_ID] == "greeting" and s.attributes[Ctx.PROMPT_VERSION] == "2"
-    assert first.attributes[Ctx.PROMPT_SHA256] != second.attributes[Ctx.PROMPT_SHA256]
-    assert "Hello" not in str(first.attributes)
+    @gernas.trace_agent("a", agent_type="worker")
+    def run():
+        pay()
 
-
-# ── @trace_tool / @trace_mcp ─────────────────────────────────────────────────
-
-def test_trace_tool_happy_path_hashes_io(spans):
-    @gernas.trace_tool("lookup", tool_version="3")
-    def lookup(customer_id):
-        return {"name": "Alice"}
-
-    lookup("C-1")
-    span = spans("tool.lookup")[0]
-    a = span.attributes
-    assert a[Ctx.TOOL_ID] == "lookup" and a[Ctx.TOOL_TYPE] == "function" and a[Ctx.TOOL_VERSION] == "3"
-    assert a[Ctx.AUTH_DECISION] == "allow" and len(a[Ctx.INPUT_HASH]) == 64 and len(a[Ctx.OUTPUT_HASH]) == 64
-    assert "Alice" not in str(a) and "C-1" not in str(a)
+    with pytest.raises(ConnectionError):
+        run()
+    tool, agent = spans(SpanName.TOOL)[0], spans(SpanName.AGENT)[0]
+    for span in (tool, agent):
+        assert span.status.status_code == StatusCode.ERROR
+        assert attrs(span)[Ctx.EXECUTION_STATUS] == "error"
+        assert attrs(span)[Ctx.ERROR_CATEGORY] == "dependency"
+    assert attrs(agent)[Ctx.TERMINATION_REASON] == "error"
+    (event,) = [e for e in tool.events if e.name == "exception"]
+    assert "jane@example.com" not in event.attributes["exception.message"]
+    assert "[EMAIL]" in event.attributes["exception.message"]
+    conformant(spans())
 
 
-def test_trace_tool_auth_denial_is_an_attribute_not_an_error(spans):
-    @gernas.trace_tool("write")
-    def write():
+@pytest.mark.parametrize(
+    "exc,category,termination",
+    [
+        (TimeoutError(), "timeout", "timeout"),
+        (PermissionError(), "auth", "error"),
+        (ValueError(), "validation", "error"),
+        (type("RateLimitError", (Exception,), {})(), "rate_limit", "error"),
+        (RuntimeError(), "internal", "error"),
+        (type("PolicyBlockedError", (Exception,), {})(), "policy", "policy_block"),
+    ],
+)
+def test_error_categories(spans, exc, category, termination):
+    @gernas.trace_agent("a", agent_type="worker")
+    def run():
+        raise exc
+
+    with pytest.raises(type(exc)):
+        run()
+    a = attrs(spans(SpanName.AGENT)[0])
+    assert a[Ctx.ERROR_CATEGORY] == category and a[Ctx.TERMINATION_REASON] == termination
+
+
+async def test_cancellation_is_not_an_error(spans):
+    @gernas.trace_agent("a", agent_type="worker")
+    async def run():
+        await asyncio.sleep(10)
+
+    task = asyncio.create_task(run())
+    await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    span = spans(SpanName.AGENT)[0]
+    a = attrs(span)
+    assert a[Ctx.EXECUTION_STATUS] == "cancelled" and a[Ctx.TERMINATION_REASON] == "abandoned"
+    assert span.status.status_code == StatusCode.UNSET
+
+
+def test_auth_failure_on_tool_is_a_deny_not_an_error(spans):
+    @gernas.trace_tool("transfer")
+    def transfer():
         raise PermissionError("not allowed")
 
     with pytest.raises(PermissionError):
-        write()
-    span = spans("tool.write")[0]
-    assert span.attributes[Ctx.AUTH_DECISION] == "deny"
-    assert span.status.status_code != StatusCode.ERROR
-
-
-def test_trace_tool_exception_path(spans):
-    @gernas.trace_tool("flaky")
-    async def flaky():
-        raise TimeoutError
-
-    with pytest.raises(TimeoutError):
-        asyncio.run(flaky())
-    span = spans("tool.flaky")[0]
-    assert span.status.status_code == StatusCode.ERROR
-    assert span.attributes[Ctx.TOOL_FAILURE_REASON] == "TimeoutError"
-
-
-@pytest.mark.parametrize("operation", ["tool", "resource", "prompt"])
-def test_trace_mcp_operations(spans, operation):
-    @gernas.trace_mcp("datalayer", operation=operation, transport="streamable_http")
-    def call(name, arguments=None):
-        return {"content": [{"text": "secret payload"}]}
-
-    call("customer_360", arguments={"id": 1})
-    span = spans(SpanName.MCP)[0]
-    a = span.attributes
-    assert span.name == "mcp.call"  # transport is never in the name
-    assert a[Ctx.MCP_SERVER_ID] == "datalayer" and a[Ctx.MCP_OPERATION] == operation
-    assert a[Ctx.MCP_TOOL_NAME] == "customer_360" and a[Ctx.MCP_TRANSPORT] == "streamable_http"
-    assert "secret payload" not in str(a)
-
-
-def test_trace_mcp_rejects_unknown_operation():
-    with pytest.raises(ValueError):
-        gernas.trace_mcp("x", operation="sampling")
-
-
-# ── retrieval family ─────────────────────────────────────────────────────────
-
-def test_trace_rag_empty_vs_non_empty(spans):
-    @gernas.trace_rag(index_id="docs", strategy="hybrid")
-    def search(query, top_k=5):
-        return [] if query == "nothing" else [{"id": "d1", "score": 0.83}, {"id": "d2", "score": 0.5}]
-
-    search("pricing policy", top_k=2)
-    search("nothing")
-    full, empty = spans(SpanName.RAG)
-    assert full.attributes[Ctx.RESULT_COUNT] == 2 and full.attributes[Ctx.EMPTY_RESULT] is False
-    assert full.attributes[Ctx.RANKING_SCORE] == 0.83 and full.attributes[Ctx.SOURCE_ID] == "d1"
-    assert full.attributes[Ctx.TOP_K] == 2 and full.attributes[Ctx.RETRIEVAL_STRATEGY] == "hybrid"
-    assert empty.attributes[Ctx.EMPTY_RESULT] is True and empty.attributes[Ctx.RESULT_COUNT] == 0
-    assert "pricing policy" not in str(full.attributes)
-    assert full.attributes[Ctx.QUERY_HASH] != empty.attributes[Ctx.QUERY_HASH]
-
-
-def test_trace_retrieval_handles_missing_scores_and_tuples(spans):
-    @gernas.trace_retrieval(index_id="kb")
-    def search(query):
-        return [SimpleNamespace(page_content="x")]
-
-    @gernas.trace_retrieval()
-    def scored(query):
-        return [("doc", 0.91)]
-
-    search("a")
-    scored("b")
-    plain, tup = spans(SpanName.RETRIEVAL)
-    assert plain.attributes[Ctx.RESULT_COUNT] == 1 and Ctx.RANKING_SCORE not in plain.attributes
-    assert tup.attributes[Ctx.RANKING_SCORE] == 0.91
-
-
-def test_trace_embedding_batch_size(spans):
-    @gernas.trace_embedding("bge-m3")
-    def embed(texts):
-        return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=120, total_tokens=120))
-
-    embed([f"t{i}" for i in range(10)])
-    a = spans(SpanName.EMBEDDING)[0].attributes
-    assert a[Ctx.EMBED_BATCH_SIZE] == 10 and a[Ctx.EMBED_MODEL] == "bge-m3"
-    assert a[Ctx.EMBED_TOKEN_COUNT] == 120 and a[Ctx.EMBED_LATENCY_MS] >= 0
-
-
-# ── @trace_memory / @trace_planning ──────────────────────────────────────────
-
-def test_trace_memory_read_hit_vs_miss_and_write(spans):
-    store = {"s1": [{"q": "a"}]}
-
-    @gernas.trace_memory("read", store="dict", stale_from=lambda r: False)
-    def load(session):
-        return store.get(session)
-
-    @gernas.trace_memory("write", store="dict")
-    def save(session, turn):
-        store.setdefault(session, []).append(turn)
-
-    load("s1")
-    load("missing")
-    save("s2", {"q": "b"})
-    hit, miss = spans("memory.read")
-    assert hit.attributes[Ctx.MEMORY_HIT] is True and miss.attributes[Ctx.MEMORY_HIT] is False
-    assert hit.attributes[Ctx.MEMORY_ITEM_COUNT] == 1 and hit.attributes[Ctx.MEMORY_STALE] is False
-    write = spans("memory.write")[0]
-    assert write.attributes[Ctx.MEMORY_OPERATION] == "write" and write.attributes[Ctx.MEMORY_SIZE_BYTES] > 0
-
-
-def test_trace_memory_custom_hit_test(spans):
-    @gernas.trace_memory("read", hit_from=lambda r: bool(r[0] or r[1]))
-    def load(session):
-        return ("", [])  # always a 2-tuple: the default "non-empty" test would call this a hit
-
-    load("s")
-    assert spans("memory.read")[0].attributes[Ctx.MEMORY_HIT] is False
-
-
-def test_trace_planning_step_count_and_steps(spans):
-    @gernas.trace_planning(plan_id="plan-1")
-    def plan(goal, attempt=1):
-        return {"steps": ["fetch", "rank", "answer"]}
-
-    result = plan("price a loan", attempt=2)
-    for i, step in enumerate(result["steps"]):
-        with gernas.planning_step("plan-1", f"s{i}", step_type=step):
-            pass
-    p = spans(SpanName.PLANNING)[0]
-    assert p.attributes[Ctx.PLAN_STEP_COUNT] == 3 and p.attributes[Ctx.ATTEMPT_NUMBER] == 2
-    assert p.attributes[Ctx.PLAN_ID] == "plan-1" and p.attributes[Ctx.PLANNING_LATENCY_MS] >= 0
-    steps = spans(SpanName.PLAN_STEP)
-    assert [s.attributes[Ctx.STEP_TYPE] for s in steps] == ["fetch", "rank", "answer"]
-
-
-# ── @trace_use_case / @trace_delegation ──────────────────────────────────────
-
-def test_trace_use_case_is_the_root_of_the_trace(spans):
-    @gernas.trace_agent("worker")
-    def worker():
-        return "ok"
-
-    @gernas.trace_use_case("UC-PRICING", channel="api", outcome_from=lambda r: "success")
-    def handle():
-        return worker()
-
-    handle()
-    root = spans(SpanName.USE_CASE)[0]
-    child = spans(SpanName.AGENT)[0]
-    assert root.parent is None
-    assert child.context.trace_id == root.context.trace_id and child.parent.span_id == root.context.span_id
-    assert root.attributes[Ctx.USE_CASE_ID] == "UC-PRICING" and root.attributes[Ctx.CHANNEL] == "api"
-    assert root.attributes[Ctx.BUSINESS_OUTCOME] == "success" and root.attributes[Ctx.EXECUTION_STATUS] == "ok"
-
-
-def test_trace_use_case_new_trace_ignores_ambient_parent(spans):
-    @gernas.trace_use_case(new_trace=True)
-    def handle():
-        return 1
-
-    with gernas.get_tracer().start_as_current_span("ambient") as ambient:
-        handle()
-    assert spans(SpanName.USE_CASE)[0].context.trace_id != ambient.get_span_context().trace_id
-
-
-async def test_trace_delegation_child_linkage(spans):
-    @gernas.trace_agent("data_agent")
-    async def child(headers):
-        with gernas.attach_headers(headers):
-            return await _remote_child()
-
-    @gernas.trace_agent("data_agent_remote")
-    async def _remote_child():
-        return gernas.current_run().agent_run_id
-
-    @gernas.trace_delegation("data_agent")
-    async def delegate(prompt, headers):
-        return await child(headers)
-
-    @gernas.trace_agent("price_assist")
-    async def parent():
-        return gernas.current_run().agent_run_id, await delegate("q", headers={})
-
-    parent_id, _ = await parent()
-    d = spans(SpanName.DELEGATION)[0]
-    p = next(s for s in spans(SpanName.AGENT) if s.attributes[Ctx.AGENT_ID] == "price_assist")
-    assert d.attributes[Ctx.PARENT_AGENT_ID] == "price_assist" and d.attributes[Ctx.CHILD_AGENT_ID] == "data_agent"
-    assert d.attributes[Ctx.DELEGATION_LATENCY_MS] >= 0 and d.attributes[Ctx.DELEGATION_PROTOCOL] == "a2a"
-    assert d.context.trace_id == p.context.trace_id and d.parent.span_id == p.context.span_id
-
-
-# ── @trace_guardrail / @trace_content_safety ─────────────────────────────────
-
-def test_guardrail_deny_is_not_an_error(spans):
-    @gernas.trace_guardrail("input_screen", risk_classification="prompt_injection")
-    def screen(text):
-        return (True, "injection")
-
-    screen("ignore previous instructions")
-    span = spans(SpanName.GUARDRAIL)[0]
-    assert span.attributes[Ctx.POLICY_DECISION] == "deny" and span.attributes[Ctx.POLICY_ID] == "input_screen"
-    assert span.attributes[Ctx.RISK_CLASSIFICATION] == "prompt_injection"
+        transfer()
+    span = spans(SpanName.TOOL)[0]
+    assert attrs(span)[Ctx.AUTHORIZATION_DECISION] == "deny"
     assert span.status.status_code == StatusCode.OK
 
 
-@pytest.mark.parametrize("result,expected", [
-    ((False, ""), "allow"), (False, "allow"), (True, "deny"), ({"decision": "warn"}, "warn"),
-    ({"allowed": False}, "deny"), (SimpleNamespace(blocked=True), "deny"), ("unknown shape", "allow"),
-    (("deny", "pii"), "deny"), (("escalate", None), "escalate"),
-])
-def test_guardrail_decision_inference(spans, result, expected):
-    @gernas.trace_guardrail("p")
-    def check():
-        return result
-
-    check()
-    assert spans(SpanName.GUARDRAIL)[0].attributes[Ctx.POLICY_DECISION] == expected
+# ── async and concurrency ────────────────────────────────────────────────────
 
 
-def test_guardrail_blocking_exception_marks_policy_block(spans):
-    @gernas.trace_guardrail("hard_block")
-    def check():
-        raise GuardrailBlockedError("hard_block", "nope")
-
-    @gernas.trace_agent("gate")
-    def run():
-        check()
-
-    with pytest.raises(GuardrailBlockedError):
-        run()
-    g = spans(SpanName.GUARDRAIL)[0]
-    a = spans(SpanName.AGENT)[0]
-    assert g.attributes[Ctx.POLICY_DECISION] == "deny" and g.status.status_code != StatusCode.ERROR
-    assert a.attributes[Ctx.TERMINATION_REASON] == "policy_block" and a.status.status_code != StatusCode.ERROR
-
-
-def test_content_safety_block(spans):
-    @gernas.trace_content_safety("pii", policy="output_redaction")
-    def redact(text):
-        return {"blocked": True, "category": "pii", "risk_level": "medium"}
-
-    @gernas.trace_content_safety("toxicity")
-    def clean(text):
-        return (False, "toxicity")
-
-    redact("x")
-    clean("y")
-    blocked, ok = spans(SpanName.CONTENT_SAFETY)
-    assert blocked.attributes[Ctx.CONTENT_BLOCKED] is True and blocked.attributes[Ctx.SAFETY_CATEGORY] == "pii"
-    assert blocked.attributes[Ctx.RISK_LEVEL] == "medium"
-    assert blocked.attributes[Ctx.POLICY_TRIGGERED] == "output_redaction"
-    assert ok.attributes[Ctx.CONTENT_BLOCKED] is False and ok.status.status_code == StatusCode.OK
-
-
-# ── @trace_chain ─────────────────────────────────────────────────────────────
-
-def test_trace_chain_nested_hierarchy(spans):
-    from langchain_core.language_models.fake_chat_models import FakeListChatModel
-    from langchain_core.runnables import RunnableLambda
-
-    @gernas.trace_chain("pricing_chain", provider="fake")
-    def build():
-        llm = FakeListChatModel(responses=["fine"])
-        inner = RunnableLambda(lambda x: x["q"]).with_config(run_name="inner")
-        return inner | llm
-
-    chain = build()
-    assert chain.invoke({"q": "hello"}).content == "fine"
-    chains = spans(SpanName.CHAIN)
-    llms = spans(SpanName.LLM)
-    assert chains and llms
-    root = next(s for s in chains if s.parent is None or s.parent.span_id not in {c.context.span_id for c in chains})
-    assert all(s.context.trace_id == root.context.trace_id for s in chains + llms)
-    assert llms[0].parent.span_id in {c.context.span_id for c in chains}
-    assert llms[0].attributes[Ctx.PROVIDER] == "fake"
-
-
-def test_trace_chain_invoke_mode(spans):
-    @gernas.trace_chain("runner", mode="invoke")
-    def run(x):
-        return x * 2
-
-    assert run(2) == 4
-    assert spans(SpanName.CHAIN)[0].attributes[Ctx.CHAIN_NAME] == "runner"
-
-
-def test_trace_chain_non_runnable_passthrough():
-    @gernas.trace_chain()
-    def build():
-        return 5
-
-    assert build() == 5
-
-
-# ── cross-cutting guarantees ─────────────────────────────────────────────────
-
-def test_telemetry_failure_never_reaches_the_agent(monkeypatch, spans):
-    import gernas.decorators._core as core
-
-    def broken(*a, **k):
-        raise RuntimeError("tracer exploded")
-
-    monkeypatch.setattr(core, "_begin", broken)
-
+async def test_async_nested_and_concurrent_runs_stay_isolated(spans):
     @gernas.trace_tool("t")
-    def tool():
-        return "still works"
+    async def tool(i):
+        await asyncio.sleep(0)
+        return i
 
-    assert tool() == "still works"
+    @gernas.trace_agent(lambda i: f"agent_{i}", agent_type="worker")
+    async def run(i):
+        return await asyncio.gather(tool(i), tool(i))
+
+    await asyncio.gather(*(run(i) for i in range(5)))
+    agents = {attrs(s)[Ctx.AGENT_RUN_ID]: s for s in spans(SpanName.AGENT)}
+    assert len(agents) == 5
+    for tool_span in spans(SpanName.TOOL):
+        owner = agents[attrs(tool_span)[Ctx.AGENT_RUN_ID]]
+        assert tool_span.parent.span_id == owner.context.span_id
+        assert attrs(tool_span)[Ctx.AGENT_ID] == attrs(owner)[Ctx.AGENT_ID]
+    conformant(spans())
 
 
-def test_decorators_preserve_metadata():
-    @gernas.trace_rag()
-    def documented(query):
-        """Docs."""
+def test_sync_generator_span_covers_iteration(spans):
+    @gernas.trace_step("produce", step_type="graph_node")
+    def produce():
+        yield 1
+        yield 2
+
+    assert list(produce()) == [1, 2]
+    assert attrs(spans(SpanName.STEP)[0])[Ctx.EXECUTION_STATUS] == "ok"
+
+
+# ── model calls and cost ─────────────────────────────────────────────────────
+
+
+def test_llm_call_tokens_cost_and_stop_reason(spans):
+    @gernas.trace_llm(
+        "gpt-4o", provider="azure_openai", deployment_id="dep-1", prompt_template_id="faq", prompt_version="3"
+    )
+    def chat():
+        return Resp(1000, 500)
+
+    @gernas.trace_agent("a", agent_type="worker")
+    def run():
+        return chat()
+
+    run()
+    span = spans(SpanName.LLM)[0]
+    a = attrs(span)
+    assert a[Ctx.PROVIDER] == "azure_openai" and a[Ctx.MODEL_ID] == "gpt-4o" and a[Ctx.DEPLOYMENT_ID] == "dep-1"
+    assert a[Ctx.TOKEN_INPUT] == 1000 and a[Ctx.TOKEN_OUTPUT] == 500 and a[Ctx.STOP_REASON] == "stop"
+    assert a[Ctx.ESTIMATED_COST] == pytest.approx(0.0092 + 0.0184)
+    assert a[Ctx.PROMPT_TEMPLATE_ID] == "faq" and a[Ctx.PROMPT_VERSION] == "3"
+    assert span.kind == SpanKind.CLIENT
+    conformant(spans())
+
+
+def test_cost_is_never_invented_for_unknown_models(spans):
+    @gernas.trace_llm("unknown-model", provider="x")
+    def chat():
+        return Resp()
+
+    chat()
+    assert Ctx.ESTIMATED_COST not in attrs(spans(SpanName.LLM)[0])
+
+
+def test_model_id_from_argument_and_usage_from(spans):
+    @gernas.trace_llm(provider="p", usage_from=lambda r: (r["in"], r["out"]))
+    def chat(prompt, model):
+        return {"in": 3, "out": 4}
+
+    chat("hi", model="claude-x")
+    a = attrs(spans(SpanName.LLM)[0])
+    assert a[Ctx.MODEL_ID] == "claude-x" and a[Ctx.TOKEN_INPUT] == 3 and a[Ctx.TOKEN_OUTPUT] == 4
+
+
+def test_fallback_marker(spans):
+    @gernas.trace_llm("m", provider="p")
+    def chat():
+        gernas.mark_fallback()
+        return Resp()
+
+    chat()
+    assert attrs(spans(SpanName.LLM)[0])[Ctx.FALLBACK_USED] is True
+
+
+def test_embedding(spans):
+    @gernas.trace_embedding("bge-m3", provider="local")
+    def embed(texts):
+        return {"usage": {"prompt_tokens": 12}}
+
+    embed(["a", "b", "c"])
+    a = attrs(spans(SpanName.EMBEDDING)[0])
+    assert a[Ctx.BATCH_SIZE] == 3 and a[Ctx.TOKEN_INPUT] == 12 and a[Ctx.MODEL_ID] == "bge-m3"
+    conformant(spans())
+
+
+# ── tools, MCP, retrieval, memory ────────────────────────────────────────────
+
+
+def test_tool_payload_sizes_not_payloads(spans):
+    @gernas.trace_tool("crm.lookup", tool_type="api", tool_version="1", api_operation="GET /customer", dependency="crm")
+    def lookup(customer_id):
+        return {"name": "Jane Doe", "iban": "AE070331234567890123456"}
+
+    lookup("C-123")
+    a = attrs(spans(SpanName.TOOL)[0])
+    assert a[Ctx.TOOL_ID] == "crm.lookup" and a[Ctx.TOOL_TYPE] == "api" and a[Ctx.DEPENDENCY] == "crm"
+    assert a[Ctx.REQUEST_SIZE_BYTES] > 0 and a[Ctx.RESPONSE_SIZE_BYTES] > 0
+    assert a[Ctx.AUTHORIZATION_DECISION] == "allow"
+    assert not [v for v in a.values() if isinstance(v, str) and ("Jane" in v or "AE07" in v or "C-123" in v)]
+    conformant(spans())
+
+
+def test_mcp_is_a_tool_type(spans):
+    @gernas.trace_tool("search_documents", tool_type="mcp", dependency="rag_mcp")
+    async def search():
         return []
 
-    assert documented.__name__ == "documented" and documented.__doc__ == "Docs."
+    asyncio.run(search())
+    a = attrs(spans(SpanName.TOOL)[0])
+    assert a[Ctx.TOOL_TYPE] == "mcp" and a[Ctx.DEPENDENCY] == "rag_mcp"
+
+
+def test_retrieval(spans):
+    @gernas.trace_retrieval(index_id="policies", strategy="hybrid", knowledge_domain="pricing")
+    def search(query, top_k=5):
+        return [{"id": "doc-1", "score": 0.91}, {"id": "doc-2", "score": 0.5}]
+
+    @gernas.trace_retrieval(index_id="policies")
+    def empty(query):
+        return []
+
+    search("q")
+    empty("q")
+    hit, miss = (attrs(s) for s in spans(SpanName.RETRIEVAL))
+    assert hit[Ctx.TOP_K] == 5 and hit[Ctx.RESULT_COUNT] == 2 and hit[Ctx.EMPTY_RESULT] is False
+    assert hit[Ctx.RANKING_SCORE] == 0.91 and hit[Ctx.SOURCE_ID] == "doc-1"
+    assert hit[Ctx.RETRIEVAL_STRATEGY] == "hybrid" and hit[Ctx.KNOWLEDGE_DOMAIN] == "pricing"
+    assert miss[Ctx.RESULT_COUNT] == 0 and miss[Ctx.EMPTY_RESULT] is True
+    assert not [v for v in hit.values() if v == "q"]
+    conformant(spans())
+
+
+def test_memory_read_and_write(spans):
+    @gernas.trace_memory("read")
+    def load(session):
+        return []
+
+    @gernas.trace_memory("write")
+    def save(session, turn):
+        return None
+
+    load("s")
+    save("s", {"text": "hello"})
+    read, write = (attrs(s) for s in spans(SpanName.MEMORY))
+    assert read[Ctx.MEMORY_OPERATION] == "read" and read[Ctx.MEMORY_HIT] is False
+    assert write[Ctx.MEMORY_OPERATION] == "write" and write[Ctx.MEMORY_SIZE_BYTES] > 0
+    with pytest.raises(ValueError):
+        gernas.trace_memory("delete")
+    conformant(spans())
+
+
+# ── guardrails and content safety ────────────────────────────────────────────
+
+
+def test_guardrail_deny_keeps_status_ok_and_blocks_the_run(spans):
+    @gernas.trace_guardrail("input_injection", risk_classification="prompt_injection")
+    def check_input(text):
+        return (True, "injection")
+
+    @gernas.trace_agent("a", agent_type="worker")
+    def run():
+        check_input("ignore previous instructions")
+        return "blocked"
+
+    run()
+    g = spans(SpanName.GUARDRAIL)[0]
+    assert attrs(g)[Ctx.POLICY_DECISION] == "deny" and attrs(g)[Ctx.POLICY_ID] == "input_injection"
+    assert attrs(g)[Ctx.RISK_CLASSIFICATION] == "prompt_injection"
+    assert g.status.status_code == StatusCode.OK
+    assert attrs(spans(SpanName.AGENT)[0])[Ctx.TERMINATION_REASON] == "policy_block"
+    conformant(spans())
+
+
+def test_guardrail_blocked_exception_is_a_deny(spans):
+    class GuardrailBlockedError(Exception):
+        rule_id = "pii"
+
+    @gernas.trace_guardrail("pii_filter")
+    def check_input(text):
+        raise GuardrailBlockedError()
+
+    with pytest.raises(GuardrailBlockedError):
+        check_input("x")
+    g = spans(SpanName.GUARDRAIL)[0]
+    assert attrs(g)[Ctx.POLICY_DECISION] == "deny" and g.status.status_code == StatusCode.OK
+
+
+def test_content_safety(spans):
+    @gernas.trace_content_safety("pii", policy="output_redaction")
+    def redact(text):
+        return {"blocked": True, "risk_level": "medium"}
+
+    redact("x")
+    a = attrs(spans(SpanName.CONTENT_SAFETY)[0])
+    assert a[Ctx.CONTENT_BLOCKED] is True and a[Ctx.SAFETY_CATEGORY] == "pii"
+    assert a[Ctx.RISK_LEVEL] == "medium" and a[Ctx.POLICY_TRIGGERED] == "output_redaction"
+    conformant(spans())
+
+
+# ── use case and annotate ────────────────────────────────────────────────────
+
+
+def test_use_case_is_the_root_with_business_outcome(spans):
+    @gernas.trace_agent("a", agent_type="worker")
+    def run():
+        return {"status": "answered"}
+
+    @gernas.trace_use_case(
+        channel="web",
+        request_type="pricing_query",
+        outcome_from=lambda r: "success" if r["status"] == "answered" else "failure",
+    )
+    def handle():
+        return run()
+
+    handle()
+    uc, agent = spans(SpanName.USE_CASE)[0], spans(SpanName.AGENT)[0]
+    assert uc.parent is None and agent.parent.span_id == uc.context.span_id
+    a = attrs(uc)
+    assert a[Ctx.CHANNEL] == "web" and a[Ctx.REQUEST_TYPE] == "pricing_query" and a[Ctx.BUSINESS_OUTCOME] == "success"
+    assert uc.kind == SpanKind.SERVER
+    conformant(spans())
+
+
+def test_annotate_sets_registry_attributes_through_redaction(spans):
+    @gernas.trace_tool("t")
+    def tool():
+        gernas.annotate({Ctx.COMPUTE_UNITS: 2.5, Ctx.API_OPERATION: "token=abc123secret"})
+
+    tool()
+    a = attrs(spans(SpanName.TOOL)[0])
+    assert a[Ctx.COMPUTE_UNITS] == 2.5 and "abc123secret" not in a[Ctx.API_OPERATION]
+
+
+def test_decorated_function_signature_and_return_are_preserved():
+    @gernas.trace_tool("t")
+    def tool(a: int, b: int = 2) -> int:
+        """Docs."""
+        return a + b
+
+    assert tool(1) == 3 and tool.__name__ == "tool" and tool.__doc__ == "Docs."
+
+
+async def test_cancelled_child_span_is_unset_not_ok(spans):
+    @gernas.trace_tool("slow")
+    async def slow():
+        await asyncio.sleep(10)
+
+    task = asyncio.create_task(slow())
+    await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    span = spans(SpanName.TOOL)[0]
+    assert span.status.status_code == StatusCode.UNSET
+    assert attrs(span)[Ctx.EXECUTION_STATUS] == "cancelled" and attrs(span)[Ctx.ERROR_CATEGORY] == "cancelled"

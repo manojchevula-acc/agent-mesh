@@ -1,24 +1,23 @@
-"""PDPL redaction hook — runs on every attribute value before it is emitted.
+"""PDPL redaction — runs on every attribute value before the SDK emits it.
 
-Order of evaluation inside :func:`redact`:
+Blueprint §2 critical principle: no unrestricted raw prompts, raw responses,
+customer data, account numbers, credentials, secrets or authentication tokens.
 
-1. an optional application hook installed with :func:`set_redaction_hook`
-   (may return :data:`DROP` or a replacement value);
-2. the registry action for the key (``registry/redaction-matrix.yaml``):
-   ``drop`` → never emitted, ``fingerprint``/``tokenise`` → SHA-256,
-   ``mask`` → PII-scrubbed, and only when ``GERNAS_CAPTURE_PAYLOADS`` grants it;
-3. for keys that are not in the registry, string values are PII-scrubbed.
-
-``gen_ai.prompt`` / ``gen_ai.completion`` and raw user ids are therefore dropped by
-default (principle 8).
+1. an optional application hook (:func:`set_redaction_hook`) may return :data:`DROP`
+   or a replacement value;
+2. keys on the registry denylist (raw user id, prompt/completion and framework
+   payload keys) are dropped;
+3. string values of keys that are not in the registry are PII-scrubbed; values of
+   registry keys (identifiers, enums) are scrubbed for credentials only, so ids stay intact.
 """
+
 from __future__ import annotations
 
-import hashlib
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
-from gernas.attributes import REDACTION_ACTIONS, REGISTRY
-from gernas.utils.sanitizer import scrub_pii
+from gernas.attributes import DENYLIST, REGISTRY
+from gernas.utils.sanitizer import scrub_pii, scrub_secrets
 
 
 class _Drop:
@@ -29,26 +28,14 @@ class _Drop:
 
 
 DROP: Any = _Drop()
-
 RedactionHook = Callable[[str, Any], Any]
 _hook: RedactionHook | None = None
-_capture_payloads = False
 
 
 def set_redaction_hook(hook: RedactionHook | None) -> None:
-    """Install an application-level hook ``hook(key, value) -> value | DROP``."""
+    """Install an application hook ``hook(key, value) -> value | DROP`` (runs first)."""
     global _hook
     _hook = hook
-
-
-def set_capture_payloads(enabled: bool) -> None:
-    """Allow ``mask``-action payload fields (redacted prompt/completion) to be emitted."""
-    global _capture_payloads
-    _capture_payloads = bool(enabled)
-
-
-def fingerprint(value: Any) -> str:
-    return hashlib.sha256(str(value).encode("utf-8", "replace")).hexdigest()
 
 
 def redact(key: str, value: Any) -> tuple[Any, bool]:
@@ -60,19 +47,10 @@ def redact(key: str, value: Any) -> tuple[Any, bool]:
             return DROP, True
         changed = new is not value
         value = new
-    action = REDACTION_ACTIONS.get(key)
-    if action is None:
-        if key not in REGISTRY and isinstance(value, str):
-            scrubbed = scrub_pii(value)
-            if scrubbed != value:
-                return scrubbed, True
-        return value, changed
-    if action == "drop":
+    if key in DENYLIST:
         return DROP, True
-    if action in ("fingerprint", "tokenise"):
-        return fingerprint(value), True
-    if action == "mask":
-        if not _capture_payloads:
-            return DROP, True
-        return scrub_pii(str(value)), True
+    if isinstance(value, str):
+        scrubbed = scrub_secrets(value) if key in REGISTRY else scrub_pii(value)
+        if scrubbed != value:
+            return scrubbed, True
     return value, changed

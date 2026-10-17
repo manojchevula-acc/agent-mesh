@@ -1,145 +1,209 @@
-"""Edge paths: async compliance decorators, LangChain tool/retriever/error events,
-interceptor chaining, structured logging through the OTel provider."""
+"""Edge cases: decision shapes, cost lookup, exporter selection, log bridge, HITL bounds."""
+
 from __future__ import annotations
 
-import uuid
-from types import SimpleNamespace
+import json
+import logging
 
 import pytest
-from opentelemetry import baggage, context
-from opentelemetry.trace import StatusCode
 
 import gernas
 from gernas import Ctx, SpanName
+from gernas.config import GernasConfig
+from gernas.cost import estimate_cost
+from gernas.decorators.safety import infer_decision
 
-from conftest import run_python
+from conftest import attrs
 
 
-async def test_async_compliance_decorators():
-    @gernas.compliance_gate("hitl_approval_decision")
-    async def decide(actor="officer", run_id="r"):
+@pytest.mark.parametrize(
+    "result,expected",
+    [
+        (("warn", "tone"), ("warn", "tone")),
+        ((False, None), ("allow", None)),
+        (True, ("deny", None)),
+        ({"decision": "escalate", "category": "fraud"}, ("escalate", "fraud")),
+        ({"allowed": False}, ("deny", None)),
+        ({"blocked": False}, ("allow", None)),
+        (object(), ("allow", None)),
+    ],
+)
+def test_guardrail_decision_shapes(result, expected):
+    assert infer_decision(result) == expected
+
+
+def test_guardrail_decision_from_and_non_blocking(spans):
+    @gernas.trace_guardrail("rbac", decision_from=lambda r: r["verdict"], blocks_run=False)
+    def check(role):
+        return {"verdict": "deny"}
+
+    @gernas.trace_agent("a", agent_type="worker")
+    def run():
+        check("customer")
+
+    run()
+    assert attrs(spans(SpanName.GUARDRAIL)[0])[Ctx.POLICY_DECISION] == "deny"
+    assert attrs(spans(SpanName.AGENT)[0])[Ctx.TERMINATION_REASON] == "completed"
+
+
+def test_guardrail_unexpected_error_escalates(spans):
+    @gernas.trace_guardrail("pii")
+    def check():
+        raise RuntimeError("model unavailable")
+
+    with pytest.raises(RuntimeError):
+        check()
+    span = spans(SpanName.GUARDRAIL)[0]
+    assert attrs(span)[Ctx.POLICY_DECISION] == "escalate" and attrs(span)[Ctx.EXECUTION_STATUS] == "error"
+
+
+@pytest.mark.parametrize("result,blocked,level", [((True, "toxicity", "high"), True, "high"), (False, False, "safe")])
+def test_content_safety_shapes(spans, result, blocked, level):
+    @gernas.trace_content_safety("toxicity")
+    def check():
+        return result
+
+    check()
+    a = attrs(spans(SpanName.CONTENT_SAFETY)[0])
+    assert a[Ctx.CONTENT_BLOCKED] is blocked and a[Ctx.RISK_LEVEL] == level
+
+
+def test_content_safety_block_exception(spans):
+    class ContentBlockedError(Exception):
+        pass
+
+    @gernas.trace_content_safety("pii", policy="dlp")
+    def check():
+        raise ContentBlockedError()
+
+    with pytest.raises(ContentBlockedError):
+        check()
+    a = attrs(spans(SpanName.CONTENT_SAFETY)[0])
+    assert a[Ctx.CONTENT_BLOCKED] is True and a[Ctx.POLICY_TRIGGERED] == "dlp"
+
+
+def test_cost_lookup_edges(tmp_path, rate_card):
+    assert estimate_cost("claude-x", "anyone", 1000, 1000, str(rate_card)) == pytest.approx(0.066)
+    assert estimate_cost("gpt-4o", "other_provider", 1000, 0, str(rate_card)) is None
+    assert estimate_cost("gpt-4o", "azure_openai", None, None, str(rate_card)) is None
+    assert estimate_cost("gpt-4o", "azure_openai", 1, 1, "") is None
+    assert estimate_cost("gpt-4o", "azure_openai", 1, 1, str(tmp_path / "missing.json")) is None
+    broken = tmp_path / "broken.json"
+    broken.write_text("{not json", encoding="utf-8")
+    assert estimate_cost("gpt-4o", "azure_openai", 1, 1, str(broken)) is None
+    bad_rate = tmp_path / "bad.json"
+    bad_rate.write_text(json.dumps({"rates": [{"model": "m", "input_per_1k": "x"}]}), encoding="utf-8")
+    assert estimate_cost("m", "p", 1, 1, str(bad_rate)) is None
+
+
+@pytest.mark.parametrize(
+    "exporter,transport,endpoint,expected",
+    [
+        ("off", "grpc", "", "NoOpSpanExporter"),
+        ("console", "grpc", "", "ConsoleSpanExporter"),
+        ("otlp", "grpc", "http://127.0.0.1:4317", "OTLPSpanExporter"),
+        ("otlp", "http", "http://127.0.0.1:4317", "OTLPSpanExporter"),
+    ],
+)
+def test_exporter_selection(exporter, transport, endpoint, expected):
+    from gernas.exporters import _http_url, build_log_exporter, build_metric_exporter, build_span_exporter
+
+    cfg = GernasConfig(
+        service_name="s",
+        use_case_id="u",
+        application_id="a",
+        business_domain="b",
+        environment="dev",
+        exporter=exporter,
+        otlp_transport=transport,
+        otlp_endpoint=endpoint,
+    )
+    assert type(build_span_exporter(cfg)).__name__ == expected
+    assert build_metric_exporter(cfg) is not None and build_log_exporter(cfg) is not None
+    if exporter == "otlp":
+        assert _http_url(cfg, "traces") == "http://127.0.0.1:4318/v1/traces"
+
+
+def test_log_records_are_scrubbed_and_correlated():
+    from gernas.logs import GernasLogHandler
+
+    emitted = []
+
+    class Logger:
+        def emit(self, **kw):
+            emitted.append(kw)
+
+    class Provider:
+        def get_logger(self, name):
+            return Logger()
+
+        def force_flush(self):
+            return True
+
+    handler = GernasLogHandler(Provider())
+    log = logging.getLogger("gernas.test.logs")
+    log.addHandler(handler)
+    try:
+        try:
+            raise ValueError("bad card 4111 1111 1111 1111")
+        except ValueError:
+            log.exception("customer jane@example.com failed")
+    finally:
+        log.removeHandler(handler)
+    handler.flush()
+    (record,) = emitted
+    assert "jane@example.com" not in record["body"] and "4111" not in record["attributes"]["exception.message"]
+    assert record["severity_text"] == "ERROR"
+
+
+def test_hitl_wait_mode_timeout_and_sync(spans):
+    @gernas.trace_hitl("approve", outcome_from=lambda r: r)
+    def wait():
+        raise TimeoutError
+
+    with pytest.raises(TimeoutError):
+        wait()
+
+    @gernas.trace_hitl("approve2", outcome_from=lambda r: r)
+    def decide():
         return "approved"
 
-    @gernas.compliance_gate("hitl_approval_decision")
-    async def explode():
-        raise RuntimeError
+    decide()
+    timed_out, approved = sorted(spans(SpanName.HITL), key=lambda s: s.start_time)
+    assert attrs(timed_out)[Ctx.HITL_OUTCOME] == "timed_out" and attrs(approved)[Ctx.HITL_OUTCOME] == "approved"
 
-    @gernas.guardrail_check("pii_warn", action_on_block="warn")
-    async def warn(text):
-        return (True, "pii")
 
-    @gernas.guardrail_check("hard", action_on_block="block")
-    async def block(text):
-        return True
+def test_memory_custom_hit_and_stale(spans):
+    @gernas.trace_memory("read", hit_from=lambda r: r["found"], stale_from=lambda r: r["age"] > 10)
+    def load():
+        return {"found": True, "age": 99}
 
-    @gernas.rbac_check("compliance_officer")
-    async def audit():
-        return "ok"
+    load()
+    a = attrs(spans(SpanName.MEMORY)[0])
+    assert a[Ctx.MEMORY_HIT] is True and a[Ctx.MEMORY_STALE] is True
 
-    assert await decide() == "approved"
+
+def test_use_case_failure_and_cancellation_outcomes(spans):
+    @gernas.trace_use_case()
+    def handle():
+        raise RuntimeError("x")
+
     with pytest.raises(RuntimeError):
-        await explode()
-    assert await warn("x") == (True, "pii")
-    with pytest.raises(gernas.GuardrailBlockedError):
-        await block("x")
-    token = context.attach(baggage.set_baggage(Ctx.USER_ROLE, "compliance_officer"))
-    try:
-        assert await audit() == "ok"
-    finally:
-        context.detach(token)
-    with pytest.raises(gernas.RBACDeniedError):
-        await audit()
+        handle()
+    assert attrs(spans(SpanName.USE_CASE)[0])[Ctx.BUSINESS_OUTCOME] == "failure"
 
 
-def test_langchain_callback_tool_retriever_and_errors(spans):
-    from gernas.adapters.langchain import GernasLangChainCallback
+def test_async_generator_agent_and_dynamic_ids(spans):
+    import asyncio
 
-    cb = GernasLangChainCallback(provider="azure_openai")
-    root, tool, retr, llm, failing = (uuid.uuid4() for _ in range(5))
-    cb.on_chain_start({"id": ["x", "AgentExecutor"]}, {"q": 1}, run_id=root)
-    cb.on_tool_start({"name": "lookup"}, "C-1", run_id=tool, parent_run_id=root)
-    cb.on_tool_end("result", run_id=tool)
-    cb.on_retriever_start({}, "query", run_id=retr, parent_run_id=root)
-    cb.on_retriever_end([1, 2], run_id=retr)
-    cb.on_llm_start({}, ["p"], run_id=llm, parent_run_id=root, invocation_params={"model": "gpt-4o"})
-    cb.on_llm_end(SimpleNamespace(llm_output={"token_usage": {"prompt_tokens": 10, "completion_tokens": 2}},
-                                  generations=[]), run_id=llm)
-    cb.on_tool_start({"name": "boom"}, "x", run_id=failing, parent_run_id=root)
-    cb.on_tool_error(RuntimeError("down"), run_id=failing)
-    cb.on_chain_error(ValueError("chain failed"), run_id=root)
-    cb.on_llm_error(RuntimeError(), run_id=uuid.uuid4())  # unknown run: ignored
-    assert cb.open_run_count() == 0
-    chain = spans(SpanName.CHAIN)[0]
-    assert chain.attributes[Ctx.CHAIN_NAME] == "AgentExecutor" and chain.status.status_code == StatusCode.ERROR
-    assert spans("tool.lookup")[0].parent.span_id == chain.context.span_id
-    assert spans(SpanName.RETRIEVAL)[0].attributes[Ctx.RESULT_COUNT] == 2
-    llm_span = spans(SpanName.LLM)[0]
-    assert (llm_span.attributes[Ctx.INPUT_TOKENS], llm_span.attributes[Ctx.OUTPUT_TOKENS]) == (10, 2)
-    assert llm_span.attributes[Ctx.EST_COST_AED] > 0
-    assert spans("tool.boom")[0].status.status_code == StatusCode.ERROR
+    @gernas.trace_agent(lambda kind: f"{kind}_agent", agent_type="worker", name=lambda kind: kind.title())
+    async def run(kind):
+        yield 1
+        yield 2
 
+    async def consume():
+        return [x async for x in run("pricing")]
 
-def test_langchain_callback_reads_usage_metadata_from_chat_messages(spans):
-    from gernas.adapters.langchain import GernasLangChainCallback
-
-    cb = GernasLangChainCallback()
-    rid = uuid.uuid4()
-    message = SimpleNamespace(usage_metadata={"input_tokens": 4, "output_tokens": 1})
-    cb.on_chat_model_start({"name": "ChatX"}, [[]], run_id=rid, metadata={"ls_provider": "openai"})
-    cb.on_llm_end(SimpleNamespace(llm_output=None, generations=[[SimpleNamespace(message=message)]]), run_id=rid)
-    span = spans(SpanName.LLM)[0]
-    assert span.attributes[Ctx.PROVIDER] == "openai" and span.attributes[Ctx.INPUT_TOKENS] == 4
-
-
-async def test_a2a_interceptor_chains_an_existing_interceptor_and_context():
-    from a2a.client.client import ClientCallContext
-    from a2a.client.interceptors import AfterArgs, BeforeArgs, ClientCallInterceptor
-    from gernas.adapters.a2a import GernasA2AInterceptor
-
-    calls = []
-
-    class Auth(ClientCallInterceptor):
-        async def before(self, args):
-            calls.append("before")
-            args.context = ClientCallContext(service_parameters={"Authorization": "Bearer t"})
-
-        async def after(self, args):
-            calls.append("after")
-
-    interceptor = GernasA2AInterceptor(Auth())
-    args = BeforeArgs(input=None, method="m", agent_card=None)
-    with gernas.get_tracer().start_as_current_span("hop"):
-        await interceptor.before(args)
-    await interceptor.after(AfterArgs(result=None, method="m", agent_card=None))
-    assert calls == ["before", "after"]
-    assert args.context.service_parameters["Authorization"] == "Bearer t"
-    assert "traceparent" in args.context.service_parameters
-
-
-def test_structured_logger_through_the_otel_provider(tmp_path):
-    code = """
-import gernas
-h = gernas.init_gernas()
-log = gernas.get_logger("gernas.app")
-with gernas.get_tracer().start_as_current_span("s"):
-    log.info("customer alice@fab.ae", note="call +971 50 123 4567", n=3)
-h.flush(); h.shutdown()
-"""
-    res = run_python(code, env={"GERNAS_EXPORTER": "file", "GERNAS_FILE_OUTPUT_DIR": str(tmp_path)})
-    assert res.returncode == 0, res.stderr
-    text = "".join(p.read_text() for p in (tmp_path / "logs").glob("*.jsonl"))
-    assert "[EMAIL]" in text and "alice@fab.ae" not in text and "123 4567" not in text
-
-
-def test_cost_is_skipped_for_bad_rate_cards(tmp_path):
-    from gernas.cost import estimate_cost_aed
-
-    bad = tmp_path / "bad.json"
-    bad.write_text("{not json")
-    partial = tmp_path / "partial.json"
-    partial.write_text('{"rates": [{"model": "m", "provider": "p"}]}')
-    assert estimate_cost_aed("m", "p", 1, 1, str(bad)) is None
-    assert estimate_cost_aed("m", "p", 1, 1, str(partial)) is None
-    assert estimate_cost_aed("m", "p", 1, 1, str(tmp_path / "missing.json")) is None
-    assert estimate_cost_aed("m", "other", 1, 1, str(partial)) is None
-    assert estimate_cost_aed(None, "p", 1, 1, str(partial)) is None
+    assert asyncio.run(consume()) == [1, 2]
+    a = attrs(spans(SpanName.AGENT)[0])
+    assert a[Ctx.AGENT_ID] == "pricing_agent" and a[Ctx.AGENT_NAME] == "Pricing"

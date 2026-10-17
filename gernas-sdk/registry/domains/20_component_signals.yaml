@@ -1,0 +1,54 @@
+domain: component_signals
+blueprint: false        # Blueprint §3/§5/§6 list these signals but do not name them; names are the SDK convention
+owner: GERNAS telemetry pod
+brief: Signals required by Blueprint §3 (component telemetry), §5 (agentic KPIs) and §6 (LLM metrics).
+fields:
+  # Use Case Layer (§3)
+  - {name: CHANNEL, key: gernas.channel, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-021, brief: Channel the request arrived through, example: api}
+  - {name: REQUEST_TYPE, key: gernas.request_type, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-021, brief: Use-case request type, example: pricing_query}
+  # Agent Runtime (§3) + KPIs (§5)
+  - {name: TERMINATION_REASON, key: gernas.termination_reason, type: string, required: always, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-022, enum: [completed, max_steps, timeout, policy_block, abandoned, error, human_rejected], brief: Why the run ended (task success / abandonment / timeout / policy block rates), example: completed}
+  - {name: STEP_COUNT, key: gernas.step_count, type: int, required: conditional, sensitivity: internal, cardinality: bounded, rollup: false, action: keep, source: GERNAS-REQ-022, brief: Steps executed by the run (step / model / tool / delegation calls), example: 4}
+  - {name: RETRY_COUNT, key: gernas.retry_count, type: int, required: conditional, sensitivity: internal, cardinality: bounded, rollup: false, action: keep, source: GERNAS-REQ-022, brief: Retries across the whole run, example: 0}
+  - {name: LOOP_DETECTED, key: gernas.loop_detected, type: boolean, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-032, brief: Same tool + same input repeated GERNAS_LOOP_THRESHOLD times, example: false}
+  - {name: LOOP_REPEAT_COUNT, key: gernas.loop_repeat_count, type: int, required: conditional, sensitivity: internal, cardinality: bounded, rollup: false, action: keep, source: GERNAS-REQ-032, brief: Repeat count that tripped loop detection, example: 3}
+  - {name: MAX_STEP_VIOLATION, key: gernas.max_step_violation, type: boolean, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-032, brief: Run exceeded GERNAS_MAX_STEPS (potential runaway agent), example: false}
+  - {name: PLAN_STEP_COUNT, key: gernas.plan_step_count, type: int, required: conditional, sensitivity: internal, cardinality: bounded, rollup: false, action: keep, source: GERNAS-REQ-022, brief: Number of steps in a generated plan, example: 3}
+  # Multi-Agent Orchestration (§3)
+  - {name: PARENT_RUN_ID, key: gernas.parent_run_id, type: string, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, source: GERNAS-REQ-023, brief: agent_run_id of the delegating run (child runs only), example: run_19ab}
+  - {name: PARENT_AGENT_ID, key: gernas.parent_agent_id, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-023, brief: Delegating agent, example: orchestrator}
+  - {name: CHILD_AGENT_ID, key: gernas.child_agent_id, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-023, brief: Agent receiving the delegation, example: data_agent}
+  - {name: DELEGATION_PATH, key: gernas.delegation_path, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-023, brief: Chain of agent ids from the root run to this run, joined by '>', example: orchestrator>price_assist>data_agent}
+  # Skills / Tools (§3)
+  - {name: AUTHORIZATION_DECISION, key: gernas.authorization_decision, type: string, required: always, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-024, enum: [allow, deny, not_evaluated], brief: Authorization decision for the tool call, example: allow}
+  - {name: REQUEST_SIZE_BYTES, key: gernas.request_size_bytes, type: int, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, source: GERNAS-REQ-024, brief: Size of the tool input payload, example: 312}
+  - {name: RESPONSE_SIZE_BYTES, key: gernas.response_size_bytes, type: int, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, source: GERNAS-REQ-024, brief: Size of the tool output payload, example: 2048}
+  - {name: DEPENDENCY, key: gernas.dependency, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-024, brief: Downstream system the tool depends on (e.g. MCP server), example: datalayer}
+  # LLM Gateway / LLMs / Embedding (§3, §6)
+  - {name: TTFT_MS, key: gernas.ttft_ms, type: double, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, source: GERNAS-REQ-025, brief: Time to first token (streaming calls), example: 212.0}
+  - {name: TOKENS_PER_SECOND, key: gernas.tokens_per_second, type: double, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, source: GERNAS-REQ-025, brief: Output throughput of a completed streaming call, example: 85.1}
+  - {name: STOP_REASON, key: gernas.stop_reason, type: string, required: conditional, sensitivity: public, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-025, brief: Why generation stopped, example: stop}
+  - {name: TOKEN_CACHED, key: gernas.token_cached, type: int, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, source: GERNAS-REQ-025, brief: Input tokens served from the provider cache (cache usage), example: 1024}
+  - {name: FALLBACK_USED, key: gernas.fallback_used, type: boolean, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-025, brief: An alternate model / tool served the call (fallback rate), example: false}
+  - {name: BATCH_SIZE, key: gernas.batch_size, type: int, required: always, sensitivity: internal, cardinality: bounded, rollup: false, action: keep, source: GERNAS-REQ-026, brief: Items per embedding call, example: 10}
+  # Content Safety (§3)
+  - {name: CONTENT_BLOCKED, key: gernas.content_blocked, type: boolean, required: always, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-027, brief: The request / response was blocked or rewritten, example: false}
+  - {name: SAFETY_CATEGORY, key: gernas.safety_category, type: string, required: always, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-027, brief: Safety category evaluated, example: pii}
+  - {name: RISK_LEVEL, key: gernas.risk_level, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-027, enum: [safe, low, medium, high], brief: Content-safety risk level, example: low}
+  - {name: POLICY_TRIGGERED, key: gernas.policy_triggered, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-027, brief: Safety policy that fired, example: output_redaction}
+  # RAG / Search (§3)
+  - {name: TOP_K, key: gernas.top_k, type: int, required: conditional, sensitivity: internal, cardinality: bounded, rollup: false, action: keep, source: GERNAS-REQ-028, brief: Requested result count, example: 5}
+  - {name: RESULT_COUNT, key: gernas.result_count, type: int, required: always, sensitivity: internal, cardinality: bounded, rollup: false, action: keep, source: GERNAS-REQ-028, brief: Results returned, example: 5}
+  - {name: EMPTY_RESULT, key: gernas.empty_result, type: boolean, required: always, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-028, brief: No results returned, example: false}
+  - {name: RANKING_SCORE, key: gernas.ranking_score, type: double, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, source: GERNAS-REQ-028, brief: Score of the top result, example: 0.83}
+  - {name: QUERY_REWRITTEN, key: gernas.query_rewritten, type: boolean, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-028, brief: Query was rewritten before search, example: false}
+  # Memory (§3)
+  - {name: MEMORY_OPERATION, key: gernas.memory_operation, type: string, required: always, sensitivity: public, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-029, enum: [read, write], brief: Memory operation, example: read}
+  - {name: MEMORY_HIT, key: gernas.memory_hit, type: boolean, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-029, brief: A read found data, example: true}
+  - {name: MEMORY_STALE, key: gernas.memory_stale, type: boolean, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-029, brief: Data read was stale, example: false}
+  - {name: MEMORY_SIZE_BYTES, key: gernas.memory_size_bytes, type: int, required: conditional, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, source: GERNAS-REQ-029, brief: Size of the data read or written, example: 2048}
+  # Human intervention (§5 Human Intervention Rate)
+  - {name: HITL_TICKET_ID, key: gernas.hitl_ticket_id, type: string, required: always, sensitivity: internal, cardinality: unbounded, rollup: false, action: keep, source: GERNAS-REQ-031, brief: Approval ticket id, example: apr-1}
+  - {name: HITL_ACTION, key: gernas.hitl_action, type: string, required: always, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-031, brief: Action awaiting human approval, example: submit_pricing_change}
+  - {name: HITL_OUTCOME, key: gernas.hitl_outcome, type: string, required: always, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-031, enum: [approved, rejected, changed, timed_out], brief: Outcome of the human intervention, example: approved}
+  - {name: HITL_APPROVER_ROLE, key: gernas.hitl_approver_role, type: string, required: conditional, sensitivity: internal, cardinality: bounded, rollup: true, action: keep, source: GERNAS-REQ-031, brief: Role of the approver - never the individual, example: credit_officer}

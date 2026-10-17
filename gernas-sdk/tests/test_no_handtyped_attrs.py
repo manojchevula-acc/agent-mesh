@@ -1,8 +1,9 @@
-"""WP1-CTX-02 step 3: no hand-typed ``gernas.*`` attribute names outside gernas/attributes.py.
+"""No hand-typed ``gernas.*`` attribute names outside gernas/attributes.py.
 
 Every decorator must use ``Ctx.ATTRIBUTE_NAME``. Docstrings and prose are ignored;
 any identifier-like string literal ``gernas.<something>`` fails the build.
 """
+
 from __future__ import annotations
 
 import ast
@@ -49,6 +50,9 @@ def test_no_handtyped_gernas_attribute_names():
 
 
 def test_the_lint_catches_an_injected_violation():
-    snippet = 'def f(span):\n    """mentions gernas.agent_id in prose: fine"""\n    span.set_attribute("gernas.agent_id", 1)\n'
+    snippet = (
+        'def f(span):\n    """mentions gernas.agent_id in prose: fine"""\n'
+        '    span.set_attribute("gernas.agent_id", 1)\n'
+    )
     assert find_handtyped(snippet) == [(3, "gernas.agent_id")]
     assert find_handtyped('x = f"gernas.{k}"') == [(1, "gernas.{...}")]
