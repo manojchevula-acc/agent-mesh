@@ -137,6 +137,33 @@ def baggage_value(key: str, ctx: Context | None = None) -> str | None:
         return None
 
 
+def correlation() -> dict[str, str | None]:
+    """Current correlation identifiers for application logs and audit records.
+
+    Read-only: ``trace_id`` / ``span_id`` of the active span (W3C hex), the active
+    run's ``agent_id`` / ``agent_run_id``, and the propagated ``session_id`` /
+    ``task_id``. Values are None when unavailable. Never raises.
+    """
+    out: dict[str, str | None] = dict.fromkeys(
+        ("trace_id", "span_id", "agent_id", "agent_run_id", "session_id", "task_id")
+    )
+    try:
+        from opentelemetry import trace
+
+        from gernas.run_state import current_run
+
+        sc = trace.get_current_span().get_span_context()
+        if sc.is_valid:
+            out["trace_id"], out["span_id"] = format(sc.trace_id, "032x"), format(sc.span_id, "016x")
+        run = current_run()
+        if run is not None:
+            out["agent_id"], out["agent_run_id"] = run.agent_id, run.agent_run_id
+        out["session_id"], out["task_id"] = baggage_value(Ctx.SESSION_ID), baggage_value(Ctx.TASK_ID)
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
 def gernas_task(coro: Coroutine[Any, Any, T], *, name: str | None = None) -> asyncio.Task[T]:
     """``asyncio.create_task`` that runs *coro* in the caller's context (same trace and run)."""
     return asyncio.get_running_loop().create_task(coro, name=name, context=contextvars.copy_context())

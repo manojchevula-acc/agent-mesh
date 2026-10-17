@@ -39,11 +39,11 @@ async def answer(question: str) -> str: ...
 | `gernas/` | The package. `attributes.py` is generated from `registry/`. |
 | `gernas/adapters/` | `agent_framework`, `langchain`, `langgraph`, `a2a`, `mcp`, `asgi`, `httpx` (optional dependencies) |
 | `registry/` | Blueprint domains plus documented extensions (YAML), span and metric catalogues, denylist, generator, redaction matrix, semantic conventions |
-| `collector/` | `otel-collector-config.yaml` (local gateway → file data plane plus Opik), `sidecar-config.yaml`. `bin/` and `out/` are git-ignored. |
+| `collector/` | `otel-collector-config.yaml` (gateway: traces → Azure Data Explorer + Opik, metrics/logs → ADX), `kustomization.yaml` + `k8s/` (AKS), `adx/create-tables.kql`, `local-dataplane-file.yaml` (local-only overlay). `bin/` and `out/` are git-ignored. |
 | `tests/` | Naming contract, config, decorators, runtime, context, security, metrics, adapters (MAF / LangChain / LangGraph / transport), optional dependencies, conformance, registry, packaging |
 | `examples/` | `custom_agent.py`, `maf_agent.py`, `langchain_agent.py`, `langgraph_agent.py` (offline), rate card example |
 | `benchmarks/`, `reports/` | Overhead benchmark and report, plus E2E evidence |
-| `scripts/` | `run_collector.py`, `e2e_pipeline_checks.py`, `inspect_trace.py` |
+| `scripts/` | `run_collector.py`, `e2e_pipeline_checks.py`, `inspect_trace.py`, `opik_verify.py` |
 | `docs/` | Blueprint traceability, developer guide, onboarding runbook, attribute reference (generated), migration, ADRs |
 
 ## Quick start

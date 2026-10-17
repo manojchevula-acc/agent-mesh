@@ -55,7 +55,7 @@ python scripts\run_collector.py                 # loads OPIK_* from ..\agent-mes
 ```
 
 Outputs:
-- `collector\out\dataplane-traces.json`, `dataplane-metrics.json` and `dataplane-logs.json`.
+- Data plane: Azure Data Explorer when `ADX_CLUSTER_URI` is set (plus Azure credentials for the default credential chain); otherwise local files `collector\out\dataplane-traces.json`, `dataplane-metrics.json` and `dataplane-logs.json` (overlay `collector\local-dataplane-file.yaml`).
 - Traces also go to Opik when `OPIK_API_KEY`, `OPIK_WORKSPACE` and `OPIK_PROJECT_NAME` are set. The Collector maps the GERNAS keys to the GenAI keys Opik displays.
 - Health check: `http://127.0.0.1:13133/`.
 - Self-metrics: `http://127.0.0.1:8888/metrics`.
@@ -72,7 +72,10 @@ gernas.init_gernas()
 - Framework agents: add the adapter (`gernas_middleware`, `instrument`, `instrument_graph`); see the developer guide, §4.
 - Custom Python: add `@gernas.trace_use_case` to the request handler, `@gernas.trace_agent(agent_id, agent_type=...)` to the agent, `@gernas.trace_step` to workflow steps, and the tool, LLM and retrieval decorators where they are not already covered by an adapter.
 - Wrap each request in `gernas.request_context(session_id=..., task_id=..., user_id=..., principal_type=...)`.
-- MAF only: MAF's built-in instrumentation emits its own `invoke_agent` / `execute_tool` spans next to the GERNAS spans. Set `ENABLE_INSTRUMENTATION=false` if you do not want them.
+- Switch off framework-native instrumentation so the SDK is the single instrumentation path:
+  - MAF: call `gernas.adapters.agent_framework.disable_native_telemetry()` at startup (and keep `ENABLE_SENSITIVE_DATA=false`);
+  - a2a-sdk: set `OTEL_INSTRUMENTATION_A2A_SDK_ENABLED=false` **before** `a2a` is imported.
+- AKS: point `GERNAS_OTLP_ENDPOINT` at the in-cluster Collector Service and follow `docs/collector-aks-deployment.md`.
 
 ## 6. Verify
 
@@ -96,7 +99,8 @@ Then run your agent and check what it exported:
 ```powershell
 gernas conformance --file collector\out\dataplane-traces.json --service <your-service> --require-op agent.run
 python scripts\inspect_trace.py <trace_id>
-python scripts\e2e_pipeline_checks.py           # PDPL, routing, Opik
+python scripts\e2e_pipeline_checks.py           # PDPL, routing, Opik (local data plane)
+python scripts\opik_verify.py --task-id <id>    # what Opik stored for one request
 ```
 
 ## Troubleshooting

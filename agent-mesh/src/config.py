@@ -60,27 +60,10 @@ class Config:
     SUMMARY_MODEL: str = os.getenv("SUMMARY_MODEL", "")
 
     # ----------------------------------------------------------------------
-    # Observability (Microsoft Agent Framework-native OpenTelemetry + logging)
+    # Telemetry (traces / metrics / logs export) is configured ONLY through the
+    # Gernas SDK GERNAS_* variables (src/observability/gernas_telemetry.py);
+    # there is no application-level exporter or backend selection here.
     # ----------------------------------------------------------------------
-    # OBS_PROFILE selects the exporter wiring:
-    #   "dev"  -> console + OTLP (Aspire/Jaeger at OTEL_EXPORTER_OTLP_ENDPOINT)
-    #   "prod" -> Azure Monitor / Application Insights (requires connection string)
-    #   "off"  -> file logging only, no OTel providers
-    OBS_PROFILE: str = os.getenv("OBS_PROFILE", "dev")
-
-    # Agent Framework reads these standard env vars in configure_otel_providers().
-    # We surface them here so a single .env drives both the SDK and our logging.
-    ENABLE_INSTRUMENTATION: bool = os.getenv("ENABLE_INSTRUMENTATION", "true").lower() in ("1", "true", "yes")
-    ENABLE_SENSITIVE_DATA: bool = os.getenv("ENABLE_SENSITIVE_DATA", "false").lower() in ("1", "true", "yes")
-    ENABLE_CONSOLE_EXPORTERS: bool = os.getenv("ENABLE_CONSOLE_EXPORTERS", "false").lower() in ("1", "true", "yes")
-    OTEL_EXPORTER_OTLP_ENDPOINT: str = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
-    OTEL_SERVICE_NAME: str = os.getenv("OTEL_SERVICE_NAME", "agent_mesh")
-    APPLICATIONINSIGHTS_CONNECTION_STRING: str = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING", "")
-
-    # Grafana Cloud OTLP (OBS_PROFILE=grafana)
-    GRAFANA_OTLP_ENDPOINT: str = os.getenv("GRAFANA_OTLP_ENDPOINT", "")
-    GRAFANA_INSTANCE_ID: str = os.getenv("GRAFANA_INSTANCE_ID", "")
-    GRAFANA_API_TOKEN: str = os.getenv("GRAFANA_API_TOKEN", "")
 
     # Centralized application logging (durable, rotating, trace-correlated).
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -100,15 +83,6 @@ class Config:
     LOG_STATE_TRACE: bool = os.getenv("LOG_STATE_TRACE", "true").lower() in ("1", "true", "yes")
     STATE_TRACE_DIR: str = os.getenv("STATE_TRACE_DIR", "data/logs/state")  # one file per request_id
     STATE_TRACE_PREVIEW_CHARS: int = int(os.getenv("STATE_TRACE_PREVIEW_CHARS", "200"))
-
-    # Keep the legacy JSONL trace sink? Off by default now that workflow/agent
-    # spans cover the same ground (avoids duplicate telemetry).
-    ENABLE_TRACE_JSONL: bool = os.getenv("ENABLE_TRACE_JSONL", "false").lower() in ("1", "true", "yes")
-
-    # Custom business metrics (counters + histograms) for guardrails, RBAC,
-    # compliance, routing, A2A hops, and mesh-level request outcomes.
-    # Set to false to suppress custom metric cardinality in tight environments.
-    ENABLE_BUSINESS_METRICS: bool = os.getenv("ENABLE_BUSINESS_METRICS", "true").lower() in ("1", "true", "yes")
 
     # ----------------------------------------------------------------------
     # Mesh node availability — set false when a node is NOT in START_ORDER.

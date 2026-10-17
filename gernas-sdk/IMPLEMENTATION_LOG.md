@@ -501,4 +501,33 @@ Environment: DATA_AGENT_MODEL / RAG_AGENT_MODEL qwen/qwen3.6-27b returns 404 fro
 ### Known Issues
 See `docs/BLUEPRINT_TRACEABILITY.md` §7 (naming-namespace sign-off, partial §11 cost attribution, MAF native spans).
 
+## 2026-10-17 · Compliance audit, Collector in AKS → ADX + Opik, single instrumentation path
+
+**Scope:** blueprint compliance audit and correction (see `../checklist.md`).
+- Traces are exported to **both** Azure Data Explorer (data plane) and Opik, per the user's instruction; metrics and logs go to ADX.
+
+**Changes:**
+- Collector rebuilt for an AKS gateway pod (`azuredataexplorer` + `otlphttp/opik`, bind via `GERNAS_COLLECTOR_BIND`, container-aware memory limiter), plus a local-only file overlay.
+- AKS manifests (`kustomization.yaml`, `k8s/`) and the ADX schema (`adx/create-tables.kql`). Sidecar config removed.
+- SDK additions:
+  - `gernas.correlation()`;
+  - `adapters.agent_framework.disable_native_telemetry()`;
+  - PII scrubber no longer corrupts hex ids (phone pattern anchored; case-sensitive IBAN).
+- Agent Mesh competing instrumentation removed: setup / tracer / metrics modules, `TraceContextMiddleware`, manual `fab.*` / `mesh.request` spans, `record_*` metrics, `peer.*` attributes, MAF and a2a-sdk native tracing.
+- Git hygiene: `agent-mesh/src/observability/gernas_telemetry.py` had never been committed (unanchored `observability/` ignore rule); fixed.
+
+**Tests run:**
+- `pytest tests --cov=gernas`: 192 passed, 91.1 %.
+- `ruff check` and `ruff format --check`: clean. `mypy gernas`: clean. `generate.py --check`: OK.
+- `otelcol-contrib validate`: VALID (AKS config and local overlay).
+- k8s v1.30 strict schema: 7/7.
+- Wheel: clean-venv install OK.
+- Live Agent Mesh, 4 requests: `scripts/opik_verify.py` PASS ×4 (one trace across 5 processes, only Gernas spans).
+- `e2e_pipeline_checks.py`: 9/9.
+- Mesh offline suite: baseline unchanged.
+
+### Known Issues
+- ADX ingestion and AKS deployment are blocked: no cluster or credentials in this environment.
+- Data and RAG agents' model returns 404 (no live MCP call this run).
+
 <!-- END ENTRIES -->

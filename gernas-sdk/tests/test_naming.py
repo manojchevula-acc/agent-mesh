@@ -175,6 +175,7 @@ def test_public_api_is_exact():
             "mark_fallback",
             "annotate",
             "request_context",
+            "correlation",
             "inject_context",
             "extract_context",
             "attach_headers",

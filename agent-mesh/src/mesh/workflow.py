@@ -31,7 +31,6 @@ Design notes
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import re
 import sys
 import time
@@ -51,15 +50,6 @@ from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
 from src.guardrails.deterministic_filters import screen_input, redact_pii, redact_output
 from src.auth.identity_provider import BankingRole
 from src.observability import get_logger, CAT_WORKFLOW
-from src.observability.metrics import (
-    record_guardrail,
-    record_rbac,
-    record_compliance,
-    record_domain_route,
-    record_a2a_call,
-    record_pii_hits,
-    record_cache,
-)
 from src.tracing.execution_trace import get_active_tracer, infer_route_and_scores
 from src.tracing.llm_reasoning import extract_reasoning, strip_reasoning_markers
 from src.tracing.state_trace import log_state_handoff
@@ -95,64 +85,16 @@ def _emit_stream_event(event: dict) -> None:
 # OTel helpers — crash-safe, no-op when OTel is unavailable
 # ---------------------------------------------------------------------------
 
-def _mesh_tracer():
-    """Returns the agent_framework OTel tracer, or None if OTel is unavailable."""
-    try:
-        from agent_framework.observability import get_tracer
-        return get_tracer("agent_mesh")
-    except Exception:
-        return None
 
 
-def _set_attr(span, key: str, value) -> None:
-    """Safe span attribute setter — no-op if span is None or not recording."""
-    try:
-        if span and hasattr(span, "set_attribute"):
-            span.set_attribute(key, value if isinstance(value, (bool, int, float, str)) else str(value))
-    except Exception:
-        pass
 
 
-def _add_event(span, name: str, attrs: dict | None = None) -> None:
-    """Safe span event emitter — no-op if span is None or not recording."""
-    try:
-        if span and hasattr(span, "add_event"):
-            span.add_event(name, attributes={
-                k: (v if isinstance(v, (bool, int, float, str)) else str(v))
-                for k, v in (attrs or {}).items()
-            })
-    except Exception:
-        pass
 
 
-def _set_ok(span) -> None:
-    try:
-        if span and hasattr(span, "set_status"):
-            from opentelemetry.trace import StatusCode
-            span.set_status(StatusCode.OK)
-    except Exception:
-        pass
 
 
-def _set_error(span, description: str = "") -> None:
-    try:
-        if span and hasattr(span, "set_status"):
-            from opentelemetry.trace import StatusCode
-            span.set_status(StatusCode.ERROR, description)
-    except Exception:
-        pass
 
 
-def _span_ctx(tracer, name: str, kind_internal: bool = True):
-    """Returns a context manager: a real span or contextlib.nullcontext()."""
-    try:
-        if tracer:
-            from opentelemetry.trace import SpanKind
-            kind = SpanKind.INTERNAL if kind_internal else SpanKind.CLIENT
-            return tracer.start_as_current_span(name, kind=kind)
-    except Exception:
-        pass
-    return contextlib.nullcontext()
 
 # Set of all valid FAB banking role string values — used by RBACValidationExecutor.
 _ALLOWED_ROLES = {r.value for r in BankingRole}
@@ -279,72 +221,46 @@ class InputGuardrailExecutor(Executor):
             tracer.emit_stage("guardrail", "started", message="Validating input safety...")
         _emit_stream_event({"stage": "guardrail", "status": "started", "message": "Validating input safety..."})
 
-        otel = _mesh_tracer()
-        t0 = time.perf_counter()
-        with _span_ctx(otel, "fab.guardrail.input_screen", kind_internal=True) as span:
-            _set_attr(span, "guardrail.stage", "input_guardrail")
-            _set_attr(span, "guardrail.query_length", len(state.query))
-            try:
-                screen = screen_input(state.query)
-                elapsed = (time.perf_counter() - t0) * 1000
+        screen = screen_input(state.query)
 
-                if not screen.allowed:
-                    categories_str = ",".join(screen.categories)
-                    _set_attr(span, "guardrail.result", "BLOCK")
-                    _set_attr(span, "guardrail.categories", categories_str)
-                    _set_attr(span, "guardrail.violations_count", len(screen.violations))
-                    _set_attr(span, "guardrail.block_reason", screen.reason[:200])
-                    _add_event(span, "guardrail.blocked", {
-                        "categories": categories_str,
-                        "reason":     screen.reason[:200],
-                    })
-                    _set_error(span, f"Input blocked: {categories_str}")
+        if not screen.allowed:
+            categories_str = ",".join(screen.categories)
 
-                    state.blocked = True
-                    state.block_stage = "input_guardrail"
-                    _gt.mark_policy_block()
-                    state.answer = (
-                        f"Request blocked by security guardrails ({', '.join(screen.categories)})."
-                    )
-                    state.trail.append(f"guardrail_block:{categories_str}")
-                    _log.warning("Input guardrail BLOCK: %s", screen.reason[:160],
-                                 extra={"user": state.user_name, "status": "BLOCK"})
-                    if tracer:
-                        tracer.record_blocked("input_guardrail")
-                        tracer.emit_stage(
-                            "guardrail", "blocked",
-                            message=screen.reason[:120],
-                            result="BLOCKED",
-                            rationale=list(screen.categories),
-                        )
-                    record_guardrail("BLOCK", screen.categories[0] if screen.categories else "none", elapsed)
-                    _emit_stream_event({"stage": "guardrail", "status": "blocked", "message": screen.reason[:120]})
-                    log_state_handoff("input_guardrail", "END", state, note="blocked -> early yield")
-                    await ctx.yield_output(state)
-                    return
+            state.blocked = True
+            state.block_stage = "input_guardrail"
+            _gt.mark_policy_block()
+            state.answer = (
+                f"Request blocked by security guardrails ({', '.join(screen.categories)})."
+            )
+            state.trail.append(f"guardrail_block:{categories_str}")
+            _log.warning("Input guardrail BLOCK: %s", screen.reason[:160],
+                         extra={"user": state.user_name, "status": "BLOCK"})
+            if tracer:
+                tracer.record_blocked("input_guardrail")
+                tracer.emit_stage(
+                    "guardrail", "blocked",
+                    message=screen.reason[:120],
+                    result="BLOCKED",
+                    rationale=list(screen.categories),
+                )
+            _emit_stream_event({"stage": "guardrail", "status": "blocked", "message": screen.reason[:120]})
+            log_state_handoff("input_guardrail", "END", state, note="blocked -> early yield")
+            await ctx.yield_output(state)
+            return
 
-                _set_attr(span, "guardrail.result", "PASS")
-                _set_attr(span, "guardrail.categories", "none")
-                _set_attr(span, "guardrail.violations_count", 0)
-                _add_event(span, "guardrail.pass", {"checks_run": 3})
-                _set_ok(span)
 
-                state.trail.append("guardrail_pass")
-                _log.info("Input guardrail PASS", extra={"user": state.user_name, "status": "PASS"})
-                if tracer:
-                    tracer.emit_stage(
-                        "guardrail", "completed",
-                        result="SAFE",
-                        checks=[
-                            "Prompt injection check passed",
-                            "Safety validation passed",
-                            "Content policy validation passed",
-                        ],
-                    )
-                record_guardrail("PASS", "none", elapsed)
-            except Exception as exc:
-                _set_error(span, str(exc)[:200])
-                raise
+        state.trail.append("guardrail_pass")
+        _log.info("Input guardrail PASS", extra={"user": state.user_name, "status": "PASS"})
+        if tracer:
+            tracer.emit_stage(
+                "guardrail", "completed",
+                result="SAFE",
+                checks=[
+                    "Prompt injection check passed",
+                    "Safety validation passed",
+                    "Content policy validation passed",
+                ],
+            )
         _emit_stream_event({"stage": "guardrail", "status": "completed", "message": "Input validation passed"})
         log_state_handoff("input_guardrail", "rbac_validation", state)
         await ctx.send_message(state)
@@ -367,72 +283,52 @@ class RBACValidationExecutor(Executor):
             tracer.emit_stage("rbac", "started")
         _emit_stream_event({"stage": "rbac", "status": "started", "message": "Checking access control..."})
 
-        otel = _mesh_tracer()
-        t0 = time.perf_counter()
-        with _span_ctx(otel, "fab.rbac.validate", kind_internal=True) as span:
-            _set_attr(span, "rbac.role", state.role)
-            _set_attr(span, "rbac.user", state.user_name)
-            _set_attr(span, "rbac.allowed_role_count", len(_ALLOWED_ROLES))
-            try:
-                elapsed = (time.perf_counter() - t0) * 1000
 
-                if state.role not in _ALLOWED_ROLES:
-                    _set_attr(span, "rbac.result", "BLOCK")
-                    _set_attr(span, "rbac.block_reason", f"Role '{state.role}' not in allowed set")
-                    _add_event(span, "rbac.denied", {"role": state.role, "reason": "unrecognised_role"})
-                    _set_error(span, f"RBAC block: role={state.role}")
+        if state.role not in _ALLOWED_ROLES:
 
-                    state.blocked = True
-                    state.block_stage = "rbac_validation"
-                    _gt.mark_policy_block()
-                    state.answer = (
-                        f"Access denied: role '{state.role}' is not a recognised FAB banking role. "
-                        "Please authenticate with valid FAB credentials."
-                    )
-                    state.trail.append(f"rbac_block:{state.role}")
-                    _log.warning("RBAC BLOCK: unrecognised role=%s user=%s",
-                                 state.role, state.user_name,
-                                 extra={"user": state.user_name, "status": "BLOCK"})
-                    if tracer:
-                        tracer.record_blocked("rbac_validation")
-                        tracer.emit_stage(
-                            "rbac", "blocked",
-                            message=f"Role '{state.role}' is not a recognised FAB banking role.",
-                            result="ACCESS DENIED",
-                        )
-                    record_rbac("BLOCK", state.role, elapsed)
-                    _emit_stream_event({"stage": "rbac", "status": "blocked", "message": f"Role '{state.role}' is not recognised"})
-                    log_state_handoff("rbac_validation", "END", state, note="blocked -> early yield")
-                    await ctx.yield_output(state)
-                    return
+            state.blocked = True
+            state.block_stage = "rbac_validation"
+            _gt.mark_policy_block()
+            state.answer = (
+                f"Access denied: role '{state.role}' is not a recognised FAB banking role. "
+                "Please authenticate with valid FAB credentials."
+            )
+            state.trail.append(f"rbac_block:{state.role}")
+            _log.warning("RBAC BLOCK: unrecognised role=%s user=%s",
+                         state.role, state.user_name,
+                         extra={"user": state.user_name, "status": "BLOCK"})
+            if tracer:
+                tracer.record_blocked("rbac_validation")
+                tracer.emit_stage(
+                    "rbac", "blocked",
+                    message=f"Role '{state.role}' is not a recognised FAB banking role.",
+                    result="ACCESS DENIED",
+                )
+            _emit_stream_event({"stage": "rbac", "status": "blocked", "message": f"Role '{state.role}' is not recognised"})
+            log_state_handoff("rbac_validation", "END", state, note="blocked -> early yield")
+            await ctx.yield_output(state)
+            return
 
-                _set_attr(span, "rbac.result", "PASS")
-                _add_event(span, "rbac.authorized", {"role": state.role})
-                _set_ok(span)
 
-                # Resolve permission scope from the static matrix and stamp on state
-                # so ComplianceExecutor can inject it into the authorization check.
-                from src.auth.role_permissions import get_permission_scope, get_allowed_tasks, get_denied_tasks
-                state.permission_scope = get_permission_scope(state.role)
-                state.allowed_tasks = get_allowed_tasks(state.role)
-                state.denied_tasks = get_denied_tasks(state.role)
+        # Resolve permission scope from the static matrix and stamp on state
+        # so ComplianceExecutor can inject it into the authorization check.
+        from src.auth.role_permissions import get_permission_scope, get_allowed_tasks, get_denied_tasks
+        state.permission_scope = get_permission_scope(state.role)
+        state.allowed_tasks = get_allowed_tasks(state.role)
+        state.denied_tasks = get_denied_tasks(state.role)
 
-                state.trail.append(f"rbac_pass:{state.role}")
-                _log.info("RBAC PASS role=%s", state.role,
-                          extra={"user": state.user_name, "status": "PASS"})
-                if tracer:
-                    tracer.emit_stage(
-                        "rbac", "completed",
-                        result="AUTHORIZED",
-                        checks=[
-                            f"Role '{state.role}' validated",
-                            "FAB banking role permissions granted",
-                        ],
-                    )
-                record_rbac("PASS", state.role, elapsed)
-            except Exception as exc:
-                _set_error(span, str(exc)[:200])
-                raise
+        state.trail.append(f"rbac_pass:{state.role}")
+        _log.info("RBAC PASS role=%s", state.role,
+                  extra={"user": state.user_name, "status": "PASS"})
+        if tracer:
+            tracer.emit_stage(
+                "rbac", "completed",
+                result="AUTHORIZED",
+                checks=[
+                    f"Role '{state.role}' validated",
+                    "FAB banking role permissions granted",
+                ],
+            )
         _emit_stream_event({"stage": "rbac", "status": "completed", "message": f"Role '{state.role}' authorized"})
         log_state_handoff("rbac_validation", "cache_check", state)
         await ctx.send_message(state)
@@ -457,11 +353,8 @@ class CacheCheckExecutor(Executor):
             tracer.emit_stage("cache_check", "started", message="Checking semantic cache...")
         _emit_stream_event({"stage": "cache_check", "status": "started", "message": "Checking semantic cache..."})
 
-        t0 = time.perf_counter()
 
         if not Config.ENABLE_RESPONSE_CACHE:
-            elapsed = (time.perf_counter() - t0) * 1000
-            record_cache("SKIP", state.role, elapsed)
             if tracer:
                 tracer.emit_stage("cache_check", "completed", result="SKIP",
                                   message="Cache disabled (ENABLE_RESPONSE_CACHE=false)")
@@ -471,8 +364,6 @@ class CacheCheckExecutor(Executor):
             return
 
         if getattr(state, "bypass_cache", False):
-            elapsed = (time.perf_counter() - t0) * 1000
-            record_cache("SKIP", state.role, elapsed)
             if tracer:
                 tracer.emit_stage("cache_check", "completed", result="BYPASS",
                                   message="Cache bypassed — running full pipeline for fresh answer")
@@ -482,414 +373,380 @@ class CacheCheckExecutor(Executor):
             await ctx.send_message(state)
             return
 
-        otel = _mesh_tracer()
-        with _span_ctx(otel, "fab.cache.check", kind_internal=True) as span:
-            _set_attr(span, "cache.role", state.role)
-            _set_attr(span, "cache.query_length", len(state.query))
-            try:
-                from src.cache import (
-                    get_cache_store, llm_cache_judge,
-                    extract_entities, signatures_match, signature_to_str, signature_from_str,
-                )
-                cache = get_cache_store()
-                # lookup_top_n() is CPU-bound (embedding) — run in thread pool.
-                # Fetches up to 3 candidates; primary zone decision is based on top-1.
-                all_candidates = await asyncio.to_thread(cache.lookup_top_n, state.query, state.role, 3)
+        try:
+            from src.cache import (
+                get_cache_store, llm_cache_judge,
+                extract_entities, signatures_match, signature_to_str, signature_from_str,
+            )
+            cache = get_cache_store()
+            # lookup_top_n() is CPU-bound (embedding) — run in thread pool.
+            # Fetches up to 3 candidates; primary zone decision is based on top-1.
+            all_candidates = await asyncio.to_thread(cache.lookup_top_n, state.query, state.role, 3)
+            entry = all_candidates[0] if all_candidates else None
+
+            # Trackers for the human-readable cache reasoning surfaced in the UI
+            # (Execution Steps "checks" + AI Reasoning "Cache Decision" card).
+            _n_retrieved = len(all_candidates)
+            _top_similarity = all_candidates[0].similarity if all_candidates else 0.0
+            _entity_dropped = 0
+            _entity_sig = ""
+            _rr_top = None
+            _rr_dropped = 0
+
+            def _build_cache_steps(judge_invoked=False, judge_decision=None, judge_reason=""):
+                """Compose the ordered cache decision sub-steps for the UI."""
+                steps: list[str] = []
+                retr = "Hybrid dense+sparse retrieval" if Config.CACHE_HYBRID_ENABLED else "Dense semantic retrieval"
+                if _n_retrieved:
+                    steps.append(f"{retr}: {_n_retrieved} candidate(s), top similarity {_top_similarity:.0%}")
+                else:
+                    steps.append(f"{retr}: no candidate above the {Config.CACHE_MISS_THRESHOLD:.0%} floor")
+                if Config.CACHE_ENTITY_GATING_ENABLED and _n_retrieved:
+                    if _entity_dropped:
+                        steps.append(
+                            f"Entity gate: dropped {_entity_dropped} candidate(s) with a different entity"
+                            + (f" (query entities: {_entity_sig})" if _entity_sig else "")
+                        )
+                    else:
+                        steps.append(f"Entity gate: entity match confirmed ({_entity_sig or 'no entities in query'})")
+                if _rr_top is not None:
+                    steps.append(
+                        f"Cross-encoder rerank: top score {_rr_top:.2f}"
+                        + (f", dropped {_rr_dropped} low-relevance candidate(s)" if _rr_dropped else "")
+                    )
+                if judge_invoked:
+                    steps.append(f"LLM judge: {judge_decision or '—'} — {judge_reason or 'no reason given'}")
+                return steps
+
+            def _emit_cache_reasoning(result_label, headline, similarity, steps):
+                """Add a 'Cache Decision' entry to the AI Reasoning tab (best-effort)."""
+                if not tracer:
+                    return
+                try:
+                    from src.tracing.llm_reasoning import LLMReasoningEntry
+                    tracer.add_llm_reasoning([LLMReasoningEntry(
+                        agent="cache",
+                        phase="cache_decision",
+                        data={
+                            "result": result_label,
+                            "rationale": headline,
+                            "confidence": float(similarity or 0.0),
+                            "steps": steps,
+                        },
+                    ).to_dict()])
+                except Exception:
+                    pass
+
+            # ── ENTITY GATE ────────────────────────────────────────────────
+            # Intent similarity alone can't tell "profile for CUST001" from
+            # "profile for CUST002" (same template, one differing token → sim ≥ 0.92).
+            # Extract the entities of the incoming query and require each candidate's
+            # entity signature to match exactly. Only runs when a candidate exists
+            # (a definitive MISS pays zero extraction cost).
+            if Config.CACHE_ENTITY_GATING_ENABLED and all_candidates:
+                new_sig = await extract_entities(state.query, state.role)
+                # Cache the signature on state so the orchestrator can reuse it when
+                # storing a fresh answer (avoids a second extraction call).
+                state.query_entities = signature_to_str(new_sig)
+                state.query_entities_extracted = True
+
+                _hard = Config.CACHE_ENTITY_GATE_MODE != "soft"
+                kept: list = []
+                dropped = 0
+                for c in all_candidates:
+                    if c.entities_indexed:
+                        cand_sig = signature_from_str(c.entities)
+                    else:
+                        # Pre-gating entry — extract from its stored query text (memoized).
+                        cand_sig = await extract_entities(c.query_original, state.role)
+                    if signatures_match(new_sig, cand_sig):
+                        kept.append(c)
+                        continue
+                    # Mismatch: hard → drop; soft → demote to gray zone for the judge.
+                    dropped += 1
+                    state.trail.append(
+                        f"entity_gate:{'drop' if _hard else 'demote'}:{c.entry_id}"
+                        f":{signature_to_str(new_sig)}!={signature_to_str(cand_sig)}"
+                    )
+                    if not _hard:
+                        c.confidence = "pending_judge"
+                        kept.append(c)
+
+                _entity_dropped = dropped
+                _entity_sig = signature_to_str(new_sig)
+                if dropped:
+                    cache._entity_gate_drops += dropped
+                    if tracer:
+                        tracer.emit_stage(
+                            "cache_check", "entity_gate",
+                            message=(
+                                f"Entity gate {'dropped' if _hard else 'demoted'} "
+                                f"{dropped} candidate(s) — different entity than the query"
+                            ),
+                        )
+                all_candidates = kept
                 entry = all_candidates[0] if all_candidates else None
 
-                # Trackers for the human-readable cache reasoning surfaced in the UI
-                # (Execution Steps "checks" + AI Reasoning "Cache Decision" card).
-                _n_retrieved = len(all_candidates)
-                _top_similarity = all_candidates[0].similarity if all_candidates else 0.0
-                _entity_dropped = 0
-                _entity_sig = ""
-                _rr_top = None
-                _rr_dropped = 0
-
-                def _build_cache_steps(judge_invoked=False, judge_decision=None, judge_reason=""):
-                    """Compose the ordered cache decision sub-steps for the UI."""
-                    steps: list[str] = []
-                    retr = "Hybrid dense+sparse retrieval" if Config.CACHE_HYBRID_ENABLED else "Dense semantic retrieval"
-                    if _n_retrieved:
-                        steps.append(f"{retr}: {_n_retrieved} candidate(s), top similarity {_top_similarity:.0%}")
-                    else:
-                        steps.append(f"{retr}: no candidate above the {Config.CACHE_MISS_THRESHOLD:.0%} floor")
-                    if Config.CACHE_ENTITY_GATING_ENABLED and _n_retrieved:
-                        if _entity_dropped:
-                            steps.append(
-                                f"Entity gate: dropped {_entity_dropped} candidate(s) with a different entity"
-                                + (f" (query entities: {_entity_sig})" if _entity_sig else "")
-                            )
-                        else:
-                            steps.append(f"Entity gate: entity match confirmed ({_entity_sig or 'no entities in query'})")
-                    if _rr_top is not None:
-                        steps.append(
-                            f"Cross-encoder rerank: top score {_rr_top:.2f}"
-                            + (f", dropped {_rr_dropped} low-relevance candidate(s)" if _rr_dropped else "")
-                        )
-                    if judge_invoked:
-                        steps.append(f"LLM judge: {judge_decision or '—'} — {judge_reason or 'no reason given'}")
-                    return steps
-
-                def _emit_cache_reasoning(result_label, headline, similarity, steps):
-                    """Add a 'Cache Decision' entry to the AI Reasoning tab (best-effort)."""
-                    if not tracer:
-                        return
-                    try:
-                        from src.tracing.llm_reasoning import LLMReasoningEntry
-                        tracer.add_llm_reasoning([LLMReasoningEntry(
-                            agent="cache",
-                            phase="cache_decision",
-                            data={
-                                "result": result_label,
-                                "rationale": headline,
-                                "confidence": float(similarity or 0.0),
-                                "steps": steps,
-                            },
-                        ).to_dict()])
-                    except Exception:
-                        pass
-
-                # ── ENTITY GATE ────────────────────────────────────────────────
-                # Intent similarity alone can't tell "profile for CUST001" from
-                # "profile for CUST002" (same template, one differing token → sim ≥ 0.92).
-                # Extract the entities of the incoming query and require each candidate's
-                # entity signature to match exactly. Only runs when a candidate exists
-                # (a definitive MISS pays zero extraction cost).
-                if Config.CACHE_ENTITY_GATING_ENABLED and all_candidates:
-                    new_sig = await extract_entities(state.query, state.role)
-                    # Cache the signature on state so the orchestrator can reuse it when
-                    # storing a fresh answer (avoids a second extraction call).
-                    state.query_entities = signature_to_str(new_sig)
-                    state.query_entities_extracted = True
-
-                    _hard = Config.CACHE_ENTITY_GATE_MODE != "soft"
-                    kept: list = []
-                    dropped = 0
-                    for c in all_candidates:
-                        if c.entities_indexed:
-                            cand_sig = signature_from_str(c.entities)
-                        else:
-                            # Pre-gating entry — extract from its stored query text (memoized).
-                            cand_sig = await extract_entities(c.query_original, state.role)
-                        if signatures_match(new_sig, cand_sig):
-                            kept.append(c)
-                            continue
-                        # Mismatch: hard → drop; soft → demote to gray zone for the judge.
-                        dropped += 1
-                        state.trail.append(
-                            f"entity_gate:{'drop' if _hard else 'demote'}:{c.entry_id}"
-                            f":{signature_to_str(new_sig)}!={signature_to_str(cand_sig)}"
-                        )
-                        if not _hard:
-                            c.confidence = "pending_judge"
-                            kept.append(c)
-
-                    _entity_dropped = dropped
-                    _entity_sig = signature_to_str(new_sig)
-                    if dropped:
-                        cache._entity_gate_drops += dropped
-                        _set_attr(span, "cache.entity_gate_dropped", dropped)
-                        _set_attr(span, "cache.entity_gate_mode", "hard" if _hard else "soft")
-                        if tracer:
-                            tracer.emit_stage(
-                                "cache_check", "entity_gate",
-                                message=(
-                                    f"Entity gate {'dropped' if _hard else 'demoted'} "
-                                    f"{dropped} candidate(s) — different entity than the query"
-                                ),
-                            )
-                    all_candidates = kept
+            # ── CROSS-ENCODER RERANK (augment) ─────────────────────────────
+            # Re-order the surviving candidates by a local cross-encoder and drop
+            # low-relevance ones before the LLM judge. The judge still decides the
+            # gray zone on the reordered set (augment mode). Fully local — no API.
+            if Config.CACHE_RERANKER_ENABLED and all_candidates:
+                from src.cache import reranker as _reranker
+                reranked, _top_score = await asyncio.to_thread(
+                    _reranker.rerank_entries, state.query, all_candidates
+                )
+                if _top_score is not None:
+                    cache._reranker_invocations += 1
+                    dropped_rr = len(all_candidates) - len(reranked)
+                    all_candidates = reranked
                     entry = all_candidates[0] if all_candidates else None
-
-                # ── CROSS-ENCODER RERANK (augment) ─────────────────────────────
-                # Re-order the surviving candidates by a local cross-encoder and drop
-                # low-relevance ones before the LLM judge. The judge still decides the
-                # gray zone on the reordered set (augment mode). Fully local — no API.
-                if Config.CACHE_RERANKER_ENABLED and all_candidates:
-                    from src.cache import reranker as _reranker
-                    reranked, _top_score = await asyncio.to_thread(
-                        _reranker.rerank_entries, state.query, all_candidates
-                    )
-                    if _top_score is not None:
-                        cache._reranker_invocations += 1
-                        dropped_rr = len(all_candidates) - len(reranked)
-                        all_candidates = reranked
-                        entry = all_candidates[0] if all_candidates else None
-                        _rr_top = _top_score
-                        _rr_dropped = dropped_rr
-                        _set_attr(span, "cache.rerank_top_score", float(_top_score))
-                        _set_attr(span, "cache.rerank_dropped", dropped_rr)
-                        state.trail.append(
-                            f"rerank:top={_top_score:.3f}:kept={len(all_candidates)}:dropped={dropped_rr}"
-                        )
-
-                # Build the shared candidates payload (used in BRANCH A and BRANCH C)
-                def _build_candidates_payload(entries):
-                    return [
-                        {
-                            "entry_id": e.entry_id,
-                            "root_query": e.query_original,
-                            "similarity": e.similarity,
-                            "age_hours": e.age_hours,
-                            "answer_preview": e.answer[:200],
-                            "answer": e.answer,
-                            "confidence": e.confidence,
-                        }
-                        for e in entries
-                    ]
-
-                elapsed = (time.perf_counter() - t0) * 1000
-
-                # ── BRANCH A: Intent-match suggestion (CACHE_INTENT_MATCH_ENABLED=true) ──
-                # Covers both "intent_match" (0.85–0.92) and "pending_judge" (0.75–0.85)
-                # when the feature flag is on. Up to 3 candidates shown; user picks one.
-                # LLM judge runs concurrently per gray-zone candidate for advisory signal.
-                if (
-                    entry is not None
-                    and Config.CACHE_INTENT_MATCH_ENABLED
-                    and entry.confidence in ("intent_match", "pending_judge")
-                ):
-                    candidates_payload = _build_candidates_payload(all_candidates)
-                    state.intent_match_pending = True
-                    state.intent_match_root_query = entry.query_original
-                    state.intent_match_entry_id = entry.entry_id
-                    state.intent_match_similarity = entry.similarity
-                    state.intent_match_answer = entry.answer
-                    state.intent_match_age_hours = entry.age_hours
-                    state.intent_match_confidence = entry.confidence
-                    state.intent_match_candidates = candidates_payload
+                    _rr_top = _top_score
+                    _rr_dropped = dropped_rr
                     state.trail.append(
-                        f"intent_suggestion:{entry.confidence}:sim={entry.similarity:.3f}"
-                        f":n={len(candidates_payload)}"
+                        f"rerank:top={_top_score:.3f}:kept={len(all_candidates)}:dropped={dropped_rr}"
                     )
 
-                    _set_attr(span, "cache.result", "INTENT_SUGGESTION")
-                    _set_attr(span, "cache.similarity", entry.similarity)
-                    _set_attr(span, "cache.confidence", entry.confidence)
-                    _set_attr(span, "cache.candidates_count", len(candidates_payload))
-                    _set_ok(span)
+            # Build the shared candidates payload (used in BRANCH A and BRANCH C)
+            def _build_candidates_payload(entries):
+                return [
+                    {
+                        "entry_id": e.entry_id,
+                        "root_query": e.query_original,
+                        "similarity": e.similarity,
+                        "age_hours": e.age_hours,
+                        "answer_preview": e.answer[:200],
+                        "answer": e.answer,
+                        "confidence": e.confidence,
+                    }
+                    for e in entries
+                ]
 
-                    _log.info(
-                        "Cache intent suggestion role=%s sim=%.3f confidence=%s candidates=%d",
-                        state.role, entry.similarity, entry.confidence, len(candidates_payload),
-                        extra={"user": state.user_name, "status": "INTENT_SUGGESTION"},
-                    )
-                    _steps_a = _build_cache_steps()
-                    if tracer:
-                        tracer.emit_stage(
-                            "cache_check", "intent_suggestion",
-                            result="INTENT_SUGGESTION",
-                            message=(
-                                f"{len(candidates_payload)} similar cached question(s) found "
-                                f"(best: {entry.similarity:.0%})"
-                            ),
-                            checks=_steps_a,
-                        )
-                    _emit_cache_reasoning(
-                        "INTENT_SUGGESTION",
-                        f"{len(candidates_payload)} semantically similar cached question(s) found "
-                        f"(best {entry.similarity:.0%}, confidence '{entry.confidence}') — surfacing them for the user to confirm rather than auto-serving.",
-                        entry.similarity, _steps_a,
-                    )
-                    record_cache("INTENT_SUGGESTION", state.role, elapsed, confidence=entry.confidence)
 
-                    # Emit intent_suggestion SSE with full candidate list
-                    _emit_stream_event({
-                        "event_type": "intent_suggestion",
-                        # Top-level fields kept for backward compat (reflect top-1)
-                        "root_query": entry.query_original,
-                        "entry_id": entry.entry_id,
-                        "similarity": entry.similarity,
-                        "age_hours": entry.age_hours,
-                        "answer_preview": entry.answer[:200],
-                        "confidence": entry.confidence,
-                        "judge_verdict": None,
-                        "judge_reason": None,
-                        # New: full ranked candidate list
-                        "candidates": [
-                            {k: v for k, v in c.items() if k != "answer"}  # omit full answer from SSE
-                            for c in candidates_payload
-                        ],
-                    })
+            # ── BRANCH A: Intent-match suggestion (CACHE_INTENT_MATCH_ENABLED=true) ──
+            # Covers both "intent_match" (0.85–0.92) and "pending_judge" (0.75–0.85)
+            # when the feature flag is on. Up to 3 candidates shown; user picks one.
+            # LLM judge runs concurrently per gray-zone candidate for advisory signal.
+            if (
+                entry is not None
+                and Config.CACHE_INTENT_MATCH_ENABLED
+                and entry.confidence in ("intent_match", "pending_judge")
+            ):
+                candidates_payload = _build_candidates_payload(all_candidates)
+                state.intent_match_pending = True
+                state.intent_match_root_query = entry.query_original
+                state.intent_match_entry_id = entry.entry_id
+                state.intent_match_similarity = entry.similarity
+                state.intent_match_answer = entry.answer
+                state.intent_match_age_hours = entry.age_hours
+                state.intent_match_confidence = entry.confidence
+                state.intent_match_candidates = candidates_payload
+                state.trail.append(
+                    f"intent_suggestion:{entry.confidence}:sim={entry.similarity:.3f}"
+                    f":n={len(candidates_payload)}"
+                )
 
-                    # For each gray-zone candidate: fire LLM judge concurrently as advisory signal.
-                    if Config.CACHE_JUDGE_ENABLED:
-                        for _cand in all_candidates:
-                            if _cand.confidence != "pending_judge":
-                                continue
-                            _cand_entry_id = _cand.entry_id
-                            _cand_query = _cand.query_original
-                            _cand_answer = _cand.answer
-                            _new_query = state.query
-                            _role_captured = state.role
 
-                            async def _run_judge_and_emit(
-                                eid=_cand_entry_id, cq=_cand_query, ca=_cand_answer,
-                                nq=_new_query, role=_role_captured,
-                            ) -> None:
-                                try:
-                                    cache._judge_invocations += 1
-                                    is_valid, reason = await llm_cache_judge(
-                                        new_query=nq,
-                                        cached_query=cq,
-                                        cached_answer=ca,
-                                        role=role,
-                                    )
-                                    verdict = "YES" if is_valid else "NO"
-                                    if is_valid:
-                                        cache._judge_hits += 1
-                                    else:
-                                        cache._judge_misses += 1
-                                    _emit_stream_event({
-                                        "event_type": "intent_suggestion_judge",
-                                        "entry_id": eid,
-                                        "judge_verdict": verdict,
-                                        "judge_reason": reason,
-                                    })
-                                except Exception as _exc:
-                                    _log.warning("intent suggestion judge error: %s", _exc)
-
-                            asyncio.create_task(_run_judge_and_emit())
-
-                    log_state_handoff("cache_check", "PAUSED", state, note="intent_match_pending -> yield")
-                    await ctx.yield_output(state)
-                    return
-
-                # ── BRANCH B: LLM judge decides (gray zone, intent flag off) ────────────
-                # entry.confidence == "pending_judge" when CACHE_INTENT_MATCH_ENABLED=false
-                judge_invoked = False
-                judge_decision = None
-                judge_reason = ""
-                if entry is not None and entry.confidence == "pending_judge":
-                    judge_invoked = True
-                    cache._judge_invocations += 1
-                    _log.info(
-                        "Cache gray zone — invoking LLM judge role=%s sim=%.3f",
-                        state.role, entry.similarity,
-                        extra={"user": state.user_name},
-                    )
-                    is_valid, judge_reason = await llm_cache_judge(
-                        new_query=state.query,
-                        cached_query=entry.query_original,
-                        cached_answer=entry.answer,
-                        role=state.role,
-                    )
-                    if is_valid:
-                        cache._judge_hits += 1
-                        entry.confidence = "judge_hit"
-                        judge_decision = "HIT"
-                    else:
-                        cache._judge_misses += 1
-                        entry = None   # treat as MISS
-                        judge_decision = "MISS"
-
-                elapsed = (time.perf_counter() - t0) * 1000
-
-                if entry is not None:
-                    # ── BRANCH C: CACHE HIT — pause and let user pick a candidate ──────────
-                    hit_label = "HIT" if not judge_invoked else "HIT (judge)"
-                    _set_attr(span, "cache.result", "HIT")
-                    _set_attr(span, "cache.similarity", entry.similarity)
-                    _set_attr(span, "cache.age_hours", entry.age_hours)
-                    _set_attr(span, "cache.confidence", entry.confidence)
-                    _set_attr(span, "cache.judge_invoked", judge_invoked)
-                    _set_ok(span)
-
-                    candidates_payload = _build_candidates_payload(all_candidates)
-                    state.intent_match_entry_id = entry.entry_id
-                    state.intent_match_answer = entry.answer
-                    state.intent_match_similarity = entry.similarity
-                    state.intent_match_candidates = candidates_payload
-
-                    _log.info(
-                        "Cache %s role=%s sim=%.3f age=%.1fh — showing %d candidate(s) for selection",
-                        hit_label, state.role, entry.similarity, entry.age_hours, len(candidates_payload),
-                        extra={"user": state.user_name, "status": "HIT_PENDING"},
-                    )
-                    _steps_c = _build_cache_steps(judge_invoked, judge_decision, judge_reason)
-                    if tracer:
-                        tracer.emit_stage(
-                            "cache_check", "intent_suggestion",
-                            result="HIT_SUGGESTION",
-                            message=(
-                                f"{len(candidates_payload)} cached answer(s) found "
-                                f"(best: {entry.similarity:.0%}) — awaiting selection"
-                            ),
-                            checks=_steps_c,
-                        )
-                    _emit_cache_reasoning(
-                        "HIT",
-                        f"Semantic cache hit at {entry.similarity:.0%} similarity"
-                        + (" (LLM judge confirmed the gray-zone match)" if judge_invoked else "")
-                        + " — offering the cached answer(s) for selection.",
-                        entry.similarity, _steps_c,
-                    )
-                    record_cache("HIT", state.role, elapsed, confidence=entry.confidence)
-                    _emit_stream_event({
-                        "stage": "cache_check", "status": "pending",
-                        "message": f"Cache hit ({entry.similarity:.0%} match) — select an answer or run fresh",
-                        "judge_invoked": judge_invoked,
-                        "judge_decision": judge_decision,
-                        "judge_reason": judge_reason,
-                    })
-
-                    state.intent_match_pending = True
-                    _emit_stream_event({
-                        "event_type": "intent_suggestion",
-                        "root_query": entry.query_original,
-                        "entry_id": entry.entry_id,
-                        "similarity": entry.similarity,
-                        "age_hours": entry.age_hours,
-                        "answer_preview": entry.answer[:200],
-                        "confidence": entry.confidence,
-                        "judge_verdict": None,
-                        "judge_reason": None,
-                        "candidates": [
-                            {k: v for k, v in c.items() if k != "answer"}
-                            for c in candidates_payload
-                        ],
-                    })
-
-                    log_state_handoff("cache_check", "PAUSED", state, note="cache_hit_pending_selection -> yield")
-                    await ctx.yield_output(state)
-                    return
-
-                # ── BRANCH D: CACHE MISS ─────────────────────────────────────────────────
-                _set_attr(span, "cache.result", "MISS")
-                _set_attr(span, "cache.judge_invoked", judge_invoked)
-                if judge_invoked:
-                    _set_attr(span, "cache.judge_decision", "MISS")
-                    if judge_reason:
-                        _set_attr(span, "cache.judge_reason", judge_reason)
-                _set_ok(span)
-                state.trail.append("cache_miss" + (":judge_rejected" if judge_invoked else ""))
                 _log.info(
-                    "Cache MISS role=%s judge_invoked=%s judge_reason=%r",
-                    state.role, judge_invoked, judge_reason,
-                    extra={"user": state.user_name, "status": "MISS"},
+                    "Cache intent suggestion role=%s sim=%.3f confidence=%s candidates=%d",
+                    state.role, entry.similarity, entry.confidence, len(candidates_payload),
+                    extra={"user": state.user_name, "status": "INTENT_SUGGESTION"},
                 )
-                miss_message = (
-                    f"LLM judge rejected — {judge_reason}" if (judge_invoked and judge_reason)
-                    else "LLM judge rejected gray-zone candidate — running full pipeline" if judge_invoked
-                    else "No cached answer found — running full pipeline"
-                )
-                _steps_d = _build_cache_steps(judge_invoked, "MISS" if judge_invoked else None, judge_reason)
+                _steps_a = _build_cache_steps()
                 if tracer:
                     tracer.emit_stage(
-                        "cache_check", "completed",
-                        result="MISS",
-                        message=miss_message,
-                        checks=_steps_d,
+                        "cache_check", "intent_suggestion",
+                        result="INTENT_SUGGESTION",
+                        message=(
+                            f"{len(candidates_payload)} similar cached question(s) found "
+                            f"(best: {entry.similarity:.0%})"
+                        ),
+                        checks=_steps_a,
                     )
-                _emit_cache_reasoning("MISS", miss_message, _top_similarity, _steps_d)
-                record_cache("MISS", state.role, elapsed)
+                _emit_cache_reasoning(
+                    "INTENT_SUGGESTION",
+                    f"{len(candidates_payload)} semantically similar cached question(s) found "
+                    f"(best {entry.similarity:.0%}, confidence '{entry.confidence}') — surfacing them for the user to confirm rather than auto-serving.",
+                    entry.similarity, _steps_a,
+                )
 
-            except Exception as exc:
-                elapsed = (time.perf_counter() - t0) * 1000
-                _set_error(span, str(exc)[:200])
-                _log.warning("Cache lookup error: %s", exc, extra={"status": "ERROR"})
-                record_cache("ERROR", state.role, elapsed)
+                # Emit intent_suggestion SSE with full candidate list
+                _emit_stream_event({
+                    "event_type": "intent_suggestion",
+                    # Top-level fields kept for backward compat (reflect top-1)
+                    "root_query": entry.query_original,
+                    "entry_id": entry.entry_id,
+                    "similarity": entry.similarity,
+                    "age_hours": entry.age_hours,
+                    "answer_preview": entry.answer[:200],
+                    "confidence": entry.confidence,
+                    "judge_verdict": None,
+                    "judge_reason": None,
+                    # New: full ranked candidate list
+                    "candidates": [
+                        {k: v for k, v in c.items() if k != "answer"}  # omit full answer from SSE
+                        for c in candidates_payload
+                    ],
+                })
+
+                # For each gray-zone candidate: fire LLM judge concurrently as advisory signal.
+                if Config.CACHE_JUDGE_ENABLED:
+                    for _cand in all_candidates:
+                        if _cand.confidence != "pending_judge":
+                            continue
+                        _cand_entry_id = _cand.entry_id
+                        _cand_query = _cand.query_original
+                        _cand_answer = _cand.answer
+                        _new_query = state.query
+                        _role_captured = state.role
+
+                        async def _run_judge_and_emit(
+                            eid=_cand_entry_id, cq=_cand_query, ca=_cand_answer,
+                            nq=_new_query, role=_role_captured,
+                        ) -> None:
+                            try:
+                                cache._judge_invocations += 1
+                                is_valid, reason = await llm_cache_judge(
+                                    new_query=nq,
+                                    cached_query=cq,
+                                    cached_answer=ca,
+                                    role=role,
+                                )
+                                verdict = "YES" if is_valid else "NO"
+                                if is_valid:
+                                    cache._judge_hits += 1
+                                else:
+                                    cache._judge_misses += 1
+                                _emit_stream_event({
+                                    "event_type": "intent_suggestion_judge",
+                                    "entry_id": eid,
+                                    "judge_verdict": verdict,
+                                    "judge_reason": reason,
+                                })
+                            except Exception as _exc:
+                                _log.warning("intent suggestion judge error: %s", _exc)
+
+                        asyncio.create_task(_run_judge_and_emit())
+
+                log_state_handoff("cache_check", "PAUSED", state, note="intent_match_pending -> yield")
+                await ctx.yield_output(state)
+                return
+
+            # ── BRANCH B: LLM judge decides (gray zone, intent flag off) ────────────
+            # entry.confidence == "pending_judge" when CACHE_INTENT_MATCH_ENABLED=false
+            judge_invoked = False
+            judge_decision = None
+            judge_reason = ""
+            if entry is not None and entry.confidence == "pending_judge":
+                judge_invoked = True
+                cache._judge_invocations += 1
+                _log.info(
+                    "Cache gray zone — invoking LLM judge role=%s sim=%.3f",
+                    state.role, entry.similarity,
+                    extra={"user": state.user_name},
+                )
+                is_valid, judge_reason = await llm_cache_judge(
+                    new_query=state.query,
+                    cached_query=entry.query_original,
+                    cached_answer=entry.answer,
+                    role=state.role,
+                )
+                if is_valid:
+                    cache._judge_hits += 1
+                    entry.confidence = "judge_hit"
+                    judge_decision = "HIT"
+                else:
+                    cache._judge_misses += 1
+                    entry = None   # treat as MISS
+                    judge_decision = "MISS"
+
+
+            if entry is not None:
+                # ── BRANCH C: CACHE HIT — pause and let user pick a candidate ──────────
+                hit_label = "HIT" if not judge_invoked else "HIT (judge)"
+
+                candidates_payload = _build_candidates_payload(all_candidates)
+                state.intent_match_entry_id = entry.entry_id
+                state.intent_match_answer = entry.answer
+                state.intent_match_similarity = entry.similarity
+                state.intent_match_candidates = candidates_payload
+
+                _log.info(
+                    "Cache %s role=%s sim=%.3f age=%.1fh — showing %d candidate(s) for selection",
+                    hit_label, state.role, entry.similarity, entry.age_hours, len(candidates_payload),
+                    extra={"user": state.user_name, "status": "HIT_PENDING"},
+                )
+                _steps_c = _build_cache_steps(judge_invoked, judge_decision, judge_reason)
+                if tracer:
+                    tracer.emit_stage(
+                        "cache_check", "intent_suggestion",
+                        result="HIT_SUGGESTION",
+                        message=(
+                            f"{len(candidates_payload)} cached answer(s) found "
+                            f"(best: {entry.similarity:.0%}) — awaiting selection"
+                        ),
+                        checks=_steps_c,
+                    )
+                _emit_cache_reasoning(
+                    "HIT",
+                    f"Semantic cache hit at {entry.similarity:.0%} similarity"
+                    + (" (LLM judge confirmed the gray-zone match)" if judge_invoked else "")
+                    + " — offering the cached answer(s) for selection.",
+                    entry.similarity, _steps_c,
+                )
+                _emit_stream_event({
+                    "stage": "cache_check", "status": "pending",
+                    "message": f"Cache hit ({entry.similarity:.0%} match) — select an answer or run fresh",
+                    "judge_invoked": judge_invoked,
+                    "judge_decision": judge_decision,
+                    "judge_reason": judge_reason,
+                })
+
+                state.intent_match_pending = True
+                _emit_stream_event({
+                    "event_type": "intent_suggestion",
+                    "root_query": entry.query_original,
+                    "entry_id": entry.entry_id,
+                    "similarity": entry.similarity,
+                    "age_hours": entry.age_hours,
+                    "answer_preview": entry.answer[:200],
+                    "confidence": entry.confidence,
+                    "judge_verdict": None,
+                    "judge_reason": None,
+                    "candidates": [
+                        {k: v for k, v in c.items() if k != "answer"}
+                        for c in candidates_payload
+                    ],
+                })
+
+                log_state_handoff("cache_check", "PAUSED", state, note="cache_hit_pending_selection -> yield")
+                await ctx.yield_output(state)
+                return
+
+            # ── BRANCH D: CACHE MISS ─────────────────────────────────────────────────
+            state.trail.append("cache_miss" + (":judge_rejected" if judge_invoked else ""))
+            _log.info(
+                "Cache MISS role=%s judge_invoked=%s judge_reason=%r",
+                state.role, judge_invoked, judge_reason,
+                extra={"user": state.user_name, "status": "MISS"},
+            )
+            miss_message = (
+                f"LLM judge rejected — {judge_reason}" if (judge_invoked and judge_reason)
+                else "LLM judge rejected gray-zone candidate — running full pipeline" if judge_invoked
+                else "No cached answer found — running full pipeline"
+            )
+            _steps_d = _build_cache_steps(judge_invoked, "MISS" if judge_invoked else None, judge_reason)
+            if tracer:
+                tracer.emit_stage(
+                    "cache_check", "completed",
+                    result="MISS",
+                    message=miss_message,
+                    checks=_steps_d,
+                )
+            _emit_cache_reasoning("MISS", miss_message, _top_similarity, _steps_d)
+
+        except Exception as exc:
+            _log.warning("Cache lookup error: %s", exc, extra={"status": "ERROR"})
                 # Degrade gracefully — proceed to compliance on any error
 
         _emit_stream_event({"stage": "cache_check", "status": "completed", "message": "Cache miss — proceeding"})
@@ -910,145 +767,105 @@ class ComplianceExecutor(Executor):
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
         tracer = get_active_tracer()
 
-        otel = _mesh_tracer()
-        t0 = time.perf_counter()
-        with _span_ctx(otel, "fab.compliance.check", kind_internal=False) as span:
-            _set_attr(span, "compliance.role", state.role)
-            _set_attr(span, "compliance.user", state.user_name)
-            _set_attr(span, "compliance.query_length", len(state.query))
-            _bypass_reason = (
-                "service_disabled" if not self._enabled else
-                "elevated_role" if state.role in _COMPLIANCE_BYPASS_ROLES else
-                None
-            )
-            bypass = _bypass_reason is not None
-            _set_attr(span, "compliance.bypass", bypass)
-            try:
-                if bypass:
-                    _emit_stream_event({"stage": "compliance", "status": "started", "message": "Compliance check (bypassed)..."})
-                    elapsed = (time.perf_counter() - t0) * 1000
-                    _set_attr(span, "compliance.result", "BYPASSED")
-                    _add_event(span, "compliance.bypassed", {
-                        "role":   state.role,
-                        "reason": _bypass_reason,
-                    })
-                    _set_ok(span)
+        _bypass_reason = (
+            "service_disabled" if not self._enabled else
+            "elevated_role" if state.role in _COMPLIANCE_BYPASS_ROLES else
+            None
+        )
+        bypass = _bypass_reason is not None
+        if bypass:
+            _emit_stream_event({"stage": "compliance", "status": "started", "message": "Compliance check (bypassed)..."})
 
-                    state.compliance_verdict = f"COMPLIANCE_PASSED: {_bypass_reason} bypass"
-                    state.trail.append(f"compliance_pass:{_bypass_reason}:{state.role}")
-                    _log.info("Compliance BYPASS reason=%s role=%s", _bypass_reason, state.role,
-                              extra={"user": state.user_name, "status": "PASS"})
-                    if tracer:
-                        _check_msg = (
-                            "Compliance node is disabled (ENABLE_COMPLIANCE=false); stamping pass verdict."
-                            if _bypass_reason == "service_disabled"
-                            else f"Elevated role '{state.role}' bypasses semantic compliance check."
-                        )
-                        tracer.emit_stage(
-                            "compliance", "completed",
-                            result="COMPLIANT",
-                            checks=[_check_msg],
-                        )
-                    record_compliance("BYPASSED", state.role, elapsed)
-                    _emit_stream_event({"stage": "compliance", "status": "completed", "message": "Compliance bypassed"})
-                    log_state_handoff("compliance", "domain", state, note=f"bypass:{_bypass_reason}")
-                    await ctx.send_message(state)
-                    return
-
-                if tracer:
-                    tracer.record_agent_invoked()
-                    tracer.emit_stage(
-                        "compliance", "started",
-                        message="Running semantic compliance check...",
-                    )
-                _emit_stream_event({"stage": "compliance", "status": "started", "message": "Running semantic compliance check..."})
-
-                _add_event(span, "compliance.a2a_call.started", {"target": "compliance"})
-                _allowed_str = ", ".join(state.allowed_tasks) if state.allowed_tasks else "none"
-                _denied_str = ", ".join(state.denied_tasks) if state.denied_tasks else "none"
-                _compliance_prompt = (
-                    f"[User: {state.user_name} | Role: {state.role} | Scope: {state.permission_scope}]\n"
-                    f"Allowed task categories: {_allowed_str}\n"
-                    f"Denied task categories: {_denied_str}\n\n"
-                    f"Review this request for safety AND role authorization: '{state.query}'"
+            state.compliance_verdict = f"COMPLIANCE_PASSED: {_bypass_reason} bypass"
+            state.trail.append(f"compliance_pass:{_bypass_reason}:{state.role}")
+            _log.info("Compliance BYPASS reason=%s role=%s", _bypass_reason, state.role,
+                      extra={"user": state.user_name, "status": "PASS"})
+            if tracer:
+                _check_msg = (
+                    "Compliance node is disabled (ENABLE_COMPLIANCE=false); stamping pass verdict."
+                    if _bypass_reason == "service_disabled"
+                    else f"Elevated role '{state.role}' bypasses semantic compliance check."
                 )
-                verdict = await self._ask("compliance", _compliance_prompt)
-                # Extract and capture LLM reasoning before consuming the verdict text.
-                _reasoning_entries, verdict = extract_reasoning(verdict, "compliance")
-                state.compliance_verdict = verdict
-                if tracer and _reasoning_entries:
-                    tracer.add_llm_reasoning([e.to_dict() for e in _reasoning_entries])
-                if _reasoning_entries:
-                    _emit_stream_event({"event_type": "reasoning", "entries": [e.to_dict() for e in _reasoning_entries]})
-                elapsed = (time.perf_counter() - t0) * 1000
+                tracer.emit_stage(
+                    "compliance", "completed",
+                    result="COMPLIANT",
+                    checks=[_check_msg],
+                )
+            _emit_stream_event({"stage": "compliance", "status": "completed", "message": "Compliance bypassed"})
+            log_state_handoff("compliance", "domain", state, note=f"bypass:{_bypass_reason}")
+            await ctx.send_message(state)
+            return
 
-                if "compliance_failed" in verdict.lower():
-                    _set_attr(span, "compliance.result", "FAILED")
-                    _set_attr(span, "compliance.verdict", verdict[:120])
-                    _add_event(span, "compliance.a2a_call.completed", {
-                        "target":         "compliance",
-                        "result":         "FAILED",
-                        "verdict_preview": verdict[:80],
-                    })
-                    _add_event(span, "compliance.failed", {"verdict": verdict[:120]})
-                    _set_error(span, "Compliance check failed")
+        if tracer:
+            tracer.record_agent_invoked()
+            tracer.emit_stage(
+                "compliance", "started",
+                message="Running semantic compliance check...",
+            )
+        _emit_stream_event({"stage": "compliance", "status": "started", "message": "Running semantic compliance check..."})
 
-                    state.blocked = True
-                    state.block_stage = "compliance"
-                    _gt.mark_policy_block()
-                    state.answer = "Request blocked by the Compliance agent (semantic safety review)."
-                    state.trail.append("compliance_failed")
-                    from src.observability.baggage import get_request_id as _grid
-                    _log.warning("Compliance FAIL req=%s verdict=%s",
-                                 _grid() or "-", verdict[:160],
-                                 extra={"user": state.user_name, "status": "FAIL",
-                                        "request_id": _grid() or "-",
-                                        "verdict": "COMPLIANCE_FAILED"})
-                    if tracer:
-                        tracer.record_blocked("compliance")
-                        tracer.emit_stage(
-                            "compliance", "blocked",
-                            message="Request failed semantic safety review.",
-                            result="COMPLIANCE FAILED",
-                            rationale=[verdict[:120]],
-                        )
-                    record_compliance("FAILED", state.role, elapsed)
-                    _emit_stream_event({"stage": "compliance", "status": "blocked", "message": "Compliance check failed"})
-                    log_state_handoff(
-                        "compliance", "END", state, note="compliance failed -> early yield",
-                        a2a={"target": "compliance", "prompt": _compliance_prompt, "response": verdict},
-                    )
-                    await ctx.yield_output(state)
-                    return
+        _allowed_str = ", ".join(state.allowed_tasks) if state.allowed_tasks else "none"
+        _denied_str = ", ".join(state.denied_tasks) if state.denied_tasks else "none"
+        _compliance_prompt = (
+            f"[User: {state.user_name} | Role: {state.role} | Scope: {state.permission_scope}]\n"
+            f"Allowed task categories: {_allowed_str}\n"
+            f"Denied task categories: {_denied_str}\n\n"
+            f"Review this request for safety AND role authorization: '{state.query}'"
+        )
+        verdict = await self._ask("compliance", _compliance_prompt)
+        # Extract and capture LLM reasoning before consuming the verdict text.
+        _reasoning_entries, verdict = extract_reasoning(verdict, "compliance")
+        state.compliance_verdict = verdict
+        if tracer and _reasoning_entries:
+            tracer.add_llm_reasoning([e.to_dict() for e in _reasoning_entries])
+        if _reasoning_entries:
+            _emit_stream_event({"event_type": "reasoning", "entries": [e.to_dict() for e in _reasoning_entries]})
 
-                _set_attr(span, "compliance.result", "PASSED")
-                _set_attr(span, "compliance.verdict", verdict[:120])
-                _add_event(span, "compliance.a2a_call.completed", {
-                    "target":         "compliance",
-                    "result":         "PASSED",
-                    "verdict_preview": verdict[:80],
-                })
-                _set_ok(span)
+        if "compliance_failed" in verdict.lower():
 
-                state.trail.append("compliance_pass")
-                from src.observability.baggage import get_request_id as _grid
-                _log.info("Compliance PASS req=%s", _grid() or "-",
-                          extra={"user": state.user_name, "status": "PASS",
-                                 "request_id": _grid() or "-",
-                                 "verdict": "COMPLIANCE_PASSED"})
-                if tracer:
-                    tracer.emit_stage(
-                        "compliance", "completed",
-                        result="COMPLIANT",
-                        checks=[
-                            "Regulatory validation passed",
-                            "Organization policy validation passed",
-                        ],
-                    )
-                record_compliance("PASSED", state.role, elapsed)
-            except Exception as exc:
-                _set_error(span, str(exc)[:200])
-                raise
+            state.blocked = True
+            state.block_stage = "compliance"
+            _gt.mark_policy_block()
+            state.answer = "Request blocked by the Compliance agent (semantic safety review)."
+            state.trail.append("compliance_failed")
+            from src.observability.baggage import get_request_id as _grid
+            _log.warning("Compliance FAIL req=%s verdict=%s",
+                         _grid() or "-", verdict[:160],
+                         extra={"user": state.user_name, "status": "FAIL",
+                                "request_id": _grid() or "-",
+                                "verdict": "COMPLIANCE_FAILED"})
+            if tracer:
+                tracer.record_blocked("compliance")
+                tracer.emit_stage(
+                    "compliance", "blocked",
+                    message="Request failed semantic safety review.",
+                    result="COMPLIANCE FAILED",
+                    rationale=[verdict[:120]],
+                )
+            _emit_stream_event({"stage": "compliance", "status": "blocked", "message": "Compliance check failed"})
+            log_state_handoff(
+                "compliance", "END", state, note="compliance failed -> early yield",
+                a2a={"target": "compliance", "prompt": _compliance_prompt, "response": verdict},
+            )
+            await ctx.yield_output(state)
+            return
+
+
+        state.trail.append("compliance_pass")
+        from src.observability.baggage import get_request_id as _grid
+        _log.info("Compliance PASS req=%s", _grid() or "-",
+                  extra={"user": state.user_name, "status": "PASS",
+                         "request_id": _grid() or "-",
+                         "verdict": "COMPLIANCE_PASSED"})
+        if tracer:
+            tracer.emit_stage(
+                "compliance", "completed",
+                result="COMPLIANT",
+                checks=[
+                    "Regulatory validation passed",
+                    "Organization policy validation passed",
+                ],
+            )
 
         # ── HITL gate: credit_officer requires human approval after compliance passes ──
         if state.role == "credit_officer":
@@ -1163,414 +980,368 @@ class DomainExecutor(Executor):
             "message": "Routing directly to Data Agent..." if self._bypass_price_assist else "Querying domain agents...",
         })
 
-        otel = _mesh_tracer()
-        with _span_ctx(otel, "fab.domain.dispatch", kind_internal=False) as span:
-            _set_attr(span, "domain.target_node", _target_node)
-            _set_attr(span, "domain.bypass_mode", "direct" if self._bypass_price_assist else "full_orchestration")
-            _set_attr(span, "domain.user", state.user_name)
-            _set_attr(span, "domain.query_length", len(state.query))
 
-            # Prepend role context so PriceAssistAgent can enforce scope rules
-            # (e.g. a 'customer' role may only access their own account data).
-            # History travels inline in the prompt; bare query is preserved on span.
-            role_context = f"[User: {state.user_name} | Role: {state.role}]\n"
-            # Prefer rolling summary (new path); fall back to raw history block (legacy).
-            if state.conversation_summary:
-                context_block = ConversationStore.format_summary_block(state.conversation_summary)
-            else:
-                context_block = ConversationStore.format_history_block(state.conversation_history)
-            base_prompt = (
-                f"{role_context}{context_block}{state.query}"
-                if context_block
-                else f"{role_context}{state.query}"
-            )
-            _set_attr(span, "domain.history_turns", len(state.conversation_history) // 2)
-            if self._bypass_price_assist:
-                # --- Direct DataAgent path (PriceAssist disabled) ---
-                # Inject routing decision reasoning entry for the frontend AI Reasoning tab.
-                from datetime import datetime, timezone as _tz
-                _bypass_entry = {
+        # Prepend role context so PriceAssistAgent can enforce scope rules
+        # (e.g. a 'customer' role may only access their own account data).
+        # History travels inline in the prompt; bare query is preserved on span.
+        role_context = f"[User: {state.user_name} | Role: {state.role}]\n"
+        # Prefer rolling summary (new path); fall back to raw history block (legacy).
+        if state.conversation_summary:
+            context_block = ConversationStore.format_summary_block(state.conversation_summary)
+        else:
+            context_block = ConversationStore.format_history_block(state.conversation_history)
+        base_prompt = (
+            f"{role_context}{context_block}{state.query}"
+            if context_block
+            else f"{role_context}{state.query}"
+        )
+        if self._bypass_price_assist:
+            # --- Direct DataAgent path (PriceAssist disabled) ---
+            # Inject routing decision reasoning entry for the frontend AI Reasoning tab.
+            from datetime import datetime, timezone as _tz
+            _bypass_entry = {
+                "agent": "orchestrator",
+                "phase": "routing_decision",
+                "timestamp": datetime.now(_tz.utc).isoformat(),
+                "data": {
                     "agent": "orchestrator",
                     "phase": "routing_decision",
-                    "timestamp": datetime.now(_tz.utc).isoformat(),
-                    "data": {
-                        "agent": "orchestrator",
-                        "phase": "routing_decision",
-                        "decision": "direct_data_agent",
-                        "reason": (
-                            "ENABLE_PRICE_ASSIST=false — PriceAssist orchestration is disabled; "
-                            "routing query directly to Data Agent (structured data path)."
-                        ),
-                        "skipped_nodes": ["price_assist"],
-                        "active_node": "data_agent",
-                    },
-                }
-                if tracer:
-                    tracer.add_llm_reasoning([_bypass_entry])
-                _emit_stream_event({"event_type": "reasoning", "entries": [_bypass_entry]})
-                try:
-                    _add_event(span, "domain.a2a_call.started", {"target": "data_agent", "mode": "direct"})
-                    answer = await self._ask("data_agent", base_prompt)
-                except Exception as exc:
-                    answer = f"The banking data service is currently unavailable ({exc})."
-                    failed = True
-                    state.trail.append("domain_error:data_agent_direct")
-                    _log.warning("Domain direct hop failed node=data_agent: %s", exc,
-                                 extra={"status": "ERROR"})
-                    _add_event(span, "domain.error", {"error": str(exc)[:200]})
-                    _set_error(span, str(exc)[:200])
-                else:
-                    state.trail.append("domain_answer:data_agent_direct")
-                    _log.info("Domain direct answer (%d chars)", len(answer or ""),
-                              extra={"status": "SUCCESS"})
+                    "decision": "direct_data_agent",
+                    "reason": (
+                        "ENABLE_PRICE_ASSIST=false — PriceAssist orchestration is disabled; "
+                        "routing query directly to Data Agent (structured data path)."
+                    ),
+                    "skipped_nodes": ["price_assist"],
+                    "active_node": "data_agent",
+                },
+            }
+            if tracer:
+                tracer.add_llm_reasoning([_bypass_entry])
+            _emit_stream_event({"event_type": "reasoning", "entries": [_bypass_entry]})
+            try:
+                answer = await self._ask("data_agent", base_prompt)
+            except Exception as exc:
+                answer = f"The banking data service is currently unavailable ({exc})."
+                failed = True
+                state.trail.append("domain_error:data_agent_direct")
+                _log.warning("Domain direct hop failed node=data_agent: %s", exc,
+                             extra={"status": "ERROR"})
             else:
-                # --- Full PriceAssist orchestration path ---
-                try:
-                    _add_event(span, "domain.a2a_call.started", {"target": "price_assist"})
-                    answer = await self._ask("price_assist", base_prompt)
-                    # UC-3: Tool approval interceptor signal detection.
-                    # write tools return this prefix when they need human approval
-                    # before execution. Signal the HITL gate and pause the pipeline.
-                    _AWAITING_PREFIX = "AWAITING_TOOL_APPROVAL:"
-                    if (answer or "").strip().startswith(_AWAITING_PREFIX):
-                        try:
-                            import json as _json
-                            from src.hitl.approval_store import approval_store as _astore
-                            _raw = answer.strip()[len(_AWAITING_PREFIX):]
-                            _payload = _json.loads(_raw)
-                            _aid = _payload["approval_id"]
-                            _astore.backfill(_aid, state.user_name, state.role, state.query)
-                            state.hitl_pending = True
-                            state.hitl_approval_id = _aid
-                            state.hitl_type = "tool_approval"
-                            state.hitl_details = {
-                                "hitl_type": "tool_approval",
-                                "tool_name": _payload["tool_name"],
-                                "tool_args": _payload["tool_args"],
-                                "user_name": state.user_name,
-                                "role": state.role,
-                            }
-                            state.trail.append(f"hitl_tool_pending:{_aid}:{_payload['tool_name']}")
-                            _emit_stream_event({"stage": "domain", "status": "hitl_pending",
-                                                "message": f"Tool approval required: {_payload['tool_name']}"})
-                            _astore.save_checkpoint(_aid, state)
-                            await ctx.yield_output(state)
-                            return
-                        except Exception as _exc:
-                            _log.warning("Tool approval signal parse failed: %s", _exc,
-                                         extra={"status": "WARN"})
-                    # Run retry-detection regexes on a reasoning-STRIPPED copy of the
-                    # answer. The <llm_reasoning> synthesis block legitimately contains
-                    # the tool name (e.g. "sources_used":["query_knowledge_base"]),
-                    # which otherwise false-matches _TOOL_CALL_RE and triggers a
-                    # spurious full retry — re-running the entire PriceAssist→RAG→search
-                    # chain a second time. Checking the visible answer only avoids that.
-                    answer_visible = strip_reasoning_markers(answer or "")
-                    if self._TOOL_CALL_RE.search(answer_visible):
-                        retry_reason = "tool_call_echo"
-                        _gt.record_retry()
-                        _log.warning(
-                            "price_assist returned bare tool-call text; retrying once.",
-                            extra={"status": "RETRY"},
-                        )
-                        _add_event(span, "domain.retry", {"reason": retry_reason, "attempt": 2})
-                        await asyncio.sleep(5)
-                        answer = await self._ask("price_assist", base_prompt)
-                    elif self._META_RESPONSE_RE.search(answer_visible):
-                        retry_reason = "meta_response"
-                        _gt.record_retry()
-                        _log.warning(
-                            "price_assist returned meta-response without data; retrying once.",
-                            extra={"status": "RETRY"},
-                        )
-                        _add_event(span, "domain.retry", {"reason": retry_reason, "attempt": 2})
-                        retry_prompt = (
-                            f"{base_prompt}\n\n"
-                            "IMPORTANT: Your previous response did not include the actual data. "
-                            "You MUST copy the COMPLETE raw output returned by the tool into your "
-                            "response — every field, every row, every figure. Do NOT say 'I retrieved' "
-                            "or 'I called'; just show the data."
-                        )
-                        await asyncio.sleep(5)
-                        answer = await self._ask("price_assist", retry_prompt)
-                    elif self._HALLUCINATION_RE.search(answer_visible):
-                        retry_reason = "hallucination"
-                        _gt.record_retry()
-                        _log.warning(
-                            "price_assist returned hallucinated placeholder text; retrying once.",
-                            extra={"status": "RETRY"},
-                        )
-                        _add_event(span, "domain.retry", {"reason": retry_reason, "attempt": 2})
-                        retry_prompt = (
-                            f"{base_prompt}\n\n"
-                            "CRITICAL: Your previous response contained placeholder text like "
-                            "[Name] or [Value] that is NOT real data. You MUST call the tool, "
-                            "then copy the EXACT values it returns — customer names, figures, "
-                            "percentages — verbatim. NEVER invent or template any field."
-                        )
-                        await asyncio.sleep(5)
-                        answer = await self._ask("price_assist", retry_prompt)
-                except Exception as exc:
-                    answer = f"The banking assistant is currently unavailable ({exc})."
-                    failed = True
-                    state.trail.append("domain_error:price_assist")
-                    _log.warning("Domain hop failed node=price_assist: %s", exc,
-                                 extra={"status": "ERROR"})
-                    _add_event(span, "domain.error", {"error": str(exc)[:200]})
-                    _set_error(span, str(exc)[:200])
-                else:
-                    state.trail.append("domain_answer:price_assist")
-                    _log.info("Domain answer (%d chars)", len(answer or ""),
-                              extra={"status": "SUCCESS"})
-
-            total_ms = int((time.perf_counter() - t0) * 1000)
-            # If the retry prompt itself was echoed back by a rate-limited LLM, the
-            # raw retry instruction becomes the user-facing answer. Replace it with
-            # the standard unavailability message so internal directives never leak.
-            _answer_stripped = (answer or "").strip()
-            if _answer_stripped.startswith("CRITICAL:") or _answer_stripped.startswith("IMPORTANT:"):
-                answer = (
-                    "I was unable to retrieve the required data. "
-                    "Please try again or contact your relationship manager."
-                )
-            answer = ConversationStore.strip_history_echo(answer or "", state.query)
-            # Extract LLM reasoning markers from the answer and strip them so the
-            # user-facing answer is clean. Captured entries go to the trace layer.
-            _reasoning_entries: list = []
-            if not failed:
-                # Extract <llm_reasoning> blocks from the response.
-                # In bypass mode the response comes directly from DataAgent, which
-                # self-labels its blocks with "agent":"data". extract_reasoning() reads
-                # data.get("agent", ...) so attribution is always correct.
-                _reasoning_entries, answer = extract_reasoning(answer, _target_node)
-                if tracer and _reasoning_entries:
-                    tracer.add_llm_reasoning([e.to_dict() for e in _reasoning_entries])
-                if _reasoning_entries:
-                    _emit_stream_event({"event_type": "reasoning", "entries": [e.to_dict() for e in _reasoning_entries]})
-                if not self._bypass_price_assist:
-                    # Collect reasoning entries emitted by peer agents (DataAgent, RAGAgent)
-                    # that were extracted and cached in collaboration_tools._peer_reasoning.
-                    # In bypass mode DataAgent is called directly, so this ContextVar is not
-                    # populated — reasoning comes from the direct response instead.
-                    try:
-                        from src.tools.collaboration_tools import _peer_reasoning as _pr_ctx
-                        _peer_entries = _pr_ctx.get() or []
-                        if tracer and _peer_entries:
-                            tracer.add_llm_reasoning(_peer_entries)
-                        if _peer_entries:
-                            _emit_stream_event({"event_type": "reasoning", "entries": _peer_entries})
-                    except Exception:
-                        pass
-                    # Also read from the request-scoped temp file written by collaboration_tools
-                    # in the PriceAssist A2A server process (ContextVars are process-local so
-                    # the ContextVar above is always empty in the API server process).
+                state.trail.append("domain_answer:data_agent_direct")
+                _log.info("Domain direct answer (%d chars)", len(answer or ""),
+                          extra={"status": "SUCCESS"})
+        else:
+            # --- Full PriceAssist orchestration path ---
+            try:
+                answer = await self._ask("price_assist", base_prompt)
+                # UC-3: Tool approval interceptor signal detection.
+                # write tools return this prefix when they need human approval
+                # before execution. Signal the HITL gate and pause the pipeline.
+                _AWAITING_PREFIX = "AWAITING_TOOL_APPROVAL:"
+                if (answer or "").strip().startswith(_AWAITING_PREFIX):
                     try:
                         import json as _json
-                        import pathlib as _pl
-                        from src.observability.baggage import get_request_id as _grid
-                        _rid = (_grid() or "").upper().strip()
-                        if _rid and _rid != "-":
-                            _pf = _pl.Path("data/logs") / f".peer_{_rid}.json"
-                            if _pf.exists():
-                                _file_entries = _json.loads(_pf.read_text())
-                                if tracer and _file_entries:
-                                    tracer.add_llm_reasoning(_file_entries)
-                                if _file_entries:
-                                    _emit_stream_event({"event_type": "reasoning", "entries": _file_entries})
-                                _pf.unlink(missing_ok=True)
-                    except Exception:
-                        pass
-            # Belt-and-suspenders: strip any blocks not caught by extract_reasoning
-            # (e.g. synthesis placed after the answer text, or blocks on retry path).
-            clean = strip_reasoning_markers(answer)
-            # Fallback: if the LLM packed its entire answer inside <llm_reasoning> blocks
-            # (leaving only an echoed question or nothing after stripping), reconstruct
-            # a readable response from the synthesis entry's key_findings + answer_rationale.
-            if not failed and (not clean or clean.strip() == state.query.strip()):
-                _syn = next((e for e in _reasoning_entries if e.phase == "synthesis"), None)
-                if _syn and isinstance(_syn.data, dict):
-                    _parts: list[str] = list(_syn.data.get("key_findings") or [])
-                    if _syn.data.get("answer_rationale"):
-                        _parts.append(_syn.data["answer_rationale"])
-                    if _parts:
-                        clean = "\n\n".join(_parts)
-                        _log.warning(
-                            "DomainExecutor: answer was empty after reasoning strip; "
-                            "reconstructed from synthesis block (%d chars)",
-                            len(clean),
-                            extra={"status": "WARN"},
-                        )
-            # Fallback 2: if the answer is still empty or just echoes the user's
-            # question after all processing, issue one final plain-answer retry that
-            # explicitly asks PriceAssist to respond without reasoning blocks.
-            if not failed and (not clean or clean.strip() == state.query.strip()):
-                _log.warning(
-                    "DomainExecutor: answer still empty/echoed after all processing; "
-                    "issuing plain-answer retry",
-                    extra={"status": "RETRY"},
-                )
-                try:
-                    _plain = await self._ask(
-                        _target_node,
-                        state.query
-                        + "\n\n[SYSTEM NOTE: Please provide a direct, complete answer "
-                        "to the question above in plain markdown. "
-                        "Do NOT repeat the question. Do NOT use <llm_reasoning> blocks.]",
-                    )
-                    _plain_entries, _plain_clean = extract_reasoning(
-                        _plain or "", _target_node
-                    )
-                    if tracer and _plain_entries:
-                        tracer.add_llm_reasoning(
-                            [e.to_dict() for e in _plain_entries]
-                        )
-                    if _plain_entries:
-                        _emit_stream_event({"event_type": "reasoning", "entries": [e.to_dict() for e in _plain_entries]})
-                    _plain_clean = strip_reasoning_markers(_plain_clean)
-                    if (_plain_clean
-                            and _plain_clean.strip() != state.query.strip()
-                            and "SYSTEM NOTE" not in _plain_clean):
-                        clean = _plain_clean
-                        state.trail.append("domain_answer:retry_plain")
-                except Exception as _exc:
+                        from src.hitl.approval_store import approval_store as _astore
+                        _raw = answer.strip()[len(_AWAITING_PREFIX):]
+                        _payload = _json.loads(_raw)
+                        _aid = _payload["approval_id"]
+                        _astore.backfill(_aid, state.user_name, state.role, state.query)
+                        state.hitl_pending = True
+                        state.hitl_approval_id = _aid
+                        state.hitl_type = "tool_approval"
+                        state.hitl_details = {
+                            "hitl_type": "tool_approval",
+                            "tool_name": _payload["tool_name"],
+                            "tool_args": _payload["tool_args"],
+                            "user_name": state.user_name,
+                            "role": state.role,
+                        }
+                        state.trail.append(f"hitl_tool_pending:{_aid}:{_payload['tool_name']}")
+                        _emit_stream_event({"stage": "domain", "status": "hitl_pending",
+                                            "message": f"Tool approval required: {_payload['tool_name']}"})
+                        _astore.save_checkpoint(_aid, state)
+                        await ctx.yield_output(state)
+                        return
+                    except Exception as _exc:
+                        _log.warning("Tool approval signal parse failed: %s", _exc,
+                                     extra={"status": "WARN"})
+                # Run retry-detection regexes on a reasoning-STRIPPED copy of the
+                # answer. The <llm_reasoning> synthesis block legitimately contains
+                # the tool name (e.g. "sources_used":["query_knowledge_base"]),
+                # which otherwise false-matches _TOOL_CALL_RE and triggers a
+                # spurious full retry — re-running the entire PriceAssist→RAG→search
+                # chain a second time. Checking the visible answer only avoids that.
+                answer_visible = strip_reasoning_markers(answer or "")
+                if self._TOOL_CALL_RE.search(answer_visible):
+                    retry_reason = "tool_call_echo"
+                    _gt.record_retry()
                     _log.warning(
-                        "DomainExecutor: plain-answer retry failed: %s",
-                        _exc,
-                        extra={"status": "ERROR"},
+                        "price_assist returned bare tool-call text; retrying once.",
+                        extra={"status": "RETRY"},
                     )
-            state.answer = clean
+                    await asyncio.sleep(5)
+                    answer = await self._ask("price_assist", base_prompt)
+                elif self._META_RESPONSE_RE.search(answer_visible):
+                    retry_reason = "meta_response"
+                    _gt.record_retry()
+                    _log.warning(
+                        "price_assist returned meta-response without data; retrying once.",
+                        extra={"status": "RETRY"},
+                    )
+                    retry_prompt = (
+                        f"{base_prompt}\n\n"
+                        "IMPORTANT: Your previous response did not include the actual data. "
+                        "You MUST copy the COMPLETE raw output returned by the tool into your "
+                        "response — every field, every row, every figure. Do NOT say 'I retrieved' "
+                        "or 'I called'; just show the data."
+                    )
+                    await asyncio.sleep(5)
+                    answer = await self._ask("price_assist", retry_prompt)
+                elif self._HALLUCINATION_RE.search(answer_visible):
+                    retry_reason = "hallucination"
+                    _gt.record_retry()
+                    _log.warning(
+                        "price_assist returned hallucinated placeholder text; retrying once.",
+                        extra={"status": "RETRY"},
+                    )
+                    retry_prompt = (
+                        f"{base_prompt}\n\n"
+                        "CRITICAL: Your previous response contained placeholder text like "
+                        "[Name] or [Value] that is NOT real data. You MUST call the tool, "
+                        "then copy the EXACT values it returns — customer names, figures, "
+                        "percentages — verbatim. NEVER invent or template any field."
+                    )
+                    await asyncio.sleep(5)
+                    answer = await self._ask("price_assist", retry_prompt)
+            except Exception as exc:
+                answer = f"The banking assistant is currently unavailable ({exc})."
+                failed = True
+                state.trail.append("domain_error:price_assist")
+                _log.warning("Domain hop failed node=price_assist: %s", exc,
+                             extra={"status": "ERROR"})
+            else:
+                state.trail.append("domain_answer:price_assist")
+                _log.info("Domain answer (%d chars)", len(answer or ""),
+                          extra={"status": "SUCCESS"})
 
-            _set_attr(span, "domain.retry_reason", retry_reason)
-            _set_attr(span, "domain.retried", retry_reason != "none")
-            _set_attr(span, "domain.result", "ERROR" if failed else "SUCCESS")
-            _set_attr(span, "domain.answer_length", len(answer or ""))
+        total_ms = int((time.perf_counter() - t0) * 1000)
+        # If the retry prompt itself was echoed back by a rate-limited LLM, the
+        # raw retry instruction becomes the user-facing answer. Replace it with
+        # the standard unavailability message so internal directives never leak.
+        _answer_stripped = (answer or "").strip()
+        if _answer_stripped.startswith("CRITICAL:") or _answer_stripped.startswith("IMPORTANT:"):
+            answer = (
+                "I was unable to retrieve the required data. "
+                "Please try again or contact your relationship manager."
+            )
+        answer = ConversationStore.strip_history_echo(answer or "", state.query)
+        # Extract LLM reasoning markers from the answer and strip them so the
+        # user-facing answer is clean. Captured entries go to the trace layer.
+        _reasoning_entries: list = []
+        if not failed:
+            # Extract <llm_reasoning> blocks from the response.
+            # In bypass mode the response comes directly from DataAgent, which
+            # self-labels its blocks with "agent":"data". extract_reasoning() reads
+            # data.get("agent", ...) so attribution is always correct.
+            _reasoning_entries, answer = extract_reasoning(answer, _target_node)
+            if tracer and _reasoning_entries:
+                tracer.add_llm_reasoning([e.to_dict() for e in _reasoning_entries])
+            if _reasoning_entries:
+                _emit_stream_event({"event_type": "reasoning", "entries": [e.to_dict() for e in _reasoning_entries]})
+            if not self._bypass_price_assist:
+                # Collect reasoning entries emitted by peer agents (DataAgent, RAGAgent)
+                # that were extracted and cached in collaboration_tools._peer_reasoning.
+                # In bypass mode DataAgent is called directly, so this ContextVar is not
+                # populated — reasoning comes from the direct response instead.
+                try:
+                    from src.tools.collaboration_tools import _peer_reasoning as _pr_ctx
+                    _peer_entries = _pr_ctx.get() or []
+                    if tracer and _peer_entries:
+                        tracer.add_llm_reasoning(_peer_entries)
+                    if _peer_entries:
+                        _emit_stream_event({"event_type": "reasoning", "entries": _peer_entries})
+                except Exception:
+                    pass
+                # Also read from the request-scoped temp file written by collaboration_tools
+                # in the PriceAssist A2A server process (ContextVars are process-local so
+                # the ContextVar above is always empty in the API server process).
+                try:
+                    import json as _json
+                    import pathlib as _pl
+                    from src.observability.baggage import get_request_id as _grid
+                    _rid = (_grid() or "").upper().strip()
+                    if _rid and _rid != "-":
+                        _pf = _pl.Path("data/logs") / f".peer_{_rid}.json"
+                        if _pf.exists():
+                            _file_entries = _json.loads(_pf.read_text())
+                            if tracer and _file_entries:
+                                tracer.add_llm_reasoning(_file_entries)
+                            if _file_entries:
+                                _emit_stream_event({"event_type": "reasoning", "entries": _file_entries})
+                            _pf.unlink(missing_ok=True)
+                except Exception:
+                    pass
+        # Belt-and-suspenders: strip any blocks not caught by extract_reasoning
+        # (e.g. synthesis placed after the answer text, or blocks on retry path).
+        clean = strip_reasoning_markers(answer)
+        # Fallback: if the LLM packed its entire answer inside <llm_reasoning> blocks
+        # (leaving only an echoed question or nothing after stripping), reconstruct
+        # a readable response from the synthesis entry's key_findings + answer_rationale.
+        if not failed and (not clean or clean.strip() == state.query.strip()):
+            _syn = next((e for e in _reasoning_entries if e.phase == "synthesis"), None)
+            if _syn and isinstance(_syn.data, dict):
+                _parts: list[str] = list(_syn.data.get("key_findings") or [])
+                if _syn.data.get("answer_rationale"):
+                    _parts.append(_syn.data["answer_rationale"])
+                if _parts:
+                    clean = "\n\n".join(_parts)
+                    _log.warning(
+                        "DomainExecutor: answer was empty after reasoning strip; "
+                        "reconstructed from synthesis block (%d chars)",
+                        len(clean),
+                        extra={"status": "WARN"},
+                    )
+        # Fallback 2: if the answer is still empty or just echoes the user's
+        # question after all processing, issue one final plain-answer retry that
+        # explicitly asks PriceAssist to respond without reasoning blocks.
+        if not failed and (not clean or clean.strip() == state.query.strip()):
+            _log.warning(
+                "DomainExecutor: answer still empty/echoed after all processing; "
+                "issuing plain-answer retry",
+                extra={"status": "RETRY"},
+            )
+            try:
+                _plain = await self._ask(
+                    _target_node,
+                    state.query
+                    + "\n\n[SYSTEM NOTE: Please provide a direct, complete answer "
+                    "to the question above in plain markdown. "
+                    "Do NOT repeat the question. Do NOT use <llm_reasoning> blocks.]",
+                )
+                _plain_entries, _plain_clean = extract_reasoning(
+                    _plain or "", _target_node
+                )
+                if tracer and _plain_entries:
+                    tracer.add_llm_reasoning(
+                        [e.to_dict() for e in _plain_entries]
+                    )
+                if _plain_entries:
+                    _emit_stream_event({"event_type": "reasoning", "entries": [e.to_dict() for e in _plain_entries]})
+                _plain_clean = strip_reasoning_markers(_plain_clean)
+                if (_plain_clean
+                        and _plain_clean.strip() != state.query.strip()
+                        and "SYSTEM NOTE" not in _plain_clean):
+                    clean = _plain_clean
+                    state.trail.append("domain_answer:retry_plain")
+            except Exception as _exc:
+                _log.warning(
+                    "DomainExecutor: plain-answer retry failed: %s",
+                    _exc,
+                    extra={"status": "ERROR"},
+                )
+        state.answer = clean
 
-            if tracer and not failed:
-                if self._bypass_price_assist:
-                    route = "Data Layer Service"
-                    route_conf = 1.0
-                    tracer.record_domain("Data Agent (Direct)", 1.0)
-                    tracer.record_route(route)
+
+        if tracer and not failed:
+            if self._bypass_price_assist:
+                route = "Data Layer Service"
+                route_conf = 1.0
+                tracer.record_domain("Data Agent (Direct)", 1.0)
+                tracer.record_route(route)
+                tracer.add_execution_path("Data Layer Service")
+                tracer.emit_stage(
+                    "domain_classification", "completed",
+                    result="Data Agent (Direct)",
+                    confidence=1.0,
+                    checks=["Direct data routing (ENABLE_PRICE_ASSIST=false)"],
+                    rationale=[
+                        "PriceAssist orchestration is disabled via ENABLE_PRICE_ASSIST=false.",
+                        "Query routed directly to Data Agent (structured data path).",
+                    ],
+                )
+                tracer.emit_stage(
+                    "routing", "completed",
+                    result=route,
+                    confidence=1.0,
+                    checks=["Direct DataAgent routing (bypass mode)"],
+                    rationale=["ENABLE_PRICE_ASSIST=false — no intent classification needed."],
+                )
+                tracer.emit_stage(
+                    "agent_handoff", "completed",
+                    result="Handoff successful",
+                    handoff_path=["Coordinator Agent", "Data Agent (Direct)", "Data Layer Service", "Response Generator"],
+                )
+                tracer.record_tool_used()
+                retrieval_ms = max(50, int(total_ms * 0.35))
+                tracer.emit_stage(
+                    "data_retrieval", "completed",
+                    result="Data retrieved successfully",
+                    checks=["Query generated", "Query validated", "Data retrieved"],
+                    duration_ms=retrieval_ms,
+                    latency_ms=retrieval_ms,
+                )
+                tracer.emit_stage(
+                    "response_generation", "completed",
+                    result="Response generated",
+                    checks=["Context assembled", "Response generated", "Hallucination checks passed"],
+                )
+            else:
+                route, route_rationale, route_conf, alt_scores = infer_route_and_scores(
+                    state.query, answer
+                )
+                tracer.record_domain("Price Assist Agent", 0.96)
+                tracer.record_route(route)
+                if route == "Data Layer + RAG (Hybrid)":
                     tracer.add_execution_path("Data Layer Service")
-                    tracer.emit_stage(
-                        "domain_classification", "completed",
-                        result="Data Agent (Direct)",
-                        confidence=1.0,
-                        checks=["Direct data routing (ENABLE_PRICE_ASSIST=false)"],
-                        rationale=[
-                            "PriceAssist orchestration is disabled via ENABLE_PRICE_ASSIST=false.",
-                            "Query routed directly to Data Agent (structured data path).",
-                        ],
-                    )
-                    tracer.emit_stage(
-                        "routing", "completed",
-                        result=route,
-                        confidence=1.0,
-                        checks=["Direct DataAgent routing (bypass mode)"],
-                        rationale=["ENABLE_PRICE_ASSIST=false — no intent classification needed."],
-                    )
-                    tracer.emit_stage(
-                        "agent_handoff", "completed",
-                        result="Handoff successful",
-                        handoff_path=["Coordinator Agent", "Data Agent (Direct)", "Data Layer Service", "Response Generator"],
-                    )
-                    tracer.record_tool_used()
-                    retrieval_ms = max(50, int(total_ms * 0.35))
-                    tracer.emit_stage(
-                        "data_retrieval", "completed",
-                        result="Data retrieved successfully",
-                        checks=["Query generated", "Query validated", "Data retrieved"],
-                        duration_ms=retrieval_ms,
-                        latency_ms=retrieval_ms,
-                    )
-                    tracer.emit_stage(
-                        "response_generation", "completed",
-                        result="Response generated",
-                        checks=["Context assembled", "Response generated", "Hallucination checks passed"],
-                    )
-                    _set_attr(span, "domain.route", route)
-                    _set_attr(span, "domain.route_confidence", route_conf)
-                    _add_event(span, "domain.a2a_call.completed", {
-                        "target":        "data_agent",
-                        "mode":          "direct",
-                        "result":        "SUCCESS",
-                        "answer_length": len(answer or ""),
-                    })
-                    _set_ok(span)
+                    tracer.add_execution_path("RAG Service")
                 else:
-                    route, route_rationale, route_conf, alt_scores = infer_route_and_scores(
-                        state.query, answer
-                    )
-                    tracer.record_domain("Price Assist Agent", 0.96)
-                    tracer.record_route(route)
-                    if route == "Data Layer + RAG (Hybrid)":
-                        tracer.add_execution_path("Data Layer Service")
-                        tracer.add_execution_path("RAG Service")
-                    else:
-                        tracer.add_execution_path(route)
+                    tracer.add_execution_path(route)
 
-                    tracer.emit_stage(
-                        "domain_classification", "completed",
-                        result="Price Assist Agent",
-                        confidence=0.96,
-                        checks=["Request classified to pricing domain"],
-                        rationale=[
-                            "User is requesting pricing or banking information.",
-                            "Price Assist domain has highest confidence score.",
-                            "Historical routing pattern matched.",
-                        ],
-                        alt_scores=alt_scores,
-                    )
-                    tracer.emit_stage(
-                        "routing", "completed",
-                        result=route,
-                        confidence=route_conf,
-                        checks=["Evaluated available retrieval strategies"],
-                        rationale=route_rationale,
-                    )
-                    handoff_path = [
-                        "Coordinator Agent", "Price Assist Agent", route, "Response Generator"
-                    ]
-                    tracer.emit_stage(
-                        "agent_handoff", "completed",
-                        result="Handoff successful",
-                        handoff_path=handoff_path,
-                    )
-                    tracer.record_tool_used()
-                    retrieval_ms = max(50, int(total_ms * 0.35))
-                    tracer.emit_stage(
-                        "data_retrieval", "completed",
-                        result="Data retrieved successfully",
-                        checks=["Query generated", "Query validated", "Data retrieved"],
-                        duration_ms=retrieval_ms,
-                        latency_ms=retrieval_ms,
-                    )
-                    tracer.emit_stage(
-                        "response_generation", "completed",
-                        result="Response generated",
-                        checks=[
-                            "Context assembled",
-                            "Response generated",
-                            "Hallucination checks passed",
-                        ],
-                    )
-                    _set_attr(span, "domain.route", route)
-                    _set_attr(span, "domain.route_confidence", route_conf)
-                    _add_event(span, "domain.a2a_call.completed", {
-                        "target":        "price_assist",
-                        "result":        "SUCCESS",
-                        "answer_length": len(answer or ""),
-                    })
-                    _add_event(span, "domain.route_inferred", {
-                        "route":      route,
-                        "confidence": route_conf,
-                    })
-                    _set_ok(span)
-
-                record_a2a_call(_target_node, "SUCCESS", float(total_ms))
-                record_domain_route(route, float(total_ms))
-            elif failed:
-                record_a2a_call(_target_node, "ERROR", float(total_ms))
+                tracer.emit_stage(
+                    "domain_classification", "completed",
+                    result="Price Assist Agent",
+                    confidence=0.96,
+                    checks=["Request classified to pricing domain"],
+                    rationale=[
+                        "User is requesting pricing or banking information.",
+                        "Price Assist domain has highest confidence score.",
+                        "Historical routing pattern matched.",
+                    ],
+                    alt_scores=alt_scores,
+                )
+                tracer.emit_stage(
+                    "routing", "completed",
+                    result=route,
+                    confidence=route_conf,
+                    checks=["Evaluated available retrieval strategies"],
+                    rationale=route_rationale,
+                )
+                handoff_path = [
+                    "Coordinator Agent", "Price Assist Agent", route, "Response Generator"
+                ]
+                tracer.emit_stage(
+                    "agent_handoff", "completed",
+                    result="Handoff successful",
+                    handoff_path=handoff_path,
+                )
+                tracer.record_tool_used()
+                retrieval_ms = max(50, int(total_ms * 0.35))
+                tracer.emit_stage(
+                    "data_retrieval", "completed",
+                    result="Data retrieved successfully",
+                    checks=["Query generated", "Query validated", "Data retrieved"],
+                    duration_ms=retrieval_ms,
+                    latency_ms=retrieval_ms,
+                )
+                tracer.emit_stage(
+                    "response_generation", "completed",
+                    result="Response generated",
+                    checks=[
+                        "Context assembled",
+                        "Response generated",
+                        "Hallucination checks passed",
+                    ],
+                )
 
         _emit_stream_event({"stage": "domain", "status": "completed", "message": "Domain agent responded"})
         log_state_handoff(
@@ -1588,29 +1359,8 @@ class OutputRedactionExecutor(Executor):
     @_gt.trace_workflow_step("output-redaction")
     async def run(self, state: MeshState, ctx: WorkflowContext[Never, MeshState]) -> None:
         _emit_stream_event({"stage": "output_redaction", "status": "started", "message": "Redacting output..."})
-        otel = _mesh_tracer()
-        with _span_ctx(otel, "fab.output.redact", kind_internal=True) as span:
-            original_len = len(state.answer or "")
-            _set_attr(span, "redaction.input_length", original_len)
-            try:
-                redaction = redact_output(state.answer)
-                state.answer = redaction.text
-                output_len = len(state.answer or "")
-                pii_count = redaction.pii_count
-                pii_found = original_len != output_len or pii_count > 0
-
-                _set_attr(span, "redaction.output_length", output_len)
-                _set_attr(span, "redaction.pii_found", pii_found)
-                _add_event(span, "output.redaction.completed", {
-                    "input_length":  original_len,
-                    "output_length": output_len,
-                    "pii_found":     pii_found,
-                })
-                _set_ok(span)
-                record_pii_hits(pii_count)
-            except Exception as exc:
-                _set_error(span, str(exc)[:200])
-                raise
+        redaction = redact_output(state.answer)
+        state.answer = redaction.text
 
         state.trail.append("output_redacted")
         _log.info("Request complete trail=%s", " -> ".join(state.trail),

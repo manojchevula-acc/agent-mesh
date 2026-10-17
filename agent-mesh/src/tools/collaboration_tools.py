@@ -15,7 +15,6 @@ Two safeguards:
 import asyncio
 import json
 import sys
-import time
 import pathlib
 import contextvars
 
@@ -65,8 +64,6 @@ async def _consult_peer(node: str, question: str, unavailable_label: str) -> str
         return cache[cache_key]
 
     token = _peer_depth.set(depth + 1)
-    t0 = time.perf_counter()
-    error_occurred = False
     try:
         # Retry once on transient transport errors (connect reset, brief unavailability).
         _last_exc: Exception | None = None
@@ -121,30 +118,14 @@ async def _consult_peer(node: str, question: str, unavailable_label: str) -> str
                 f"{unavailable_label}: agent returned no data "
                 "(response matched input — downstream LLM may be rate-limited)."
             )
-            error_occurred = True
         cache[cache_key] = result
         return result
     except Exception as e:
-        error_occurred = True
         result = f"{unavailable_label}: could not reach the {node} agent ({e})."
         cache[cache_key] = result
         return result
     finally:
         _peer_depth.reset(token)
-        # Enrich the enclosing execute_tool span (created by Agent Framework for
-        # the @tool function) with peer delegation metadata so traces show which
-        # sub-agent was consulted, at what depth, and how long it took.
-        try:
-            from opentelemetry import trace
-            span = trace.get_current_span()
-            if span and span.is_recording():
-                elapsed_ms = int((time.perf_counter() - t0) * 1000)
-                span.set_attribute("peer.target_node", node)
-                span.set_attribute("peer.depth",       depth)
-                span.set_attribute("peer.result",      "ERROR" if error_occurred else "SUCCESS")
-                span.set_attribute("peer.duration_ms", elapsed_ms)
-        except Exception:
-            pass
 
 
 @tool(description=(

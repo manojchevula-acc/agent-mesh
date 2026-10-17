@@ -8,7 +8,7 @@ Design
 ------
 - One rotating file sink at ``Config.LOG_FILE`` (durable; survives restarts).
 - One console sink at ``Config.LOG_LEVEL`` for local dev.
-- ``TraceContextFilter`` injects ``trace_id`` / ``span_id`` / ``parent_span_id``
+- ``TraceContextFilter`` injects ``trace_id`` / ``span_id`` / ``agent_run_id``
   onto every record from the current span context (no-op safe if OTel is off).
 - Named logger categories let each layer log independently:
   ``mesh.agent``, ``mesh.workflow``, ``mesh.tools``, ``mesh.a2a``, ``mesh.mcp``,
@@ -106,31 +106,25 @@ class PerRequestFileHandler(logging.Handler):
 class TraceContextFilter(logging.Filter):
     """Stamps every log record with the active trace/span ids.
 
-    Reads the current OpenTelemetry span context so file/console records can be
-    correlated with distributed traces. Degrades gracefully to ``-`` when no
-    span is active or OTel is not installed/configured.
+    Correlation ids come from the Gernas SDK (``gernas.correlation()``); the mesh
+    request id is application baggage. Degrades to ``-`` when unavailable.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
-        trace_id = span_id = parent_span_id = request_id = "-"
+        corr: dict = {}
+        request_id = None
         try:
-            from opentelemetry import trace, baggage  # local import: optional dep
+            from src.observability import gernas_telemetry
+            from src.observability.baggage import get_request_id
 
-            span = trace.get_current_span()
-            ctx = span.get_span_context() if span is not None else None
-            if ctx is not None and getattr(ctx, "is_valid", False):
-                trace_id = format(ctx.trace_id, "032x")
-                span_id = format(ctx.span_id, "016x")
-            # parent span id is not directly exposed; surface it from baggage if set
-            parent_span_id = baggage.get_baggage("parent_span_id") or "-"
-            # request_id propagated as W3C baggage (set by orchestrator entry point)
-            request_id = baggage.get_baggage("fab.request_id") or "-"
+            corr = gernas_telemetry.correlation()
+            request_id = get_request_id()
         except Exception:
             pass
-        record.trace_id = trace_id
-        record.span_id = span_id
-        record.parent_span_id = parent_span_id
-        record.request_id = request_id
+        record.trace_id = corr.get("trace_id") or "-"
+        record.span_id = corr.get("span_id") or "-"
+        record.agent_run_id = corr.get("agent_run_id") or "-"
+        record.request_id = request_id or "-"
         return True
 
 
@@ -144,7 +138,7 @@ class _JsonFormatter(logging.Formatter):
             "logger": record.name,
             "trace_id": getattr(record, "trace_id", "-"),
             "span_id": getattr(record, "span_id", "-"),
-            "parent_span_id": getattr(record, "parent_span_id", "-"),
+            "agent_run_id": getattr(record, "agent_run_id", "-"),
             "request_id": getattr(record, "request_id", "-"),
             "msg": record.getMessage(),
         }
@@ -250,7 +244,7 @@ def configure_logging(service_name: str | None = None) -> None:
         _CONFIGURED = True
         logging.getLogger(CAT_SYSTEM).info(
             "Logging configured (service=%s, level=%s, file=%s, json=%s)",
-            service_name or Config.OTEL_SERVICE_NAME, Config.LOG_LEVEL,
+            service_name or "agent_mesh", Config.LOG_LEVEL,
             log_path, Config.LOG_JSON,
         )
     except Exception:

@@ -200,7 +200,7 @@ Every hop writes to `data/audit_trail.jsonl` and emits OpenTelemetry spans with 
 
 **Retry + graceful degradation:** `DomainExecutor` detects tool-call echo, meta-response, and hallucinated placeholders via regex and retries once with a corrective prompt. Failed A2A/MCP hops soft-fail to an "unavailable" string rather than crashing the workflow.
 
-**Gernas SDK telemetry (`gernas-sdk/`, evolved from Beacon Kit):** `pip install -e ./gernas-sdk`; one `init_gernas()` call per process (via `gernas_telemetry.init_telemetry`), configured only by `GERNAS_*` env vars (mandatory identity is validated, never invented). Telemetry goes SDK → OTel Collector (`python gernas-sdk/scripts/run_collector.py`) → Opik + data plane. Blueprint-named attributes (`gernas.<field>`); request → `use_case.request` → `agent.run` (mesh orchestrator) → `agent.step` per workflow executor → A2A / MAF `agent.run` per node → `llm.call` / `tool.call` (MCP = `tool_type=mcp`). See `gernas-sdk/docs/sdk-developer-guide.md`.
+**Gernas SDK telemetry (`gernas-sdk/`, evolved from Beacon Kit):** `pip install -e ./gernas-sdk`; one `init_gernas()` call per process (via `gernas_telemetry.init_telemetry`), configured only by `GERNAS_*` env vars (mandatory identity is validated, never invented). Telemetry goes SDK → OTel Collector (AKS gateway; locally `python gernas-sdk/scripts/run_collector.py`) → Azure Data Explorer (data plane) + Opik. Blueprint-named attributes (`gernas.<field>`); request → `use_case.request` → `agent.run` (mesh orchestrator) → `agent.step` per workflow executor → A2A / MAF `agent.run` per node → `llm.call` / `tool.call` (MCP = `tool_type=mcp`). See `gernas-sdk/docs/sdk-developer-guide.md`.
 
 ---
 
@@ -248,6 +248,8 @@ All loaded from `agent-mesh/.env`. Key variables:
 | `GERNAS_USE_CASE_ID` / `GERNAS_APPLICATION_ID` / `GERNAS_BUSINESS_DOMAIN` / `GERNAS_ENVIRONMENT` | *(required; missing = telemetry off with a warning)* | Blueprint business / infrastructure context on every span |
 | `GERNAS_USER_TOKEN_KEY` | *(unset = user identity not recorded)* | HMAC key for `tokenized_user_id` |
 | `LLM_PROVIDER` | `groq` | Provider label on `llm.call` spans |
+| `ENABLE_INSTRUMENTATION` / `ENABLE_SENSITIVE_DATA` / `OTEL_INSTRUMENTATION_A2A_SDK_ENABLED` | `false` | Framework-native (MAF / a2a-sdk) tracing off: the Gernas SDK is the only instrumentation path |
+| `ADX_CLUSTER_URI` / `ADX_DATABASE` | — | Read by the Collector only: data plane in Azure Data Explorer (without them the local Collector writes `gernas-sdk/collector/out/`) |
 | `OPIK_API_KEY` / `OPIK_WORKSPACE` / `OPIK_PROJECT_NAME` | — | Read only by the Collector's Opik exporter |
 | `LOG_LEVEL` | `INFO` | Log verbosity |
 | `LOG_JSON` | `false` | Structured JSON logging |

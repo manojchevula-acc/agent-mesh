@@ -10,7 +10,7 @@ custom Python agents::
 
     gernas.init_gernas()                                   # GERNAS_* environment variables
 
-    @gernas.trace_agent("price_assist", agent_type="orchestrator")
+    @gernas.trace_agent("pricing_assistant", agent_type="orchestrator")
     async def run(question: str) -> str: ...
 """
 
@@ -22,6 +22,7 @@ from gernas.attributes import Ctx, Metric, SpanName
 from gernas.config import GernasConfig, GernasConfigError
 from gernas.context import (
     attach_headers,
+    correlation,
     extract_context,
     gernas_task,
     inject_context,
@@ -95,6 +96,7 @@ __all__ = [
     "annotate",
     # context propagation
     "request_context",
+    "correlation",
     "inject_context",
     "extract_context",
     "attach_headers",

@@ -33,6 +33,7 @@ from src.observability import get_logger, CAT_A2A
 _log = get_logger(CAT_A2A)
 
 from src.observability import gernas_telemetry as _gt
+from src.observability.baggage import get_request_id
 
 
 def get_remote_agent(name: str) -> A2AAgent:
@@ -79,11 +80,7 @@ async def ask_remote(
     except Exception as e:
         error = str(e)
         _p = " ".join((prompt or "").split())[:200]
-        try:
-            from opentelemetry import baggage as _otel_baggage
-            rid = _otel_baggage.get_baggage("fab.request_id") or "-"
-        except Exception:
-            rid = "-"
+        rid = get_request_id() or "-"
         _log.error("A2A call to node '%s' failed: %s | sent: \"%s\"", name, error, _p,
                    extra={"node": name, "status": "ERROR", "request_id": rid})
         raise
@@ -93,34 +90,8 @@ async def ask_remote(
             # Truncated previews so the log shows *what* was sent/received, not just sizes.
             _p = " ".join((prompt or "").split())[:200]
             _r = " ".join((result or "").split())[:200]
-            try:
-                from opentelemetry import baggage as _otel_baggage
-                rid = _otel_baggage.get_baggage("fab.request_id") or "-"
-            except Exception:
-                rid = "-"
+            rid = get_request_id() or "-"
             _log.info("A2A call node=%s ok (%d ms, %d chars) | sent: \"%s\" | recv: \"%s\"",
                       name, duration_ms, len(result or ""), _p, _r,
                       extra={"node": name, "status": "SUCCESS", "request_id": rid,
                              "duration_ms": duration_ms})
-        # Business metric — A2A hop latency and outcome by target node.
-        try:
-            from src.observability.metrics import record_a2a_call
-            record_a2a_call(
-                target_node=name,
-                result="ERROR" if error else "SUCCESS",
-                duration_ms=float(duration_ms),
-            )
-        except Exception:
-            pass
-        # Optional legacy JSONL sink (off by default; workflow/agent spans cover this).
-        if Config.ENABLE_TRACE_JSONL:
-            try:
-                from src.observability import tracer
-                tracer.trace_a2a_call(
-                    node=name, prompt=prompt, response=result,
-                    duration_ms=duration_ms,
-                    status="ERROR" if error else "SUCCESS",
-                    trace_id=trace_id, parent_span_id=parent_span_id, error=error,
-                )
-            except Exception:
-                pass

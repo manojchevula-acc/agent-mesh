@@ -18,7 +18,6 @@ from typing import List
 import uvicorn
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -30,59 +29,6 @@ from agent_framework.a2a import A2AExecutor
 
 from src.config import Config
 from src.observability import gernas_telemetry as _gt
-
-
-class TraceContextMiddleware(BaseHTTPMiddleware):
-    """Continues the caller's distributed trace on inbound A2A requests.
-
-    Extracts W3C ``traceparent`` / ``tracestate`` (injected by the A2A client in
-    ``src/a2a/clients.py``) from the request headers and attaches the resulting
-    OpenTelemetry context for the duration of the request. This makes every span
-    the node emits (``invoke_agent``, ``chat``, ``execute_tool``) a child of the
-    orchestrator's span, yielding one coherent end-to-end distributed trace.
-
-    Safe no-op when OpenTelemetry is not installed/configured.
-    """
-
-    async def dispatch(self, request, call_next):
-        token = None
-        try:
-            from opentelemetry import context as otel_context, baggage, trace
-            from opentelemetry.propagate import extract
-
-            # Extract both W3C traceparent AND baggage from inbound headers.
-            # The composite propagator (set by _ensure_composite_propagator) handles both.
-            ctx = extract(dict(request.headers))
-            token = otel_context.attach(ctx)
-
-            # Enrich the active span (created by ASGI instrumentation) with the
-            # caller's identity from propagated baggage so remote spans are queryable
-            # by request_id / user / role in Grafana Tempo.
-            try:
-                span = trace.get_current_span()
-                if span and span.is_recording():
-                    for baggage_key, span_attr in (
-                        ("fab.request_id", "fab.request_id"),
-                        ("fab.user",       "fab.inbound.user"),
-                        ("fab.role",       "fab.inbound.role"),
-                        ("fab.session_id", "fab.inbound.session_id"),
-                    ):
-                        val = baggage.get_baggage(baggage_key, context=ctx)
-                        if val:
-                            span.set_attribute(span_attr, val)
-            except Exception:
-                pass
-        except Exception:
-            token = None
-        try:
-            return await call_next(request)
-        finally:
-            if token is not None:
-                try:
-                    from opentelemetry import context as otel_context
-                    otel_context.detach(token)
-                except Exception:
-                    pass
 
 
 def build_agent_card(
@@ -110,8 +56,8 @@ def build_agent_card(
 def build_starlette_app(agent, card: AgentCard) -> Starlette:
     """Wraps an agent_framework Agent into a Starlette A2A application.
 
-    Installs ``GernasASGIMiddleware`` (or ``TraceContextMiddleware`` without the
-    Gernas SDK) so inbound A2A calls continue the caller's distributed trace.
+    Installs the Gernas SDK ``GernasASGIMiddleware`` so inbound A2A calls continue
+    the caller's distributed trace (no middleware when the SDK is not installed).
 
     Adds a ``GET /health`` endpoint so the launcher and ``api_server`` mesh-status
     fan-out can liveness-check each A2A node independently.
@@ -133,10 +79,9 @@ def build_starlette_app(agent, card: AgentCard) -> Starlette:
     )
     # Gernas: the ASGI middleware extracts traceparent + GERNAS baggage and opens a
     # SERVER span per A2A request, so the node's agent.run continues the caller's
-    # trace and links to the delegating run. Falls back to the local extractor.
+    # trace and links to the delegating run.
     gernas_mw = _gt.asgi_middleware()
-    middleware = ([Middleware(gernas_mw, channel="a2a")] if gernas_mw is not None
-                  else [Middleware(TraceContextMiddleware)])
+    middleware = [Middleware(gernas_mw, channel="a2a")] if gernas_mw is not None else []
     return Starlette(
         middleware=middleware,
         routes=[

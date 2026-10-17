@@ -1,0 +1,44 @@
+// GERNAS data plane — Azure Data Explorer tables for the OTel Collector `azuredataexplorer`
+// exporter (otelcol-contrib v0.162.0). Table and column definitions are the exporter's
+// documented schema (exporter/azuredataexplorerexporter/README.md); do not rename columns.
+// Run once per database (default name: gernas_telemetry) as a database admin.
+
+.create-merge table OTELTraces (
+  TraceID:string,
+  SpanID:string,
+  ParentID:string,
+  SpanName:string,
+  SpanStatus:string,
+  SpanStatusMessage:string,
+  SpanKind:string,
+  StartTime:datetime,
+  EndTime:datetime,
+  ResourceAttributes:dynamic,
+  TraceAttributes:dynamic,
+  Events:dynamic,
+  Links:dynamic)
+
+.create-merge table OTELMetrics (
+  Timestamp:datetime,
+  MetricName:string,
+  MetricType:string,
+  MetricUnit:string,
+  MetricDescription:string,
+  MetricValue:real,
+  Host:string,
+  ResourceAttributes:dynamic,
+  MetricAttributes:dynamic)
+
+.create-merge table OTELLogs (
+  Timestamp:datetime,
+  ObservedTimestamp:datetime,
+  TraceID:string,
+  SpanID:string,
+  SeverityText:string,
+  SeverityNumber:int,
+  Body:string,
+  ResourceAttributes:dynamic,
+  LogsAttributes:dynamic)
+
+// Grant the Collector's workload identity ingest rights (replace the client id and tenant):
+// .add database gernas_telemetry ingestors ('aadapp=<COLLECTOR_CLIENT_ID>;<TENANT_ID>') 'gernas-otel-collector'

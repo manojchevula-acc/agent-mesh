@@ -1,35 +1,42 @@
-# GERNAS OTel Collector — local / dev gateway configuration.
+# GERNAS OTel Collector — gateway configuration (AKS pod; also used for local runs).
 #
-#   SDK (gernas) --OTLP--> this Collector --+--> data plane   (file exporter: R1 store not yet selected)
-#                                           +--> Opik Cloud    (OTLP/HTTP protobuf, traces only)
+#   Gernas SDK --OTLP gRPC/HTTP--> Collector --+--> Azure Data Explorer (data plane: traces, metrics, logs)
+#                                              +--> Opik Cloud (developer trace view: traces only, OTLP/HTTP)
 #
-# Covers: OTLP receivers (gRPC :4317 / HTTP :4318, 8 MiB cap) · registry-generated denylist +
-#   deny-by-default allow-list + PII value masks · tail sampling that always keeps errors,
-#   policy denials and HITL decisions · Opik span shape · self-metrics on :8888.
-# Not covered here (see docs/collector-topology.md): TLS/OIDC, HA gateway, k8sattributes, registry enrichment.
+# Pipeline (Blueprint §1 Figure 1: collection & processing):
+#   memory_limiter → PII/secret control (registry-generated denylist, deny-by-default allow-list,
+#   value masks) → sampling → vendor shape (Opik only) → batch → exporters.
 #
-# Every secret comes from the environment (scripts/run_collector.ps1 loads agent-mesh/.env):
-#   OPIK_API_KEY, OPIK_WORKSPACE, OPIK_PROJECT_NAME
-# Run:  collector/bin/otelcol-contrib.exe --config collector/otel-collector-config.yaml
+# Every endpoint and secret comes from the environment (never from this file):
+#   ADX_CLUSTER_URI, ADX_DATABASE                    data plane
+#   AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_FEDERATED_TOKEN_FILE
+#                                                    ADX auth (AKS Workload Identity, injected by
+#                                                    the webhook) — or a service principal via
+#                                                    AZURE_CLIENT_SECRET for non-AKS runs
+#   OPIK_API_KEY, OPIK_WORKSPACE, OPIK_PROJECT_NAME  Opik (Kubernetes Secret)
+#   GERNAS_COLLECTOR_BIND                            listen address (0.0.0.0 in the pod, 127.0.0.1 locally)
+# Validate:  collector/bin/otelcol-contrib validate --config collector/otel-collector-config.yaml
+# Deploy:    kubectl apply -k collector/   (see docs/collector-aks-deployment.md)
 
 extensions:
   health_check:
-    endpoint: 127.0.0.1:13133
+    endpoint: ${env:GERNAS_COLLECTOR_BIND:-0.0.0.0}:13133
 
 receivers:
   otlp:
     protocols:
       grpc:
-        endpoint: 127.0.0.1:4317
+        endpoint: ${env:GERNAS_COLLECTOR_BIND:-0.0.0.0}:4317
         max_recv_msg_size_mib: 8
       http:
-        endpoint: 127.0.0.1:4318
+        endpoint: ${env:GERNAS_COLLECTOR_BIND:-0.0.0.0}:4318
 
 processors:
+  # Container-aware: limits are a share of the pod memory limit (cgroup).
   memory_limiter:
     check_interval: 1s
-    limit_mib: 512
-    spike_limit_mib: 128
+    limit_percentage: 80
+    spike_limit_percentage: 20
 
   # Registry rows with action=drop plus registry/denylist.yaml: never stored (PDPL).
   attributes/pdpl:
@@ -46,8 +53,8 @@ processors:
       - {key: gernas.user_id, action: delete}
       # <<< GERNAS-DENYLIST
 
-  # Deny by default: any attribute not in the registry-generated
-  # allow-list is removed; PII patterns are masked in the values that remain.
+  # Deny by default: any attribute not in the registry-generated allow-list is removed;
+  # PII / secret patterns are masked in the values that remain.
   redaction/deny_by_default:
     allow_all_keys: false
     allowed_keys:
@@ -201,10 +208,10 @@ processors:
       - "\\b(?:sk|gsk|pk|rk)[-_][A-Za-z0-9_-]{16,}"  # provider API keys
     summary: info
 
-  # Data-plane sampling: wait for the run, never sample away errors,
-  # policy blocks, human approvals or high-risk runs.
+  # Data plane: wait for the whole trace; never sample away errors, policy blocks,
+  # high-risk content or human approvals.
   tail_sampling/dataplane:
-    decision_wait: ${env:GERNAS_TAIL_DECISION_WAIT:-5s}
+    decision_wait: ${env:GERNAS_TAIL_DECISION_WAIT:-10s}
     num_traces: 50000
     policies:
       - name: always_errors
@@ -224,7 +231,7 @@ processors:
         probabilistic:
           sampling_percentage: ${env:GERNAS_BASELINE_SAMPLE_PERCENT:-100}
 
-  # Opik copy: 100% in dev; lower it per environment.
+  # Opik copy: 100% by default; lower it per environment.
   probabilistic_sampler/opik:
     sampling_percentage: ${env:GERNAS_OPIK_SAMPLE_PERCENT:-100}
 
@@ -246,15 +253,27 @@ processors:
     timeout: 2s
 
 exporters:
-  # Data-plane placeholder: the data-plane store is not yet selected.
-  # One file per signal class so each class lands in its own "schema".
-  file/dataplane_traces:
-    path: ${env:GERNAS_COLLECTOR_OUT:-./collector/out}/dataplane-traces.json
-  file/dataplane_metrics:
-    path: ${env:GERNAS_COLLECTOR_OUT:-./collector/out}/dataplane-metrics.json
-  file/dataplane_logs:
-    path: ${env:GERNAS_COLLECTOR_OUT:-./collector/out}/dataplane-logs.json
+  # Data plane: Azure Data Explorer (tables from collector/adx/create-tables.kql).
+  azuredataexplorer:
+    cluster_uri: ${env:ADX_CLUSTER_URI}
+    use_azure_auth: true
+    db_name: ${env:ADX_DATABASE:-gernas_telemetry}
+    traces_table_name: OTELTraces
+    metrics_table_name: OTELMetrics
+    logs_table_name: OTELLogs
+    ingestion_type: queued
+    timeout: 30s
+    sending_queue:
+      enabled: true
+      num_consumers: 2
+      queue_size: 5000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 60s
+      max_elapsed_time: 10m
 
+  # Developer trace view: Opik Cloud OTLP endpoint (HTTP only, traces only).
   otlphttp/opik:
     endpoint: ${env:OPIK_OTLP_ENDPOINT:-https://www.comet.com/opik/api/v1/private/otel}
     encoding: proto
@@ -262,34 +281,33 @@ exporters:
       Authorization: ${env:OPIK_API_KEY}
       Comet-Workspace: ${env:OPIK_WORKSPACE}
       projectName: ${env:OPIK_PROJECT_NAME}
+    timeout: 30s
     retry_on_failure:
       enabled: true
-      max_elapsed_time: 60s
+      max_elapsed_time: 120s
     sending_queue:
       enabled: true
       queue_size: 2048
-
-  debug:
-    verbosity: basic
 
 service:
   extensions: [health_check]
   telemetry:
     logs:
       level: info
+      encoding: json
     metrics:
-      level: detailed
+      level: detailed          # otelcol_exporter_send_failed_*, queue size, refused spans …
       readers:
         - pull:
             exporter:
               prometheus:
-                host: 127.0.0.1
+                host: ${env:GERNAS_COLLECTOR_BIND:-0.0.0.0}
                 port: 8888
   pipelines:
     traces/dataplane:
       receivers: [otlp]
       processors: [memory_limiter, attributes/pdpl, redaction/deny_by_default, tail_sampling/dataplane, batch]
-      exporters: [file/dataplane_traces, debug]
+      exporters: [azuredataexplorer]
     traces/opik:
       receivers: [otlp]
       processors: [memory_limiter, attributes/pdpl, redaction/deny_by_default, probabilistic_sampler/opik, transform/opik_shape, batch]
@@ -297,8 +315,8 @@ service:
     metrics/dataplane:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [file/dataplane_metrics]
+      exporters: [azuredataexplorer]
     logs/dataplane:
       receivers: [otlp]
       processors: [memory_limiter, attributes/pdpl, batch]
-      exporters: [file/dataplane_logs]
+      exporters: [azuredataexplorer]

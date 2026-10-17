@@ -3,8 +3,8 @@
 This guide is for Python engineers instrumenting an agent. You do not need to know OpenTelemetry. You add decorators (or one framework adapter); the SDK creates spans, metrics and logs that follow the GERNAS Enterprise Telemetry Blueprint, and sends them to the GERNAS OTel Collector. The Collector forwards them to Opik and to the data plane.
 
 ```text
-your agent ──@trace_* / adapter──▶ gernas SDK ──OTLP──▶ OTel Collector ──▶ Opik (developer view)
-                                                                    └──▶ data plane (dashboards, audit)
+your agent ──@trace_* / adapter──▶ gernas SDK ──OTLP──▶ OTel Collector (AKS) ──▶ Opik (developer trace view)
+                                                                          └──▶ Azure Data Explorer (data plane)
 ```
 
 The same span and attribute model is produced for Microsoft Agent Framework, LangChain, LangGraph and plain Python.
@@ -66,6 +66,7 @@ Helpers:
 | `set_termination_reason(...)` | Sets the run's termination reason |
 | `mark_fallback()` | Marks the current model call as served by a fallback |
 | `annotate({Ctx.X: value})` | Sets registry attributes on the current span |
+| `correlation()` | `trace_id`, `span_id`, `agent_id`, `agent_run_id`, `session_id`, `task_id` for application log and audit records (read-only) |
 
 Status rules:
 - A guardrail or content-safety *deny* keeps status OK, and the decision is an attribute.
@@ -131,7 +132,7 @@ agent = Agent(client, name="DataAgent", tools=[...],
                                            mcp_server="datalayer"))   # agent.run + llm.call + tool.call(mcp)
 ```
 
-Pass `trace_functions=False` when the tools already carry `@gernas.trace_tool`, to avoid two tool spans per call. MAF's own instrumentation (`invoke_agent`, `execute_tool` spans) is independent; set `ENABLE_INSTRUMENTATION=false` if you do not want those vendor spans as well.
+Pass `trace_functions=False` when the tools already carry `@gernas.trace_tool`, to avoid two tool spans per call. Call `gernas.adapters.agent_framework.disable_native_telemetry()` once at startup so MAF's own `invoke_agent` / `chat` / `execute_tool` / `workflow.*` spans (a second instrumentation path that can capture prompts) are not emitted. For A2A, set `OTEL_INSTRUMENTATION_A2A_SDK_ENABLED=false` before `a2a` is imported (the a2a-sdk decides at import time).
 
 **LangChain:**
 

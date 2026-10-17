@@ -9,7 +9,7 @@
 
     from gernas.adapters.agent_framework import gernas_middleware
     Agent(client, name="DataAgent", middleware=[*gernas_middleware("data_agent", agent_type="worker",
-                                                                    provider="azure_openai", mcp_server="datalayer")])
+                                                                    provider="azure_openai", mcp_server="crm_mcp")])
 
 Requires ``agent-framework`` (``pip install gernas-telemetry[agent-framework]``).
 """
@@ -121,6 +121,20 @@ class GernasFunctionMiddleware(FunctionMiddleware):
 
     async def process(self, context: FunctionInvocationContext, call_next: Next) -> None:
         await self._run(context, call_next)
+
+
+def disable_native_telemetry() -> None:
+    """Switch off Agent Framework's built-in OTel instrumentation for this process.
+
+    MAF otherwise emits its own ``invoke_agent`` / ``chat`` / ``execute_tool`` /
+    ``workflow.*`` spans (and, with ``ENABLE_SENSITIVE_DATA``, raw prompts) next to the
+    GERNAS spans — a second instrumentation path for the same operations. Call once at
+    startup when the Gernas middlewares are the instrumentation of record. Sticky
+    (see ``agent_framework.observability.disable_instrumentation``).
+    """
+    from agent_framework.observability import disable_instrumentation
+
+    disable_instrumentation()
 
 
 def gernas_middleware(

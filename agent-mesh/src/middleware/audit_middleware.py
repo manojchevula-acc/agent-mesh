@@ -23,14 +23,12 @@ _MCP_AGENT_SERVICE: dict[str, str] = {
 def _trace_ids() -> tuple[str, str]:
     """Returns (trace_id, span_id) of the active span, or ('-', '-').
 
-    Lets each audit record correlate with the distributed trace emitted by the
-    SDK's AgentTelemetryLayer for the same agent run.
+    Lets each audit record correlate with the Gernas SDK trace of the same agent run.
     """
     try:
-        from opentelemetry import trace
-        ctx = trace.get_current_span().get_span_context()
-        if getattr(ctx, "is_valid", False):
-            return format(ctx.trace_id, "032x"), format(ctx.span_id, "016x")
+        from src.observability import gernas_telemetry
+        corr = gernas_telemetry.correlation()
+        return corr.get("trace_id") or "-", corr.get("span_id") or "-"
     except Exception:
         pass
     return "-", "-"
@@ -155,14 +153,12 @@ class AuditMiddleware(AgentMiddleware):
             baggage_user = "-"
             baggage_role = "-"
             try:
-                from opentelemetry import baggage as _baggage
-                request_id  = _baggage.get_baggage("fab.request_id") or "-"
-                baggage_user = _baggage.get_baggage("fab.user")      or "-"
-                baggage_role = _baggage.get_baggage("fab.role")      or "-"
+                from src.observability import baggage as _app_baggage
+                request_id = _app_baggage.get_request_id() or "-"
+                baggage_user = _app_baggage.get_user() or "-"
+                baggage_role = _app_baggage.get_role() or "-"
                 if session_id == "default_session":
-                    bag_sess = _baggage.get_baggage("fab.session_id")
-                    if bag_sess:
-                        session_id = bag_sess
+                    session_id = _app_baggage.get_session_id() or session_id
             except Exception:
                 pass
 
@@ -219,20 +215,12 @@ class AuditMiddleware(AgentMiddleware):
                 # Middleware logging failures should not crash the core application flow
                 pass
 
-            # 5b. Record MCP business metrics + log line for MCP-backed agents.
-            #     The Agent Framework emits an execute_tool span per tool call (visible in
-            #     Tempo), but our custom fab.mcp.calls.total counter and mesh.mcp log
-            #     need a separate hook. AuditMiddleware runs per agent invocation which
-            #     gives us service-level granularity (datalayer / rag).
+            # 5b. mesh.mcp log line for MCP-backed agents (service-level granularity:
+            #     datalayer / rag). MCP telemetry itself comes from the Gernas SDK
+            #     (tool.call spans with tool_type=mcp).
             mcp_service = _MCP_AGENT_SERVICE.get(agent_name)
             if mcp_service:
                 try:
-                    from src.observability.metrics import record_mcp_call
-                    record_mcp_call(
-                        service=mcp_service,
-                        tool_name="agent_invocation",
-                        result=status,
-                    )
                     _mcp_log.info(
                         "service=%s agent=%s status=%s latency_ms=%d req=%s",
                         mcp_service, agent_name, status, latency_ms, request_id,

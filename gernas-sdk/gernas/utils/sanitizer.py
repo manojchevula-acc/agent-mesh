@@ -33,7 +33,7 @@ def _card(match: re.Match[str]) -> str:
 # Ordered from most-specific to least-specific to avoid partial matches.
 _PII_PATTERNS: list[tuple[str, str | Callable[[re.Match[str]], str]]] = [
     # Secrets: bearer tokens, provider API keys, key=value credentials
-    (r"Bearer\s+[A-Za-z0-9\-._~+/]+=*", "Bearer [REDACTED]"),
+    (r"(?i)\bBearer\s+[A-Za-z0-9\-._~+/]+=*", "Bearer [REDACTED]"),
     (r"\b(?:sk|gsk|pk|rk)[-_][A-Za-z0-9_\-]{16,}", "[API_KEY]"),
     (r"(?i)\b(api[_-]?key|secret|password|passwd|token)\b\s*[:=]\s*[^\s,;]+", r"\1=[REDACTED]"),
     # Emirates ID: 784-YYYY-NNNNNNN-C (dashes optional)
@@ -48,13 +48,16 @@ _PII_PATTERNS: list[tuple[str, str | Callable[[re.Match[str]], str]]] = [
     (r"\b[A-CEGHJ-PR-TW-Z]{2}\s?\d{2}\s?\d{2}\s?\d{2}\s?[A-D]\b", "[NI_NUMBER]"),
     # Email addresses
     (r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}", "[EMAIL]"),
-    # Phone numbers (E.164 and local formats, incl. UAE +971 / 05x)
-    (r"\+?\d[\d\s\-().]{8,}\d", "[PHONE]"),
+    # Phone numbers (E.164 and local formats, incl. UAE +971 / 05x). Not inside an
+    # identifier: hex run / trace / span ids must survive scrubbing intact.
+    (r"(?<![A-Za-z0-9_])\+?\d[\d\s\-().]{8,}\d(?![A-Za-z0-9_])", "[PHONE]"),
     # Generic account numbers (14-19 consecutive digits that were not Luhn-valid cards)
     (r"\b\d{14,19}\b", "[ACCOUNT_NUMBER]"),
 ]
 
-_COMPILED = [(re.compile(p, re.IGNORECASE if not p.startswith("(?i)") else 0), r) for p, r in _PII_PATTERNS]
+# Case-sensitive by default (IBANs and NI numbers are upper case; a case-insensitive
+# IBAN pattern matches lower-case hex ids). Patterns opt in with an inline (?i).
+_COMPILED = [(re.compile(p), r) for p, r in _PII_PATTERNS]
 _SECRETS = _COMPILED[:3]
 
 

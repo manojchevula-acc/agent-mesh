@@ -1,26 +1,18 @@
-"""W3C Baggage helpers for request identity propagation across process boundaries.
+"""Application request context carried as W3C baggage (Agent Mesh business data).
 
-W3C Baggage travels alongside ``traceparent`` / ``tracestate`` in HTTP headers so
-every remote A2A node can read the originating user, role, session, and request
-identity without an additional lookup.
+The mesh's audit trail and cross-process reasoning collection need the originating
+user, role, session and request id on every A2A node. These ``fab.*`` entries are
+*application* baggage: they ride on the propagation the Gernas SDK configures
+(W3C traceparent + baggage, injected by ``GernasA2AInterceptor``, extracted by
+``GernasASGIMiddleware``) and are **never** written to telemetry — the SDK copies
+only its own allow-listed GERNAS keys onto spans. Telemetry identity (session,
+task, tokenized user) is set separately with ``gernas.request_context``.
 
-Usage (orchestrator entry point)
----------------------------------
     ctx, token = set_request_baggage(request_id, user, role, session_id)
     try:
-        ...  # code whose OTel context carries the baggage
+        ...
     finally:
         detach_baggage(token)
-
-The ``opentelemetry.propagate.inject(headers)`` call made by the httpx
-instrumentation writes BOTH ``traceparent`` AND ``baggage`` headers, so once
-baggage is set in the context it propagates automatically through every A2A hop
-— no code changes needed in ``ask_remote``.
-
-On the receiving side, ``extract(dict(request.headers))`` (already called by
-``TraceContextMiddleware``) extracts both trace context and baggage from the
-inbound headers when the W3C Baggage propagator is in the composite propagator
-(ensured by ``setup_observability`` → ``_ensure_composite_propagator``).
 """
 from __future__ import annotations
 
@@ -100,19 +92,5 @@ def get_session_id() -> str | None:
     try:
         from opentelemetry import baggage
         return baggage.get_baggage(_KEYS["session_id"]) or None
-    except Exception:
-        return None
-
-
-def extract_from_headers(headers: dict) -> object:
-    """Extract trace context + baggage from inbound HTTP headers.
-
-    Returns the resulting OTel context object. Delegates to
-    ``opentelemetry.propagate.extract`` which uses the composite propagator
-    (TraceContext + Baggage) configured by ``_ensure_composite_propagator``.
-    """
-    try:
-        from opentelemetry.propagate import extract
-        return extract(headers)
     except Exception:
         return None

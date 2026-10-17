@@ -1,0 +1,14 @@
+# In-cluster endpoint for every Gernas SDK producer:
+#   GERNAS_OTLP_ENDPOINT=http://gernas-otel-collector.gernas-telemetry.svc.cluster.local:4317
+apiVersion: v1
+kind: Service
+metadata:
+  name: gernas-otel-collector
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/component: gateway
+  ports:
+    - {name: otlp-grpc, port: 4317, targetPort: otlp-grpc, protocol: TCP, appProtocol: grpc}
+    - {name: otlp-http, port: 4318, targetPort: otlp-http, protocol: TCP}
+    - {name: metrics, port: 8888, targetPort: metrics, protocol: TCP}

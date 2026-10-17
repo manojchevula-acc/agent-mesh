@@ -158,3 +158,20 @@ def test_unregistered_principal_type_is_not_recorded(spans):
     with gernas.request_context(principal_type="employee"):
         tool()
     assert Ctx.PRINCIPAL_TYPE not in attrs(spans(SpanName.TOOL)[0])
+
+
+def test_correlation_exposes_trace_run_and_request_ids(spans):
+    out = {}
+
+    @gernas.trace_agent("corr_agent", agent_type="worker")
+    def run():
+        out.update(gernas.correlation())
+
+    with gernas.request_context(session_id="s-c", task_id="t-c"):
+        run()
+    agent = spans(SpanName.AGENT)[0]
+    assert out["trace_id"] == format(agent.context.trace_id, "032x")
+    assert out["span_id"] == format(agent.context.span_id, "016x")
+    assert out["agent_id"] == "corr_agent" and out["agent_run_id"] == attrs(agent)[Ctx.AGENT_RUN_ID]
+    assert (out["session_id"], out["task_id"]) == ("s-c", "t-c")
+    assert set(gernas.correlation().values()) == {None}

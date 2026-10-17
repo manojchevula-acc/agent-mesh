@@ -1,0 +1,29 @@
+# GERNAS OTel Collector gateway on AKS.  kubectl apply -k collector/
+# Prerequisites (docs/collector-aks-deployment.md): namespace, Opik Secret, Workload Identity
+# federated credential for the ServiceAccount, ADX tables (adx/create-tables.kql).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: gernas-telemetry
+labels:
+  - pairs:
+      app.kubernetes.io/name: gernas-otel-collector
+      app.kubernetes.io/part-of: gernas
+    includeSelectors: true
+resources:
+  - k8s/serviceaccount.yaml
+  - k8s/deployment.yaml
+  - k8s/service.yaml
+  - k8s/poddisruptionbudget.yaml
+  - k8s/networkpolicy.yaml
+configMapGenerator:
+  # The exact file validated with `otelcol-contrib validate` — single source of truth.
+  - name: gernas-otel-collector-config
+    files:
+      - otel-collector-config.yaml
+  # Non-secret, per-environment settings. Override per environment with an overlay.
+  - name: gernas-otel-collector-env
+    literals:
+      - ADX_CLUSTER_URI=https://<adx-cluster>.<region>.kusto.windows.net
+      - ADX_DATABASE=gernas_telemetry
+      - GERNAS_OPIK_SAMPLE_PERCENT=100
+      - GERNAS_BASELINE_SAMPLE_PERCENT=100

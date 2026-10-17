@@ -159,3 +159,25 @@ async def test_workflow_executor_steps_use_the_common_step_model(spans):
     step = attrs(spans(SpanName.STEP)[0])
     assert step[Ctx.STEP_ID] == "input_guardrail" and step[Ctx.STEP_TYPE] == "workflow_executor"
     assert step[Ctx.AGENT_ID] == "mesh"
+
+
+def test_disable_native_telemetry_turns_off_maf_spans(spans):
+    import agent_framework.observability as maf_obs
+
+    from gernas.adapters.agent_framework import disable_native_telemetry
+
+    saved = (
+        maf_obs.OBSERVABILITY_SETTINGS._user_disabled,
+        maf_obs.OBSERVABILITY_SETTINGS._enable_instrumentation,
+        maf_obs.OBSERVABILITY_SETTINGS._enable_sensitive_data,
+    )
+    try:
+        disable_native_telemetry()
+        assert maf_obs.OBSERVABILITY_SETTINGS.enable_instrumentation is False
+        assert maf_obs.OBSERVABILITY_SETTINGS.enable_sensitive_data is False
+    finally:
+        (
+            maf_obs.OBSERVABILITY_SETTINGS._user_disabled,
+            maf_obs.OBSERVABILITY_SETTINGS._enable_instrumentation,
+            maf_obs.OBSERVABILITY_SETTINGS._enable_sensitive_data,
+        ) = saved

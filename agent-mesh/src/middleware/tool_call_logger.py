@@ -29,11 +29,8 @@ _log = get_logger(CAT_MCP)
 
 
 def _request_id() -> str:
-    try:
-        from opentelemetry import baggage as _baggage
-        return (_baggage.get_baggage("fab.request_id") or "-")
-    except Exception:
-        return "-"
+    from src.observability.baggage import get_request_id
+    return get_request_id() or "-"
 
 
 def _args_signature(arguments: Any) -> str:

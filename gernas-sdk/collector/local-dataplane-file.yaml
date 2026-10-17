@@ -1,0 +1,26 @@
+# LOCAL DEVELOPMENT OVERLAY ONLY — never deployed to AKS.
+#
+# Merged on top of otel-collector-config.yaml by scripts/run_collector.py when no
+# ADX_CLUSTER_URI is configured. It replaces the Azure Data Explorer exporter in the
+# data-plane pipelines with local JSON files, so the same processors (PDPL denylist,
+# deny-by-default allow-list, tail sampling) can be exercised and inspected offline.
+# Opik export is unchanged. The ADX exporter is given an inert placeholder URI only so
+# the (unused) component validates; no pipeline references it in this mode.
+exporters:
+  azuredataexplorer:
+    cluster_uri: https://adx-not-configured.invalid
+  file/dataplane_traces:
+    path: ${env:GERNAS_COLLECTOR_OUT:-./collector/out}/dataplane-traces.json
+  file/dataplane_metrics:
+    path: ${env:GERNAS_COLLECTOR_OUT:-./collector/out}/dataplane-metrics.json
+  file/dataplane_logs:
+    path: ${env:GERNAS_COLLECTOR_OUT:-./collector/out}/dataplane-logs.json
+
+service:
+  pipelines:
+    traces/dataplane:
+      exporters: [file/dataplane_traces]
+    metrics/dataplane:
+      exporters: [file/dataplane_metrics]
+    logs/dataplane:
+      exporters: [file/dataplane_logs]

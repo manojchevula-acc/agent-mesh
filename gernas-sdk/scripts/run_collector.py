@@ -1,8 +1,10 @@
-"""Start the local GERNAS OTel Collector (collector/otel-collector-config.yaml).
+"""Start the GERNAS OTel Collector locally (collector/otel-collector-config.yaml).
 
-Loads only the variables the Collector needs (OPIK_*, GERNAS_COLLECTOR_*, sampling
-knobs) from an env file — never prints their values — then runs otelcol-contrib in
-the foreground from the SDK root so relative output paths resolve to collector/out/.
+Loads only the variables the Collector needs (OPIK_*, ADX_*, AZURE_*, GERNAS_COLLECTOR_*,
+sampling knobs) from an env file — never prints their values — then runs otelcol-contrib
+in the foreground from the SDK root. Without ADX_CLUSTER_URI the data plane is replaced
+by local files (collector/local-dataplane-file.yaml); with it, traces, metrics and logs
+go to Azure Data Explorer exactly as in AKS.
 
     python scripts/run_collector.py [--env ../agent-mesh/.env] [--validate]
 """
@@ -19,7 +21,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 BIN = ROOT / "collector" / "bin" / ("otelcol-contrib.exe" if os.name == "nt" else "otelcol-contrib")
 CONFIG = ROOT / "collector" / "otel-collector-config.yaml"
-_PREFIXES = ("OPIK_", "GERNAS_COLLECTOR_", "GERNAS_BASELINE_", "GERNAS_OPIK_", "GERNAS_TAIL_")
+_PREFIXES = ("OPIK_", "ADX_", "AZURE_", "GERNAS_COLLECTOR_", "GERNAS_BASELINE_", "GERNAS_OPIK_", "GERNAS_TAIL_")
+LOCAL_OVERLAY = ROOT / "collector" / "local-dataplane-file.yaml"
 
 
 def load_env(path: Path) -> dict[str, str]:
@@ -55,15 +58,26 @@ def main() -> int:
     missing = [k for k in ("OPIK_API_KEY", "OPIK_WORKSPACE", "OPIK_PROJECT_NAME") if not env.get(k)]
     if missing:
         print(
-            f"warning: {', '.join(missing)} not set — the Opik exporter will fail; data plane still works",
+            f"warning: {', '.join(missing)} not set — the Opik exporter will fail",
             file=sys.stderr,
         )
         for k in missing:
             env.setdefault(k, "unset")
+    env.setdefault("GERNAS_COLLECTOR_BIND", "127.0.0.1")  # local runs listen on loopback only
+    configs = [CONFIG]
+    if not env.get("ADX_CLUSTER_URI"):
+        configs.append(LOCAL_OVERLAY)
+        print(
+            "warning: ADX_CLUSTER_URI not set — data plane goes to LOCAL FILES (collector/out/), "
+            "not Azure Data Explorer",
+            file=sys.stderr,
+        )
     (ROOT / "collector" / "out").mkdir(parents=True, exist_ok=True)
-    print(f"collector: {exe}  config: {CONFIG.name}  env keys loaded: {sorted(loaded)}", flush=True)
-    cmd = [str(exe), "validate" if args.validate else "", "--config", str(CONFIG)]
-    return subprocess.call([c for c in cmd if c], cwd=ROOT, env=env)
+    print(f"collector: {exe}  configs: {[c.name for c in configs]}  env keys loaded: {sorted(loaded)}", flush=True)
+    cmd = [str(exe)] + (["validate"] if args.validate else [])
+    for c in configs:
+        cmd += ["--config", str(c)]
+    return subprocess.call(cmd, cwd=ROOT, env=env)
 
 
 if __name__ == "__main__":

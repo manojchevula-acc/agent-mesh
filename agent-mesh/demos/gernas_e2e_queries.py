@@ -2,8 +2,9 @@
 
 Sends representative queries (test_queries.md Q1, Q2, Q4, Q6) through the real
 orchestrator → A2A nodes → MCP servers → Groq, exactly as ``run.py`` would, and
-prints the per-request outcome plus the trace id to look up in the Collector
-output / Opik.
+prints each request id. The request id is the GERNAS ``task_id``, so the stored
+trace can be verified in Opik with
+``python ../gernas-sdk/scripts/opik_verify.py --task-id <request_id>``.
 
 Prerequisites: OTel Collector, DataLayer MCP (:9100), RAG MCP (:9000) and the four
 mesh nodes (``python launch_mesh.py``) running; GERNAS_* + GROQ keys in .env.
@@ -30,9 +31,6 @@ from src.observability import gernas_telemetry  # noqa: E402
 
 gernas_telemetry.init_telemetry("agent_mesh_e2e", channel="cli")
 
-from opentelemetry import trace  # noqa: E402
-from opentelemetry.sdk.trace import SpanProcessor  # noqa: E402
-
 from src.auth.identity_provider import login  # noqa: E402
 from src.mesh.orchestrator import handle_request  # noqa: E402
 
@@ -44,35 +42,19 @@ QUERIES = [
 ]
 
 
-class _TraceIdCapture(SpanProcessor):
-    """Span processor that remembers the trace id of each use_case.request span."""
-
-    def __init__(self) -> None:
-        self.trace_ids: list[str] = []
-
-    def on_start(self, span, parent_context=None) -> None:
-        if span.name == "use_case.request":
-            self.trace_ids.append(format(span.get_span_context().trace_id, "032x"))
-
-
-
-async def main(username: str) -> int:
-    capture = _TraceIdCapture()
-    provider = trace.get_tracer_provider()
-    if hasattr(provider, "add_span_processor"):
-        provider.add_span_processor(capture)
+async def main(username: str, prefix: str) -> int:
     user = login(username)
     results = []
     for label, query in QUERIES:
         t0 = time.perf_counter()
+        request_id = f"{prefix}{len(results):03d}"
         try:
-            res = await handle_request(user, query, request_id=f"E2E{len(results):03d}")
+            res = await handle_request(user, query, request_id=request_id)
             outcome = {"blocked": res.blocked, "block_stage": res.block_stage,
                        "answer_chars": len(res.answer or ""), "trail": res.trail[-4:]}
         except Exception as exc:  # report, keep going
             outcome = {"error": f"{type(exc).__name__}: {exc}"}
-        outcome.update(label=label, seconds=round(time.perf_counter() - t0, 1),
-                       trace_id=capture.trace_ids[-1] if capture.trace_ids else None)
+        outcome.update(label=label, request_id=request_id, seconds=round(time.perf_counter() - t0, 1))
         results.append(outcome)
         print(json.dumps(outcome), flush=True)
     gernas_telemetry.shutdown()
@@ -85,4 +67,6 @@ async def main(username: str) -> int:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--user", default="alice")
-    raise SystemExit(asyncio.run(main(ap.parse_args().user)))
+    ap.add_argument("--prefix", default="E2E", help="request id prefix (unique per run)")
+    a = ap.parse_args()
+    raise SystemExit(asyncio.run(main(a.user, a.prefix)))

@@ -38,7 +38,6 @@ from src.utils.console_logger import AgentLogger
 from src.observability import get_logger, CAT_SYSTEM
 from src.observability.baggage import set_request_baggage, detach_baggage
 from src.observability import gernas_telemetry as _gt
-from src.observability.metrics import record_mesh_request, record_cache
 from src.mesh.workflow import MeshState, build_mesh_workflow, build_hitl_resume_workflow, build_intent_resume_workflow, _stream_queue, _emit_stream_event
 from src.tracing.execution_trace import get_active_tracer
 from src.tracing.llm_reasoning import strip_reasoning_markers
@@ -63,8 +62,6 @@ def _record_cache_rejection(role: str, query: str, chosen_entry_id: str,
             _store._hit_rejected += 1
         else:
             _store._intent_rejected += 1
-        record_cache("HIT_REJECTED" if is_hit else "INTENT_REJECTED",
-                     role, 0.0, confidence=confidence)
     except Exception as exc:
         _log.warning("cache reject metric failed: %s", exc)
     try:
@@ -187,33 +184,27 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
     try:
         # Root the whole request in a single span (framework-native tracer). All
         # workflow/executor/agent/A2A spans become children of this one.
-        span_cm = _root_span(user, query, session_id, request_id)
-        with span_cm as root_span:
-            _log.info("Request start user=%s role=%s req=%s query=%s",
-                      user.username, user.role.value, request_id, query[:150],
-                      extra={"user": user.username, "role": user.role.value,
-                             "request_id": request_id, "session_id": session_id})
-            events = await _run_workflow(workflow, initial)
+        _log.info("Request start user=%s role=%s req=%s query=%s",
+                  user.username, user.role.value, request_id, query[:150],
+                  extra={"user": user.username, "role": user.role.value,
+                         "request_id": request_id, "session_id": session_id})
+        events = await _run_workflow(workflow, initial)
 
         final = _final_state(events)
-        _enrich_root_span(root_span, final, request_id)
     finally:
         duration_ms = (time.perf_counter() - t0) * 1000
         if final is None:
-            record_mesh_request("ERROR", "internal_error", duration_ms)
             _log.error("Request done req=%s user=%s duration_ms=%d outcome=ERROR",
                        request_id, user.username, int(duration_ms),
                        extra={"request_id": request_id, "user": user.username,
                               "outcome": "ERROR", "duration_ms": int(duration_ms)})
         elif final.blocked:
-            record_mesh_request("BLOCKED", final.block_stage or "none", duration_ms)
             _log.info("Request done req=%s user=%s duration_ms=%d outcome=BLOCKED block_stage=%s",
                       request_id, user.username, int(duration_ms), final.block_stage or "none",
                       extra={"request_id": request_id, "user": user.username,
                              "outcome": "BLOCKED", "block_stage": final.block_stage or "none",
                              "duration_ms": int(duration_ms)})
         else:
-            record_mesh_request("SUCCESS", "none", duration_ms)
             _log.info("Request done req=%s user=%s duration_ms=%d outcome=SUCCESS answer=%s",
                       request_id, user.username, int(duration_ms),
                       (final.answer or "")[:200],
@@ -329,10 +320,8 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
                 )
                 if is_hit:
                     _store._hit_accepted += 1
-                    record_cache("HIT_ACCEPTED", user.role.value, 0.0, confidence="high")
                 else:
                     _store._intent_accepted += 1
-                    record_cache("INTENT_ACCEPTED", user.role.value, 0.0, confidence=primary_conf)
             except Exception as _exc:
                 _log.warning("intent_match: accept bookkeeping failed: %s", _exc)
         else:
@@ -519,68 +508,8 @@ async def handle_request_stream(
     return result
 
 
-def _root_span(user: User, query: str, session_id: str, request_id: str = ""):
-    """Returns a context manager for the root ``mesh.request`` span.
-
-    Falls back to a no-op context manager if OpenTelemetry is unavailable.
-    The caller is responsible for calling ``_enrich_root_span`` while the span
-    is still open (before ``__exit__``).
-    """
-    try:
-        from agent_framework.observability import get_tracer
-        from opentelemetry.trace import SpanKind
-
-        cm = get_tracer().start_as_current_span("mesh.request", kind=SpanKind.SERVER)
-
-        class _Wrapped:
-            def __enter__(self):
-                self._span = cm.__enter__()
-                try:
-                    self._span.set_attribute("mesh.user", user.username)
-                    self._span.set_attribute("mesh.role", user.role.value)
-                    self._span.set_attribute("session.id", session_id)
-                    self._span.set_attribute("mesh.query_length", len(query))
-                    if request_id:
-                        self._span.set_attribute("fab.request_id", request_id)
-                except Exception:
-                    pass
-                return self._span
-
-            def __exit__(self, *exc):
-                return cm.__exit__(*exc)
-
-        return _Wrapped()
-    except Exception:
-        import contextlib
-        return contextlib.nullcontext()
 
 
-def _enrich_root_span(span, final: Optional[MeshState], request_id: str) -> None:
-    """Enriches the root span with workflow outcome while it is still open."""
-    try:
-        if span is None or not hasattr(span, "set_attribute"):
-            return
-        if final:
-            span.set_attribute("mesh.blocked",            final.blocked)
-            span.set_attribute("mesh.block_stage",        final.block_stage or "none")
-            span.set_attribute("mesh.trail",              " -> ".join(final.trail))
-            span.set_attribute("mesh.compliance_verdict", (final.compliance_verdict or "")[:120])
-            span.set_attribute("fab.request_id",          request_id)
-            span.add_event("mesh.request.completed", attributes={
-                "blocked":     final.blocked,
-                "block_stage": final.block_stage or "none",
-                "trail":       " -> ".join(final.trail),
-            })
-        else:
-            span.set_attribute("mesh.blocked",    True)
-            span.set_attribute("mesh.block_stage", "internal_error")
-            span.add_event("mesh.request.completed", attributes={
-                "blocked":     True,
-                "block_stage": "internal_error",
-                "trail":       "",
-            })
-    except Exception:
-        pass
 
 
 def _final_state(events) -> Optional[MeshState]:

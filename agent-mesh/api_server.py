@@ -58,7 +58,6 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 
-from src.a2a.hosting import TraceContextMiddleware
 from src.auth.identity_provider import login, list_users
 from src.config import Config
 from src.feedback.store import record_feedback, record_structured_feedback, get_structured_feedback_list
@@ -1126,9 +1125,9 @@ app = Starlette(
             allow_headers=["*"],
         ),
         # Gernas SDK: one SERVER span per request (kept open across SSE streams),
-        # inbound traceparent/baggage extraction.
+        # inbound traceparent/baggage extraction. No middleware without the SDK.
         *([Middleware(gernas_telemetry.asgi_middleware(), channel="api")]
-          if gernas_telemetry.asgi_middleware() is not None else [Middleware(TraceContextMiddleware)]),
+          if gernas_telemetry.asgi_middleware() is not None else []),
     ],
     routes=[
         Route("/health",               health,              methods=["GET"]),
@@ -1172,15 +1171,7 @@ def main() -> None:
     else:
         print(f"[api_server] {msg}")
 
-    profile = Config.OBS_PROFILE.lower()
-    if profile == "grafana":
-        obs_dest = Config.GRAFANA_OTLP_ENDPOINT or "<GRAFANA_OTLP_ENDPOINT not set>"
-    elif profile == "prod":
-        obs_dest = "Azure Monitor / Application Insights"
-    elif profile == "off":
-        obs_dest = "disabled (file logging only)"
-    else:
-        obs_dest = Config.OTEL_EXPORTER_OTLP_ENDPOINT or "localhost:4317"
+    obs_dest = gernas_telemetry.describe()
 
     print("=" * 64)
     print("  AGENT MESH — REST API Server")
@@ -1189,7 +1180,7 @@ def main() -> None:
     print(f"  CORS:   {', '.join(_CORS_ORIGINS)}")
     print("  Routes: GET /health  GET /api/users  POST /api/login")
     print("          POST /api/query  GET /api/mesh/status")
-    print(f"  Observability: profile={profile} → {obs_dest}")
+    print(f"  Observability: {obs_dest}")
     print("  Note:   Ensure mesh is running first (python launch_mesh.py)")
     print("=" * 64)
 

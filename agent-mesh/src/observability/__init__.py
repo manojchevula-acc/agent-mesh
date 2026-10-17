@@ -1,13 +1,9 @@
 """Mesh observability package.
 
 Public surface:
-- ``setup_observability(service_name)`` — single startup activation point
-  (framework-native OpenTelemetry + centralized logging).
+- ``gernas_telemetry`` — the single telemetry integration point (Gernas SDK).
 - ``get_logger(category)`` — category loggers (mesh.agent, mesh.a2a, ...).
-- ``metrics`` — custom business metric helpers (record_guardrail, record_a2a_call, …).
-- ``baggage`` — W3C baggage helpers (set_request_baggage, get_request_id, …).
-- ``tracer`` — legacy mesh event helpers (JSONL sink, off by default now that
-  Agent Framework workflow/agent spans cover the same ground).
+- ``baggage`` — application request context (set_request_baggage, get_request_id, …).
 """
 from src.observability.logging_config import (
     CAT_A2A,
@@ -22,11 +18,9 @@ from src.observability.logging_config import (
     configure_logging,
     get_logger,
 )
-from src.observability.setup import flush_observability, setup_observability
-from src.observability import metrics, baggage
+from src.observability import baggage
 
 __all__ = [
-    "setup_observability",
     "configure_logging",
     "get_logger",
     "CAT_AGENT",
@@ -38,7 +32,5 @@ __all__ = [
     "CAT_APPROVALS",
     "CAT_SYSTEM",
     "CAT_STATE",
-    "flush_observability",
-    "metrics",
     "baggage",
 ]

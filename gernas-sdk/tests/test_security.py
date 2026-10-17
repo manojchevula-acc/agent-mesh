@@ -146,3 +146,21 @@ def test_otlp_api_key_is_sent_as_header_not_attribute():
     )
     assert _headers(cfg) == {"authorization": "Bearer k-123"}
     assert "k-123" not in str(dict(cfg.resource.attributes))
+
+
+@pytest.mark.parametrize(
+    "ident",
+    [
+        "run_1fe2349876543210b7651234567df249c10",  # agent_run_id
+        "4bf92f3577b34da6a3ce929d0e0e4736",  # trace id
+        "de12ab341234567aa01",  # lower-case hex that looks IBAN-shaped
+    ],
+)
+def test_scrubbing_keeps_identifiers_intact(ident):
+    assert scrub_pii(f"probe for {ident} done") == f"probe for {ident} done"
+
+
+def test_scrubbing_still_catches_real_pii_after_tightening():
+    assert scrub_pii("call +971 50 123 4567 now") == "call [PHONE] now"
+    assert scrub_pii("bearer abc.def.ghi") == "Bearer [REDACTED]"
+    assert "[IBAN]" in scrub_pii("iban GB82WEST12345698765432")

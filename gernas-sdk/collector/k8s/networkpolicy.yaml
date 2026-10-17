@@ -1,0 +1,32 @@
+# OTLP ingress only from namespaces labelled as GERNAS telemetry producers, and
+# self-metrics only from the monitoring namespace. Egress: DNS plus HTTPS to ADX,
+# Entra ID (token exchange) and Opik Cloud.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gernas-otel-collector
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: gateway
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              gernas.fab/telemetry-producer: "true"
+      ports:
+        - {port: 4317, protocol: TCP}
+        - {port: 4318, protocol: TCP}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - {port: 8888, protocol: TCP}
+  egress:
+    - ports:
+        - {port: 53, protocol: UDP}
+        - {port: 53, protocol: TCP}
+    - ports:
+        - {port: 443, protocol: TCP}

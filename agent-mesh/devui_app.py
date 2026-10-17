@@ -31,13 +31,9 @@ DevUI is a development tool only — it is not a production hosting surface.
 """
 import os
 
-# Single-process mode: no A2A hops, so skip OTLP/Aspire export wiring (which would
-# otherwise try to reach a non-existent collector at :4317). DevUI provides the
-# tracing surface itself via ``instrumentation_enabled=True`` below. We still want
-# the rich, trace-correlated console/file logging, so set the profile to "off"
-# (logging only) BEFORE importing the observability setup.
+# Single-process dev tool: Gernas telemetry export is switched off below
+# (init_telemetry(exporter="off")); DevUI shows its own local trace view.
 os.environ.setdefault("PYTHONWARNINGS", "ignore")
-os.environ["OBS_PROFILE"] = "off"
 
 import sys
 import pathlib
@@ -50,7 +46,8 @@ if project_root not in sys.path:
 # (DevUI is its own tracing surface); unchanged from the previous behaviour.
 from src.observability import get_logger, CAT_SYSTEM
 from src.observability import gernas_telemetry
-gernas_telemetry.init_telemetry("agent_mesh_devui", channel="devui", exporter="off")
+gernas_telemetry.init_telemetry("agent_mesh_devui", channel="devui", exporter="off",
+                                framework_native_telemetry=True)
 
 from agent_framework.devui import serve
 
