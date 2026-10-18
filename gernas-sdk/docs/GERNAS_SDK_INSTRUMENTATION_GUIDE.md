@@ -6,6 +6,8 @@ This guide is for an engineer adding GERNAS telemetry to an agentic AI applicati
 
 Every API below exists in `gernas-telemetry` 0.4.0. The runnable examples in `examples/` are executed by `tests/test_examples.py`. Field names follow the GERNAS Enterprise Telemetry Blueprint (`docs/BLUEPRINT_TRACEABILITY.md`).
 
+To run the whole pipeline end to end, see `docs/GERNAS_SDK_END_TO_END_RUNBOOK.md`. For diagrams, the API catalogue and the exact Agent Mesh call sites, see `docs/GERNAS_SDK_ARCHITECTURE_AND_INSTRUMENTATION.html`, which is generated from the source.
+
 ---
 
 ## A. Architecture

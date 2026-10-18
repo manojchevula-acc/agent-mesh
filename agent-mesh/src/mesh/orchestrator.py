@@ -115,8 +115,9 @@ async def _run_workflow(workflow, state):
 async def handle_request(user: User, query: str, session_id: str | None = None, request_id: str | None = None, bypass_cache: bool = False) -> MeshResult:
     """Runs one request through the full mesh workflow.
 
-    Opens a root ``mesh.request`` span so every downstream executor / agent / A2A
-    span nests under one coherent distributed trace, then maps the workflow's
+    Traced as ``use_case.request`` (``@trace_use_case``, the root of the request trace)
+    so every downstream executor / agent / A2A span nests under one coherent
+    distributed trace, then maps the workflow's
     terminal :class:`MeshState` to a :class:`MeshResult`.
 
     ``session_id`` ties consecutive turns into one conversation. When omitted, a

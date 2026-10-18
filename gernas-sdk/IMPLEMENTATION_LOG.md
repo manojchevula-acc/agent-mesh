@@ -564,3 +564,17 @@ See `docs/BLUEPRINT_TRACEABILITY.md` §7 (naming-namespace sign-off, partial §1
 - Registry: 4 fields, 1 span, 2 metrics; collector allow-list and docs regenerated. Instrumentation guide §D updated. Ruff 0.17 now formats Python blocks in Markdown: README, runbook and guide reformatted.
 - Tests: `tests/test_document_processing.py`. SDK **215 passed, 91.42 %**; ruff / format / mypy / `generate --check` clean. RAG suite 26 passed / 1 failed (missing PDF, unchanged). Scratch span check: RBAC allow + deny, `document.process` failed + `agent.step` extraction.
 - Open: live ingestion run, reject path in RAG, version metadata, RBAC escalation signal (see `checklist.md` §12).
+
+## 2026-10-18 · Independent audit: five SOW aspects, decorator engine, runbook, architecture HTML
+
+- **Five SOW aspects.** These are the blueprint §1 instrumentation principles: OpenTelemetry, semantic conventions, trace/span context, exporter abstraction, gateway/collectors. Figure 1 has four layers, so it is not the grouping. All 65 SOW rows are mapped in `checklist.md` §3A. All five aspects are Partial: the SDK side is verified, and the open rows belong to other owners, ADX / AKS, or WP3.
+- **F-33 (decorator engine).** `_core.wrap` now treats objects with `async def __call__` as coroutine functions. A sync callable that returns a coroutine keeps its span open until the coroutine completes (`_await_in_span`); a `Task` / `Future` is returned unchanged. Before the fix such a span closed immediately, showing 0.9 ms and OK while the work took 50 ms and raised. Tests: `tests/test_lifecycle.py`, 5 tests; the 2 F-33 tests fail on the old code. The new file also covers per-task baggage isolation and an exporter that raises.
+- **F-34.** The MCP servers need `GERNAS_*` in their environment. Without it they warn and run untraced, which is correct: identity is never invented. Added `scripts/load_env.ps1`, which prints names only, and `scripts/mcp_probe.py`, promoted from a scratch probe.
+- **Live re-run.** `LIVE18A000`–`003` and `MCPPROBE18A` passed `opik_verify` ×5. Collector: 89 accepted = 89 Opik = 89 data plane, 0 refused. `gernas doctor --opik` PASS. RBAC `rbac_role_check` allow observed live.
+- **Generated documentation.** `scripts/build_architecture_doc.py` builds two files:
+  - `docs/GERNAS_SDK_ARCHITECTURE_AND_INSTRUMENTATION.html`: offline, with flowchart, 10 SVG sequence diagrams, API catalogue, call-site map, SOW dashboard and gaps;
+  - `docs/INSTRUMENTATION_MAP.md`.
+
+  Its inputs are `ast` over the SDK and the apps, `registry/spans.yaml` and `checklist.md`. Its `--check` flag (test `test_generated_docs.py`) also verifies the checklist's derived aspect table.
+- **New docs.** `docs/GERNAS_SDK_END_TO_END_RUNBOOK.md` (commands executed 2026-10-18) and `docs/SOW_COMPLIANCE_REPORT.md`.
+- Agent Mesh: stale `mesh.request` docstring in `orchestrator.handle_request` corrected (comment only).

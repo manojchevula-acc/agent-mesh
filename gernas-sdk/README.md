@@ -62,4 +62,6 @@ python examples\custom_agent.py
 Next steps:
 - `docs/onboarding-runbook.md` to onboard an agent;
 - `docs/GERNAS_SDK_INSTRUMENTATION_GUIDE.md` for what, where and how to instrument;
+- `docs/GERNAS_SDK_END_TO_END_RUNBOOK.md` to run the full pipeline and verify a trace in Opik;
+- `docs/GERNAS_SDK_ARCHITECTURE_AND_INSTRUMENTATION.html` (generated: diagrams, API catalogue, call-site map) and `docs/SOW_COMPLIANCE_REPORT.md`;
 - `docs/BLUEPRINT_TRACEABILITY.md` for the requirement → code → test mapping.

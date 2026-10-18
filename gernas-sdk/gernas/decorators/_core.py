@@ -12,6 +12,9 @@ Guarantees, for every decorator:
   cannot even be started the function simply runs untraced;
 * spans always end — on return, exception, cancellation, generator exhaustion,
   ``close()`` or garbage collection (``finally``-based lifecycle);
+* objects with ``async def __call__`` and sync callables that return a coroutine
+  keep the span open until the coroutine completes (other awaitables, e.g. a
+  ``Task``, are returned unchanged and timed only up to the return);
 * exception messages are PII-scrubbed before they are recorded.
 """
 
@@ -245,9 +248,27 @@ def wrap(fn: F, spec: Spec) -> F:
         return _wrap_async_gen(fn, spec)  # type: ignore[return-value]
     if inspect.isgeneratorfunction(fn):
         return _wrap_gen(fn, spec)  # type: ignore[return-value]
-    if inspect.iscoroutinefunction(fn):
+    # objects with ``async def __call__`` are coroutine callables too (B004: not a callable() test)
+    if inspect.iscoroutinefunction(fn) or inspect.iscoroutinefunction(getattr(type(fn), "__call__", None)):  # noqa: B004
         return _wrap_async(fn, spec)  # type: ignore[return-value]
     return _wrap_sync(fn, spec)  # type: ignore[return-value]
+
+
+async def _await_in_span(spec: Spec, span: Any, call: Call, awaitable: Any) -> Any:
+    """Finish the span of a sync callable that returned a coroutine, once it completes."""
+    token = otel_context.attach(trace.set_span_in_context(span))
+    ctx_token = _guard(spec.activate, span, call)
+    exc: BaseException | None = None
+    try:
+        result = await awaitable
+        _guard(spec.success, span, call, result)
+        return result
+    except BaseException as e:
+        exc = e
+        raise
+    finally:
+        _guard(spec.deactivate, call, ctx_token)
+        _end(spec, span, call, exc, token)
 
 
 def _wrap_sync(fn: Callable[..., Any], spec: Spec) -> Callable[..., Any]:
@@ -260,8 +281,13 @@ def _wrap_sync(fn: Callable[..., Any], spec: Spec) -> Callable[..., Any]:
             return fn(*args, **kwargs)
         ctx_token = _guard(spec.activate, span, call)
         exc: BaseException | None = None
+        deferred = False
         try:
             result = fn(*args, **kwargs)
+            if inspect.iscoroutine(result):
+                # the work runs when the caller awaits: keep the span open until then
+                deferred = True
+                return _await_in_span(spec, span, call, result)
             _guard(spec.success, span, call, result)
             return result
         except BaseException as e:
@@ -269,7 +295,13 @@ def _wrap_sync(fn: Callable[..., Any], spec: Spec) -> Callable[..., Any]:
             raise
         finally:
             _guard(spec.deactivate, call, ctx_token)
-            _end(spec, span, call, exc, token)
+            if deferred:
+                try:
+                    otel_context.detach(token)
+                except Exception:  # noqa: BLE001
+                    pass
+            else:
+                _end(spec, span, call, exc, token)
 
     wrapper.__gernas_spec__ = spec  # type: ignore[attr-defined]
     return wrapper
