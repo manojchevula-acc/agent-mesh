@@ -69,6 +69,8 @@ logger = logging.getLogger(__name__)
 # the calling agent's trace (traceparent arrives in the MCP request _meta).
 # ---------------------------------------------------------------------------
 _gernas_mw = None
+# fastmcp traces tools/call itself; the Gernas middleware already emits the server tool.call span.
+os.environ.setdefault("GERNAS_SUPPRESSED_SCOPES", "fastmcp")
 try:
     import gernas
     gernas.init_gernas(gernas.GernasConfig.from_env(service_name="datalayer_mcp"))

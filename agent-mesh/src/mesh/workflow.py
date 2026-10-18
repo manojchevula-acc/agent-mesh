@@ -99,6 +99,16 @@ def _emit_stream_event(event: dict) -> None:
 # Set of all valid FAB banking role string values — used by RBACValidationExecutor.
 _ALLOWED_ROLES = {r.value for r in BankingRole}
 
+
+# Gernas: the RBAC decision is a guardrail.check span (Blueprint §2 authorization_decision;
+# deny keeps status OK and ends the run with termination_reason=policy_block).
+@_gt.trace_guardrail(
+    "rbac_role_check",
+    decision_from=lambda allowed: ("allow", None) if allowed else ("deny", "unrecognised_role"),
+)
+def _role_recognised(role: str) -> bool:
+    return role in _ALLOWED_ROLES
+
 # Roles that bypass the LLM semantic compliance check. The deterministic guardrail
 # (layer 1) still applies to everyone — only the A2A compliance agent call is skipped.
 # Only roles with unrestricted access (allowed_tasks: ["*"]) bypass compliance —
@@ -284,7 +294,7 @@ class RBACValidationExecutor(Executor):
         _emit_stream_event({"stage": "rbac", "status": "started", "message": "Checking access control..."})
 
 
-        if state.role not in _ALLOWED_ROLES:
+        if not _role_recognised(state.role):
 
             state.blocked = True
             state.block_stage = "rbac_validation"

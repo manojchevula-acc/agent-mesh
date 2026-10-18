@@ -49,6 +49,7 @@ class NormalSpan:
     status: str
     attributes: dict[str, Any]
     resource: dict[str, Any] = field(default_factory=dict)
+    kind: str | None = None  # INTERNAL / SERVER / CLIENT … when the source records it
 
     @property
     def operation(self) -> str | None:
@@ -112,6 +113,7 @@ def from_readable(spans: Iterable[Any]) -> list[NormalSpan]:
                 status=s.status.status_code.name,
                 attributes=dict(s.attributes or {}),
                 resource=dict(s.resource.attributes) if s.resource else {},
+                kind=getattr(getattr(s, "kind", None), "name", None),
             )
         )
     return out
@@ -147,12 +149,36 @@ def load_file(path: str | Path) -> list[NormalSpan]:
                                 status,
                                 _otlp_attrs(sp.get("attributes")),
                                 resource,
+                                _OTLP_KINDS.get(sp.get("kind")),
                             )
                         )
     return spans
 
 
 # ── checks ───────────────────────────────────────────────────────────────────
+
+
+_OTLP_KINDS = {
+    1: "INTERNAL",
+    2: "SERVER",
+    3: "CLIENT",
+    4: "PRODUCER",
+    5: "CONSUMER",
+    "SPAN_KIND_INTERNAL": "INTERNAL",
+    "SPAN_KIND_SERVER": "SERVER",
+    "SPAN_KIND_CLIENT": "CLIENT",
+}
+
+
+def _client_server_pair(parent: NormalSpan, child: NormalSpan) -> bool:
+    """A CLIENT span and the SERVER span it caused are one call seen from two processes.
+
+    When the source keeps span kinds this is exact; stores that drop them (Opik) fall back
+    to the documented pair pattern: an MCP tool call (``tool_type=mcp``) on both sides.
+    """
+    if parent.kind and child.kind:
+        return parent.kind == "CLIENT" and child.kind == "SERVER"
+    return parent.attributes.get(Ctx.TOOL_TYPE) == "mcp" and child.attributes.get(Ctx.TOOL_TYPE) == "mcp"
 
 
 def check(spans: Iterable[NormalSpan], *, max_bounded_values: int = 500, require_gernas_only: bool = False) -> Report:
@@ -201,6 +227,7 @@ def check(spans: Iterable[NormalSpan], *, max_bounded_values: int = 500, require
                 and parent.operation == op
                 and Ctx.OPERATION in parent.attributes
                 and all(attrs.get(k) is not None and attrs.get(k) == parent.attributes.get(k) for k in identity)
+                and not _client_server_pair(parent, span)
             ):
                 add("duplicate", span, identity[0], f"{op} emitted twice for the same call (nested duplicate)")
         for key, value in attrs.items():

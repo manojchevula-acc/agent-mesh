@@ -172,3 +172,21 @@ def test_doctor_fails_when_the_collector_is_unreachable():
         timeout=180,
     )
     assert result.returncode == 1 and "[FAIL] collector" in result.stdout
+
+
+def test_client_server_pair_is_not_a_duplicate():
+    tool = {
+        **_ENVELOPE,
+        Ctx.OPERATION: SpanName.TOOL,
+        Ctx.TOOL_ID: "x",
+        Ctx.TOOL_TYPE: "function",
+        Ctx.AUTHORIZATION_DECISION: "allow",
+    }
+    client = _span(SpanName.TOOL, tool, span_id="1")
+    client.kind = "CLIENT"
+    server = _span(SpanName.TOOL, tool, span_id="2", parent="1")
+    server.kind = "SERVER"
+    assert check([client, server]).passed
+    # without kinds (e.g. Opik's copy) the MCP client/server pair is recognised by tool_type
+    mcp = {**tool, Ctx.TOOL_TYPE: "mcp"}
+    assert check([_span(SpanName.TOOL, mcp, span_id="1"), _span(SpanName.TOOL, mcp, span_id="2", parent="1")]).passed

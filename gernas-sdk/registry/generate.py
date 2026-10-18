@@ -217,6 +217,9 @@ def render_attributes(reg: dict, fields: dict[str, dict], version: str) -> str:
     out += [f"    {s['op']} = {s['name']!r}" for s in reg["spans"]["spans"]]
     out += ["", "", "class Metric:", '    """Metric instrument names."""']
     out += [f"    {m['name']} = {m['key']!r}" for m in reg["metrics"]]
+    out += ["", "", "# metric name -> unit (UCUM, from registry/metrics.yaml)", "METRIC_UNITS: dict[str, str] = {"]
+    out += [f"    Metric.{m['name']}: {m['unit']!r}," for m in reg["metrics"]]
+    out += ["}"]
     out += ["", "", "REGISTRY: dict[str, FieldSpec] = {"]
     for f in emitted.values():
         enum = tuple(str(e) for e in f.get("enum", []) or [])

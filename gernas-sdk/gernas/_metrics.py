@@ -8,6 +8,7 @@ from typing import Any
 from opentelemetry import metrics
 
 from gernas._version import __version__
+from gernas.attributes import METRIC_UNITS
 
 _lock = threading.Lock()
 _counters: dict[str, Any] = {}
@@ -22,7 +23,7 @@ def _counter(name: str) -> Any:
     inst = _counters.get(name)
     if inst is None:
         with _lock:
-            inst = _counters.get(name) or _meter().create_counter(name)
+            inst = _counters.get(name) or _meter().create_counter(name, unit=METRIC_UNITS.get(name, ""))
             _counters[name] = inst
     return inst
 
@@ -31,7 +32,7 @@ def _histogram(name: str) -> Any:
     inst = _histograms.get(name)
     if inst is None:
         with _lock:
-            inst = _histograms.get(name) or _meter().create_histogram(name, unit="ms")
+            inst = _histograms.get(name) or _meter().create_histogram(name, unit=METRIC_UNITS.get(name, "ms"))
             _histograms[name] = inst
     return inst
 
@@ -45,5 +46,13 @@ def record(
         _counter(counter).add(n, clean)
         if histogram and duration_ms is not None:
             _histogram(histogram).record(duration_ms, clean)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def observe(histogram: str, value: float, attrs: dict) -> None:
+    """Best-effort histogram observation (non-duration KPIs: steps, TTFT, tokens/s, scores)."""
+    try:
+        _histogram(histogram).record(value, {k: v for k, v in attrs.items() if v is not None})
     except Exception:  # noqa: BLE001
         pass

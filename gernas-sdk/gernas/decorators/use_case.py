@@ -12,10 +12,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-from gernas.attributes import Ctx, SpanName
+from gernas._metrics import record
+from gernas.attributes import Ctx, Metric, SpanName
 from gernas.decorators._core import Call, Spec, resolve, wrap
 from gernas.run_state import error_category
-from gernas.tracer import safe_set
+from gernas.tracer import get_config, safe_set
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -53,6 +54,20 @@ class UseCaseSpec(Spec):
         cancelled = error_category(exc) == "cancelled"
         safe_set(span, Ctx.BUSINESS_OUTCOME, "abandoned" if cancelled else "failure")
         return not cancelled
+
+    def finish(self, span: Any, call: Call, exc: BaseException | None) -> None:
+        attrs = getattr(span, "attributes", None) or {}
+        cfg = get_config()
+        status = "ok" if exc is None else ("cancelled" if error_category(exc) == "cancelled" else "error")
+        record(
+            Metric.USE_CASE_REQUESTS,
+            {
+                Ctx.USE_CASE_ID: self.use_case_id or (cfg.use_case_id if cfg else None),
+                Ctx.CHANNEL: attrs.get(Ctx.CHANNEL),
+                Ctx.BUSINESS_OUTCOME: attrs.get(Ctx.BUSINESS_OUTCOME),
+                Ctx.EXECUTION_STATUS: status,
+            },
+        )
 
 
 def trace_use_case(

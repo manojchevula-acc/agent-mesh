@@ -10,7 +10,7 @@ Built on OpenTelemetry SDK primitives. All artefacts are FAB-owned intellectual 
 | `IMPLEMENTATION_PLAN.md` | Authoritative task list — work from this, never invent tasks |
 | `IMPLEMENTATION_LOG.md` | Record every completed step here before stopping |
 | `docs/BLUEPRINT_TRACEABILITY.md` | Blueprint requirement → code → test matrix (keep current) |
-| `docs/sdk-developer-guide.md` · `docs/onboarding-runbook.md` | Public API and onboarding |
+| `docs/GERNAS_SDK_INSTRUMENTATION_GUIDE.md` · `docs/onboarding-runbook.md` | What / where / how to instrument; onboarding |
 | `registry/domains/*.yaml` | The attribute contract — edit here, then `python registry/generate.py` |
 | `../docs/GERNAS Enterprise Telemetry Observability Blueprint.docx` | The naming and scope contract (never modify) |
 | `../md_files/` | Original WP1/WP2 plans (history) |

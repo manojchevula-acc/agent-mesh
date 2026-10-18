@@ -18,7 +18,7 @@ from typing import Any, TypeVar
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
 
-from gernas._metrics import record
+from gernas._metrics import observe, record
 from gernas.attributes import Ctx, Metric, SpanName
 from gernas.cost import estimate_cost
 from gernas.decorators._core import (
@@ -101,7 +101,11 @@ def record_usage(
 
 def mark_fallback() -> None:
     """Mark the current model / tool call as served by a fallback (Blueprint §5 Fallback Rate)."""
-    safe_set(trace.get_current_span(), Ctx.FALLBACK_USED, True)
+    span = trace.get_current_span()
+    safe_set(span, Ctx.FALLBACK_USED, True)
+    run = current_run()
+    op = (getattr(span, "attributes", None) or {}).get(Ctx.OPERATION)
+    record(Metric.FALLBACKS, {Ctx.AGENT_ID: run.agent_id if run else None, Ctx.OPERATION: op})
 
 
 class _ModelSpec(Spec):
@@ -196,7 +200,13 @@ class LLMSpec(_ModelSpec):
         produced = usage[1] or st.get("chunks", 0)
         if outcome == "completed" and produced:
             seconds = max(call.elapsed_ms() - st.get("ttft", 0.0), 1e-3) / 1000.0
-            safe_set(span, Ctx.TOKENS_PER_SECOND, round(produced / seconds, 3))
+            tps = round(produced / seconds, 3)
+            safe_set(span, Ctx.TOKENS_PER_SECOND, tps)
+            observe(
+                Metric.LLM_TOKENS_PER_SECOND, tps, {Ctx.PROVIDER: st.get("provider"), Ctx.MODEL_ID: st.get("model")}
+            )
+        if "ttft" in st:
+            observe(Metric.LLM_TTFT, st["ttft"], {Ctx.PROVIDER: st.get("provider"), Ctx.MODEL_ID: st.get("model")})
         if outcome == "cancelled":
             st["execution_status"] = "cancelled"
             safe_set(span, Ctx.EXECUTION_STATUS, "cancelled")

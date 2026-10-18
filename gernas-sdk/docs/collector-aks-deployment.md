@@ -103,5 +103,7 @@ Label the app namespace: `kubectl label ns <app-ns> gernas.fab/telemetry-produce
 | Manifests validated | **Done**: strict Kubernetes v1.30 JSON-schema validation of all 7 rendered objects; image tag `0.162.0` exists on Docker Hub |
 | Running Collector, SDK → Collector → Opik | **Done (local)**: live Agent Mesh run with 4 requests. Every request verified in Opik by `opik_verify.py` (one trace across 5 processes, parent links resolve, conformance PASS, only Gernas spans). Collector metrics: 660 accepted / 660 sent to Opik / 0 failed. |
 | Data-plane path (processors, routing, PDPL) | **Done (local substitute)**: same pipelines with the file exporter; `e2e_pipeline_checks.py` 9/9 PASS |
+| Live MCP leg (MAF MCP client → DataLayer fastmcp server) | **Done (local)**: `opik_verify.py --task-id MCPPROBE17D` PASS. One trace; the server `tool.call` carries the caller's run; no fastmcp duplicate span. |
+| Re-run after the propagator change (2026-10-17) | **Done (local)**: 4 live mesh requests `LIVE17E000-003` PASS. Collector: 96 accepted = 96 to Opik = 96 to the data plane, 0 refused. |
 | Collector → ADX ingestion | **Blocked**: no ADX cluster or credentials available in this environment |
 | AKS deployment | **Blocked**: no cluster access (`kubectl` / `az` not available). Use §2 and §3 to close. |

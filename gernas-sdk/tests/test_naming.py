@@ -71,6 +71,8 @@ def test_span_names_are_exact():
         "MEMORY": "memory.access",
         "GUARDRAIL": "guardrail.check",
         "CONTENT_SAFETY": "content_safety.check",
+        "DOCUMENT": "document.process",
+        "EVALUATION": "evaluation.score",
         "HITL": "hitl.approval",
         "HTTP": "{method} {route}",
     }
@@ -80,7 +82,16 @@ def test_span_names_are_exact():
 def test_metric_names_are_exact():
     assert sorted(v for k, v in vars(Metric).items() if k.isupper()) == sorted(
         [
+            "gernas.use_case.requests",
             "gernas.agent.runs",
+            "gernas.agent.steps",
+            "gernas.agent.plan.duration",
+            "gernas.fallbacks",
+            "gernas.llm.ttft",
+            "gernas.llm.tokens_per_second",
+            "gernas.evaluation.score",
+            "gernas.documents",
+            "gernas.document.chunks",
             "gernas.agent.run.duration",
             "gernas.agent.retries",
             "gernas.agent.loops",
@@ -141,6 +152,7 @@ def test_environment_variables_are_exact():
         "GERNAS_MAX_STEPS",
         "GERNAS_RATE_CARD_PATH",
         "GERNAS_USER_TOKEN_KEY",
+        "GERNAS_SUPPRESSED_SCOPES",
     }
 
 
@@ -164,6 +176,7 @@ def test_public_api_is_exact():
             "trace_embedding",
             "trace_tool",
             "trace_retrieval",
+            "trace_document",
             "trace_memory",
             "trace_guardrail",
             "trace_content_safety",
@@ -173,6 +186,7 @@ def test_public_api_is_exact():
             "record_retry",
             "set_termination_reason",
             "mark_fallback",
+            "record_evaluation",
             "annotate",
             "request_context",
             "correlation",

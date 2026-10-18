@@ -530,6 +530,54 @@ fields:
   action: keep
   cardinality: bounded
   collector_rule: redaction allow-list + value patterns
+- field: gernas.document_type
+  domain: component_signals
+  sensitivity: internal
+  action: keep
+  cardinality: bounded
+  collector_rule: redaction allow-list + value patterns
+- field: gernas.document_status
+  domain: component_signals
+  sensitivity: internal
+  action: keep
+  cardinality: bounded
+  collector_rule: redaction allow-list + value patterns
+- field: gernas.chunk_count
+  domain: component_signals
+  sensitivity: internal
+  action: keep
+  cardinality: bounded
+  collector_rule: redaction allow-list + value patterns
+- field: gernas.document_version
+  domain: component_signals
+  sensitivity: internal
+  action: keep
+  cardinality: growing
+  collector_rule: redaction allow-list + value patterns
+- field: gernas.evaluation_metric
+  domain: component_signals
+  sensitivity: internal
+  action: keep
+  cardinality: bounded
+  collector_rule: redaction allow-list + value patterns
+- field: gernas.evaluation_score
+  domain: component_signals
+  sensitivity: internal
+  action: keep
+  cardinality: unbounded
+  collector_rule: redaction allow-list + value patterns
+- field: gernas.evaluation_passed
+  domain: component_signals
+  sensitivity: internal
+  action: keep
+  cardinality: bounded
+  collector_rule: redaction allow-list + value patterns
+- field: gernas.evaluator
+  domain: component_signals
+  sensitivity: internal
+  action: keep
+  cardinality: bounded
+  collector_rule: redaction allow-list + value patterns
 - field: gernas.hitl_outcome
   domain: component_signals
   sensitivity: internal

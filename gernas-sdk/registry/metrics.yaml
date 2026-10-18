@@ -16,6 +16,15 @@ metrics:
   - {name: RETRIEVAL_CALLS, key: gernas.retrieval.calls, type: counter, unit: "{call}", source: GERNAS-REQ-028, dims: [INDEX_ID, EMPTY_RESULT, EXECUTION_STATUS], brief: Retrieval volume, failed and empty retrievals}
   - {name: POLICY_DECISIONS, key: gernas.policy.decisions, type: counter, unit: "{decision}", source: GERNAS-REQ-015, dims: [POLICY_ID, POLICY_DECISION], brief: Policy block rate (guardrail and content safety)}
   - {name: HITL_INTERVENTIONS, key: gernas.hitl.interventions, type: counter, unit: "{intervention}", source: GERNAS-REQ-031, dims: [HITL_ACTION, HITL_OUTCOME], brief: Human intervention rate}
+  - {name: USE_CASE_REQUESTS, key: gernas.use_case.requests, type: counter, unit: "{request}", source: GERNAS-REQ-021, dims: [USE_CASE_ID, CHANNEL, BUSINESS_OUTCOME, EXECUTION_STATUS], brief: Agent task success rate and successful outcomes (Blueprint §4A / §5)}
+  - {name: AGENT_STEPS, key: gernas.agent.steps, type: histogram, unit: "{step}", source: GERNAS-REQ-022, dims: [AGENT_ID], brief: Average steps per run (Blueprint §5)}
+  - {name: AGENT_PLAN_DURATION, key: gernas.agent.plan.duration, type: histogram, unit: ms, source: GERNAS-REQ-022, dims: [AGENT_ID], brief: Planning latency (Blueprint §5)}
+  - {name: FALLBACKS, key: gernas.fallbacks, type: counter, unit: "{fallback}", source: GERNAS-REQ-025, dims: [AGENT_ID, OPERATION], brief: Fallback rate / model fallback (Blueprint §5, §6)}
+  - {name: LLM_TTFT, key: gernas.llm.ttft, type: histogram, unit: ms, source: GERNAS-REQ-025, dims: [PROVIDER, MODEL_ID], brief: First-token latency (Blueprint §6)}
+  - {name: LLM_TOKENS_PER_SECOND, key: gernas.llm.tokens_per_second, type: histogram, unit: "{token}/s", source: GERNAS-REQ-025, dims: [PROVIDER, MODEL_ID], brief: Tokens per second (Blueprint §6)}
+  - {name: DOCUMENTS, key: gernas.documents, type: counter, unit: "{document}", source: GERNAS-REQ-043, dims: [DOCUMENT_TYPE, DOCUMENT_STATUS], brief: Documents received / parsed / rejected / failed (Blueprint §3)}
+  - {name: DOCUMENT_CHUNKS, key: gernas.document.chunks, type: histogram, unit: "{chunk}", source: GERNAS-REQ-043, dims: [DOCUMENT_TYPE], brief: Chunk count per document (Blueprint §3)}
+  - {name: EVALUATION_SCORE, key: gernas.evaluation.score, type: histogram, unit: "1", source: GERNAS-REQ-041, dims: [EVALUATION_METRIC, AGENT_ID, EVALUATION_PASSED], brief: Quality evaluation scores (Blueprint §6 Quality)}
   - {name: SDK_DROPPED_SPANS, key: gernas.sdk.dropped_spans, type: observable_counter, unit: "{span}", source: GERNAS-REQ-030, dims: [], brief: Spans that could not be exported}
   - {name: SDK_DROPPED_LOGS, key: gernas.sdk.dropped_logs, type: observable_counter, unit: "{log}", source: GERNAS-REQ-030, dims: [], brief: Log records that could not be exported}
   - {name: SDK_DROPPED_ATTRIBUTES, key: gernas.sdk.dropped_attributes, type: observable_counter, unit: "{attribute}", source: GERNAS-REQ-030, dims: [], brief: Attribute writes that failed}

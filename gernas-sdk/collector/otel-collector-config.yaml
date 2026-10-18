@@ -100,6 +100,7 @@ processors:
       - gernas.business_outcome
       - gernas.channel
       - gernas.child_agent_id
+      - gernas.chunk_count
       - gernas.cluster
       - gernas.compute_units
       - gernas.content_blocked
@@ -107,10 +108,17 @@ processors:
       - gernas.department
       - gernas.dependency
       - gernas.deployment_id
+      - gernas.document_status
+      - gernas.document_type
+      - gernas.document_version
       - gernas.empty_result
       - gernas.environment
       - gernas.error_category
       - gernas.estimated_cost
+      - gernas.evaluation_metric
+      - gernas.evaluation_passed
+      - gernas.evaluation_score
+      - gernas.evaluator
       - gernas.execution_status
       - gernas.fallback_used
       - gernas.framework

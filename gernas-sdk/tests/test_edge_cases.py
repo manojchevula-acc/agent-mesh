@@ -207,3 +207,30 @@ def test_async_generator_agent_and_dynamic_ids(spans):
     assert asyncio.run(consume()) == [1, 2]
     a = attrs(spans(SpanName.AGENT)[0])
     assert a[Ctx.AGENT_ID] == "pricing_agent" and a[Ctx.AGENT_NAME] == "Pricing"
+
+
+def test_suppressed_scopes_are_not_exported():
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    from gernas.tracer import CountingSpanExporter
+
+    sink = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(CountingSpanExporter(sink, ("fastmcp",))))
+    provider.get_tracer("fastmcp").start_span("tools/call x").end()
+    provider.get_tracer("gernas").start_span("tool.call").end()
+    assert [s.name for s in sink.get_finished_spans()] == ["tool.call"]
+    cfg = GernasConfig.from_env(
+        environ={
+            "GERNAS_SERVICE_NAME": "s",
+            "GERNAS_USE_CASE_ID": "u",
+            "GERNAS_APPLICATION_ID": "a",
+            "GERNAS_BUSINESS_DOMAIN": "b",
+            "GERNAS_ENVIRONMENT": "dev",
+            "GERNAS_EXPORTER": "off",
+            "GERNAS_SUPPRESSED_SCOPES": "fastmcp, other",
+        }
+    )
+    assert cfg.suppressed_scopes == ("fastmcp", "other")

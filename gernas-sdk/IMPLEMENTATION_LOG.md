@@ -530,4 +530,37 @@ See `docs/BLUEPRINT_TRACEABILITY.md` §7 (naming-namespace sign-off, partial §1
 - ADX ingestion and AKS deployment are blocked: no cluster or credentials in this environment.
 - Data and RAG agents' model returns 404 (no live MCP call this run).
 
+## 2026-10-17 · Final re-verification against the SOW (blueprint)
+
+**Scope:** independent re-audit of the whole SOW (`../checklist.md`: 65 requirements; 25 passed, 14 partial, 19 not started, 5 blocked, 2 N/A).
+
+**Fixes:**
+- Run context now travels with every propagation path (`GernasBaggagePropagator`); an MCP server span carries the calling run.
+- `GERNAS_SUPPRESSED_SCOPES` stops fastmcp's duplicate `tools/call` span.
+- Conformance no longer counts a client→server pair as a duplicate.
+- Registry metric units are applied.
+- §6 Quality: `record_evaluation`.
+- §4–§6 KPI instruments: `use_case.requests`, `agent.steps`, `agent.plan.duration`, `fallbacks`, `llm.ttft`, `llm.tokens_per_second`, `evaluation.score`.
+- `docs/kpi-catalogue.md`.
+- `docs/GERNAS_SDK_INSTRUMENTATION_GUIDE.md`, with the examples executed by `tests/test_examples.py`.
+
+**Tests run:**
+- 210 passed, 91.25 %.
+- ruff, mypy, `generate.py --check` and `otelcol validate`: clean.
+- Live MCP probe and 4 live Agent Mesh requests: `opik_verify` PASS ×5.
+
+### Known Issues
+- Dashboards, alerts, KPI governance, FinOps allocation and platform telemetry are not delivered.
+- ADX and AKS are blocked.
+- Mesh Trace Dashboard page (F-20).
+
 <!-- END ENTRIES -->
+
+## 2026-10-18 · SOW-028 / 029 / 037: document processing, knowledge layer, RBAC decision
+
+- **SOW-028 (GERNAS-REQ-043).** New `@gernas.trace_document` (`gernas/decorators/document.py`) → `document.process` with `document_type`, `document_status` (parsed / rejected / failed) and `chunk_count`; metrics `gernas.documents` and `gernas.document.chunks`. A failure the pipeline catches and reports (`outcome_from` → `failed`) is still ERROR. RAG `IngestionPipeline.ingest_file` is decorated, and extraction moved into `_extract` with `trace_step("extract", step_type="document_extraction")` (OCR latency). Gernas stays optional for RAG (no-op decorators on `ImportError`).
+- **SOW-029 (GERNAS-REQ-044).** `trace_retrieval` reads `document_version` from the top result and accepts `authorization_decision=`. The RAG chunk metadata has no version yet, so nothing is emitted there.
+- **SOW-037.** Agent Mesh `RBACValidationExecutor`: the role check is `_role_recognised`, decorated with `trace_guardrail("rbac_role_check")` (allow / deny + `unrecognised_role`; deny → `policy_block`). Business logic unchanged.
+- Registry: 4 fields, 1 span, 2 metrics; collector allow-list and docs regenerated. Instrumentation guide §D updated. Ruff 0.17 now formats Python blocks in Markdown: README, runbook and guide reformatted.
+- Tests: `tests/test_document_processing.py`. SDK **215 passed, 91.42 %**; ruff / format / mypy / `generate --check` clean. RAG suite 26 passed / 1 failed (missing PDF, unchanged). Scratch span check: RBAC allow + deny, `document.process` failed + `agent.step` extraction.
+- Open: live ingestion run, reject path in RAG, version metadata, RBAC escalation signal (see `checklist.md` §12).

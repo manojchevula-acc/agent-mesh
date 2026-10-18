@@ -76,6 +76,8 @@ async def pricing_assistant(question: str, customer_id: str) -> str:
     context = await gather_context(question, customer_id)
     reply = await call_model([{"role": "user", "content": question}, {"role": "system", "content": str(context)}])
     streamed = "".join([c.get("delta", "") async for c in stream_model([{"role": "user", "content": question}])])
+    # Blueprint §6 Quality: an in-process judge scores the answer (only the score is recorded).
+    gernas.record_evaluation("answer_completeness", 0.9, passed=True, evaluator="example_judge")
     return reply["choices"][0]["message"]["content"] + " / " + streamed
 
 

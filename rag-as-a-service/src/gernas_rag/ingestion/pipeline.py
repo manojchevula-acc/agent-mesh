@@ -15,6 +15,21 @@ from .metadata import MetadataExtractor
 
 logger = get_logger(__name__)
 
+try:  # Gernas SDK is optional for this service (see main.py): no-op decorators without it.
+    import gernas as _gernas
+
+    _trace_document = _gernas.trace_document(
+        outcome_from=lambda r: "parsed" if r.status == IngestionStatus.SUCCESS.value else "failed",
+        chunks_from=lambda r: r.chunks_created,
+    )
+    _trace_extraction = _gernas.trace_step("extract", step_type="document_extraction")
+except ImportError:  # pragma: no cover - exercised only without the SDK installed
+
+    def _trace_document(fn):  # type: ignore[no-redef]
+        return fn
+
+    _trace_extraction = _trace_document
+
 
 class IngestionPipeline:
     """Orchestrates the full ingestion flow:
@@ -35,6 +50,7 @@ class IngestionPipeline:
         # Extractor is shared across all files — avoids reloading Docling weights per document.
         self._extractor = get_extractor(settings.chunking, Path("placeholder.pdf"))
 
+    @_trace_document
     async def ingest_file(
         self,
         file_path: Path,
@@ -51,7 +67,7 @@ class IngestionPipeline:
         logger.info("Starting ingestion", file=str(file_path))
         try:
             # Step 1: Extract
-            extraction = await self._extractor.extract(file_path)
+            extraction = await self._extract(file_path)
 
             # Step 2: Chunk with metadata
             base_metadata = self._metadata.build_base_metadata(
@@ -83,6 +99,11 @@ class IngestionPipeline:
                 status=IngestionStatus.ERROR.value,
                 error=str(exc),
             )
+
+    @_trace_extraction
+    async def _extract(self, file_path: Path):
+        """Extraction / OCR step (its latency is the Blueprint §3 OCR latency)."""
+        return await self._extractor.extract(file_path)
 
     async def ingest_directory(
         self,

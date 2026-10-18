@@ -135,6 +135,14 @@ class Ctx:
     MEMORY_SIZE_BYTES = 'gernas.memory_size_bytes'
     HITL_TICKET_ID = 'gernas.hitl_ticket_id'
     HITL_ACTION = 'gernas.hitl_action'
+    DOCUMENT_TYPE = 'gernas.document_type'
+    DOCUMENT_STATUS = 'gernas.document_status'
+    CHUNK_COUNT = 'gernas.chunk_count'
+    DOCUMENT_VERSION = 'gernas.document_version'
+    EVALUATION_METRIC = 'gernas.evaluation_metric'
+    EVALUATION_SCORE = 'gernas.evaluation_score'
+    EVALUATION_PASSED = 'gernas.evaluation_passed'
+    EVALUATOR = 'gernas.evaluator'
     HITL_OUTCOME = 'gernas.hitl_outcome'
     HITL_APPROVER_ROLE = 'gernas.hitl_approver_role'
 
@@ -163,6 +171,8 @@ class SpanName:
     MEMORY = 'memory.access'
     GUARDRAIL = 'guardrail.check'
     CONTENT_SAFETY = 'content_safety.check'
+    DOCUMENT = 'document.process'
+    EVALUATION = 'evaluation.score'
     HITL = 'hitl.approval'
     HTTP = '{method} {route}'
 
@@ -184,10 +194,52 @@ class Metric:
     RETRIEVAL_CALLS = 'gernas.retrieval.calls'
     POLICY_DECISIONS = 'gernas.policy.decisions'
     HITL_INTERVENTIONS = 'gernas.hitl.interventions'
+    USE_CASE_REQUESTS = 'gernas.use_case.requests'
+    AGENT_STEPS = 'gernas.agent.steps'
+    AGENT_PLAN_DURATION = 'gernas.agent.plan.duration'
+    FALLBACKS = 'gernas.fallbacks'
+    LLM_TTFT = 'gernas.llm.ttft'
+    LLM_TOKENS_PER_SECOND = 'gernas.llm.tokens_per_second'
+    DOCUMENTS = 'gernas.documents'
+    DOCUMENT_CHUNKS = 'gernas.document.chunks'
+    EVALUATION_SCORE = 'gernas.evaluation.score'
     SDK_DROPPED_SPANS = 'gernas.sdk.dropped_spans'
     SDK_DROPPED_LOGS = 'gernas.sdk.dropped_logs'
     SDK_DROPPED_ATTRIBUTES = 'gernas.sdk.dropped_attributes'
     SDK_REDACTIONS = 'gernas.sdk.redactions'
+
+
+# metric name -> unit (UCUM, from registry/metrics.yaml)
+METRIC_UNITS: dict[str, str] = {
+    Metric.AGENT_RUNS: '{run}',
+    Metric.AGENT_RUN_DURATION: 'ms',
+    Metric.AGENT_RETRIES: '{retry}',
+    Metric.AGENT_LOOPS: '{run}',
+    Metric.AGENT_DELEGATIONS: '{delegation}',
+    Metric.AGENT_DELEGATION_DURATION: 'ms',
+    Metric.LLM_CALLS: '{call}',
+    Metric.LLM_DURATION: 'ms',
+    Metric.LLM_TOKENS: '{token}',
+    Metric.LLM_ESTIMATED_COST: '{currency}',
+    Metric.TOOL_CALLS: '{call}',
+    Metric.TOOL_DURATION: 'ms',
+    Metric.RETRIEVAL_CALLS: '{call}',
+    Metric.POLICY_DECISIONS: '{decision}',
+    Metric.HITL_INTERVENTIONS: '{intervention}',
+    Metric.USE_CASE_REQUESTS: '{request}',
+    Metric.AGENT_STEPS: '{step}',
+    Metric.AGENT_PLAN_DURATION: 'ms',
+    Metric.FALLBACKS: '{fallback}',
+    Metric.LLM_TTFT: 'ms',
+    Metric.LLM_TOKENS_PER_SECOND: '{token}/s',
+    Metric.DOCUMENTS: '{document}',
+    Metric.DOCUMENT_CHUNKS: '{chunk}',
+    Metric.EVALUATION_SCORE: '1',
+    Metric.SDK_DROPPED_SPANS: '{span}',
+    Metric.SDK_DROPPED_LOGS: '{log}',
+    Metric.SDK_DROPPED_ATTRIBUTES: '{attribute}',
+    Metric.SDK_REDACTIONS: '{attribute}',
+}
 
 
 REGISTRY: dict[str, FieldSpec] = {
@@ -277,6 +329,14 @@ REGISTRY: dict[str, FieldSpec] = {
     'gernas.memory_size_bytes': FieldSpec('gernas.memory_size_bytes', 'component_signals', 'int', 'conditional', 'internal', 'unbounded', 'keep', ()),
     'gernas.hitl_ticket_id': FieldSpec('gernas.hitl_ticket_id', 'component_signals', 'string', 'always', 'internal', 'unbounded', 'keep', ()),
     'gernas.hitl_action': FieldSpec('gernas.hitl_action', 'component_signals', 'string', 'always', 'internal', 'bounded', 'keep', ()),
+    'gernas.document_type': FieldSpec('gernas.document_type', 'component_signals', 'string', 'always', 'internal', 'bounded', 'keep', ()),
+    'gernas.document_status': FieldSpec('gernas.document_status', 'component_signals', 'string', 'always', 'internal', 'bounded', 'keep', ('parsed', 'rejected', 'failed')),
+    'gernas.chunk_count': FieldSpec('gernas.chunk_count', 'component_signals', 'int', 'conditional', 'internal', 'bounded', 'keep', ()),
+    'gernas.document_version': FieldSpec('gernas.document_version', 'component_signals', 'string', 'conditional', 'internal', 'growing', 'keep', ()),
+    'gernas.evaluation_metric': FieldSpec('gernas.evaluation_metric', 'component_signals', 'string', 'always', 'internal', 'bounded', 'keep', ('groundedness', 'relevance', 'faithfulness', 'answer_completeness', 'citation_quality', 'hallucination', 'toxicity', 'refusal')),
+    'gernas.evaluation_score': FieldSpec('gernas.evaluation_score', 'component_signals', 'double', 'always', 'internal', 'unbounded', 'keep', ()),
+    'gernas.evaluation_passed': FieldSpec('gernas.evaluation_passed', 'component_signals', 'boolean', 'conditional', 'internal', 'bounded', 'keep', ()),
+    'gernas.evaluator': FieldSpec('gernas.evaluator', 'component_signals', 'string', 'conditional', 'internal', 'bounded', 'keep', ()),
     'gernas.hitl_outcome': FieldSpec('gernas.hitl_outcome', 'component_signals', 'string', 'always', 'internal', 'bounded', 'keep', ('approved', 'rejected', 'changed', 'timed_out')),
     'gernas.hitl_approver_role': FieldSpec('gernas.hitl_approver_role', 'component_signals', 'string', 'conditional', 'internal', 'bounded', 'keep', ()),
     'gernas.operation': FieldSpec('gernas.operation', 'sdk', 'string', 'always', 'public', 'bounded', 'keep', ()),
@@ -307,6 +367,8 @@ REQUIRED_ATTRIBUTES: dict[str, tuple[str, ...]] = {
     SpanName.MEMORY: (Ctx.MEMORY_OPERATION,),
     SpanName.GUARDRAIL: (Ctx.POLICY_ID, Ctx.POLICY_DECISION,),
     SpanName.CONTENT_SAFETY: (Ctx.SAFETY_CATEGORY, Ctx.CONTENT_BLOCKED,),
+    SpanName.DOCUMENT: (Ctx.DOCUMENT_TYPE, Ctx.DOCUMENT_STATUS,),
+    SpanName.EVALUATION: (Ctx.EVALUATION_METRIC, Ctx.EVALUATION_SCORE,),
     SpanName.HITL: (Ctx.HITL_TICKET_ID, Ctx.HITL_ACTION, Ctx.HITL_OUTCOME,),
     SpanName.HTTP: (Ctx.HTTP_METHOD, Ctx.HTTP_ROUTE, Ctx.HTTP_STATUS_CODE,),
 }
@@ -324,6 +386,8 @@ SPAN_KINDS: dict[str, str] = {
     SpanName.MEMORY: 'INTERNAL',
     SpanName.GUARDRAIL: 'INTERNAL',
     SpanName.CONTENT_SAFETY: 'INTERNAL',
+    SpanName.DOCUMENT: 'INTERNAL',
+    SpanName.EVALUATION: 'INTERNAL',
     SpanName.HITL: 'INTERNAL',
     SpanName.HTTP: 'SERVER',
 }

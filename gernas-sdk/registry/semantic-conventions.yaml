@@ -744,6 +744,86 @@ groups:
     stability: development
     examples:
     - submit_pricing_change
+  - id: gernas.document_type
+    type: string
+    brief: Document class being processed
+    requirement_level: required
+    stability: development
+    examples:
+    - pricing_policy
+  - id: gernas.document_status
+    type:
+      members:
+      - id: parsed
+        value: parsed
+      - id: rejected
+        value: rejected
+      - id: failed
+        value: failed
+    brief: Outcome of processing one received document
+    requirement_level: required
+    stability: development
+    examples:
+    - parsed
+  - id: gernas.chunk_count
+    type: int
+    brief: Chunks produced from the document
+    requirement_level: conditionally_required
+    stability: development
+    examples:
+    - 42
+  - id: gernas.document_version
+    type: string
+    brief: Version of the top retrieved document
+    requirement_level: conditionally_required
+    stability: development
+    examples:
+    - v2.4
+  - id: gernas.evaluation_metric
+    type:
+      members:
+      - id: groundedness
+        value: groundedness
+      - id: relevance
+        value: relevance
+      - id: faithfulness
+        value: faithfulness
+      - id: answer_completeness
+        value: answer_completeness
+      - id: citation_quality
+        value: citation_quality
+      - id: hallucination
+        value: hallucination
+      - id: toxicity
+        value: toxicity
+      - id: refusal
+        value: refusal
+    brief: "Blueprint \xA76 quality metric being scored"
+    requirement_level: required
+    stability: development
+    examples:
+    - groundedness
+  - id: gernas.evaluation_score
+    type: double
+    brief: Score between 0 and 1
+    requirement_level: required
+    stability: development
+    examples:
+    - 0.92
+  - id: gernas.evaluation_passed
+    type: boolean
+    brief: Score met the evaluator's threshold
+    requirement_level: conditionally_required
+    stability: development
+    examples:
+    - true
+  - id: gernas.evaluator
+    type: string
+    brief: Evaluator name / version
+    requirement_level: conditionally_required
+    stability: development
+    examples:
+    - ragas_faithfulness_v1
   - id: gernas.hitl_outcome
     type:
       members:
@@ -971,6 +1051,24 @@ groups:
     requirement_level: required
   - ref: gernas.content_blocked
     requirement_level: required
+- id: span.gernas.document
+  type: span
+  span_kind: internal
+  brief: document.process (trace_document)
+  attributes:
+  - ref: gernas.document_type
+    requirement_level: required
+  - ref: gernas.document_status
+    requirement_level: required
+- id: span.gernas.evaluation
+  type: span
+  span_kind: internal
+  brief: evaluation.score (record_evaluation)
+  attributes:
+  - ref: gernas.evaluation_metric
+    requirement_level: required
+  - ref: gernas.evaluation_score
+    requirement_level: required
 - id: span.gernas.hitl
   type: span
   span_kind: internal
@@ -1138,6 +1236,87 @@ groups:
   attributes:
   - ref: gernas.hitl_action
   - ref: gernas.hitl_outcome
+- id: metric.gernas.use_case.requests
+  type: metric
+  metric_name: gernas.use_case.requests
+  instrument: counter
+  unit: '{request}'
+  brief: "Agent task success rate and successful outcomes (Blueprint \xA74A / \xA75)"
+  attributes:
+  - ref: gernas.use_case_id
+  - ref: gernas.channel
+  - ref: gernas.business_outcome
+  - ref: gernas.execution_status
+- id: metric.gernas.agent.steps
+  type: metric
+  metric_name: gernas.agent.steps
+  instrument: histogram
+  unit: '{step}'
+  brief: "Average steps per run (Blueprint \xA75)"
+  attributes:
+  - ref: gernas.agent_id
+- id: metric.gernas.agent.plan.duration
+  type: metric
+  metric_name: gernas.agent.plan.duration
+  instrument: histogram
+  unit: ms
+  brief: "Planning latency (Blueprint \xA75)"
+  attributes:
+  - ref: gernas.agent_id
+- id: metric.gernas.fallbacks
+  type: metric
+  metric_name: gernas.fallbacks
+  instrument: counter
+  unit: '{fallback}'
+  brief: "Fallback rate / model fallback (Blueprint \xA75"
+  attributes:
+  - ref: gernas.agent_id
+  - ref: gernas.operation
+- id: metric.gernas.llm.ttft
+  type: metric
+  metric_name: gernas.llm.ttft
+  instrument: histogram
+  unit: ms
+  brief: "First-token latency (Blueprint \xA76)"
+  attributes:
+  - ref: gernas.provider
+  - ref: gernas.model_id
+- id: metric.gernas.llm.tokens_per_second
+  type: metric
+  metric_name: gernas.llm.tokens_per_second
+  instrument: histogram
+  unit: '{token}/s'
+  brief: "Tokens per second (Blueprint \xA76)"
+  attributes:
+  - ref: gernas.provider
+  - ref: gernas.model_id
+- id: metric.gernas.documents
+  type: metric
+  metric_name: gernas.documents
+  instrument: counter
+  unit: '{document}'
+  brief: "Documents received / parsed / rejected / failed (Blueprint \xA73)"
+  attributes:
+  - ref: gernas.document_type
+  - ref: gernas.document_status
+- id: metric.gernas.document.chunks
+  type: metric
+  metric_name: gernas.document.chunks
+  instrument: histogram
+  unit: '{chunk}'
+  brief: "Chunk count per document (Blueprint \xA73)"
+  attributes:
+  - ref: gernas.document_type
+- id: metric.gernas.evaluation.score
+  type: metric
+  metric_name: gernas.evaluation.score
+  instrument: histogram
+  unit: '1'
+  brief: "Quality evaluation scores (Blueprint \xA76 Quality)"
+  attributes:
+  - ref: gernas.evaluation_metric
+  - ref: gernas.agent_id
+  - ref: gernas.evaluation_passed
 - id: metric.gernas.sdk.dropped_spans
   type: metric
   metric_name: gernas.sdk.dropped_spans

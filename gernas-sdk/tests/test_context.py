@@ -175,3 +175,44 @@ def test_correlation_exposes_trace_run_and_request_ids(spans):
     assert out["agent_id"] == "corr_agent" and out["agent_run_id"] == attrs(agent)[Ctx.AGENT_RUN_ID]
     assert (out["session_id"], out["task_id"]) == ("s-c", "t-c")
     assert set(gernas.correlation().values()) == {None}
+
+
+def test_plain_otel_injection_carries_the_calling_run(spans):
+    """Libraries that call propagate.inject themselves (MAF's MCP client) still carry the run."""
+    from opentelemetry import context as otel_context
+    from opentelemetry import propagate
+
+    carrier: dict = {}
+
+    @gernas.trace_agent("mcp_caller", agent_type="worker")
+    def caller():
+        propagate.inject(carrier)
+
+    caller()
+    assert "gernas.parent_run_id=" in carrier["baggage"] and "gernas.parent_agent_id=mcp_caller" in carrier["baggage"]
+
+    # server side in "another process": no run bound, context only from the headers
+    token = otel_context.attach(otel_context.Context())
+    try:
+
+        @gernas.trace_tool("customer_360", tool_type="mcp", dependency="crm")
+        def server_tool():
+            return 1
+
+        with gernas.attach_headers(carrier):
+            server_tool()
+    finally:
+        otel_context.detach(token)
+    caller_span, tool = spans(SpanName.AGENT)[0], spans(SpanName.TOOL)[0]
+    assert attrs(tool)[Ctx.AGENT_ID] == "mcp_caller"
+    assert attrs(tool)[Ctx.AGENT_RUN_ID] == attrs(caller_span)[Ctx.AGENT_RUN_ID]
+    assert tool.context.trace_id == caller_span.context.trace_id
+
+
+def test_spans_outside_any_run_get_no_run_context(spans):
+    @gernas.trace_tool("standalone")
+    def tool():
+        return 1
+
+    tool()
+    assert Ctx.AGENT_RUN_ID not in attrs(spans(SpanName.TOOL)[0])

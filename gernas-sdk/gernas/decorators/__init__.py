@@ -2,6 +2,7 @@
 
 from gernas.decorators.agent import trace_agent
 from gernas.decorators.delegation import trace_delegation
+from gernas.decorators.document import trace_document
 from gernas.decorators.llm import mark_fallback, trace_embedding, trace_llm
 from gernas.decorators.memory import trace_memory
 from gernas.decorators.planning import trace_planning, trace_step
@@ -20,6 +21,7 @@ __all__ = [
     "trace_embedding",
     "trace_tool",
     "trace_retrieval",
+    "trace_document",
     "trace_memory",
     "trace_guardrail",
     "trace_content_safety",

@@ -16,7 +16,6 @@ from typing import Any
 
 from opentelemetry import metrics, trace
 from opentelemetry.baggage import get_all as baggage_get_all
-from opentelemetry.baggage.propagation import W3CBaggagePropagator
 from opentelemetry.propagate import set_global_textmap
 from opentelemetry.propagators.composite import CompositePropagator
 from opentelemetry.sdk._logs.export import LogRecordExporter
@@ -97,12 +96,23 @@ def safe_set_many(span: Any, attributes: Mapping[str, Any]) -> None:
 
 
 class CountingSpanExporter(SpanExporter):
-    """Wraps the real exporter; failed or raising exports count as dropped spans."""
+    """Wraps the real exporter; failed or raising exports count as dropped spans.
 
-    def __init__(self, inner: SpanExporter) -> None:
+    Spans from ``suppressed_scopes`` (GERNAS_SUPPRESSED_SCOPES) are not exported: the
+    single-instrumentation-path control for libraries that trace the same operation
+    as an SDK span and cannot be switched off themselves. Only suppress leaf scopes —
+    a suppressed span that is the parent of a Gernas span would orphan it.
+    """
+
+    def __init__(self, inner: SpanExporter, suppressed_scopes: Sequence[str] = ()) -> None:
         self._inner = inner
+        self._suppressed = frozenset(suppressed_scopes)
 
     def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
+        if self._suppressed:
+            spans = [s for s in spans if getattr(s.instrumentation_scope, "name", None) not in self._suppressed]
+            if not spans:
+                return SpanExportResult.SUCCESS
         try:
             result = self._inner.export(spans)
         except Exception:  # noqa: BLE001
@@ -262,7 +272,7 @@ def init_gernas(
         from gernas.exporters import build_log_exporter, build_metric_exporter, build_span_exporter
 
         resource = cfg.resource
-        exporter = CountingSpanExporter(span_exporter or build_span_exporter(cfg))
+        exporter = CountingSpanExporter(span_exporter or build_span_exporter(cfg), cfg.suppressed_scopes)
         existing = trace.get_tracer_provider()
         if isinstance(existing, TracerProvider):
             tracer_provider = existing
@@ -279,7 +289,9 @@ def init_gernas(
         )
         if tracer_provider is not existing:
             trace.set_tracer_provider(tracer_provider)
-        set_global_textmap(CompositePropagator([TraceContextTextMapPropagator(), W3CBaggagePropagator()]))
+        from gernas.context import GernasBaggagePropagator
+
+        set_global_textmap(CompositePropagator([TraceContextTextMapPropagator(), GernasBaggagePropagator()]))
 
         meter_provider = None
         try:

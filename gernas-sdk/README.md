@@ -4,7 +4,9 @@ The Gernas SDK implements the **GERNAS Enterprise Telemetry & Observability Blue
 
 ```python
 import gernas
-gernas.init_gernas()                                   # GERNAS_* environment only; mandatory identity is validated
+
+gernas.init_gernas()  # GERNAS_* environment only; mandatory identity is validated
+
 
 @gernas.trace_agent("price_assist", agent_type="orchestrator")
 async def answer(question: str) -> str: ...
@@ -44,7 +46,7 @@ async def answer(question: str) -> str: ...
 | `examples/` | `custom_agent.py`, `maf_agent.py`, `langchain_agent.py`, `langgraph_agent.py` (offline), rate card example |
 | `benchmarks/`, `reports/` | Overhead benchmark and report, plus E2E evidence |
 | `scripts/` | `run_collector.py`, `e2e_pipeline_checks.py`, `inspect_trace.py`, `opik_verify.py` |
-| `docs/` | Blueprint traceability, developer guide, onboarding runbook, attribute reference (generated), migration, ADRs |
+| `docs/` | Blueprint traceability, instrumentation guide (`GERNAS_SDK_INSTRUMENTATION_GUIDE.md`), AKS deployment, KPI catalogue, onboarding runbook, attribute reference (generated), migration, ADRs |
 
 ## Quick start
 
@@ -59,5 +61,5 @@ python examples\custom_agent.py
 
 Next steps:
 - `docs/onboarding-runbook.md` to onboard an agent;
-- `docs/sdk-developer-guide.md` for the API;
+- `docs/GERNAS_SDK_INSTRUMENTATION_GUIDE.md` for what, where and how to instrument;
 - `docs/BLUEPRINT_TRACEABILITY.md` for the requirement → code → test mapping.

@@ -189,6 +189,14 @@ Signals required by Blueprint §3 (component telemetry), §5 (agentic KPIs) and 
 | `Ctx.MEMORY_SIZE_BYTES` | `gernas.memory_size_bytes` | int | conditional | internal | unbounded | keep | GERNAS-REQ-029 | Size of the data read or written |
 | `Ctx.HITL_TICKET_ID` | `gernas.hitl_ticket_id` | string | always | internal | unbounded | keep | GERNAS-REQ-031 | Approval ticket id |
 | `Ctx.HITL_ACTION` | `gernas.hitl_action` | string | always | internal | bounded | keep | GERNAS-REQ-031 | Action awaiting human approval |
+| `Ctx.DOCUMENT_TYPE` | `gernas.document_type` | string | always | internal | bounded | keep | GERNAS-REQ-043 | Document class being processed |
+| `Ctx.DOCUMENT_STATUS` | `gernas.document_status` | string (`parsed`, `rejected`, `failed`) | always | internal | bounded | keep | GERNAS-REQ-043 | Outcome of processing one received document |
+| `Ctx.CHUNK_COUNT` | `gernas.chunk_count` | int | conditional | internal | bounded | keep | GERNAS-REQ-043 | Chunks produced from the document |
+| `Ctx.DOCUMENT_VERSION` | `gernas.document_version` | string | conditional | internal | growing | keep | GERNAS-REQ-044 | Version of the top retrieved document |
+| `Ctx.EVALUATION_METRIC` | `gernas.evaluation_metric` | string (`groundedness`, `relevance`, `faithfulness`, `answer_completeness`, `citation_quality`, `hallucination`, `toxicity`, `refusal`) | always | internal | bounded | keep | GERNAS-REQ-041 | Blueprint §6 quality metric being scored |
+| `Ctx.EVALUATION_SCORE` | `gernas.evaluation_score` | double | always | internal | unbounded | keep | GERNAS-REQ-041 | Score between 0 and 1 |
+| `Ctx.EVALUATION_PASSED` | `gernas.evaluation_passed` | boolean | conditional | internal | bounded | keep | GERNAS-REQ-041 | Score met the evaluator's threshold |
+| `Ctx.EVALUATOR` | `gernas.evaluator` | string | conditional | internal | bounded | keep | GERNAS-REQ-041 | Evaluator name / version |
 | `Ctx.HITL_OUTCOME` | `gernas.hitl_outcome` | string (`approved`, `rejected`, `changed`, `timed_out`) | always | internal | bounded | keep | GERNAS-REQ-031 | Outcome of the human intervention |
 | `Ctx.HITL_APPROVER_ROLE` | `gernas.hitl_approver_role` | string | conditional | internal | bounded | keep | GERNAS-REQ-031 | Role of the approver - never the individual |
 
@@ -223,6 +231,8 @@ Keys the SDK needs to operate - span classification, multi-framework comparabili
 | `memory.access` | `trace_memory` | INTERNAL | `gernas.memory_operation` | GERNAS-REQ-029 |
 | `guardrail.check` | `trace_guardrail` | INTERNAL | `gernas.policy_id`, `gernas.policy_decision` | GERNAS-REQ-015 |
 | `content_safety.check` | `trace_content_safety` | INTERNAL | `gernas.safety_category`, `gernas.content_blocked` | GERNAS-REQ-027 |
+| `document.process` | `trace_document` | INTERNAL | `gernas.document_type`, `gernas.document_status` | GERNAS-REQ-043 |
+| `evaluation.score` | `record_evaluation` | INTERNAL | `gernas.evaluation_metric`, `gernas.evaluation_score` | GERNAS-REQ-041 |
 | `hitl.approval` | `trace_hitl / start_hitl` | INTERNAL | `gernas.hitl_ticket_id`, `gernas.hitl_action`, `gernas.hitl_outcome` | GERNAS-REQ-031 |
 | `{method} {route}` | `GernasASGIMiddleware` | SERVER | `http.request.method`, `http.route`, `http.response.status_code` | TN-03 |
 
@@ -250,6 +260,15 @@ Events: only the OpenTelemetry standard `exception` event.
 | `gernas.retrieval.calls` | counter | {call} | `gernas.index_id`, `gernas.empty_result`, `gernas.execution_status` | GERNAS-REQ-028 | Retrieval volume |
 | `gernas.policy.decisions` | counter | {decision} | `gernas.policy_id`, `gernas.policy_decision` | GERNAS-REQ-015 | Policy block rate (guardrail and content safety) |
 | `gernas.hitl.interventions` | counter | {intervention} | `gernas.hitl_action`, `gernas.hitl_outcome` | GERNAS-REQ-031 | Human intervention rate |
+| `gernas.use_case.requests` | counter | {request} | `gernas.use_case_id`, `gernas.channel`, `gernas.business_outcome`, `gernas.execution_status` | GERNAS-REQ-021 | Agent task success rate and successful outcomes (Blueprint §4A / §5) |
+| `gernas.agent.steps` | histogram | {step} | `gernas.agent_id` | GERNAS-REQ-022 | Average steps per run (Blueprint §5) |
+| `gernas.agent.plan.duration` | histogram | ms | `gernas.agent_id` | GERNAS-REQ-022 | Planning latency (Blueprint §5) |
+| `gernas.fallbacks` | counter | {fallback} | `gernas.agent_id`, `gernas.operation` | GERNAS-REQ-025 | Fallback rate / model fallback (Blueprint §5 |
+| `gernas.llm.ttft` | histogram | ms | `gernas.provider`, `gernas.model_id` | GERNAS-REQ-025 | First-token latency (Blueprint §6) |
+| `gernas.llm.tokens_per_second` | histogram | {token}/s | `gernas.provider`, `gernas.model_id` | GERNAS-REQ-025 | Tokens per second (Blueprint §6) |
+| `gernas.documents` | counter | {document} | `gernas.document_type`, `gernas.document_status` | GERNAS-REQ-043 | Documents received / parsed / rejected / failed (Blueprint §3) |
+| `gernas.document.chunks` | histogram | {chunk} | `gernas.document_type` | GERNAS-REQ-043 | Chunk count per document (Blueprint §3) |
+| `gernas.evaluation.score` | histogram | 1 | `gernas.evaluation_metric`, `gernas.agent_id`, `gernas.evaluation_passed` | GERNAS-REQ-041 | Quality evaluation scores (Blueprint §6 Quality) |
 | `gernas.sdk.dropped_spans` | observable_counter | {span} | — | GERNAS-REQ-030 | Spans that could not be exported |
 | `gernas.sdk.dropped_logs` | observable_counter | {log} | — | GERNAS-REQ-030 | Log records that could not be exported |
 | `gernas.sdk.dropped_attributes` | observable_counter | {attribute} | — | GERNAS-REQ-030 | Attribute writes that failed |

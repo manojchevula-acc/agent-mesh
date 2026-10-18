@@ -34,6 +34,7 @@ from gernas.decorators import (
     trace_agent,
     trace_content_safety,
     trace_delegation,
+    trace_document,
     trace_embedding,
     trace_guardrail,
     trace_llm,
@@ -44,6 +45,7 @@ from gernas.decorators import (
     trace_tool,
     trace_use_case,
 )
+from gernas.evaluation import record_evaluation
 from gernas.hitl import complete_hitl, start_hitl, trace_hitl
 from gernas.redaction import DROP, set_redaction_hook
 from gernas.run_state import record_retry, set_termination_reason
@@ -83,6 +85,7 @@ __all__ = [
     "trace_embedding",
     "trace_tool",
     "trace_retrieval",
+    "trace_document",
     "trace_memory",
     "trace_guardrail",
     "trace_content_safety",
@@ -93,6 +96,7 @@ __all__ = [
     "record_retry",
     "set_termination_reason",
     "mark_fallback",
+    "record_evaluation",
     "annotate",
     # context propagation
     "request_context",

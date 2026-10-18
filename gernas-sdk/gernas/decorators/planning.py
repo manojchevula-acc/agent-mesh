@@ -14,7 +14,8 @@ from typing import Any, TypeVar
 
 from opentelemetry.trace import SpanKind, Status, StatusCode
 
-from gernas.attributes import Ctx, SpanName
+from gernas._metrics import observe
+from gernas.attributes import Ctx, Metric, SpanName
 from gernas.decorators._core import (
     Call,
     Spec,
@@ -136,6 +137,10 @@ class PlanningSpec(Spec):
         items = as_list(steps) if steps is not None else None
         if items is not None:
             safe_set(span, Ctx.PLAN_STEP_COUNT, len(items))
+
+    def finish(self, span: Any, call: Call, exc: BaseException | None) -> None:
+        run = current_run()
+        observe(Metric.AGENT_PLAN_DURATION, call.elapsed_ms(), {Ctx.AGENT_ID: run.agent_id if run else None})
 
 
 def trace_planning(

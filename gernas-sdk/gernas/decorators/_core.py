@@ -158,6 +158,9 @@ def _begin(spec: Spec, call: Call) -> tuple[Any, Any]:
     return span, token
 
 
+_NO_RUN_CONTEXT = (SpanName.AGENT, SpanName.USE_CASE, SpanName.HTTP)
+
+
 def stamp_context(span: Any, op: str, run: Any = None) -> None:
     """Envelope + operation + (inside a run) agent_id / agent_run_id. Used by every span producer.
 
@@ -173,6 +176,13 @@ def stamp_context(span: Any, op: str, run: Any = None) -> None:
         if run is not None and op != SpanName.AGENT:
             safe_set(span, Ctx.AGENT_ID, run.agent_id)
             safe_set(span, Ctx.AGENT_RUN_ID, run.agent_run_id)
+        elif run is None and op not in _NO_RUN_CONTEXT:
+            # executed on behalf of a run in another process (MCP server, remote tool):
+            # the calling run arrives as baggage (GernasBaggagePropagator)
+            from gernas.context import baggage_value
+
+            safe_set(span, Ctx.AGENT_ID, baggage_value(Ctx.PARENT_AGENT_ID))
+            safe_set(span, Ctx.AGENT_RUN_ID, baggage_value(Ctx.PARENT_RUN_ID))
     except Exception:  # noqa: BLE001
         pass
 

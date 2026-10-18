@@ -17,7 +17,7 @@ from typing import Any, TypeVar
 
 from opentelemetry.trace import SpanKind, Status, StatusCode
 
-from gernas._metrics import record
+from gernas._metrics import observe, record
 from gernas.attributes import Ctx, Metric, SpanName
 from gernas.context import baggage_value
 from gernas.decorators._core import (
@@ -89,6 +89,7 @@ def finish_run(span: Any, run: RunState, exc: BaseException | None, duration_ms:
         histogram=Metric.AGENT_RUN_DURATION,
         duration_ms=duration_ms,
     )
+    observe(Metric.AGENT_STEPS, run.steps, {Ctx.AGENT_ID: run.agent_id})
     return reason
 
 

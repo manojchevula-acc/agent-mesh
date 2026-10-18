@@ -18,6 +18,7 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 _SCORE = ("score", "relevance_score", "rerank_score", "similarity")
 _SOURCE = ("source_id", "doc_id", "document_id", "id", "source")
+_VERSION = ("document_version", "doc_version", "version")
 
 
 def _first(item: Any, names: tuple[str, ...]) -> Any:
@@ -54,9 +55,11 @@ class RetrievalSpec(Spec):
         knowledge_domain: str | None,
         query_rewritten: bool | Callable[[Any], bool] | None,
         results_from: Callable[[Any], Any] | None,
+        authorization_decision: str | Callable[[Any], str] | None = None,
     ) -> None:
         self.index_id, self.top_k, self.strategy, self.knowledge_domain = index_id, top_k, strategy, knowledge_domain
         self.query_rewritten, self.results_from = query_rewritten, results_from
+        self.authorization_decision = authorization_decision
 
     def start(self, span: Any, call: Call) -> None:
         top_k = self.top_k if self.top_k is not None else call.arg("top_k", default=call.arg("k"))
@@ -77,6 +80,14 @@ class RetrievalSpec(Spec):
         if items:
             safe_set(span, Ctx.RANKING_SCORE, first_score(items[0]))
             safe_set(span, Ctx.SOURCE_ID, first_source(items[0]))
+            version = _first(items[0][0] if isinstance(items[0], (tuple, list)) else items[0], _VERSION)
+            safe_set(span, Ctx.DOCUMENT_VERSION, None if version is None else str(version))
+        decision = (
+            resolve(self.authorization_decision, call, result)
+            if callable(self.authorization_decision)
+            else self.authorization_decision
+        )
+        safe_set(span, Ctx.AUTHORIZATION_DECISION, decision)
         if callable(self.query_rewritten):
             flag = resolve(self.query_rewritten, call, result)
             if flag is not None:
@@ -101,10 +112,21 @@ def trace_retrieval(
     knowledge_domain: str | None = None,
     query_rewritten: bool | Callable[[Any], bool] | None = None,
     results_from: Callable[[Any], Any] | None = None,
+    authorization_decision: str | Callable[[Any], str] | None = None,
 ) -> Callable[[F], F]:
-    """Trace a retrieval / search as ``retrieval.search`` (empty results are flagged)."""
+    """Trace a retrieval / search as ``retrieval.search`` (empty results are flagged).
+
+    Knowledge layer (Blueprint §3): ``source_id`` / ``document_version`` of the top result
+    are read from common result shapes; ``authorization_decision`` records the knowledge
+    access decision (``allow`` / ``deny``) when the store enforces document-level access.
+    """
 
     def decorator(fn: F) -> F:
-        return wrap(fn, RetrievalSpec(index_id, top_k, strategy, knowledge_domain, query_rewritten, results_from))
+        return wrap(
+            fn,
+            RetrievalSpec(
+                index_id, top_k, strategy, knowledge_domain, query_rewritten, results_from, authorization_decision
+            ),
+        )
 
     return decorator

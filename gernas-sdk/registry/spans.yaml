@@ -28,6 +28,8 @@ spans:
   - {op: MEMORY, name: memory.access, api: trace_memory, kind: INTERNAL, source: GERNAS-REQ-029, required: [MEMORY_OPERATION]}
   - {op: GUARDRAIL, name: guardrail.check, api: trace_guardrail, kind: INTERNAL, source: GERNAS-REQ-015, required: [POLICY_ID, POLICY_DECISION]}
   - {op: CONTENT_SAFETY, name: content_safety.check, api: trace_content_safety, kind: INTERNAL, source: GERNAS-REQ-027, required: [SAFETY_CATEGORY, CONTENT_BLOCKED]}
+  - {op: DOCUMENT, name: document.process, api: trace_document, kind: INTERNAL, source: GERNAS-REQ-043, required: [DOCUMENT_TYPE, DOCUMENT_STATUS]}
+  - {op: EVALUATION, name: evaluation.score, api: record_evaluation, kind: INTERNAL, source: GERNAS-REQ-041, required: [EVALUATION_METRIC, EVALUATION_SCORE]}
   - {op: HITL, name: hitl.approval, api: trace_hitl / start_hitl, kind: INTERNAL, source: GERNAS-REQ-031, required: [HITL_TICKET_ID, HITL_ACTION, HITL_OUTCOME]}
   - {op: HTTP, name: "{method} {route}", api: GernasASGIMiddleware, kind: SERVER, source: TN-03, required: [HTTP_METHOD, HTTP_ROUTE, HTTP_STATUS_CODE]}
 

@@ -24,7 +24,9 @@ from contextlib import contextmanager
 from typing import Any, TypeVar
 
 from opentelemetry import baggage, context, propagate
+from opentelemetry.baggage.propagation import W3CBaggagePropagator
 from opentelemetry.context import Context
+from opentelemetry.propagators.textmap import default_setter
 
 from gernas.attributes import REGISTRY, Ctx
 
@@ -90,21 +92,42 @@ def request_context(
         context.detach(token)
 
 
+def with_run_baggage(ctx: Context | None = None) -> Context:
+    """*ctx* plus the active run as baggage (parent_run_id / parent_agent_id / delegation_path).
+
+    Used by :class:`GernasBaggagePropagator`, so every injection — ``inject_context``,
+    the A2A interceptor, httpx hooks, and libraries that call ``propagate.inject``
+    themselves (e.g. Agent Framework's MCP client) — carries the calling run.
+    """
+    from gernas.run_state import current_run
+
+    ctx = ctx if ctx is not None else context.get_current()
+    run = current_run()
+    if run is not None:
+        ctx = baggage.set_baggage(Ctx.PARENT_RUN_ID, run.agent_run_id, ctx)
+        ctx = baggage.set_baggage(Ctx.PARENT_AGENT_ID, run.agent_id, ctx)
+        ctx = baggage.set_baggage(Ctx.DELEGATION_PATH, run.delegation_path, ctx)
+    return ctx
+
+
+class GernasBaggagePropagator(W3CBaggagePropagator):
+    """W3C baggage propagator that also writes the active Gernas run (installed by ``init_gernas``)."""
+
+    def inject(self, carrier: Any, context: Context | None = None, setter: Any = default_setter) -> None:
+        try:
+            context = with_run_baggage(context)
+        except Exception:  # noqa: BLE001 - propagation failure must not break the hop
+            pass
+        super().inject(carrier, context=context, setter=setter)
+
+
 def inject_context(
     headers: MutableMapping[str, str] | None = None, *, ctx: Context | None = None
 ) -> MutableMapping[str, str]:
-    """Write W3C trace context + GERNAS baggage into *headers* (created if None)."""
+    """Write W3C trace context + GERNAS baggage (incl. the calling run) into *headers*."""
     carrier: MutableMapping[str, str] = {} if headers is None else headers
     try:
-        from gernas.run_state import current_run
-
-        ctx = ctx if ctx is not None else context.get_current()
-        run = current_run()
-        if run is not None:
-            ctx = baggage.set_baggage(Ctx.PARENT_RUN_ID, run.agent_run_id, ctx)
-            ctx = baggage.set_baggage(Ctx.PARENT_AGENT_ID, run.agent_id, ctx)
-            ctx = baggage.set_baggage(Ctx.DELEGATION_PATH, run.delegation_path, ctx)
-        propagate.inject(carrier, context=ctx)
+        propagate.inject(carrier, context=with_run_baggage(ctx))
     except Exception:  # noqa: BLE001 - propagation failure must not break the hop
         pass
     return carrier

@@ -77,6 +77,9 @@ class GernasConfig:
     rate_card_path: str = ""
     # Identity tokenization (Blueprint §2 tokenized_user_id)
     user_token_key: str = ""
+    # Instrumentation scopes whose spans duplicate SDK spans and are not exported
+    # (e.g. "fastmcp": its tools/call span duplicates the SDK's server tool.call)
+    suppressed_scopes: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         missing = [env for attr, env in _REQUIRED.items() if not str(getattr(self, attr) or "").strip()]
@@ -131,6 +134,9 @@ class GernasConfig:
             max_steps=_num(env, "GERNAS_MAX_STEPS", 50, int),
             rate_card_path=env.get("GERNAS_RATE_CARD_PATH", ""),
             user_token_key=env.get("GERNAS_USER_TOKEN_KEY", ""),
+            suppressed_scopes=tuple(
+                p.strip() for p in (env.get("GERNAS_SUPPRESSED_SCOPES") or "").split(",") if p.strip()
+            ),
         )
 
     @property

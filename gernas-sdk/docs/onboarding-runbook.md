@@ -42,6 +42,7 @@ The core depends only on OpenTelemetry.
 | `GERNAS_LOG_NAMESPACES` | | `gernas` | Python loggers bridged to OTel logs |
 | `GERNAS_LOOP_THRESHOLD` / `GERNAS_MAX_STEPS` | | `3` / `50` | Loop rate and maximum step violation |
 | `GERNAS_RATE_CARD_PATH` | | — | JSON rate card that produces `estimated_cost` |
+| `GERNAS_SUPPRESSED_SCOPES` | | — | Tracer scopes not exported because they duplicate SDK spans (e.g. `fastmcp` in MCP servers) |
 
 An invalid or missing mandatory value raises `GernasConfigError`, which lists every problem.
 
@@ -64,12 +65,13 @@ Outputs:
 
 ```python
 import gernas
+
 gernas.init_gernas()
 ```
 
 ## 5. Instrument
 
-- Framework agents: add the adapter (`gernas_middleware`, `instrument`, `instrument_graph`); see the developer guide, §4.
+- Framework agents: add the adapter (`gernas_middleware`, `instrument`, `instrument_graph`); see `docs/GERNAS_SDK_INSTRUMENTATION_GUIDE.md` §D.
 - Custom Python: add `@gernas.trace_use_case` to the request handler, `@gernas.trace_agent(agent_id, agent_type=...)` to the agent, `@gernas.trace_step` to workflow steps, and the tool, LLM and retrieval decorators where they are not already covered by an adapter.
 - Wrap each request in `gernas.request_context(session_id=..., task_id=..., user_id=..., principal_type=...)`.
 - Switch off framework-native instrumentation so the SDK is the single instrumentation path:
