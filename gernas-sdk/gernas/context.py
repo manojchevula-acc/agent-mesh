@@ -33,6 +33,30 @@ from gernas.attributes import REGISTRY, Ctx
 T = TypeVar("T")
 _log = logging.getLogger("gernas")
 _warned_no_key = False
+# The span that received the request in this process (e.g. the ASGI SERVER span). It is
+# usually the trace root, which Opik reads for the trace's thread, so request_context also
+# stamps its session / task onto it even though that span started before they were known.
+_entry_span: contextvars.ContextVar[Any] = contextvars.ContextVar("gernas_entry_span", default=None)
+
+
+def set_entry_span(span: Any) -> contextvars.Token:
+    """Mark *span* as the request's entry span (adapters; reset with :func:`reset_entry_span`)."""
+    return _entry_span.set(span)
+
+
+def reset_entry_span(token: contextvars.Token) -> None:
+    _entry_span.reset(token)
+
+
+def _stamp_request_spans(entries: dict[str, str]) -> None:
+    from opentelemetry import trace
+
+    from gernas.tracer import safe_set
+
+    for span in {id(s): s for s in (trace.get_current_span(), _entry_span.get()) if s is not None}.values():
+        if span.is_recording():
+            for k, v in entries.items():
+                safe_set(span, k, v)
 
 
 def _warn_no_key() -> None:
@@ -82,6 +106,7 @@ def request_context(
     ):
         if v:
             entries[k] = str(v)
+    _stamp_request_spans(entries)
     ctx = context.get_current()
     for k, v in entries.items():
         ctx = baggage.set_baggage(k, v, ctx)

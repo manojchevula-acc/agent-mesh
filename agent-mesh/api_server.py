@@ -1115,6 +1115,23 @@ async def post_intent_decision(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "entry_id": entry_id, "chosen_entry_id": chosen_entry_id, "accepted": accepted})
 
 
+# Path prefixes: keep them specific (e.g. not "/api/approvals", which would also drop
+# the HITL approve / reject actions).
+_UNTRACED_PATHS = (
+    "/health",
+    "/api/users",
+    "/api/login",
+    "/api/logs",
+    "/api/audit",
+    "/api/traces",
+    "/api/conversations",
+    "/api/feedback/list",
+    "/api/feedback/stats",
+    "/api/feedback/structured/list",
+    "/api/mesh/status",
+    "/api/cache/stats",
+)
+
 app = Starlette(
     lifespan=_lifespan,
     middleware=[
@@ -1126,7 +1143,8 @@ app = Starlette(
         ),
         # Gernas SDK: one SERVER span per request (kept open across SSE streams),
         # inbound traceparent/baggage extraction. No middleware without the SDK.
-        *([Middleware(gernas_telemetry.asgi_middleware(), channel="api")]
+        # Read-only UI / admin views are not traced (each would be its own trace in Opik).
+        *([Middleware(gernas_telemetry.asgi_middleware(), channel="api", exclude_paths=_UNTRACED_PATHS)]
           if gernas_telemetry.asgi_middleware() is not None else []),
     ],
     routes=[

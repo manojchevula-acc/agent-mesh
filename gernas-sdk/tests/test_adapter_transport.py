@@ -43,6 +43,18 @@ async def test_asgi_continues_the_inbound_trace_and_baggage(spans):
     assert a[Ctx.SESSION_ID] == "s-1" and a[Ctx.OPERATION] == SpanName.HTTP and a[Ctx.EXECUTION_STATUS] == "ok"
 
 
+async def test_request_context_opened_in_the_handler_reaches_the_server_span(spans):
+    async def app(scope, receive, send):
+        with get_tracer().start_as_current_span("use_case"):
+            with gernas.request_context(session_id="s-2", task_id="t-2"):
+                await send({"type": "http.response.start", "status": 200, "headers": []})
+                await send({"type": "http.response.body", "body": b"ok"})
+
+    await _call(GernasASGIMiddleware(app), "/query")
+    for span in (spans("GET /query")[0], spans("use_case")[0]):
+        assert attrs(span)[Ctx.SESSION_ID] == "s-2" and attrs(span)[Ctx.TASK_ID] == "t-2"
+
+
 async def test_asgi_marks_5xx_and_skips_health(spans):
     await _call(GernasASGIMiddleware(_app), "/boom")
     await _call(GernasASGIMiddleware(_app), "/health")

@@ -9,6 +9,7 @@ every record correlates with its trace.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Any
 
@@ -17,6 +18,15 @@ from opentelemetry import context as otel_context
 from gernas.utils.sanitizer import scrub_pii
 
 _SEVERITY = {logging.DEBUG: 5, logging.INFO: 9, logging.WARNING: 13, logging.ERROR: 17, logging.CRITICAL: 21}
+
+# OTel's own diagnostics are never exported through OTel (a feedback loop if a configured
+# log namespace covers them).
+_SELF_LOGGERS = ("opentelemetry", "grpc")
+# The stdlib calls flush() while holding the global logging lock (dictConfig, e.g. uvicorn
+# startup; logging.shutdown at exit). The OTel force_flush ignores its timeout and waits for
+# the in-flight export, whose retry warnings need that same lock when the Collector is down,
+# so the flush runs on a helper thread and the caller waits at most this long.
+_FLUSH_WAIT_S = 1.0
 
 
 def _severity(levelno: int) -> Any:
@@ -43,6 +53,12 @@ class GernasLogHandler(logging.Handler):
             self._loggers[name] = logger
         return logger
 
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Runs before logging.Handler.handle() takes the handler lock.
+        if record.name.startswith(_SELF_LOGGERS):
+            return False
+        return bool(super().filter(record))
+
     def emit(self, record: logging.LogRecord) -> None:
         try:
             body = scrub_pii(record.getMessage())
@@ -67,6 +83,14 @@ class GernasLogHandler(logging.Handler):
             pass
 
     def flush(self) -> None:
+        try:
+            worker = threading.Thread(target=self._force_flush, name="GernasLogFlush", daemon=True)
+            worker.start()
+            worker.join(_FLUSH_WAIT_S)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _force_flush(self) -> None:
         try:
             self._provider.force_flush()
         except Exception:  # noqa: BLE001

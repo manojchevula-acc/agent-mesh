@@ -30,13 +30,13 @@
 | `mark_fallback` | Run helper | `gernas-sdk/gernas/decorators/llm.py:102` | — | 0 | 2 |
 | `record_evaluation` | Run helper | `gernas-sdk/gernas/evaluation.py:30` | `evaluation.score` (INTERNAL) | 0 | 3 |
 | `annotate` | Run helper | `gernas-sdk/gernas/__init__.py:55` | — | 0 | 4 |
-| `request_context` | Context | `gernas-sdk/gernas/context.py:50` | — | 1 | 8 |
-| `correlation` | Context | `gernas-sdk/gernas/context.py:163` | — | 2 | 2 |
-| `inject_context` | Context | `gernas-sdk/gernas/context.py:124` | — | 0 | 5 |
-| `extract_context` | Context | `gernas-sdk/gernas/context.py:136` | — | 0 | 1 |
-| `attach_headers` | Context | `gernas-sdk/gernas/context.py:145` | — | 0 | 2 |
-| `gernas_task` | Context | `gernas-sdk/gernas/context.py:190` | — | 1 | 1 |
-| `wrap_in_context` | Context | `gernas-sdk/gernas/context.py:195` | — | 0 | 1 |
+| `request_context` | Context | `gernas-sdk/gernas/context.py:74` | — | 1 | 8 |
+| `correlation` | Context | `gernas-sdk/gernas/context.py:188` | — | 2 | 2 |
+| `inject_context` | Context | `gernas-sdk/gernas/context.py:149` | — | 0 | 5 |
+| `extract_context` | Context | `gernas-sdk/gernas/context.py:161` | — | 0 | 1 |
+| `attach_headers` | Context | `gernas-sdk/gernas/context.py:170` | — | 0 | 2 |
+| `gernas_task` | Context | `gernas-sdk/gernas/context.py:215` | — | 1 | 1 |
+| `wrap_in_context` | Context | `gernas-sdk/gernas/context.py:220` | — | 0 | 1 |
 | `set_redaction_hook` | Privacy | `gernas-sdk/gernas/redaction.py:35` | — | 0 | 1 |
 | `gernas_middleware` | Adapter (MAF) | `gernas-sdk/gernas/adapters/agent_framework.py:140` | — | 1 | 3 |
 | `disable_native_telemetry` | Adapter (MAF) | `gernas-sdk/gernas/adapters/agent_framework.py:126` | — | 5 | 1 |

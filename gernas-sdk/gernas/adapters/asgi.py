@@ -18,7 +18,7 @@ from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
 
 from gernas.attributes import Ctx, SpanName
-from gernas.context import extract_context
+from gernas.context import extract_context, reset_entry_span, set_entry_span
 from gernas.decorators._core import record_exception, stamp_context, stamp_outcome
 from gernas.tracer import get_tracer, safe_set
 
@@ -50,6 +50,7 @@ class GernasASGIMiddleware:
         except Exception:  # noqa: BLE001 - never break request handling
             await self.app(scope, receive, send)
             return
+        entry_token = set_entry_span(span)
         status_holder: dict[str, int] = {}
 
         async def send_wrapper(message: dict) -> None:
@@ -65,6 +66,7 @@ class GernasASGIMiddleware:
             raise
         finally:
             self._finish(span, scope, status_holder.get("status"), exc)
+            reset_entry_span(entry_token)
             otel_context.detach(token)
 
     def _start(self, scope: Scope) -> tuple[Any, Any]:
