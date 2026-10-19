@@ -79,8 +79,8 @@ _HALLUCINATION_LABELS = [
 # LLM judge infrastructure (same Groq/Cerebras endpoint as task_adherence)
 # ---------------------------------------------------------------------------
 
-_DEFAULT_GROQ_MODEL     = "llama-3.3-70b-versatile"
-_DEFAULT_CEREBRAS_MODEL = "gemma-4-31b"
+_DEFAULT_GROQ_MODEL     = "openai/gpt-oss-120b"
+_DEFAULT_CEREBRAS_MODEL = "qwen-3.8-27b"
 
 _AMBIGUITY_JUDGE_PROMPT = """\
 You are evaluating a banking AI assistant (FAB — First Abu Dhabi Bank) on how it \

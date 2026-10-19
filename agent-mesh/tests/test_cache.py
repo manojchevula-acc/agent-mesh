@@ -31,10 +31,10 @@ os.environ["CACHE_MAX_AGE_HOURS"] = "24.0"
 os.environ["CACHE_EMBED_MODEL"] = "chromadb-default"
 os.environ["CACHE_COLLECTION_NAME"] = "test_cache_collection"
 os.environ["CACHE_JUDGE_ENABLED"] = "true"
-os.environ["CACHE_JUDGE_MODEL"] = "gemma-4-31b"
+os.environ["CACHE_JUDGE_MODEL"] = "qwen-3.8-27b"
 os.environ["GROQ_API_KEY"] = "test-key"
 os.environ["LLM_BASE_URL"] = "https://api.cerebras.ai/v1"
-os.environ["GROQ_MODEL"] = "gemma-4-31b"
+os.environ["GROQ_MODEL"] = "qwen-3.8-27b"
 
 project_root = str(pathlib.Path(__file__).resolve().parents[1])
 if project_root not in sys.path:

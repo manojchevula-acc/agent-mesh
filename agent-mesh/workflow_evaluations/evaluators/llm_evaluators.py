@@ -38,8 +38,8 @@ if str(_EVAL_ROOT) not in sys.path:
 
 from evaluators.compliance_evaluator import EvalScore
 
-_DEFAULT_GROQ_MODEL     = "llama-3.3-70b-versatile"
-_DEFAULT_CEREBRAS_MODEL = "gemma-4-31b"
+_DEFAULT_GROQ_MODEL     = "openai/gpt-oss-120b"
+_DEFAULT_CEREBRAS_MODEL = "qwen-3.8-27b"
 
 
 def _get_client_and_model(model: Optional[str] = None):

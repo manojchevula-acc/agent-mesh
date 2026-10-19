@@ -330,7 +330,7 @@ python scripts/test_agent_tools.py         # all 15 tools + semantic-only guaran
 | `Access denied` / auth errors on MySQL | Verify `MYSQL_USER` / `MYSQL_PASSWORD`; passwords with `@` are auto URL-encoded. |
 | `Unknown database 'fab_semantic'` | Run steps 4 & 5 (`03_load_curated_to_mysql.py`, `04_create_semantic_views.py`). |
 | A view returns `ERROR` in the health check | Re-run `python 04_create_semantic_views.py`; ensure all curated tables loaded. |
-| Groq model / auth error | Confirm `GROQ_API_KEY` is valid; default model is `llama-3.3-70b-versatile`. |
+| Groq model / auth error | Confirm `GROQ_API_KEY` is valid; default model is `openai/gpt-oss-120b`. |
 | New CSV not picked up | Re-run steps 1–2 (+4). The pipeline auto-discovers files in `data/raw/`. |
 | tenor / codes turned to NaN | Handled — numeric cast requires ≥80 % parse rate and excludes `tenor`. |
 

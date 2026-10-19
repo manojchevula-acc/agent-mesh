@@ -695,7 +695,7 @@ def _score_case(
                 _detail(
                     "Task Adherence",
                     ta.score, ta.score >= _T.get("task_adherence", 0.75),
-                    "LLM judge (Groq llama-3.3-70b-versatile / Cerebras llama3.1-8b) scored whether the response directly addresses the banking query. "
+                    "LLM judge (Groq openai/gpt-oss-120b / Cerebras qwen-3.8-27b) scored whether the response directly addresses the banking query. "
                     "1.0 = fully on-topic; 0.5 = partial; 0.0 = off-topic or refused without cause.",
                     f"{ta.label}" + (f" — {ta.detail}" if ta.detail else ""),
                     label=ta.label,

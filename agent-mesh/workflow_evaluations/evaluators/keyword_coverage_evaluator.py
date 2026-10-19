@@ -30,8 +30,8 @@ from typing import List, Optional
 
 from evaluators.compliance_evaluator import EvalScore
 
-_DEFAULT_GROQ_MODEL     = "llama-3.3-70b-versatile"
-_DEFAULT_CEREBRAS_MODEL = "gemma-4-31b"
+_DEFAULT_GROQ_MODEL     = "openai/gpt-oss-120b"
+_DEFAULT_CEREBRAS_MODEL = "qwen-3.8-27b"
 
 _KW_SUFFIXES = ("ing", "ed", "er", "ers", "ion", "ions", "ity", "ies", "ness", "ly", "ment", "ments", "al", "ally")
 

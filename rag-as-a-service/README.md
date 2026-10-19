@@ -493,7 +493,7 @@ endpoints in [`api/routers/evaluate.py`](src/gernas_rag/api/routers/evaluate.py)
   concentration limits, eligible tenors, and submission documentation.
 - The evaluator **reuses the already-loaded embedder** (via a sync `_EmbeddingsBridge`
   that runs the async coroutine in a worker thread) so it doesn't load a second copy.
-  The **LLM judge** is a *separate, smaller* model (`llama-3.1-8b-instant`) to stay
+  The **LLM judge** is a *separate, smaller* model (`openai/gpt-oss-20b`) to stay
   within free-tier token limits, and contexts are truncated to keep judge prompts small.
 - A single-answer endpoint (`/evaluate/answer`) scores one live Q+A+contexts triple
   reference-free in ~10–30 s, for in-UI "rate this answer" feedback.

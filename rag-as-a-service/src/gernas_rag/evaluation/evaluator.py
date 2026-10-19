@@ -103,7 +103,7 @@ class RAGEvaluator:
         from ragas.llms import LangchainLLMWrapper
 
         eval_cfg = self._settings.evaluation if self._settings else None
-        judge_model = eval_cfg.judge_model if eval_cfg else "llama-3.1-8b-instant"
+        judge_model = eval_cfg.judge_model if eval_cfg else "openai/gpt-oss-20b"
         judge_max_tokens = eval_cfg.judge_max_tokens if eval_cfg else 4096
         provider = (eval_cfg.judge_provider if eval_cfg else "groq").lower()
 

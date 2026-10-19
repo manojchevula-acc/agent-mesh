@@ -16,8 +16,8 @@ class Config:
     # Per-agent model overrides — each agent is wired to the model best suited
     # for its task. Override individually via env vars; falls back to GROQ_MODEL.
     COMPLIANCE_MODEL:   str = os.getenv("COMPLIANCE_MODEL",   "openai/gpt-oss-20b")
-    DATA_AGENT_MODEL:   str = os.getenv("DATA_AGENT_MODEL",   "qwen/qwen3.6-27b")
-    RAG_AGENT_MODEL:    str = os.getenv("RAG_AGENT_MODEL",    "qwen/qwen3.6-27b")
+    DATA_AGENT_MODEL:   str = os.getenv("DATA_AGENT_MODEL",   "qwen/qwen3.8-27b")
+    RAG_AGENT_MODEL:    str = os.getenv("RAG_AGENT_MODEL",    "qwen/qwen3.8-27b")
     PRICE_ASSIST_MODEL: str = os.getenv("PRICE_ASSIST_MODEL", "openai/gpt-oss-120b")
 
     # Per-agent API keys — spread across two keys to avoid hitting rate limits.

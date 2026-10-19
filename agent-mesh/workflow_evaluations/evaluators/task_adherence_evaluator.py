@@ -27,8 +27,8 @@ for _p in (str(_MESH_ROOT), str(_EVAL_ROOT)):
 
 # Per-provider fallback defaults (used only when GROQ_MODEL env var is not set).
 # Prefer setting GROQ_MODEL in .env to avoid hardcoded model IDs breaking on account changes.
-_DEFAULT_GROQ_MODEL     = "llama-3.3-70b-versatile"
-_DEFAULT_CEREBRAS_MODEL = "gemma-4-31b"
+_DEFAULT_GROQ_MODEL     = "openai/gpt-oss-120b"
+_DEFAULT_CEREBRAS_MODEL = "qwen-3.8-27b"
 
 _JUDGE_PROMPT = """\
 You are an objective evaluator for a banking AI assistant (FAB — First Abu Dhabi Bank).

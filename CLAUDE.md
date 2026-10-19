@@ -216,8 +216,8 @@ All loaded from `agent-mesh/.env`. Key variables:
 | `LLM_BASE_URL` | `https://api.groq.com/openai/v1` | OpenAI-compatible endpoint |
 | `GROQ_MODEL` | `openai/gpt-oss-20b` | Default model |
 | `COMPLIANCE_MODEL` | `openai/gpt-oss-20b` | ComplianceAgent model |
-| `DATA_AGENT_MODEL` | `qwen/qwen3.6-27b` | DataAgent model |
-| `RAG_AGENT_MODEL` | `qwen/qwen3.6-27b` | RAGAgent model |
+| `DATA_AGENT_MODEL` | `qwen/qwen3.8-27b` | DataAgent model |
+| `RAG_AGENT_MODEL` | `qwen/qwen3.8-27b` | RAGAgent model |
 | `PRICE_ASSIST_MODEL` | `openai/gpt-oss-120b` | PriceAssistAgent model |
 | `*_API_KEY` | falls back to `GROQ_API_KEY` | Per-agent keys for spreading rate limits |
 

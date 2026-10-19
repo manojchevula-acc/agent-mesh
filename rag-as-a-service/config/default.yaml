@@ -88,7 +88,7 @@ ingestion:
 
 evaluation:
   judge_provider: groq                 # 'groq' | 'ollama' | 'openai'
-  judge_model: qwen/qwen3.6-27b        # strong reasoning for RAGAS eval metrics
+  judge_model: qwen/qwen3.8-27b        # strong reasoning for RAGAS eval metrics
   judge_base_url:                      # for ollama use http://localhost:11434/v1 ; ignored by groq
   judge_api_key:                       # ollama ignores this; OpenAI SDK needs a non-empty string (e.g. "ollama")
   max_context_chars: 6000              # truncate contexts before sending to judge (too small drops the supporting table row -> recall/faithfulness collapse; override via RAG__EVALUATION__MAX_CONTEXT_CHARS)
