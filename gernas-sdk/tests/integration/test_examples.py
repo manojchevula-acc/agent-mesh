@@ -1,4 +1,4 @@
-"""The examples in examples/ (referenced by docs/GERNAS_SDK_INSTRUMENTATION_GUIDE.md) run and emit
+"""The examples in examples/ (referenced by docs/user-guide/GERNAS_SDK_INSTRUMENTATION_GUIDE.md) run and emit
 the documented spans. Each runs in a fresh process with the console exporter."""
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import pytest
 
 from conftest import IDENTITY
 
-EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
+EXAMPLES = Path(__file__).resolve().parents[2] / "examples"
 
 CASES = {
     "custom_agent.py": (
@@ -55,7 +55,7 @@ def test_example_runs_and_emits_expected_spans(example):
         "GERNAS_EXPORTER": "console",
         "GERNAS_USER_TOKEN_KEY": "example-key",
         "ENABLE_INSTRUMENTATION": "false",
-        "PYTHONPATH": str(EXAMPLES.parent),
+        "PYTHONPATH": str(EXAMPLES.parent / "src"),
     }
     full_env = {k: v for k, v in os.environ.items() if not k.startswith("GERNAS_")}
     full_env.update(env)

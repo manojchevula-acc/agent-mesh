@@ -180,7 +180,7 @@ Every hop writes to `data/audit_trail.jsonl` and emits OpenTelemetry spans with 
 - `agent-mesh/src/hitl/approval_store.py` — `asyncio.Event`-based HITL approval gate
 - `agent-mesh/src/memory/conversation_store.py` — JSONL conversation persistence
 - `agent-mesh/src/tracing/llm_reasoning.py` — `extract_reasoning()` / `strip_reasoning_markers()`
-- `gernas-sdk/gernas/__init__.py` — public API of the Gernas SDK (telemetry); `agent-mesh/src/observability/gernas_telemetry.py` — the mesh's single integration point
+- `gernas-sdk/src/gernas/__init__.py` — public API of the Gernas SDK (telemetry); `agent-mesh/src/observability/gernas_telemetry.py` — the mesh's single integration point
 
 ### Design Patterns to Know
 
@@ -200,7 +200,7 @@ Every hop writes to `data/audit_trail.jsonl` and emits OpenTelemetry spans with 
 
 **Retry + graceful degradation:** `DomainExecutor` detects tool-call echo, meta-response, and hallucinated placeholders via regex and retries once with a corrective prompt. Failed A2A/MCP hops soft-fail to an "unavailable" string rather than crashing the workflow.
 
-**Gernas SDK telemetry (`gernas-sdk/`, evolved from Beacon Kit):** `pip install -e ./gernas-sdk`; one `init_gernas()` call per process (via `gernas_telemetry.init_telemetry`), configured only by `GERNAS_*` env vars (mandatory identity is validated, never invented). Telemetry goes SDK → OTel Collector (AKS gateway; locally `python gernas-sdk/scripts/run_collector.py`) → Azure Data Explorer (data plane) + Opik. Blueprint-named attributes (`gernas.<field>`); request → `use_case.request` → `agent.run` (mesh orchestrator) → `agent.step` per workflow executor → A2A / MAF `agent.run` per node → `llm.call` / `tool.call` (MCP = `tool_type=mcp`). See `gernas-sdk/docs/GERNAS_SDK_INSTRUMENTATION_GUIDE.md`.
+**Gernas SDK telemetry (`gernas-sdk/`, evolved from Beacon Kit):** `pip install -e ./gernas-sdk`; one `init_gernas()` call per process (via `gernas_telemetry.init_telemetry`), configured only by `GERNAS_*` env vars (mandatory identity is validated, never invented). Telemetry goes SDK → OTel Collector (AKS gateway; locally `python gernas-sdk/scripts/run_collector.py`) → Azure Data Explorer (data plane) + Opik. Blueprint-named attributes (`gernas.<field>`); request → `use_case.request` → `agent.run` (mesh orchestrator) → `agent.step` per workflow executor → A2A / MAF `agent.run` per node → `llm.call` / `tool.call` (MCP = `tool_type=mcp`). See `gernas-sdk/docs/user-guide/GERNAS_SDK_INSTRUMENTATION_GUIDE.md`.
 
 ---
 

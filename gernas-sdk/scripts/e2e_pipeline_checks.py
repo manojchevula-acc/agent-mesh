@@ -21,7 +21,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "collector" / "out"
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "src"))
 
 from gernas.attributes import Ctx, Metric, SpanName  # noqa: E402
 
@@ -69,7 +69,7 @@ def emit(service: str) -> str:
             "GERNAS_BUSINESS_DOMAIN": "testing",
             "GERNAS_ENVIRONMENT": "dev",
             "GERNAS_METRIC_INTERVAL_MS": "1000",
-            "PYTHONPATH": str(ROOT),
+            "PYTHONPATH": str(ROOT / "src"),
         }
     )
     res = subprocess.run([sys.executable, "-c", PROBE], capture_output=True, text=True, env=env, timeout=120)

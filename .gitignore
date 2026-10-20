@@ -52,12 +52,7 @@ Thumbs.db
 *.swp
 *.bak
 
-# Gernas SDK: downloaded Collector binary, Collector runtime output, build artefacts
-gernas-sdk/collector/bin/
-gernas-sdk/collector/out/
-gernas-sdk/dist/
-gernas-sdk/build/
-gernas-sdk/*.egg-info/
+# Gernas SDK rules live in gernas-sdk/.gitignore
 
 # ── Test / coverage output ────────────────────────────────────────────────────
 .coverage
@@ -69,4 +64,3 @@ coverage.xml
 agent-mesh/observability_report.html
 agent-mesh/reports/
 agent-mesh/audit_regulatory/
-gernas-sdk/reports/*.json

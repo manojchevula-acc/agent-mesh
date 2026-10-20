@@ -3,10 +3,10 @@
 The registry (``registry/domains/*.yaml``, ``spans.yaml``, ``metrics.yaml``,
 ``denylist.yaml``) is the single source of GERNAS telemetry names. Generated:
 
-    gernas/attributes.py                  Ctx / SpanName / Metric constants + tables
+    src/gernas/attributes.py              Ctx / SpanName / Metric constants + tables
     registry/redaction-matrix.yaml        field → sensitivity → PDPL action → Collector rule
     registry/semantic-conventions.yaml    OTel-semconv-style groups for non-Python producers
-    docs/attribute-reference.md           human-readable reference
+    docs/reference/attribute-reference.md human-readable reference
     collector/*.yaml                      allow-list and denylist blocks between markers
 
 The validator enforces the Blueprint §2 canonical context verbatim: each of the 13
@@ -431,10 +431,10 @@ def build_outputs() -> dict[Path, str]:
     )
     deny = _denylist(reg, fields)
     outputs = {
-        ROOT / "gernas" / "attributes.py": render_attributes(reg, fields, version),
+        ROOT / "src" / "gernas" / "attributes.py": render_attributes(reg, fields, version),
         REGISTRY / "redaction-matrix.yaml": render_redaction_matrix(reg, fields, version),
         REGISTRY / "semantic-conventions.yaml": render_semconv(reg, version),
-        ROOT / "docs" / "attribute-reference.md": render_reference(reg, fields, version),
+        ROOT / "docs" / "reference" / "attribute-reference.md": render_reference(reg, fields, version),
     }
     for cfg in sorted((ROOT / "collector").glob("*.yaml")):
         text = cfg.read_text(encoding="utf-8")

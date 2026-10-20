@@ -130,7 +130,7 @@ def run_child(mode: str, iterations: int, concurrency: int, env: dict) -> dict:
     full_env = {k: v for k, v in os.environ.items() if not k.startswith("GERNAS_")}
     full_env.update(_IDENTITY)
     full_env.update(env)
-    full_env["PYTHONPATH"] = str(ROOT)
+    full_env["PYTHONPATH"] = str(ROOT / "src")
     res = subprocess.run(
         [sys.executable, "-c", _CHILD, mode, str(iterations), str(concurrency)],
         capture_output=True,

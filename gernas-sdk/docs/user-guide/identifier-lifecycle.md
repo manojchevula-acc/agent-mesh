@@ -25,5 +25,5 @@
 
 Verified by:
 - `tests/test_async_context.py`: queue hop, cross-process subprocess hop, both orphan cases.
-- `tests/test_decorators.py::test_nested_agents_link_parent_run`.
-- The live Agent Mesh trace in `docs/E2E_VALIDATION_REPORT.md`.
+- `tests/unit/test_decorators.py::test_nested_agents_link_parent_run`.
+- The live Agent Mesh trace in `docs/governance/E2E_VALIDATION_REPORT.md`.

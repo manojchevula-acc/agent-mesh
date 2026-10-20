@@ -15,7 +15,7 @@ from pathlib import Path
 import gernas
 from gernas.attributes import DENYLIST, ENVELOPE, REGISTRY, REQUIRED_ATTRIBUTES, RUN_CONTEXT, Ctx, Metric, SpanName
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def _generator():
@@ -127,7 +127,7 @@ def test_envelope_and_run_context():
 
 
 def test_environment_variables_are_exact():
-    source = (ROOT / "gernas" / "config.py").read_text(encoding="utf-8")
+    source = (ROOT / "src" / "gernas" / "config.py").read_text(encoding="utf-8")
     assert set(re.findall(r'"(GERNAS_[A-Z_]+)"', source)) == {
         "GERNAS_SERVICE_NAME",
         "GERNAS_USE_CASE_ID",

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import yaml
 
-COLLECTOR = Path(__file__).resolve().parent.parent / "collector"
+COLLECTOR = Path(__file__).resolve().parents[2] / "collector"
 CONFIG = yaml.safe_load((COLLECTOR / "otel-collector-config.yaml").read_text(encoding="utf-8"))
 KUSTOMIZATION = yaml.safe_load((COLLECTOR / "kustomization.yaml").read_text(encoding="utf-8"))
 

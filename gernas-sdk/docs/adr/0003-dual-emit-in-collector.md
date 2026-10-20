@@ -18,4 +18,4 @@
 - No signal is recorded twice.
 - Destinations change without touching agents.
 - Vendor field shapes live in one place (the Collector).
-- Local runs without `ADX_CLUSTER_URI` use the clearly labelled overlay `collector/local-dataplane-file.yaml` (file exporters) instead of ADX; it is never deployed. Deployment: `docs/collector-aks-deployment.md`.
+- Local runs without `ADX_CLUSTER_URI` use the clearly labelled overlay `collector/local-dataplane-file.yaml` (file exporters) instead of ADX; it is never deployed. Deployment: `docs/operations/collector-aks-deployment.md`.

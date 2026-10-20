@@ -1,0 +1,20 @@
+# Downloaded Collector binary and Collector runtime output
+collector/bin/
+collector/out/
+
+# Build artefacts (src layout puts *.egg-info under src/)
+dist/
+build/
+*.egg-info/
+
+# Generated E2E evidence (reports/overhead_report.md stays tracked)
+reports/*.json
+
+# Tool caches and coverage
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml

@@ -4,7 +4,7 @@
 
 ## 0. Migrating from 0.3.0 to 0.4.0 (blueprint alignment)
 
-0.4.0 aligns names and scope with the GERNAS Enterprise Telemetry Blueprint (see `docs/BLUEPRINT_TRACEABILITY.md`). It is a breaking release. No aliases are shipped, because the blueprint requires one set of names.
+0.4.0 aligns names and scope with the GERNAS Enterprise Telemetry Blueprint (see `docs/governance/BLUEPRINT_TRACEABILITY.md`). It is a breaking release. No aliases are shipped, because the blueprint requires one set of names.
 
 | 0.3.0 | 0.4.0 |
 |---|---|
@@ -62,7 +62,7 @@ pip install -e ./gernas-sdk            # from the agent-mesh repo root
 | `compliance_gate`, `guardrail_check`, `rbac_check`, audit chain | unchanged | They read the role from `GERNAS_ROLE_BAGGAGE_KEYS` (default `gernas.user_role`). |
 | `AgenticMetrics`, `beacon.*` metrics | `AgenticMetrics`, `gernas.*` metrics | Decorators record metrics automatically. Drop any manual calls to avoid double counting. |
 | `beacon-report`, `beacon-audit-report` | `gernas report`, `gernas audit-report` | |
-| Hand-typed attributes (`agent.name`, `llm.input_tokens`, `tool.latency_ms`, …) | `Ctx.*` constants (`gernas.*`, OTel `gen_ai.*`) | See `docs/attribute-reference.md`. |
+| Hand-typed attributes (`agent.name`, `llm.input_tokens`, `tool.latency_ms`, …) | `Ctx.*` constants (`gernas.*`, OTel `gen_ai.*`) | See `docs/reference/attribute-reference.md`. |
 
 ## Environment variables
 

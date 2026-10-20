@@ -4,9 +4,9 @@ This guide is for an engineer adding GERNAS telemetry to an agentic AI applicati
 - Microsoft Agent Framework (MAF), LangChain, LangGraph or plain Python;
 - any service in front of it (API, A2A node, MCP server).
 
-Every API below exists in `gernas-telemetry` 0.4.0. The runnable examples in `examples/` are executed by `tests/test_examples.py`. Field names follow the GERNAS Enterprise Telemetry Blueprint (`docs/BLUEPRINT_TRACEABILITY.md`).
+Every API below exists in `gernas-telemetry` 0.4.0. The runnable examples in `examples/` are executed by `tests/integration/test_examples.py`. Field names follow the GERNAS Enterprise Telemetry Blueprint (`docs/governance/BLUEPRINT_TRACEABILITY.md`).
 
-To run the whole pipeline end to end, see `docs/GERNAS_SDK_END_TO_END_RUNBOOK.md`. For diagrams, the API catalogue and the exact Agent Mesh call sites, see `docs/GERNAS_SDK_ARCHITECTURE_AND_INSTRUMENTATION.html`, which is generated from the source.
+To run the whole pipeline end to end, see `docs/operations/GERNAS_SDK_END_TO_END_RUNBOOK.md`. For diagrams, the API catalogue and the exact Agent Mesh call sites, see `docs/reference/GERNAS_SDK_ARCHITECTURE_AND_INSTRUMENTATION.html`, which is generated from the source.
 
 ---
 
@@ -194,7 +194,7 @@ Only sizes, ids and decisions are recorded. Exception messages and logs are PII-
 
 ---
 
-## F. Examples (all executed by `tests/test_examples.py`)
+## F. Examples (all executed by `tests/integration/test_examples.py`)
 
 | File | Shows |
 |---|---|
@@ -252,7 +252,7 @@ gernas.record_evaluation("faithfulness", 0.74, evaluator="ragas_v1", agent_id="f
 | Foreign spans in Opik (`invoke_agent`, `a2a.server.*`, `tools/call …`) | Framework or library-native tracing on | As above; for fastmcp, `GERNAS_SUPPRESSED_SCOPES=fastmcp` |
 | Failed exports | Collector or backend down | SDK: `gernas.sdk.dropped_spans`. Collector: `otelcol_exporter_send_failed_spans` on `:8888/metrics` |
 | Opik 401 / 403 | Collector's Opik secret or headers wrong | Check `OPIK_API_KEY`, `OPIK_WORKSPACE`, `OPIK_PROJECT_NAME` in the Collector's Secret |
-| ADX ingestion fails | Workload Identity not federated, or missing Ingestor role | `docs/collector-aks-deployment.md` §2 |
+| ADX ingestion fails | Workload Identity not federated, or missing Ingestor role | `docs/operations/collector-aks-deployment.md` §2 |
 | Collector refuses to start: `clusterURI config is mandatory` | `ADX_CLUSTER_URI` unset | Set it, or locally use `scripts/run_collector.py` (file overlay) |
 
 Validation commands:

@@ -2,7 +2,7 @@
 
 > Authoritative audit record. Root of the single git repository `agent-mesh/` (the VS Code workspace root `telemetry/` is not a repository). Last full re-verification: **2026-10-18** (independent code audit, live re-run `LIVE18A`; earlier rounds 2026-10-16/17).
 >
-> Detailed requirement → code → test traceability: `gernas-sdk/docs/BLUEPRINT_TRACEABILITY.md` (GERNAS-REQ-001…042).
+> Detailed requirement → code → test traceability: `gernas-sdk/docs/governance/BLUEPRINT_TRACEABILITY.md` (GERNAS-REQ-001…042).
 >
 > **Legend:** `[x]` passed and verified · `[~]` partial · `[ ]` not started / not verified · `[!]` failed / noncompliant · `[B]` blocked (external dependency or decision) · `N/A` not applicable (with justification)
 
@@ -17,10 +17,10 @@
 - **Single source of truth:** yes for every runtime path (§4). The one remaining competing implementation is the offline evaluation harness (F-16), which exports nothing today.
 - **2026-10-18 live evidence:** `LIVE18A000`–`003` and `MCPPROBE18A`, `opik_verify` PASS ×5; Collector 89 accepted = 89 Opik = 89 data plane, 0 refused; `gernas doctor --opik` PASS.
 - **Deliverables (§9A):**
-  - `gernas-sdk/docs/GERNAS_SDK_END_TO_END_RUNBOOK.md`;
-  - `gernas-sdk/docs/GERNAS_SDK_ARCHITECTURE_AND_INSTRUMENTATION.html` (generated);
-  - `gernas-sdk/docs/SOW_COMPLIANCE_REPORT.md`;
-  - `gernas-sdk/docs/INSTRUMENTATION_MAP.md` (generated).
+  - `gernas-sdk/docs/operations/GERNAS_SDK_END_TO_END_RUNBOOK.md`;
+  - `gernas-sdk/docs/reference/GERNAS_SDK_ARCHITECTURE_AND_INSTRUMENTATION.html` (generated);
+  - `gernas-sdk/docs/governance/SOW_COMPLIANCE_REPORT.md`;
+  - `gernas-sdk/docs/reference/INSTRUMENTATION_MAP.md` (generated).
 
 | Requirements (§3 matrix) | `[x]` Passed | `[~]` Partial | `[ ]` Not started | `[!]` Failed | `[B]` Blocked | N/A |
 |---|---|---|---|---|---|---|
@@ -41,7 +41,7 @@ Counting rules:
 | Repository | One git repository `agent-mesh/` (branch `fab-toolkit-oct`). No submodules, no nested `.git`. |
 | SOW / blueprint | `docs/GERNAS Enterprise Telemetry Observability Blueprint.docx`, subtitled *"Proposed Accenture Scope of Work for FAB"*: it **is** the SOW. Re-extracted in full: 11 headings, 8 tables, Figure 1 inspected as an image (four numbered layers). Five aspects = §1 *"Instrumentation should primarily use"* (§3A). |
 | Derived delivery plans (not authoritative) | `md_files/IMPLEMENTATION_PLAN_WP1.md`, `IMPLEMENTATION_PLAN_WP2.md` (WP3 dashboards, alerting and FinOps as later work packages); `docs/BRIEFING_NOTES.md`, `DEVELOPER_BRIEF.md`, `SPRINT_PLAN.md`, `collector-topology.md` |
-| SDK | `gernas-sdk/gernas/`: `__init__` (public API), `config`, `tracer`, `exporters`, `context`, `run_state`, `redaction`, `cost`, `hitl`, `evaluation`, `logs`, `conformance`, `decorators/*`, `adapters/{agent_framework,langchain,langgraph,a2a,mcp,asgi,httpx}`, `cli/{doctor,conformance}`, generated `attributes.py` |
+| SDK | `gernas-sdk/src/gernas/`: `__init__` (public API), `config`, `tracer`, `exporters`, `context`, `run_state`, `redaction`, `cost`, `hitl`, `evaluation`, `logs`, `conformance`, `decorators/*`, `adapters/{agent_framework,langchain,langgraph,a2a,mcp,asgi,httpx}`, `cli/{doctor,conformance}`, generated `attributes.py` |
 | Registry | `gernas-sdk/registry/` (13 blueprint domains + `20_component_signals` + `30_sdk`, `spans.yaml`, `metrics.yaml`, `denylist.yaml`, `generate.py`) |
 | Agent Mesh integration | `agent-mesh/src/observability/gernas_telemetry.py` (single integration module); call sites in §5 |
 | Other services | `datalayer-as-service/mcp_server/server.py`, `rag-as-a-service/mcp_integration/server.py`, `rag-as-a-service/src/gernas_rag/main.py` |
@@ -97,7 +97,7 @@ Component key — **SDK**: Gernas SDK · **MESH**: Agent Mesh integration · **C
 | SOW-037 | §3 Authorization | RBAC / ABAC decisions, denied actions, escalation attempts | SDK `authorization_decision`, `policy_decision`; mesh `RBACValidationExecutor` role check is a `guardrail.check` (`policy_id=rbac_role_check`, allow / deny, deny → `policy_block`) | No escalation-attempt signal; RBAC *deny* not observed live (`login()` maps unknown users to `customer`, so it is reachable only programmatically) | `test_decorators`; scratch span check 2026-10-18 (allow + deny); **live** `rbac_role_check` allow ×3 in LIVE18A (data plane) | `[~]` | Define an escalation signal (FAB) |
 | SOW-038 | §3 CI/CD | Deployment version, release, rollback, drift | PLAT | Not in repo | Inspection | `[ ]` | Pipeline events (platform) |
 | SOW-039 | §3 Telemetry Platform | Collector health, dropped spans / logs, ingestion rate, storage utilization | COL `health_check` + `:8888` metrics; SDK `gernas.sdk.dropped_*` | Storage utilization needs ADX | Local Collector metrics; `test_collector_down` | `[~]` | ADX storage metrics |
-| SOW-040 | §4 | Each KPI: definition → formula → source → owner → threshold → SLO → dashboard → alert → retention → interpretation | `gernas-sdk/docs/kpi-catalogue.md` (definition, formula, source) | Owner, threshold, SLO, alert and retention not set; KQL unexecuted | Document review | `[~]` | FAB to set; validate KQL on ADX |
+| SOW-040 | §4 | Each KPI: definition → formula → source → owner → threshold → SLO → dashboard → alert → retention → interpretation | `gernas-sdk/docs/reference/kpi-catalogue.md` (definition, formula, source) | Owner, threshold, SLO, alert and retention not set; KQL unexecuted | Document review | `[~]` | FAB to set; validate KQL on ADX |
 | SOW-041 | §4A | Adoption KPIs (active users, use cases, agents, executions, outcomes, trend, sessions / user) | Signals: SDK spans + `gernas.use_case.requests` | Computation needs the data plane | `test_kpi_metrics`; live data-plane metrics | `[B]` | ADX |
 | SOW-042 | §5 | 16 agentic KPIs: signals | SDK metrics and attributes (`kpi-catalogue.md` 5-1…5-16) | — | `test_runtime`, `test_metrics`, `test_kpi_metrics`, live | `[x]` | — |
 | SOW-043 | §5 | Cost per successful agent task | SDK `estimated_cost` + `business_outcome` | Only LLM + embedding cost | `test_decorators::test_llm_call…` | `[~]` | §11 components from platform metering |
@@ -122,7 +122,7 @@ Component key — **SDK**: Gernas SDK · **MESH**: Agent Mesh integration · **C
 | SOW-062 | Programme brief | Collector runs in an AKS pod | COL `k8s/` | Not deployed | Schema validation | `[B]` | AKS access |
 | SOW-063 | Programme brief | Collector → Opik | COL `otlphttp/opik` (Opik docs: OTLP/HTTP, traces only) | — | `opik_verify` PASS ×5 (LIVE17E000-003, MCPPROBE17D) and ×5 on 2026-10-18 (LIVE18A000-003, MCPPROBE18A) | `[x]` | — |
 | SOW-064 | User instruction 2026-10-17 | Collector → ADX (data plane) | COL `azuredataexplorer` | No ADX | `otelcol validate` | `[B]` | ADX environment |
-| SOW-065 | Programme brief | Instrumentation guide for new use cases | `gernas-sdk/docs/GERNAS_SDK_INSTRUMENTATION_GUIDE.md` | — | APIs checked against `inspect.signature`; examples executed by `tests/test_examples.py`; end-to-end runbook commands executed 2026-10-18 | `[x]` | — |
+| SOW-065 | Programme brief | Instrumentation guide for new use cases | `gernas-sdk/docs/user-guide/GERNAS_SDK_INSTRUMENTATION_GUIDE.md` | — | APIs checked against `inspect.signature`; examples executed by `tests/integration/test_examples.py`; end-to-end runbook commands executed 2026-10-18 | `[x]` | — |
 
 ## 3A. The five SOW aspects
 
@@ -159,7 +159,7 @@ Aspect status is derived from the member rows and is never set by hand:
 | A5 | 2 | 1 | 0 | 0 | 3 | 0 | Partial | AKS and ADX unavailable (006, 010, 062); storage utilization (039) |
 | X | 0 | 2 | 18 | 0 | 1 | 2 | Not delivered | Other owners / WP3 |
 
-Per-aspect evidence (implementation, exact source lines, tests, runtime results, gaps) is in `gernas-sdk/docs/SOW_COMPLIANCE_REPORT.md` §3.
+Per-aspect evidence (implementation, exact source lines, tests, runtime results, gaps) is in `gernas-sdk/docs/governance/SOW_COMPLIANCE_REPORT.md` §3.
 
 ## 4. Single-source-of-truth audit
 
@@ -181,7 +181,7 @@ Per-aspect evidence (implementation, exact source lines, tests, runtime results,
 
 ## 5. Instrumentation coverage (Agent Mesh)
 
-Exact file:line for all 67 call sites (Agent Mesh, DataLayer, RAG) is generated into `gernas-sdk/docs/INSTRUMENTATION_MAP.md` §2; the per-row line numbers are in `SOW_COMPLIANCE_REPORT.md` §6.
+Exact file:line for all 67 call sites (Agent Mesh, DataLayer, RAG) is generated into `gernas-sdk/docs/reference/INSTRUMENTATION_MAP.md` §2; the per-row line numbers are in `SOW_COMPLIANCE_REPORT.md` §6.
 
 | Location | SDK API | Agent Mesh usage | Verified |
 |---|---|---|---|
@@ -238,18 +238,18 @@ Exact file:line for all 67 call sites (Agent Mesh, DataLayer, RAG) is generated 
 | ID | Sev | File | Observed | Expected | Action | Verification |
 |---|---|---|---|---|---|---|
 | F-20 | High (mesh UX) | `agent-mesh/api_server.py` `/api/traces`, `frontend/.../TraceDashboardPage.tsx` | Fed by `data/trace_log.jsonl` from the removed raw-payload sink | Trace view from the GERNAS trace stores | **Open**, mesh-team decision; not re-adding a PDPL-violating sink | Inspection |
-| F-21 | High | `gernas/context.py`, `decorators/_core.py` | MCP server span (other process) had no `agent_id` / `agent_run_id`: run context only travelled through `inject_context` | Run context on every propagation path | `GernasBaggagePropagator` + baggage fallback in `stamp_context` | `test_context::test_plain_otel_injection…`; MCPPROBE17D PASS |
+| F-21 | High | `src/gernas/context.py`, `decorators/_core.py` | MCP server span (other process) had no `agent_id` / `agent_run_id`: run context only travelled through `inject_context` | Run context on every propagation path | `GernasBaggagePropagator` + baggage fallback in `stamp_context` | `test_context::test_plain_otel_injection…`; MCPPROBE17D PASS |
 | F-22 | Medium | DataLayer (fastmcp) | fastmcp `tools/call` span duplicated the server `tool.call` | One span per operation | `GERNAS_SUPPRESSED_SCOPES` (SDK, opt-in) + set in `mcp_server/server.py` | `test_edge_cases::test_suppressed_scopes…`; MCPPROBE17D "only Gernas spans" |
-| F-23 | Medium | `gernas/conformance.py` | Client→server pair flagged as duplicate | Pairs exempt | Span kind + MCP fallback | `test_conformance::test_client_server_pair…` |
-| F-24 | Low | `gernas/_metrics.py` | Every histogram created with unit `ms` | Registry units | `METRIC_UNITS` generated | `test_kpi_metrics::test_histogram_units…` |
-| F-25 | Medium | — | No §6 Quality evaluation API | Evaluators record through the SDK | `gernas/evaluation.py` `record_evaluation` + `evaluation.score` span + metric | `test_kpi_metrics` |
+| F-23 | Medium | `src/gernas/conformance.py` | Client→server pair flagged as duplicate | Pairs exempt | Span kind + MCP fallback | `test_conformance::test_client_server_pair…` |
+| F-24 | Low | `src/gernas/_metrics.py` | Every histogram created with unit `ms` | Registry units | `METRIC_UNITS` generated | `test_kpi_metrics::test_histogram_units…` |
+| F-25 | Medium | — | No §6 Quality evaluation API | Evaluators record through the SDK | `src/gernas/evaluation.py` `record_evaluation` + `evaluation.score` span + metric | `test_kpi_metrics` |
 | F-26 | Medium | `registry/metrics.yaml` | §5 / §6 KPIs without instruments: TTFT, tokens / s, planning latency, steps / run, fallback rate, use-case outcome | Metric per KPI | 6 instruments added and wired | `test_kpi_metrics`; live data-plane metrics |
-| F-27 | Medium | — | No KPI catalogue (§4) | Catalogue | `docs/kpi-catalogue.md` | Review; KQL unexecuted |
+| F-27 | Medium | — | No KPI catalogue (§4) | Catalogue | `docs/reference/kpi-catalogue.md` | Review; KQL unexecuted |
 | F-28 | High (scope) | — | Dashboards, alerts and FinOps not implemented | SOW §10, §11 | **Open** (WP3) | — |
-| F-30 | Medium | `rag-as-a-service/.../ingestion/pipeline.py`, `gernas/decorators/document.py` | No document-processing telemetry (SOW-028) | `document.process` per document | `trace_document` + registry fields / span / 2 metrics; RAG ingestion decorated | `test_document_processing`; RAG suite unchanged |
-| F-31 | Medium | `gernas/decorators/retrieval.py` | No document version / knowledge authorization on retrieval (SOW-029) | Fields when available | `document_version`, `authorization_decision` | `test_document_processing` |
+| F-30 | Medium | `rag-as-a-service/.../ingestion/pipeline.py`, `src/gernas/decorators/document.py` | No document-processing telemetry (SOW-028) | `document.process` per document | `trace_document` + registry fields / span / 2 metrics; RAG ingestion decorated | `test_document_processing`; RAG suite unchanged |
+| F-31 | Medium | `src/gernas/decorators/retrieval.py` | No document version / knowledge authorization on retrieval (SOW-029) | Fields when available | `document_version`, `authorization_decision` | `test_document_processing` |
 | F-32 | Medium | `agent-mesh/src/mesh/workflow.py` | RBAC decision not emitted as a policy decision (SOW-037) | `guardrail.check` | `_role_recognised` decorated with `trace_guardrail("rbac_role_check")`; logic unchanged | Scratch check; mesh suite |
-| F-33 | High | `gernas-sdk/gernas/decorators/_core.py` | An object with `async def __call__` (or a sync callable returning a coroutine) got a span that closed before the work ran: 0.9 ms, OK, while the work took 50 ms and raised | Span covers the awaited work; ERROR on failure | `wrap` treats async-callable objects as coroutine functions; `_await_in_span` keeps the span of a coroutine-returning sync call open until completion (a Task / Future is returned unchanged) | `tests/test_lifecycle.py`: 2 tests fail before, pass after; full suite |
+| F-33 | High | `gernas-sdk/src/gernas/decorators/_core.py` | An object with `async def __call__` (or a sync callable returning a coroutine) got a span that closed before the work ran: 0.9 ms, OK, while the work took 50 ms and raised | Span covers the awaited work; ERROR on failure | `wrap` treats async-callable objects as coroutine functions; `_await_in_span` keeps the span of a coroutine-returning sync call open until completion (a Task / Future is returned unchanged) | `tests/test_lifecycle.py`: 2 tests fail before, pass after; full suite |
 | F-34 | Medium (operational) | DataLayer / RAG MCP servers | Started without `GERNAS_*` → "Gernas SDK telemetry disabled" (correctly refused to invent identity); their spans missing from the trace | Same identity as the use case | `gernas-sdk/scripts/load_env.ps1` + runbook Part C / D; `scripts/mcp_probe.py` added | MCPPROBE18A PASS |
 | F-16 | Medium | `agent-mesh/workflow_evaluations/evaluators/trace_linker.py`, `workflow/grafana_push.py` | Offline evaluation harness creates its own `fab.eval.*` spans / pushes to Grafana; never calls `init_telemetry`, so spans go to the no-op provider | Evaluators record through `gernas.record_evaluation` | **Open**, mesh-team decision: map its 20 evaluator names onto the 8 §6 metrics | Inspection 2026-10-18 |
 | F-29 | Decision | Brief vs user instruction | Opik-only vs ADX + Opik | One decision | Followed the user's direct instruction; recorded in §1 | — |
@@ -259,19 +259,19 @@ Exact file:line for all 67 call sites (Agent Mesh, DataLayer, RAG) is generated 
 
 | Item | Status | Evidence |
 |---|---|---|
-| `gernas-sdk/docs/GERNAS_SDK_INSTRUMENTATION_GUIDE.md` (replaces `sdk-developer-guide.md`; references updated) | `[x]` | Sections A–H: architecture (Mermaid), install, init and shutdown, where-to-instrument table, propagation with correct / incorrect examples, examples, troubleshooting, adoption checklist |
+| `gernas-sdk/docs/user-guide/GERNAS_SDK_INSTRUMENTATION_GUIDE.md` (replaces `sdk-developer-guide.md`; references updated) | `[x]` | Sections A–H: architecture (Mermaid), install, init and shutdown, where-to-instrument table, propagation with correct / incorrect examples, examples, troubleshooting, adoption checklist |
 | API accuracy | `[x]` | Every signature cross-checked with `inspect.signature` on 0.4.0 |
-| Examples runnable | `[x]` | `tests/test_examples.py`: 4 examples run in fresh processes and emit the documented spans |
+| Examples runnable | `[x]` | `tests/integration/test_examples.py`: 4 examples run in fresh processes and emit the documented spans |
 | Collector / Opik commands | `[x]` | Commands used in §10 of this file |
 
 ## 9A. Runbook, HTML and report deliverables (2026-10-18)
 
 | Deliverable | Status | Evidence |
 |---|---|---|
-| `gernas-sdk/docs/GERNAS_SDK_END_TO_END_RUNBOOK.md` | `[x]` local / `[B]` AKS part | Parts A–F executed on 2026-10-18 (install, configure, Collector, services, workflow, Opik / Collector verification, tests); Part G (AKS) repeats `collector-aks-deployment.md`, not executed |
-| `gernas-sdk/docs/GERNAS_SDK_ARCHITECTURE_AND_INSTRUMENTATION.html` | `[x]` | Generated by `gernas-sdk/scripts/build_architecture_doc.py` from the source (ast), `registry/spans.yaml` and this checklist; offline (inline CSS / JS / SVG); rendered and inspected in headless Edge; `tests/test_generated_docs.py` fails on drift |
-| `gernas-sdk/docs/INSTRUMENTATION_MAP.md` | `[x]` | Same generator: API catalogue with definition lines, 67 call sites with exact lines |
-| `gernas-sdk/docs/SOW_COMPLIANCE_REPORT.md` | `[x]` | Five-aspect sections with SOW rows, implementation, call sites, tests, results, gaps; consistent with §3 / §3A |
+| `gernas-sdk/docs/operations/GERNAS_SDK_END_TO_END_RUNBOOK.md` | `[x]` local / `[B]` AKS part | Parts A–F executed on 2026-10-18 (install, configure, Collector, services, workflow, Opik / Collector verification, tests); Part G (AKS) repeats `collector-aks-deployment.md`, not executed |
+| `gernas-sdk/docs/reference/GERNAS_SDK_ARCHITECTURE_AND_INSTRUMENTATION.html` | `[x]` | Generated by `gernas-sdk/scripts/build_architecture_doc.py` from the source (ast), `registry/spans.yaml` and this checklist; offline (inline CSS / JS / SVG); rendered and inspected in headless Edge; `tests/test_generated_docs.py` fails on drift |
+| `gernas-sdk/docs/reference/INSTRUMENTATION_MAP.md` | `[x]` | Same generator: API catalogue with definition lines, 67 call sites with exact lines |
+| `gernas-sdk/docs/governance/SOW_COMPLIANCE_REPORT.md` | `[x]` | Five-aspect sections with SOW rows, implementation, call sites, tests, results, gaps; consistent with §3 / §3A |
 | Sequence diagrams | `[x]` | 10 diagrams with exact source names; 9 observed live (LIVE18A, MCPPROBE18A, Collector counters; in the Collector diagram only the Opik and local data-plane branches, not ADX); 1 source-derived (initialisation internals) |
 
 ## 10. Test execution log (2026-10-17, Windows 11, Python 3.14.6, OTel 1.45.1, otelcol-contrib 0.162.0)
@@ -317,13 +317,13 @@ Repository-wide changes are tracked in git with an anchored `/observability/` ru
 
 This round:
 - `docs/sdk-developer-guide.md` renamed to `GERNAS_SDK_INSTRUMENTATION_GUIDE.md` (`git mv`);
-- new files: `gernas/evaluation.py`, `docs/kpi-catalogue.md`, `tests/test_kpi_metrics.py`, `tests/test_examples.py`.
+- new files: `src/gernas/evaluation.py`, `docs/reference/kpi-catalogue.md`, `tests/test_kpi_metrics.py`, `tests/test_examples.py`.
 
 Final staged inspection: see the report at the end of the session. Nothing is committed or pushed.
 
 2026-10-18 audit round:
-- new files: `gernas-sdk/tests/test_lifecycle.py`, `tests/test_generated_docs.py`, `scripts/build_architecture_doc.py`, `scripts/mcp_probe.py`, `scripts/load_env.ps1`, `docs/GERNAS_SDK_END_TO_END_RUNBOOK.md`, `docs/SOW_COMPLIANCE_REPORT.md`, `docs/GERNAS_SDK_ARCHITECTURE_AND_INSTRUMENTATION.html`, `docs/INSTRUMENTATION_MAP.md` (last two generated);
-- changed: `gernas/decorators/_core.py` (F-33), `agent-mesh/src/mesh/orchestrator.py` (docstring), README / instrumentation guide links, `IMPLEMENTATION_LOG.md`, this file;
+- new files: `gernas-sdk/tests/unit/test_lifecycle.py`, `tests/packaging/test_generated_docs.py`, `scripts/build_architecture_doc.py`, `scripts/mcp_probe.py`, `scripts/load_env.ps1`, `docs/operations/GERNAS_SDK_END_TO_END_RUNBOOK.md`, `docs/governance/SOW_COMPLIANCE_REPORT.md`, `docs/reference/GERNAS_SDK_ARCHITECTURE_AND_INSTRUMENTATION.html`, `docs/reference/INSTRUMENTATION_MAP.md` (last two generated);
+- changed: `src/gernas/decorators/_core.py` (F-33), `agent-mesh/src/mesh/orchestrator.py` (docstring), README / instrumentation guide links, `IMPLEMENTATION_LOG.md`, this file;
 - `collector/out/` and `collector/bin/` remain git-ignored; no `.env` value was printed or written. Not committed (no authorization in this brief).
 
 ## 12. Outstanding gaps and sign-off
@@ -333,7 +333,7 @@ Final staged inspection: see the report at the end of the session. Nothing is co
 | G-1 | High | SOW-010, 041, 064 (A4, A5) | Collector `azuredataexplorer` exporter; `collector/adx/create-tables.kql` | No data plane: KPIs, adoption metrics and dashboards cannot be computed; local file substitute only | No ADX instance or Azure credentials | Provision ADX, run the KQL, set `ADX_CLUSTER_URI`. Close on `OTELTraces` rows per `task_id` and 0 `send_failed` |
 | G-2 | High | SOW-006, 062 (A5) | `gernas-sdk/collector/k8s/`, `kustomization.yaml` | Gateway not running in AKS; producers in AKS have no endpoint | No cluster access (kubectl, az) | Runbook Part G / `collector-aks-deployment.md` §2–3; 7 acceptance checks |
 | G-3 | High (scope) | SOW-047…056, 060 (X, A4); F-28 | Dashboards, RED / USE, drill-down, alert rules (not in repo) | No observability experience beyond Opik trace view | WP3 not started; depends on G-1 | Dashboards-as-code over ADX, reviewed by FAB personas |
-| G-4 | Medium | SOW-040 (X) | `gernas-sdk/docs/kpi-catalogue.md` | KPIs have no owner, threshold, SLO or retention | FAB decision | FAB completes the catalogue |
+| G-4 | Medium | SOW-040 (X) | `gernas-sdk/docs/reference/kpi-catalogue.md` | KPIs have no owner, threshold, SLO or retention | FAB decision | FAB completes the catalogue |
 | G-5 | Medium | SOW-043, 057, 058 (A2, X) | SDK cost (LLM + embedding only) | Cost per run misses 7 of 9 §11 components | Platform metering, FinOps model | WP3-D cost model in the data plane |
 | G-6 | Medium | SOW-011, 017, 021, 027, 031, 032, 035, 038; parts of 012, 022, 036, 039 (A1, X) | Platform telemetry sources (Azure Monitor, APIM, GERNAS OS, Qdrant / AI Search, DB, AKS, network, CI/CD, IdP) | No infrastructure or platform nodes in the telemetry graph | Other owners | Route those signals to the Collector / data plane |
 | G-7 | Medium | SOW-028 (A1) | `rag-as-a-service/src/gernas_rag/ingestion/pipeline.py` | `document.process` not yet observed live; no `rejected` path | Docling + Qdrant not running | RAG team: live ingestion run; reject path |

@@ -126,5 +126,5 @@ def attrs(span) -> dict:
 def run_python(code: str, env: dict | None = None, timeout: float = 120) -> subprocess.CompletedProcess[str]:
     full_env = {k: v for k, v in os.environ.items() if not k.startswith("GERNAS_")}
     full_env.update(env or {})
-    full_env["PYTHONPATH"] = str(ROOT)
+    full_env["PYTHONPATH"] = str(ROOT / "src")
     return subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=full_env, timeout=timeout)

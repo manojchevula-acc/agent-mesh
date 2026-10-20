@@ -5,7 +5,7 @@
 **Context.** The SDK must support Microsoft Agent Framework, LangChain, LangGraph and custom Python without separate schemas per framework.
 
 **Decision.**
-- The core (`gernas/decorators`, `run_state`, `context`) is framework-neutral and imports no framework.
+- The core (`src/gernas/decorators`, `run_state`, `context`) is framework-neutral and imports no framework.
 - Each adapter maps framework-native execution onto the same spans:
   - MAF agent invocation, LangChain root runnable and LangGraph graph invocation → `agent.run`.
   - MAF workflow executor (`@trace_step`), LangGraph node and custom plan step → `agent.step`.

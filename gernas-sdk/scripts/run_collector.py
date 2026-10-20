@@ -48,7 +48,7 @@ def main() -> int:
     exe = BIN if BIN.exists() else shutil.which("otelcol-contrib")
     if not exe:
         print(
-            "otelcol-contrib not found: download it into collector/bin/ (see docs/onboarding-runbook.md)",
+            "otelcol-contrib not found: download it into collector/bin/ (see docs/getting-started.md)",
             file=sys.stderr,
         )
         return 2

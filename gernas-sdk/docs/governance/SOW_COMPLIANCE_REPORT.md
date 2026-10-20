@@ -2,7 +2,7 @@
 
 **Independent code audit, five-aspect SOW verification, Agent Mesh instrumentation audit**
 **Date:** 2026-10-18 · **SDK:** `gernas-telemetry` 0.4.0 · **Repository:** `agent-mesh/` (branch `fab-toolkit-oct`)
-**Authoritative status record:** `../../checklist.md` (this report explains it; where they differ, the checklist wins and this report is stale).
+**Authoritative status record:** `../../../checklist.md` (this report explains it; where they differ, the checklist wins and this report is stale).
 
 ## 1. Summary
 
@@ -46,9 +46,9 @@
 |---|---|
 | SOW rows | SOW-002, 012, 016, 018, 020, 022, 023, 024, 025, 026, 028, 029, 030, 036, 037, 061, 065 |
 | Expected behaviour | Every GERNAS component operation (use case, agent runtime, multi-agent, tools, LLM, embedding, safety, RAG, documents, knowledge, memory, identity, authorization) emits OTel telemetry with the blueprint fields |
-| SDK implementation | OTel SDK primitives only (no `opentelemetry-instrumentation-*`). Providers: `gernas/tracer.py:254` `init_gernas`. One wrapper engine `gernas/decorators/_core.py:246` `wrap` runs the per-operation `Spec`s in `gernas/decorators/*.py` |
+| SDK implementation | OTel SDK primitives only (no `opentelemetry-instrumentation-*`). Providers: `src/gernas/tracer.py:254` `init_gernas`. One wrapper engine `src/gernas/decorators/_core.py:246` `wrap` runs the per-operation `Spec`s in `src/gernas/decorators/*.py` |
 | Public APIs | `trace_use_case` (`decorators/use_case.py:73`), `trace_agent` (`agent.py:181`), `trace_step` / `trace_planning` (`planning.py:64` / `:146`), `trace_delegation` (`delegation.py:64`), `trace_llm` / `trace_embedding` (`llm.py:217` / `:301`), `trace_tool` (`tool.py:103`), `trace_retrieval` (`retrieval.py:107`), `trace_document` (`document.py:75`), `trace_memory` (`memory.py:49`), `trace_guardrail` / `trace_content_safety` (`safety.py:111` / `:186`), `start_hitl` / `complete_hitl` (`hitl.py:52` / `:79`), `record_evaluation` (`evaluation.py:30`); MAF / A2A / ASGI / MCP / LangChain adapters |
-| Agent Mesh integration | `src/mesh/orchestrator.py:114` `handle_request` (`trace_use_case`); `:108` `_run_workflow` (`trace_agent`); `src/mesh/workflow.py:227/289/359/776/962/1369` (6 executors, `trace_step`); `workflow.py:105` `_role_recognised` and `src/guardrails/deterministic_filters.py:126` `screen_input` (`trace_guardrail`); `deterministic_filters.py:140` `redact_output` (`trace_content_safety`); `src/agents/agent_factory.py:65` (MAF middlewares: `agent.run`, `llm.call`, `tool.call`); `src/tools/collaboration_tools.py:137/150/166/185` (`trace_tool`); `src/a2a/clients.py:59` `ask_remote` (`trace_delegation`); `src/memory/conversation_store.py:45/56/81` (`trace_memory`); `src/cache/semantic_cache.py:143` (`trace_retrieval`); `src/hitl/approval_store.py:72/104/125/143` (HITL); `src/memory/summarizer.py:49`, `src/cache/cache_judge.py:87`, `src/cache/entity_extractor.py:266/309` (`trace_llm` via `chat_post`). Full list: [INSTRUMENTATION_MAP.md](INSTRUMENTATION_MAP.md) §2 |
+| Agent Mesh integration | `src/mesh/orchestrator.py:114` `handle_request` (`trace_use_case`); `:108` `_run_workflow` (`trace_agent`); `src/mesh/workflow.py:227/289/359/776/962/1369` (6 executors, `trace_step`); `workflow.py:105` `_role_recognised` and `src/guardrails/deterministic_filters.py:126` `screen_input` (`trace_guardrail`); `deterministic_filters.py:140` `redact_output` (`trace_content_safety`); `src/agents/agent_factory.py:65` (MAF middlewares: `agent.run`, `llm.call`, `tool.call`); `src/tools/collaboration_tools.py:137/150/166/185` (`trace_tool`); `src/a2a/clients.py:59` `ask_remote` (`trace_delegation`); `src/memory/conversation_store.py:45/56/81` (`trace_memory`); `src/cache/semantic_cache.py:143` (`trace_retrieval`); `src/hitl/approval_store.py:72/104/125/143` (HITL); `src/memory/summarizer.py:49`, `src/cache/cache_judge.py:87`, `src/cache/entity_extractor.py:266/309` (`trace_llm` via `chat_post`). Full list: [INSTRUMENTATION_MAP.md](../reference/INSTRUMENTATION_MAP.md) §2 |
 | Telemetry output | 16 span types (`registry/spans.yaml`), 28 metric instruments (`registry/metrics.yaml`, incl. 4 SDK-health counters), OTel logs bridge |
 | Tests | `test_decorators` (28), `test_runtime` (13), `test_document_processing` (5), `test_kpi_metrics` (8), `test_metrics` (4), `test_adapter_*` (22), `test_lifecycle` (5), `test_examples` |
 | Verification result | **U, L, C, O.** In `LIVE18A000`, Opik holds `use_case.request`, `agent.run` ×4, `agent.step` ×7, `guardrail.check` ×2, `agent.delegate` ×3, `llm.call` ×5, `tool.call`, `retrieval.search`, `memory.access` ×3 and `content_safety.check` |
@@ -61,7 +61,7 @@
 |---|---|
 | SOW rows | SOW-003, 013, 014, 015, 042, 043, 044, 045, 046 |
 | Expected behaviour | The 13 canonical context domains use the exact blueprint field names on every signal. No raw prompts, responses, customer data, secrets or tokens. KPI signals and consumption are attributable along Use Case → Agent → Run → User → Model → Cost |
-| SDK implementation | `registry/domains/*.yaml` → `registry/generate.py` → `gernas/attributes.py` (`Ctx`, `SpanName`, `Metric`, `REQUIRED_ATTRIBUTES`, `DENYLIST`). Collector allow-list and denylist are generated from the same registry. Every write goes through `gernas/tracer.py:74` `safe_set` → `gernas/redaction.py:41` `redact` |
+| SDK implementation | `registry/domains/*.yaml` → `registry/generate.py` → `src/gernas/attributes.py` (`Ctx`, `SpanName`, `Metric`, `REQUIRED_ATTRIBUTES`, `DENYLIST`). Collector allow-list and denylist are generated from the same registry. Every write goes through `src/gernas/tracer.py:74` `safe_set` → `src/gernas/redaction.py:41` `redact` |
 | Public APIs | `gernas.Ctx`, `gernas.annotate`, `gernas.set_redaction_hook`, `gernas.request_context` (HMAC-tokenized user) |
 | Agent Mesh integration | Uses `Ctx.*` only (`gernas_telemetry.py` `_annotate`). No hand-typed `gernas.*` keys (AST lint `test_no_handtyped_attrs`) |
 | Telemetry output | `gernas.<blueprint_field>` attributes. The envelope (`business_domain`, `use_case_id`, `application_id`, `environment`, `operation`, `execution_status`) is on every span |
@@ -76,7 +76,7 @@
 |---|---|
 | SOW rows | SOW-001, 004, 007, 019, 055, 059 |
 | Expected behaviour | One correlated trace per request across processes, agents, tools and MCP, with run, session and task context on every span, so the Use Case → Agent → Run → Step → Span drill-down is possible |
-| SDK implementation | Global propagator: W3C TraceContext + `GernasBaggagePropagator` (`gernas/context.py:113`), installed by `init_gernas`. Run context: `RunState` ContextVar (`gernas/run_state.py:28`, `bind` at `:139`), so it is isolated per asyncio task. `_BaggageSpanProcessor` (`tracer.py:178`) copies allow-listed baggage onto every span. `stamp_context` (`_core.py:167`) adds run context, with a baggage fallback for remote servers |
+| SDK implementation | Global propagator: W3C TraceContext + `GernasBaggagePropagator` (`src/gernas/context.py:113`), installed by `init_gernas`. Run context: `RunState` ContextVar (`src/gernas/run_state.py:28`, `bind` at `:139`), so it is isolated per asyncio task. `_BaggageSpanProcessor` (`tracer.py:178`) copies allow-listed baggage onto every span. `stamp_context` (`_core.py:167`) adds run context, with a baggage fallback for remote servers |
 | Public APIs | `request_context` (`context.py:50`), `inject_context` / `extract_context` / `attach_headers` (`:124` / `:136` / `:145`), `gernas_task` (`:190`), `wrap_in_context` (`:195`), `correlation` (`:163`); adapters `GernasA2AInterceptor`, `GernasASGIMiddleware`, `GernasFastMCPMiddleware`, `mcp_meta_context` |
 | Agent Mesh integration | `orchestrator.py:140` `request_context`; `orchestrator.py:449` `spawn` → `gernas_task`; `src/a2a/clients.py:47` `GernasA2AInterceptor`; `src/a2a/hosting.py:83` and `api_server.py:1129` `GernasASGIMiddleware`; `datalayer-as-service/mcp_server/server.py:78` `GernasFastMCPMiddleware`; `rag-as-a-service/mcp_integration/server.py:173` `mcp_meta_context`; `logging_config.py:120` and `audit_middleware.py:30` `correlation()` |
 | Telemetry output | One `trace_id` per request; `gernas.session_id`, `task_id`, `tokenized_user_id` and `channel` on every span; `parent_run_id` and `delegation_path` across agents |
@@ -91,7 +91,7 @@
 |---|---|
 | SOW rows | SOW-005, 060, 063, 064 |
 | Expected behaviour | Producers are not coupled to a vendor; backends can change without re-instrumenting |
-| SDK implementation | `gernas/exporters.py:68/84/100` builds **OTLP only** (gRPC or HTTP), plus `console` and `off` for development. No vendor SDK is imported (`test_packaging`). Vendor shape (Opik mapping, ADX tables) lives in Collector config |
+| SDK implementation | `src/gernas/exporters.py:68/84/100` builds **OTLP only** (gRPC or HTTP), plus `console` and `off` for development. No vendor SDK is imported (`test_packaging`). Vendor shape (Opik mapping, ADX tables) lives in Collector config |
 | Agent Mesh integration | None needed: `GERNAS_OTLP_ENDPOINT` only |
 | Tests | `test_edge_cases::test_exporter_selection`, `test_packaging::test_core_modules_do_not_import_vendor_sdks`, `test_collector_deployment::test_traces_go_to_adx_and_opik_metrics_and_logs_to_adx` |
 | Verification result | **U, C, O**: Opik export live; data-plane export live to local files |
@@ -134,7 +134,7 @@ These are 23 rows: platform telemetry sources (Azure, APIM, GERNAS OS, vector st
 ## 4. Decorator and API inventory
 
 The complete inventory is **generated from the source**:
-- [INSTRUMENTATION_MAP.md](INSTRUMENTATION_MAP.md) §1 gives the API, group, definition `file:line`, registry span, number of call sites and number of tests.
+- [INSTRUMENTATION_MAP.md](../reference/INSTRUMENTATION_MAP.md) §1 gives the API, group, definition `file:line`, registry span, number of call sites and number of tests.
 - The HTML guide, section D, adds per API: signature, docstring, span behaviour, required attributes, context and baggage behaviour, error behaviour, sync/async support, call-site links and test names.
 
 Behaviour that differs between decorators (verified in source and tests):
@@ -209,7 +209,7 @@ Every live trace passes "only Gernas SDK spans".
 | Parent–child relationships | Pass | `test_decorators::test_children_carry_run_context_and_nest_under_the_run`; Opik "every parent link resolves" ×5 |
 | Context leakage between concurrent tasks | Pass | ContextVar `RunState`; `test_decorators::test_async_nested_and_concurrent_runs_stay_isolated`, `test_lifecycle::test_request_context_baggage_is_isolated_per_concurrent_task` (**new**) |
 | Async propagation (tasks, threads) | Pass | `test_context::test_gernas_task_keeps_the_trace_and_run`, `test_wrap_in_context_for_threads` |
-| **Callable returning a coroutine** | **Failed → fixed (F-33)** | An object with `async def __call__` (or a sync function returning a coroutine) got a span that closed *before* the work ran: 0.9 ms and status OK while the work took 50 ms and raised. Fix in `_core.py:246` `wrap` and `:257` `_await_in_span`; a `Task` / `Future` is returned unchanged. Regression tests in `tests/test_lifecycle.py` fail on the old code and pass on the new |
+| **Callable returning a coroutine** | **Failed → fixed (F-33)** | An object with `async def __call__` (or a sync function returning a coroutine) got a span that closed *before* the work ran: 0.9 ms and status OK while the work took 50 ms and raised. Fix in `_core.py:246` `wrap` and `:257` `_await_in_span`; a `Task` / `Future` is returned unchanged. Regression tests in `tests/unit/test_lifecycle.py` fail on the old code and pass on the new |
 | Duplicate spans from nested instrumentation | Pass | `test_adapter_agent_framework::test_no_duplicate_tool_span_when_tools_are_already_decorated`, conformance `duplicate` rule, Opik "only Gernas spans" |
 | Exception recording and status | Pass | PII-scrubbed `exception` event, ERROR status; expected outcomes (deny, auth) stay OK (`test_exception_sets_error_status_category_and_scrubbed_event`, `test_guardrail_deny_keeps_status_ok_and_blocks_the_run`) |
 | Attribute names consistent | Pass | Generated `Ctx`; `test_naming`, AST lint |
@@ -239,10 +239,10 @@ Every live trace passes "only Gernas SDK spans".
 
 | ID | File | Change | Verification |
 |---|---|---|---|
-| F-33 | `gernas-sdk/gernas/decorators/_core.py` | Async-callable objects use the async wrapper. A sync callable returning a coroutine keeps its span open until the coroutine completes, with the span current inside it | `tests/test_lifecycle.py` (2 tests fail before, pass after); full SDK suite |
+| F-33 | `gernas-sdk/src/gernas/decorators/_core.py` | Async-callable objects use the async wrapper. A sync callable returning a coroutine keeps its span open until the coroutine completes, with the span current inside it | `tests/unit/test_lifecycle.py` (2 tests fail before, pass after); full SDK suite |
 | F-34 | `gernas-sdk/scripts/load_env.ps1`, runbook Part C/D | MCP servers need `GERNAS_*` from `agent-mesh/.env`; a helper loads them without printing values | `MCPPROBE18A` PASS |
 | — | `gernas-sdk/scripts/mcp_probe.py` | Repeatable MCP-leg check, promoted from a scratch script | `MCPPROBE18A` PASS |
-| — | `gernas-sdk/scripts/build_architecture_doc.py`, `tests/test_generated_docs.py` | Generated HTML guide and instrumentation map. `--check` fails on drift from the source or the checklist | test passes |
+| — | `gernas-sdk/scripts/build_architecture_doc.py`, `tests/packaging/test_generated_docs.py` | Generated HTML guide and instrumentation map. `--check` fails on drift from the source or the checklist | test passes |
 | — | `agent-mesh/src/mesh/orchestrator.py` (docstring) | Removed the stale reference to the old `mesh.request` span | comment only |
 
 ## 10. Outstanding gaps

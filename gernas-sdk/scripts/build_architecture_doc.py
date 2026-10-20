@@ -6,10 +6,10 @@
 
 Generated (never edit by hand):
 
-* ``docs/GERNAS_SDK_ARCHITECTURE_AND_INSTRUMENTATION.html`` — self-contained, offline
+* ``docs/reference/GERNAS_SDK_ARCHITECTURE_AND_INSTRUMENTATION.html`` — self-contained, offline
   HTML (inline CSS / JS / SVG): overview, flowchart, code explorer, API catalogue,
   sequence diagrams, Agent Mesh instrumentation map, SOW dashboard, gaps;
-* ``docs/INSTRUMENTATION_MAP.md`` — the same API catalogue and call-site map as Markdown.
+* ``docs/reference/INSTRUMENTATION_MAP.md`` — the same API catalogue and call-site map as Markdown.
 
 Sources, so the documents cannot drift from the implementation:
 
@@ -41,8 +41,8 @@ import yaml
 SDK = Path(__file__).resolve().parent.parent
 REPO = SDK.parent
 CHECKLIST = REPO / "checklist.md"
-OUT_HTML = SDK / "docs" / "GERNAS_SDK_ARCHITECTURE_AND_INSTRUMENTATION.html"
-OUT_MD = SDK / "docs" / "INSTRUMENTATION_MAP.md"
+OUT_HTML = SDK / "docs" / "reference" / "GERNAS_SDK_ARCHITECTURE_AND_INSTRUMENTATION.html"
+OUT_MD = SDK / "docs" / "reference" / "INSTRUMENTATION_MAP.md"
 MESH_INTEGRATION = REPO / "agent-mesh" / "src" / "observability" / "gernas_telemetry.py"
 
 APP_SOURCES = [
@@ -365,7 +365,7 @@ SEQUENCES: list[Seq] = [
     Seq(
         "init",
         "Application initialisation and SDK setup",
-        SOURCE + "; covered by tests/test_packaging.py, tests/test_config.py and every live start-up",
+        SOURCE + "; covered by tests/packaging/test_packaging.py, tests/unit/test_config.py and every live start-up",
         [
             ("app", "run.py / api_server.py"),
             ("gt", "gernas_telemetry"),
@@ -562,8 +562,8 @@ SEQUENCES: list[Seq] = [
     Seq(
         "export",
         "Span closure and telemetry export",
-        "Live: Collector accepted 89 spans, 0 refused (LIVE18A); failure path: tests/test_collector_down.py, "
-        "tests/test_lifecycle.py",
+        "Live: Collector accepted 89 spans, 0 refused (LIVE18A); failure path: tests/integration/test_collector_down.py, "
+        "tests/unit/test_lifecycle.py",
         [
             ("span", "span.end()"),
             ("bsp", "_GernasBatchSpanProcessor"),
@@ -638,7 +638,7 @@ def index_sdk() -> tuple[dict[str, Definition], dict[str, dict]]:
     """Top-level functions / classes of the gernas package, and per-module summaries."""
     defs: dict[str, Definition] = {}
     modules: dict[str, dict] = {}
-    for path in sorted((SDK / "gernas").rglob("*.py")):
+    for path in sorted((SDK / "src" / "gernas").rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         names = []
         for node in tree.body:
@@ -660,7 +660,7 @@ def index_sdk() -> tuple[dict[str, Definition], dict[str, dict]]:
 
 
 def public_api() -> list[str]:
-    tree = ast.parse((SDK / "gernas" / "__init__.py").read_text(encoding="utf-8"))
+    tree = ast.parse((SDK / "src" / "gernas" / "__init__.py").read_text(encoding="utf-8"))
     for node in tree.body:
         if isinstance(node, ast.Assign) and any(getattr(t, "id", None) == "__all__" for t in node.targets):
             return [e.value for e in node.value.elts]  # type: ignore[attr-defined]
@@ -679,7 +679,7 @@ def span_registry() -> dict[str, dict]:
 def tests_by_api(names: list[str]) -> dict[str, list[str]]:
     wanted = set(names)
     found: dict[str, list[str]] = defaultdict(list)
-    for path in sorted((SDK / "tests").glob("test_*.py")):
+    for path in sorted((SDK / "tests").rglob("test_*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in tree.body:
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) or not node.name.startswith("test_"):
@@ -1433,7 +1433,7 @@ def build(data: dict) -> tuple[str, str]:
             "</table></details>"
         )
     add(
-        "<p class='small'>Every decorator runs on one engine (<code>gernas/decorators/_core.py</code>): the envelope "
+        "<p class='small'>Every decorator runs on one engine (<code>src/gernas/decorators/_core.py</code>): the envelope "
         "first, spans closed in <code>finally</code> on every exit path (return, exception, cancellation, generator "
         "close), exceptions re-raised unchanged, telemetry failures never reach the application, objects with "
         "<code>async __call__</code> and sync callables returning a coroutine timed until the coroutine completes "
@@ -1575,8 +1575,8 @@ def build(data: dict) -> tuple[str, str]:
 
     add(
         f"<footer>Generated {esc(date)} from commit-tracked sources. Runbook: "
-        "<code>gernas-sdk/docs/GERNAS_SDK_END_TO_END_RUNBOOK.md</code> · Compliance report: "
-        "<code>gernas-sdk/docs/SOW_COMPLIANCE_REPORT.md</code> · Checklist: <code>checklist.md</code></footer>"
+        "<code>gernas-sdk/docs/operations/GERNAS_SDK_END_TO_END_RUNBOOK.md</code> · Compliance report: "
+        "<code>gernas-sdk/docs/governance/SOW_COMPLIANCE_REPORT.md</code> · Checklist: <code>checklist.md</code></footer>"
     )
     add(f"</main><script>{JS}</script></body></html>")
     return "\n".join(h) + "\n", markdown
@@ -1617,7 +1617,7 @@ NAV = [
 ]
 
 QUICKSTART = """
-<p>Full procedure, expected output and troubleshooting: <code>gernas-sdk/docs/GERNAS_SDK_END_TO_END_RUNBOOK.md</code>.
+<p>Full procedure, expected output and troubleshooting: <code>gernas-sdk/docs/operations/GERNAS_SDK_END_TO_END_RUNBOOK.md</code>.
 Commands below are the ones used for the 2026-10-18 live verification (Windows PowerShell, repository root
 <code>agent-mesh/</code>, virtual environment <code>.venv</code>).</p>
 <ol class='steps'>

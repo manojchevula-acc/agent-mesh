@@ -11,7 +11,7 @@
 - `30_sdk.yaml` holds the technical necessities: `operation` (TN-01), `framework` (TN-02), `sdk_version`, `redaction_applied`, `token_type`, and OTel HTTP semconv keys for the ASGI span (TN-03).
 - Each field records its key, type, required level, sensitivity, cardinality, rollup flag, PDPL action, source requirement (`GERNAS-REQ-NNN` / `TN-NN`), brief and example.
 - The generator validates the registry and produces:
-  - `gernas/attributes.py` (`Ctx`, `SpanName`, `Metric`, `REGISTRY`, `ENVELOPE`, `RUN_CONTEXT`, `REQUIRED_ATTRIBUTES`, `DENYLIST`);
+  - `src/gernas/attributes.py` (`Ctx`, `SpanName`, `Metric`, `REGISTRY`, `ENVELOPE`, `RUN_CONTEXT`, `REQUIRED_ATTRIBUTES`, `DENYLIST`);
   - the redaction matrix;
   - OTel-style semantic conventions;
   - the attribute reference;
@@ -21,4 +21,4 @@
 
 **Consequences.**
 - One source drives SDK redaction, Collector rules, conformance checks and docs.
-- Keys are `gernas.<blueprint_field>`. The namespace is a technical necessity, because bare names such as `provider` and `environment` would collide with other instrumentation. The architecture owner should confirm it (see Gaps in `docs/BLUEPRINT_TRACEABILITY.md`).
+- Keys are `gernas.<blueprint_field>`. The namespace is a technical necessity, because bare names such as `provider` and `environment` would collide with other instrumentation. The architecture owner should confirm it (see Gaps in `docs/governance/BLUEPRINT_TRACEABILITY.md`).

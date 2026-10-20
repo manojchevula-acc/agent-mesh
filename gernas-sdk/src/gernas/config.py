@@ -87,7 +87,7 @@ class GernasConfig:
             raise GernasConfigError(
                 "Missing required Gernas configuration: "
                 + ", ".join(missing)
-                + ". Set these environment variables (see docs/onboarding-runbook.md)."
+                + ". Set these environment variables (see docs/getting-started.md)."
             )
         if self.exporter not in EXPORTERS:
             raise GernasConfigError(f"GERNAS_EXPORTER={self.exporter!r} must be one of {EXPORTERS}")

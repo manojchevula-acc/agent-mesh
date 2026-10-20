@@ -1,4 +1,4 @@
-"""No hand-typed ``gernas.*`` attribute names outside gernas/attributes.py.
+"""No hand-typed ``gernas.*`` attribute names outside src/gernas/attributes.py.
 
 Every decorator must use ``Ctx.ATTRIBUTE_NAME``. Docstrings and prose are ignored;
 any identifier-like string literal ``gernas.<something>`` fails the build.
@@ -10,7 +10,7 @@ import ast
 import re
 from pathlib import Path
 
-PACKAGE = Path(__file__).resolve().parent.parent / "gernas"
+PACKAGE = Path(__file__).resolve().parents[2] / "src" / "gernas"
 _PATTERN = re.compile(r"^gernas\.[a-z0-9_]+(\.[a-z0-9_]+)*$")
 
 

@@ -1,4 +1,4 @@
-"""The GERNAS decorators — one per GERNAS operation (see docs/BLUEPRINT_TRACEABILITY.md)."""
+"""The GERNAS decorators — one per GERNAS operation (see docs/governance/BLUEPRINT_TRACEABILITY.md)."""
 
 from gernas.decorators.agent import trace_agent
 from gernas.decorators.delegation import trace_delegation

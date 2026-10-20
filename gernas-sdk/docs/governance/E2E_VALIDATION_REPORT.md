@@ -1,6 +1,6 @@
 # Gernas SDK — implementation and end-to-end validation report
 
-> **Historical (0.3.0).** This report validates the 0.3.0 API and attribute names. Release 0.4.0 (blueprint alignment) renamed attributes and consolidated decorators. Its requirements and verification evidence are in `docs/BLUEPRINT_TRACEABILITY.md` §3, and the migration is in `docs/MIGRATION_FROM_BEACON_KIT.md` §0.
+> **Historical (0.3.0).** This report validates the 0.3.0 API and attribute names. Release 0.4.0 (blueprint alignment) renamed attributes and consolidated decorators. Its requirements and verification evidence are in `docs/governance/BLUEPRINT_TRACEABILITY.md` §3, and the migration is in `docs/user-guide/MIGRATION_FROM_BEACON_KIT.md` §0.
 
 **Date:** 2026-10-16
 **SDK:** `gernas-telemetry` 0.3.0, evolved from Beacon Kit 0.2.0
@@ -12,7 +12,7 @@ Every result in this report was produced by a command that was actually run, and
 
 | Area | Result |
 |---|---|
-| Beacon Kit → Gernas SDK | `beacon_kit/` → `gernas-sdk/gernas/` via `git mv`, history preserved. No `beacon_kit` references remain in code: `tests/test_packaging.py::test_no_beacon_kit_names_remain_in_the_package`. |
+| Beacon Kit → Gernas SDK | `beacon_kit/` → `gernas-sdk/src/gernas/` via `git mv`, history preserved. No `beacon_kit` references remain in code: `tests/packaging/test_packaging.py::test_no_beacon_kit_names_remain_in_the_package`. |
 | Spec coverage | All of WP1·A (CORE-01..08) and WP1·B (CTX-01..07) is implemented. Remaining gaps are external: registry publishing, sign-offs, and items that need the data-plane store (R1). See `docs/REQUIREMENTS_TRACEABILITY.md`. |
 | SDK tests | **201 passed, 0 failed. 90.31% line coverage** (gate `--cov-fail-under=90`). |
 | Overhead | Worst decorator **p95 0.20 ms** against a < 1 ms target. Collector down: **0 agent errors**; 36,000 of 36,000 spans counted as dropped. Collector slow: added p95 0.10 ms. |

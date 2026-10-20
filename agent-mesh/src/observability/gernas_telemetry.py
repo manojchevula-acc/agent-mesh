@@ -8,7 +8,7 @@ warning and every decorator degrades to a pass-through — the mesh never fails
 because of telemetry.
 
 Configuration is environment-only (``GERNAS_*`` in ``agent-mesh/.env``); see
-``gernas-sdk/docs/onboarding-runbook.md``.
+``gernas-sdk/docs/getting-started.md``.
 """
 from __future__ import annotations
 

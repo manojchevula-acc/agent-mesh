@@ -1,5 +1,5 @@
 domain: sdk
-blueprint: false        # technical necessities (see docs/BLUEPRINT_TRACEABILITY.md §5)
+blueprint: false        # technical necessities (see docs/governance/BLUEPRINT_TRACEABILITY.md §5)
 owner: GERNAS telemetry pod
 brief: Keys the SDK needs to operate - span classification, multi-framework comparability, metric dimensions, OTel HTTP semantics.
 fields:

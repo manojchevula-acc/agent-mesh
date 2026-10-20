@@ -19,7 +19,7 @@
 
 | Concern | Decision | Where |
 |---|---|---|
-| Producer contract | The SDK exports OTLP only, to the Collector (blueprint §1 "exporter abstraction", "centralized collectors"). The SDK has no vendor exporter. | `gernas/exporters.py` |
+| Producer contract | The SDK exports OTLP only, to the Collector (blueprint §1 "exporter abstraction", "centralized collectors"). The SDK has no vendor exporter. | `src/gernas/exporters.py` |
 | Data plane | `azuredataexplorer` exporter (otelcol-contrib, Beta for traces, metrics and logs), queued ingestion, retry, sending queue | `collector/otel-collector-config.yaml` |
 | Developer trace view | Opik's documented OTLP endpoint `…/opik/api/v1/private/otel`, over HTTP (Opik supports HTTP only, traces only), headers `Authorization`, `Comet-Workspace`, `projectName` | same |
 | Vendor field shape | GERNAS keys → GenAI keys for Opik in `transform/opik_shape`. The SDK stays vendor-neutral. | same |

@@ -38,15 +38,15 @@ async def answer(question: str) -> str: ...
 
 | Path | What |
 |---|---|
-| `gernas/` | The package. `attributes.py` is generated from `registry/`. |
-| `gernas/adapters/` | `agent_framework`, `langchain`, `langgraph`, `a2a`, `mcp`, `asgi`, `httpx` (optional dependencies) |
+| `src/gernas/` | The package (src layout; ships `py.typed`). `attributes.py` is generated from `registry/`. |
+| `src/gernas/adapters/` | `agent_framework`, `langchain`, `langgraph`, `a2a`, `mcp`, `asgi`, `httpx` (optional dependencies) |
 | `registry/` | Blueprint domains plus documented extensions (YAML), span and metric catalogues, denylist, generator, redaction matrix, semantic conventions |
 | `collector/` | `otel-collector-config.yaml` (gateway: traces → Azure Data Explorer + Opik, metrics/logs → ADX), `kustomization.yaml` + `k8s/` (AKS), `adx/create-tables.kql`, `local-dataplane-file.yaml` (local-only overlay). `bin/` and `out/` are git-ignored. |
-| `tests/` | Naming contract, config, decorators, runtime, context, security, metrics, adapters (MAF / LangChain / LangGraph / transport), optional dependencies, conformance, registry, packaging |
+| `tests/` | `unit/` (config, decorators, runtime, context, security, metrics, MAF / LangChain adapters), `integration/` (transport adapters, Collector down / deployment, examples), `packaging/` (dependencies, optional imports, generated docs), `conformance/` (naming contract, registry, conformance) |
 | `examples/` | `custom_agent.py`, `maf_agent.py`, `langchain_agent.py`, `langgraph_agent.py` (offline), rate card example |
 | `benchmarks/`, `reports/` | Overhead benchmark and report, plus E2E evidence |
-| `scripts/` | `run_collector.py`, `e2e_pipeline_checks.py`, `inspect_trace.py`, `opik_verify.py` |
-| `docs/` | Blueprint traceability, instrumentation guide (`GERNAS_SDK_INSTRUMENTATION_GUIDE.md`), AKS deployment, KPI catalogue, onboarding runbook, attribute reference (generated), migration, ADRs |
+| `scripts/` | `run_collector.py`, `e2e_pipeline_checks.py`, `inspect_trace.py`, `opik_verify.py`, `mcp_probe.py`, `build_architecture_doc.py`, `load_env.ps1` |
+| `docs/` | `index.md` (map), `getting-started.md`, `user-guide/`, `reference/` (attribute reference and architecture docs are generated), `operations/`, `governance/`, `adr/` |
 
 ## Quick start
 
@@ -60,8 +60,8 @@ python examples\custom_agent.py
 ```
 
 Next steps:
-- `docs/onboarding-runbook.md` to onboard an agent;
-- `docs/GERNAS_SDK_INSTRUMENTATION_GUIDE.md` for what, where and how to instrument;
-- `docs/GERNAS_SDK_END_TO_END_RUNBOOK.md` to run the full pipeline and verify a trace in Opik;
-- `docs/GERNAS_SDK_ARCHITECTURE_AND_INSTRUMENTATION.html` (generated: diagrams, API catalogue, call-site map) and `docs/SOW_COMPLIANCE_REPORT.md`;
-- `docs/BLUEPRINT_TRACEABILITY.md` for the requirement → code → test mapping.
+- `docs/getting-started.md` to onboard an agent;
+- `docs/user-guide/GERNAS_SDK_INSTRUMENTATION_GUIDE.md` for what, where and how to instrument;
+- `docs/operations/GERNAS_SDK_END_TO_END_RUNBOOK.md` to run the full pipeline and verify a trace in Opik;
+- `docs/reference/GERNAS_SDK_ARCHITECTURE_AND_INSTRUMENTATION.html` (generated: diagrams, API catalogue, call-site map) and `docs/governance/SOW_COMPLIANCE_REPORT.md`;
+- `docs/governance/BLUEPRINT_TRACEABILITY.md` for the requirement → code → test mapping.

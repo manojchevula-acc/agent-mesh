@@ -6,45 +6,45 @@
 
 | API | Group | Defined at | Span (registry) | Agent Mesh / service call sites | Tests |
 |---|---|---|---|---|---|
-| `init_gernas` | Setup | `gernas-sdk/gernas/tracer.py:254` | — | 8 | 1 |
-| `GernasConfig` | Setup | `gernas-sdk/gernas/config.py:50` | — | 5 | 11 |
-| `GernasHandle` | Setup | `gernas-sdk/gernas/tracer.py:202` | — | 3 | 0 |
-| `trace_use_case` | Decorator | `gernas-sdk/gernas/decorators/use_case.py:73` | `use_case.request` (SERVER) | 1 | 3 |
-| `trace_agent` | Decorator | `gernas-sdk/gernas/decorators/agent.py:181` | `agent.run` (INTERNAL) | 1 | 37 |
-| `trace_step` | Decorator | `gernas-sdk/gernas/decorators/planning.py:64` | `agent.step` (INTERNAL) | 9 | 4 |
-| `trace_planning` | Decorator | `gernas-sdk/gernas/decorators/planning.py:146` | `agent.plan` (INTERNAL) | 0 | 2 |
-| `trace_delegation` | Decorator | `gernas-sdk/gernas/decorators/delegation.py:64` | `agent.delegate` (CLIENT) | 1 | 3 |
-| `trace_llm` | Decorator | `gernas-sdk/gernas/decorators/llm.py:217` | `llm.call` (CLIENT) | 4 | 14 |
-| `trace_embedding` | Decorator | `gernas-sdk/gernas/decorators/llm.py:301` | `embedding.create` (CLIENT) | 0 | 1 |
-| `trace_tool` | Decorator | `gernas-sdk/gernas/decorators/tool.py:103` | `tool.call` (CLIENT) | 4 | 31 |
-| `trace_retrieval` | Decorator | `gernas-sdk/gernas/decorators/retrieval.py:107` | `retrieval.search` (CLIENT) | 3 | 3 |
-| `trace_document` | Decorator | `gernas-sdk/gernas/decorators/document.py:75` | `document.process` (INTERNAL) | 2 | 4 |
-| `trace_memory` | Decorator | `gernas-sdk/gernas/decorators/memory.py:49` | `memory.access` (INTERNAL) | 3 | 3 |
-| `trace_guardrail` | Decorator | `gernas-sdk/gernas/decorators/safety.py:111` | `guardrail.check` (INTERNAL) | 2 | 5 |
-| `trace_content_safety` | Decorator | `gernas-sdk/gernas/decorators/safety.py:186` | `content_safety.check` (INTERNAL) | 1 | 3 |
-| `trace_hitl` | Decorator | `gernas-sdk/gernas/hitl.py:144` | `hitl.approval` (INTERNAL) | 0 | 3 |
-| `start_hitl` | Run helper | `gernas-sdk/gernas/hitl.py:52` | `hitl.approval` (INTERNAL) | 2 | 3 |
-| `complete_hitl` | Run helper | `gernas-sdk/gernas/hitl.py:79` | — | 2 | 3 |
-| `record_retry` | Run helper | `gernas-sdk/gernas/run_state.py:150` | — | 6 | 3 |
-| `set_termination_reason` | Run helper | `gernas-sdk/gernas/run_state.py:157` | — | 3 | 2 |
-| `mark_fallback` | Run helper | `gernas-sdk/gernas/decorators/llm.py:102` | — | 0 | 2 |
-| `record_evaluation` | Run helper | `gernas-sdk/gernas/evaluation.py:30` | `evaluation.score` (INTERNAL) | 0 | 3 |
-| `annotate` | Run helper | `gernas-sdk/gernas/__init__.py:55` | — | 0 | 4 |
-| `request_context` | Context | `gernas-sdk/gernas/context.py:74` | — | 1 | 8 |
-| `correlation` | Context | `gernas-sdk/gernas/context.py:188` | — | 2 | 2 |
-| `inject_context` | Context | `gernas-sdk/gernas/context.py:149` | — | 0 | 5 |
-| `extract_context` | Context | `gernas-sdk/gernas/context.py:161` | — | 0 | 1 |
-| `attach_headers` | Context | `gernas-sdk/gernas/context.py:170` | — | 0 | 2 |
-| `gernas_task` | Context | `gernas-sdk/gernas/context.py:215` | — | 1 | 1 |
-| `wrap_in_context` | Context | `gernas-sdk/gernas/context.py:220` | — | 0 | 1 |
-| `set_redaction_hook` | Privacy | `gernas-sdk/gernas/redaction.py:35` | — | 0 | 1 |
-| `gernas_middleware` | Adapter (MAF) | `gernas-sdk/gernas/adapters/agent_framework.py:140` | — | 1 | 3 |
-| `disable_native_telemetry` | Adapter (MAF) | `gernas-sdk/gernas/adapters/agent_framework.py:126` | — | 5 | 1 |
-| `GernasA2AInterceptor` | Adapter (A2A) | `gernas-sdk/gernas/adapters/a2a.py:19` | — | 1 | 1 |
-| `GernasASGIMiddleware` | Adapter (ASGI) | `gernas-sdk/gernas/adapters/asgi.py:30` | `{method} {route}` (SERVER) | 3 | 3 |
-| `GernasFastMCPMiddleware` | Adapter (MCP server) | `gernas-sdk/gernas/adapters/mcp.py:60` | — | 1 | 2 |
-| `mcp_meta_context` | Adapter (MCP server) | `gernas-sdk/gernas/adapters/mcp.py:41` | — | 1 | 1 |
-| `GernasCallbackHandler` | Adapter (LangChain) | `gernas-sdk/gernas/adapters/langchain.py:66` | — | 0 | 1 |
+| `init_gernas` | Setup | `gernas-sdk/src/gernas/tracer.py:254` | — | 8 | 1 |
+| `GernasConfig` | Setup | `gernas-sdk/src/gernas/config.py:50` | — | 5 | 11 |
+| `GernasHandle` | Setup | `gernas-sdk/src/gernas/tracer.py:202` | — | 3 | 0 |
+| `trace_use_case` | Decorator | `gernas-sdk/src/gernas/decorators/use_case.py:73` | `use_case.request` (SERVER) | 1 | 3 |
+| `trace_agent` | Decorator | `gernas-sdk/src/gernas/decorators/agent.py:181` | `agent.run` (INTERNAL) | 1 | 37 |
+| `trace_step` | Decorator | `gernas-sdk/src/gernas/decorators/planning.py:64` | `agent.step` (INTERNAL) | 9 | 4 |
+| `trace_planning` | Decorator | `gernas-sdk/src/gernas/decorators/planning.py:146` | `agent.plan` (INTERNAL) | 0 | 2 |
+| `trace_delegation` | Decorator | `gernas-sdk/src/gernas/decorators/delegation.py:64` | `agent.delegate` (CLIENT) | 1 | 3 |
+| `trace_llm` | Decorator | `gernas-sdk/src/gernas/decorators/llm.py:217` | `llm.call` (CLIENT) | 4 | 14 |
+| `trace_embedding` | Decorator | `gernas-sdk/src/gernas/decorators/llm.py:301` | `embedding.create` (CLIENT) | 0 | 1 |
+| `trace_tool` | Decorator | `gernas-sdk/src/gernas/decorators/tool.py:103` | `tool.call` (CLIENT) | 4 | 31 |
+| `trace_retrieval` | Decorator | `gernas-sdk/src/gernas/decorators/retrieval.py:107` | `retrieval.search` (CLIENT) | 3 | 3 |
+| `trace_document` | Decorator | `gernas-sdk/src/gernas/decorators/document.py:75` | `document.process` (INTERNAL) | 2 | 4 |
+| `trace_memory` | Decorator | `gernas-sdk/src/gernas/decorators/memory.py:49` | `memory.access` (INTERNAL) | 3 | 3 |
+| `trace_guardrail` | Decorator | `gernas-sdk/src/gernas/decorators/safety.py:111` | `guardrail.check` (INTERNAL) | 2 | 5 |
+| `trace_content_safety` | Decorator | `gernas-sdk/src/gernas/decorators/safety.py:186` | `content_safety.check` (INTERNAL) | 1 | 3 |
+| `trace_hitl` | Decorator | `gernas-sdk/src/gernas/hitl.py:144` | `hitl.approval` (INTERNAL) | 0 | 3 |
+| `start_hitl` | Run helper | `gernas-sdk/src/gernas/hitl.py:52` | `hitl.approval` (INTERNAL) | 2 | 3 |
+| `complete_hitl` | Run helper | `gernas-sdk/src/gernas/hitl.py:79` | — | 2 | 3 |
+| `record_retry` | Run helper | `gernas-sdk/src/gernas/run_state.py:150` | — | 6 | 3 |
+| `set_termination_reason` | Run helper | `gernas-sdk/src/gernas/run_state.py:157` | — | 3 | 2 |
+| `mark_fallback` | Run helper | `gernas-sdk/src/gernas/decorators/llm.py:102` | — | 0 | 2 |
+| `record_evaluation` | Run helper | `gernas-sdk/src/gernas/evaluation.py:30` | `evaluation.score` (INTERNAL) | 0 | 3 |
+| `annotate` | Run helper | `gernas-sdk/src/gernas/__init__.py:55` | — | 0 | 4 |
+| `request_context` | Context | `gernas-sdk/src/gernas/context.py:74` | — | 1 | 9 |
+| `correlation` | Context | `gernas-sdk/src/gernas/context.py:188` | — | 2 | 2 |
+| `inject_context` | Context | `gernas-sdk/src/gernas/context.py:149` | — | 0 | 5 |
+| `extract_context` | Context | `gernas-sdk/src/gernas/context.py:161` | — | 0 | 1 |
+| `attach_headers` | Context | `gernas-sdk/src/gernas/context.py:170` | — | 0 | 2 |
+| `gernas_task` | Context | `gernas-sdk/src/gernas/context.py:215` | — | 1 | 1 |
+| `wrap_in_context` | Context | `gernas-sdk/src/gernas/context.py:220` | — | 0 | 1 |
+| `set_redaction_hook` | Privacy | `gernas-sdk/src/gernas/redaction.py:35` | — | 0 | 1 |
+| `gernas_middleware` | Adapter (MAF) | `gernas-sdk/src/gernas/adapters/agent_framework.py:140` | — | 1 | 3 |
+| `disable_native_telemetry` | Adapter (MAF) | `gernas-sdk/src/gernas/adapters/agent_framework.py:126` | — | 5 | 1 |
+| `GernasA2AInterceptor` | Adapter (A2A) | `gernas-sdk/src/gernas/adapters/a2a.py:19` | — | 1 | 1 |
+| `GernasASGIMiddleware` | Adapter (ASGI) | `gernas-sdk/src/gernas/adapters/asgi.py:30` | `{method} {route}` (SERVER) | 3 | 4 |
+| `GernasFastMCPMiddleware` | Adapter (MCP server) | `gernas-sdk/src/gernas/adapters/mcp.py:60` | — | 1 | 2 |
+| `mcp_meta_context` | Adapter (MCP server) | `gernas-sdk/src/gernas/adapters/mcp.py:41` | — | 1 | 1 |
+| `GernasCallbackHandler` | Adapter (LangChain) | `gernas-sdk/src/gernas/adapters/langchain.py:66` | — | 0 | 1 |
 
 ## 2. Call sites (Agent Mesh, DataLayer MCP, RAG service)
 
@@ -55,9 +55,9 @@
 | Agent Mesh | `agent-mesh/a2a_server.py:113` | `main` | call | `_gt.init_telemetry` | `init_gernas`, `disable_native_telemetry`, `GernasConfig` |
 | Agent Mesh | `agent-mesh/api_server.py:50` | `<module>` | call | `_gt.init_telemetry` | `init_gernas`, `disable_native_telemetry`, `GernasConfig` |
 | Agent Mesh | `agent-mesh/api_server.py:836` | `_lifespan` | call | `_gt.shutdown` | `GernasHandle` |
-| Agent Mesh | `agent-mesh/api_server.py:1129` | `<module>` | call | `_gt.asgi_middleware` | `GernasASGIMiddleware` |
-| Agent Mesh | `agent-mesh/api_server.py:1130` | `<module>` | call | `_gt.asgi_middleware` | `GernasASGIMiddleware` |
-| Agent Mesh | `agent-mesh/api_server.py:1174` | `main → obs_dest` | call | `_gt.describe` | — |
+| Agent Mesh | `agent-mesh/api_server.py:1147` | `<module>` | call | `_gt.asgi_middleware` | `GernasASGIMiddleware` |
+| Agent Mesh | `agent-mesh/api_server.py:1148` | `<module>` | call | `_gt.asgi_middleware` | `GernasASGIMiddleware` |
+| Agent Mesh | `agent-mesh/api_server.py:1192` | `main → obs_dest` | call | `_gt.describe` | — |
 | Agent Mesh | `agent-mesh/demos/gernas_e2e_queries.py:32` | `<module>` | call | `_gt.init_telemetry` | `init_gernas`, `disable_native_telemetry`, `GernasConfig` |
 | Agent Mesh | `agent-mesh/demos/gernas_e2e_queries.py:60` | `main` | call | `_gt.shutdown` | `GernasHandle` |
 | Agent Mesh | `agent-mesh/devui_app.py:49` | `<module>` | call | `_gt.init_telemetry` | `init_gernas`, `disable_native_telemetry`, `GernasConfig` |

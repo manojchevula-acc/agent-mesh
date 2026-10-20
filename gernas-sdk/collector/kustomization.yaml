@@ -1,5 +1,5 @@
 # GERNAS OTel Collector gateway on AKS.  kubectl apply -k collector/
-# Prerequisites (docs/collector-aks-deployment.md): namespace, Opik Secret, Workload Identity
+# Prerequisites (docs/operations/collector-aks-deployment.md): namespace, Opik Secret, Workload Identity
 # federated credential for the ServiceAccount, ADX tables (adx/create-tables.kql).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization

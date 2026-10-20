@@ -16,7 +16,7 @@
 #   OPIK_API_KEY, OPIK_WORKSPACE, OPIK_PROJECT_NAME  Opik (Kubernetes Secret)
 #   GERNAS_COLLECTOR_BIND                            listen address (0.0.0.0 in the pod, 127.0.0.1 locally)
 # Validate:  collector/bin/otelcol-contrib validate --config collector/otel-collector-config.yaml
-# Deploy:    kubectl apply -k collector/   (see docs/collector-aks-deployment.md)
+# Deploy:    kubectl apply -k collector/   (see docs/operations/collector-aks-deployment.md)
 
 extensions:
   health_check:

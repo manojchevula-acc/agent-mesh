@@ -71,13 +71,13 @@ gernas.init_gernas()
 
 ## 5. Instrument
 
-- Framework agents: add the adapter (`gernas_middleware`, `instrument`, `instrument_graph`); see `docs/GERNAS_SDK_INSTRUMENTATION_GUIDE.md` §D.
+- Framework agents: add the adapter (`gernas_middleware`, `instrument`, `instrument_graph`); see `docs/user-guide/GERNAS_SDK_INSTRUMENTATION_GUIDE.md` §D.
 - Custom Python: add `@gernas.trace_use_case` to the request handler, `@gernas.trace_agent(agent_id, agent_type=...)` to the agent, `@gernas.trace_step` to workflow steps, and the tool, LLM and retrieval decorators where they are not already covered by an adapter.
 - Wrap each request in `gernas.request_context(session_id=..., task_id=..., user_id=..., principal_type=...)`.
 - Switch off framework-native instrumentation so the SDK is the single instrumentation path:
   - MAF: call `gernas.adapters.agent_framework.disable_native_telemetry()` at startup (and keep `ENABLE_SENSITIVE_DATA=false`);
   - a2a-sdk: set `OTEL_INSTRUMENTATION_A2A_SDK_ENABLED=false` **before** `a2a` is imported.
-- AKS: point `GERNAS_OTLP_ENDPOINT` at the in-cluster Collector Service and follow `docs/collector-aks-deployment.md`.
+- AKS: point `GERNAS_OTLP_ENDPOINT` at the in-cluster Collector Service and follow `docs/operations/collector-aks-deployment.md`.
 
 ## 6. Verify
 

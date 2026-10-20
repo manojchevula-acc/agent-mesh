@@ -9,9 +9,9 @@ This runbook takes you from a clean checkout to a verified trace in Opik. The pa
 Part G (AKS) has **not** been run: there is no cluster, ADX instance or Azure credentials. It repeats the documented procedure from [collector-aks-deployment.md](collector-aks-deployment.md) and is marked as unverified.
 
 Related documents:
-- [GERNAS_SDK_INSTRUMENTATION_GUIDE.md](GERNAS_SDK_INSTRUMENTATION_GUIDE.md): how to instrument a new use case.
-- [GERNAS_SDK_ARCHITECTURE_AND_INSTRUMENTATION.html](GERNAS_SDK_ARCHITECTURE_AND_INSTRUMENTATION.html): diagrams, API catalogue, call-site map.
-- [SOW_COMPLIANCE_REPORT.md](SOW_COMPLIANCE_REPORT.md) and `../../checklist.md`: compliance status.
+- [GERNAS_SDK_INSTRUMENTATION_GUIDE.md](../user-guide/GERNAS_SDK_INSTRUMENTATION_GUIDE.md): how to instrument a new use case.
+- [GERNAS_SDK_ARCHITECTURE_AND_INSTRUMENTATION.html](../reference/GERNAS_SDK_ARCHITECTURE_AND_INSTRUMENTATION.html): diagrams, API catalogue, call-site map.
+- [SOW_COMPLIANCE_REPORT.md](../governance/SOW_COMPLIANCE_REPORT.md) and `../../../checklist.md`: compliance status.
 
 ---
 
@@ -59,7 +59,7 @@ py -3.14 -m venv .venv                                   # or any Python >= 3.13
 - **Expected:** `pip` ends with `Successfully installed …`, and `.venv\Scripts\python -c "import gernas; print(gernas.__version__)"` prints `0.4.0`.
 - **On failure:** if you hit a path-too-long error on Windows, use a shorter venv path such as `C:\fab-venv`. If `agent-framework` versions cannot be resolved, add `--pre`.
 
-**Collector binary.** Download `otelcol-contrib` 0.162.0 for your OS from the opentelemetry-collector-releases GitHub release into `gernas-sdk/collector/bin/`. Verify the SHA-256 against the release checksum file, as described in [onboarding-runbook.md](onboarding-runbook.md) §3.
+**Collector binary.** Download `otelcol-contrib` 0.162.0 for your OS from the opentelemetry-collector-releases GitHub release into `gernas-sdk/collector/bin/`. Verify the SHA-256 against the release checksum file, as described in [onboarding-runbook.md](../getting-started.md) §3.
 
 ```powershell
 .venv\Scripts\python gernas-sdk\scripts\run_collector.py --validate

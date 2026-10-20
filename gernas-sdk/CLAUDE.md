@@ -9,8 +9,8 @@ Built on OpenTelemetry SDK primitives. All artefacts are FAB-owned intellectual 
 |---|---|
 | `IMPLEMENTATION_PLAN.md` | Authoritative task list — work from this, never invent tasks |
 | `IMPLEMENTATION_LOG.md` | Record every completed step here before stopping |
-| `docs/BLUEPRINT_TRACEABILITY.md` | Blueprint requirement → code → test matrix (keep current) |
-| `docs/GERNAS_SDK_INSTRUMENTATION_GUIDE.md` · `docs/onboarding-runbook.md` | What / where / how to instrument; onboarding |
+| `docs/governance/BLUEPRINT_TRACEABILITY.md` | Blueprint requirement → code → test matrix (keep current) |
+| `docs/user-guide/GERNAS_SDK_INSTRUMENTATION_GUIDE.md` · `docs/getting-started.md` | What / where / how to instrument; onboarding |
 | `registry/domains/*.yaml` | The attribute contract — edit here, then `python registry/generate.py` |
 | `../docs/GERNAS Enterprise Telemetry Observability Blueprint.docx` | The naming and scope contract (never modify) |
 | `../md_files/` | Original WP1/WP2 plans (history) |
@@ -63,7 +63,7 @@ Please review this step. I will not proceed until you approve.
 
 - Do not install `opentelemetry-instrumentation-openai`, `opentelemetry-instrumentation-anthropic`, or any `opentelemetry-instrumentation-*` package
 - Do not import `openai`, `anthropic`, `azure.ai`, or `boto3` into core SDK modules (only in `tests/` and `adapters/`)
-- Do not use hand-typed string attribute names — always use the `Ctx` class from `gernas/attributes.py`
+- Do not use hand-typed string attribute names — always use the `Ctx` class from `src/gernas/attributes.py`
 - Do not capture `gen_ai.prompt` or `gen_ai.completion` by default
 - Do not commit unless explicitly told to
 - Do not implement more than the current step
@@ -73,7 +73,7 @@ Please review this step. I will not proceed until you approve.
 - Python 3.11+ — use `match`, `asyncio.TaskGroup`, `tomllib` freely; no 3.9/3.10 compatibility shims
 - Test runner: `pytest` with `pytest-asyncio` for all async tests
 - Full dependency list in `pyproject.toml`
-- Package name: `gernas-telemetry` (import as `gernas`); evolved from Beacon Kit (`docs/MIGRATION_FROM_BEACON_KIT.md`)
-- Lint/format/types: `ruff check`, `ruff format --check`, `mypy gernas`
+- Package name: `gernas-telemetry` (import as `gernas`); evolved from Beacon Kit (`docs/user-guide/MIGRATION_FROM_BEACON_KIT.md`)
+- Lint/format/types: `ruff check`, `ruff format --check`, `mypy src/gernas`
 - Before finishing any change: `pytest tests --cov=gernas` (fail-under 90 in pyproject) and `python registry/generate.py --check`
-- Never edit `gernas/attributes.py` or the Collector allow-list / denylist blocks by hand — they are generated
+- Never edit `src/gernas/attributes.py` or the Collector allow-list / denylist blocks by hand — they are generated
