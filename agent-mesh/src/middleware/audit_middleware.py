@@ -6,9 +6,10 @@ from datetime import datetime, timezone
 from collections.abc import Awaitable, Callable
 from typing import Any, List, Dict
 
+import gernas
 from agent_framework import AgentMiddleware, AgentContext
 from src.config import Config
-from src.observability import get_logger, CAT_AGENT, CAT_MCP
+from src.utils.logging_config import get_logger, CAT_AGENT, CAT_MCP
 
 _log = get_logger(CAT_AGENT)
 _mcp_log = get_logger(CAT_MCP)
@@ -25,13 +26,8 @@ def _trace_ids() -> tuple[str, str]:
 
     Lets each audit record correlate with the Gernas SDK trace of the same agent run.
     """
-    try:
-        from src.observability import gernas_telemetry
-        corr = gernas_telemetry.correlation()
-        return corr.get("trace_id") or "-", corr.get("span_id") or "-"
-    except Exception:
-        pass
-    return "-", "-"
+    corr = gernas.correlation()  # never raises
+    return corr.get("trace_id") or "-", corr.get("span_id") or "-"
 def get_message_text(msg: Any) -> str:
     if isinstance(msg, dict):
         return msg.get("text", "") or msg.get("content", "") or ""
@@ -147,20 +143,13 @@ class AuditMiddleware(AgentMiddleware):
             scrubbed_output = self._redact_pii(raw_output)
             trace_id, span_id = _trace_ids()
 
-            # Pull identity from W3C baggage so audit records on remote A2A nodes
-            # carry the originating user context, not just the session id.
-            request_id = "-"
-            baggage_user = "-"
-            baggage_role = "-"
-            try:
-                from src.observability import baggage as _app_baggage
-                request_id = _app_baggage.get_request_id() or "-"
-                baggage_user = _app_baggage.get_user() or "-"
-                baggage_role = _app_baggage.get_role() or "-"
-                if session_id == "default_session":
-                    session_id = _app_baggage.get_session_id() or session_id
-            except Exception:
-                pass
+            # Pull identity from the application baggage so audit records on remote A2A
+            # nodes carry the originating user context, not just the session id.
+            request_id = gernas.app_value("request_id") or "-"
+            baggage_user = gernas.app_value("user") or "-"
+            baggage_role = gernas.app_value("role") or "-"
+            if session_id == "default_session":
+                session_id = gernas.app_value("session_id") or session_id
 
             # Extract token usage from agent response when the framework exposes it.
             input_tokens = output_tokens = 0

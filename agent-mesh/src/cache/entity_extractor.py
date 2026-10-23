@@ -33,12 +33,25 @@ import threading
 import time
 from typing import FrozenSet, List, Optional
 
+import gernas
 import httpx
 
 from src.config import Config
-from src.observability import gernas_telemetry as _gt
 
 _log = logging.getLogger("agent_mesh.cache.entity")
+
+
+@gernas.trace_llm(provider=Config.LLM_PROVIDER, prompt_template_id="entity_extractor")
+async def _post_chat(client: httpx.AsyncClient, url: str, *, json: dict, headers: dict, model: str) -> httpx.Response:
+    """One ``llm.call`` span per request; tokens and stop reason are read from the response."""
+    return await client.post(url, json=json, headers=headers)
+
+
+@gernas.trace_llm(provider=Config.LLM_PROVIDER, prompt_template_id="entity_extractor")
+def _post_chat_sync(client: httpx.Client, url: str, *, json: dict, headers: dict, model: str) -> httpx.Response:
+    """One ``llm.call`` span per request; tokens and stop reason are read from the response."""
+    return client.post(url, json=json, headers=headers)
+
 
 # An EntitySignature is a canonical, order-independent set of "type:value" tokens.
 EntitySignature = FrozenSet[str]
@@ -263,8 +276,8 @@ async def extract_entities(query: str, role: str = "") -> EntitySignature:
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             payload = _build_payload(query)
-            resp = await _gt.chat_post(client, url, json=payload, headers=_build_headers(),
-                                       model=payload.get("model", ""), template_id="entity_extractor")
+            resp = await _post_chat(client, url, json=payload, headers=_build_headers(),
+                                    model=payload.get("model", ""))
             resp.raise_for_status()
             raw = resp.json()["choices"][0]["message"]["content"].strip()
             sig = _parse_extractor_response(raw)
@@ -306,10 +319,10 @@ def _chat_completion_sync(payload: dict, timeout: float) -> str:
     for attempt in range(max_retries + 1):
         try:
             with httpx.Client(timeout=timeout) as client:
-                resp = _gt.chat_post_sync(client, url, json=payload, headers=_build_headers(),
-                                          model=payload.get("model", ""), template_id="entity_extractor")
+                resp = _post_chat_sync(client, url, json=payload, headers=_build_headers(),
+                                       model=payload.get("model", ""))
                 if resp.status_code == 429 and attempt < max_retries:
-                    _gt.record_retry()
+                    gernas.record_retry()
                     wait = _retry_after_seconds(resp)
                     time.sleep(wait if wait is not None else _backoff_seconds(attempt))
                     continue
@@ -318,7 +331,7 @@ def _chat_completion_sync(payload: dict, timeout: float) -> str:
         except Exception as exc:  # connection/SSL/timeout/HTTP error
             last_exc = exc
             if attempt < max_retries:
-                _gt.record_retry()
+                gernas.record_retry()
                 time.sleep(_backoff_seconds(attempt))
                 continue
             raise

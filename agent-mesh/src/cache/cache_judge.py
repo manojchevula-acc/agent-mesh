@@ -17,12 +17,18 @@ from __future__ import annotations
 import logging
 from typing import Tuple
 
+import gernas
 import httpx
 
 from src.config import Config
-from src.observability import gernas_telemetry as _gt
 
 _log = logging.getLogger("agent_mesh.cache.judge")
+
+
+@gernas.trace_llm(provider=Config.LLM_PROVIDER, prompt_template_id="cache_judge")
+async def _post_chat(client: httpx.AsyncClient, url: str, *, json: dict, headers: dict, model: str) -> httpx.Response:
+    """One ``llm.call`` span per request; tokens and stop reason are read from the response."""
+    return await client.post(url, json=json, headers=headers)
 
 _JUDGE_PROMPT = """\
 You are a cache validation assistant for a financial services AI system.
@@ -84,8 +90,8 @@ async def llm_cache_judge(
 
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await _gt.chat_post(client, url, json=payload, headers=headers,
-                                       model=Config.CACHE_JUDGE_MODEL, template_id="cache_judge")
+            resp = await _post_chat(client, url, json=payload, headers=headers,
+                                    model=Config.CACHE_JUDGE_MODEL)
             resp.raise_for_status()
             raw = resp.json()["choices"][0]["message"]["content"].strip()
             decision, reason = _parse_judge_response(raw)

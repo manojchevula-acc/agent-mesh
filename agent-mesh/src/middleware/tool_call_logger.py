@@ -21,16 +21,16 @@ import json
 from collections.abc import Awaitable, Callable
 from typing import Any, Dict, List, Tuple
 
+import gernas
 from agent_framework import FunctionMiddleware, FunctionInvocationContext
 
-from src.observability import get_logger, CAT_MCP
+from src.utils.logging_config import get_logger, CAT_MCP
 
 _log = get_logger(CAT_MCP)
 
 
 def _request_id() -> str:
-    from src.observability.baggage import get_request_id
-    return get_request_id() or "-"
+    return gernas.app_value("request_id") or "-"
 
 
 def _args_signature(arguments: Any) -> str:

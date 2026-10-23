@@ -25,7 +25,7 @@ if project_root not in sys.path:
 from agent_framework import tool
 from src.a2a.clients import ask_remote
 
-from src.observability import gernas_telemetry as _gt
+import gernas
 
 # Bounds nested peer delegation within a single process.
 _peer_depth: contextvars.ContextVar[int] = contextvars.ContextVar("peer_call_depth", default=0)
@@ -75,7 +75,7 @@ async def _consult_peer(node: str, question: str, unavailable_label: str) -> str
             except Exception as _e:
                 _last_exc = _e
                 if _attempt < _A2A_RETRIES:
-                    _gt.record_retry()
+                    gernas.record_retry()
                     await asyncio.sleep(_A2A_RETRY_DELAY)
         if result is None:
             raise _last_exc  # all retry attempts failed — fall into outer except
@@ -98,9 +98,8 @@ async def _consult_peer(node: str, question: str, unavailable_label: str) -> str
                     # Also persist to a temp file keyed by request_id so the API
                     # server process can read them (ContextVars are process-local).
                     try:
-                        from src.observability.baggage import get_request_id as _grid
                         import json as _json
-                        _rid = (_grid() or "").upper().strip()
+                        _rid = (gernas.app_value("request_id") or "").upper().strip()
                         if _rid and _rid != "-":
                             _pf = pathlib.Path("data/logs") / f".peer_{_rid}.json"
                             _pf.parent.mkdir(parents=True, exist_ok=True)
@@ -134,7 +133,7 @@ async def _consult_peer(node: str, question: str, unavailable_label: str) -> str
     "numeric or record lookup about a customer or deal (e.g. CUST001's recommended "
     "price, margin analysis, profitability tier, RWA impact)."
 ))
-@_gt.trace_tool("query_structured_data", tool_type="a2a")
+@gernas.trace_tool("query_structured_data", tool_type="a2a")
 async def query_structured_data(question: str) -> str:
     """Agent-to-agent hop: Price Assist asks the Data Agent (over A2A)."""
     return await _consult_peer("data_agent", question, "DATA_UNAVAILABLE")
@@ -147,7 +146,7 @@ async def query_structured_data(question: str) -> str:
     "(RAG-as-a-Service knowledge base). Use to retrieve the rule or benchmark that "
     "a price or action must comply with."
 ))
-@_gt.trace_tool("query_knowledge_base", tool_type="a2a")
+@gernas.trace_tool("query_knowledge_base", tool_type="a2a")
 async def query_knowledge_base(question: str) -> str:
     """Agent-to-agent hop: Price Assist asks the RAG Agent (over A2A)."""
     return await _consult_peer("rag_agent", question, "RAG_UNAVAILABLE")
@@ -163,7 +162,7 @@ APPROVAL_SIGNAL_PREFIX = "AWAITING_TOOL_APPROVAL:"
     "Requires supervisor approval before the change is applied. "
     "Use for explicit pricing updates (e.g. 'change pricing for CUST001 to 4.5%')."
 ))
-@_gt.trace_tool("submit_pricing_change")
+@gernas.trace_tool("submit_pricing_change")
 async def submit_pricing_change(customer_id: str, new_rate: float, effective_date: str) -> str:
     """Interceptor: creates an approval request and returns a signal string."""
     from src.hitl.approval_store import approval_store
@@ -182,7 +181,7 @@ async def submit_pricing_change(customer_id: str, new_rate: float, effective_dat
     "Requires supervisor approval before the limit is changed. "
     "Use for explicit credit limit adjustments (e.g. 'increase credit limit for CUST001 to 5M')."
 ))
-@_gt.trace_tool("adjust_credit_limit")
+@gernas.trace_tool("adjust_credit_limit")
 async def adjust_credit_limit(customer_id: str, new_limit: float, reason: str) -> str:
     """Interceptor: creates an approval request and returns a signal string."""
     from src.hitl.approval_store import approval_store

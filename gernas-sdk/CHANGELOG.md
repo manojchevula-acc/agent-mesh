@@ -11,6 +11,9 @@ All notable changes to `gernas-telemetry`. The version lives in `src/gernas/_ver
   - Docs are grouped into `docs/user-guide/`, `reference/`, `operations/`, `governance/` and `adr/`, with `docs/index.md` as the map. `onboarding-runbook.md` became `docs/getting-started.md`.
 
 ### Added
+- `gernas.app_context(**entries)` / `gernas.app_value(name)`: application baggage (`app.<name>`). It crosses process hops with the GERNAS context but is never written to telemetry.
+- `gernas.CorrelationLogFilter(app_fields=())`: a `logging.Filter` that stamps `trace_id`, `span_id`, `agent_id`, `agent_run_id`, `session_id`, `task_id` and the named app fields onto log records. Values passed with `extra=` are kept.
+- `@trace_llm` reads tokens, stop reason and model version from a raw HTTP response (httpx / requests) with no `usage_from`.
 - `py.typed` marker (PEP 561), so type checkers use the SDK's annotations.
 - `LICENSE`, `CHANGELOG.md` and an SDK-local `.gitignore`.
 

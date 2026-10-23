@@ -27,8 +27,9 @@ from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from agent_framework.a2a import A2AExecutor
 
+from gernas.adapters.asgi import GernasASGIMiddleware
+
 from src.config import Config
-from src.observability import gernas_telemetry as _gt
 
 
 def build_agent_card(
@@ -80,10 +81,8 @@ def build_starlette_app(agent, card: AgentCard) -> Starlette:
     # Gernas: the ASGI middleware extracts traceparent + GERNAS baggage and opens a
     # SERVER span per A2A request, so the node's agent.run continues the caller's
     # trace and links to the delegating run.
-    gernas_mw = _gt.asgi_middleware()
-    middleware = [Middleware(gernas_mw, channel="a2a")] if gernas_mw is not None else []
     return Starlette(
-        middleware=middleware,
+        middleware=[Middleware(GernasASGIMiddleware, channel="a2a")],
         routes=[
             Route("/health", _health, methods=["GET"]),
             *create_agent_card_routes(card),

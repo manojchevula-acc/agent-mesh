@@ -588,3 +588,19 @@ See `docs/BLUEPRINT_TRACEABILITY.md` §7 (naming-namespace sign-off, partial §1
 - **Added.** `LICENSE` (FAB proprietary; included in the wheel), `CHANGELOG.md`, and `gernas-sdk/.gitignore`. The SDK rules moved there from the root `.gitignore`, and the ignored set is unchanged.
 - **Tests run.** SDK: **219 passed, 4 failed, 90.95 %**. The 4 failures are the pre-existing environment ones (langgraph not installed ×3, the ASGI route-template import). The baseline before the change was 218 passed / 5 failed; the stale architecture-docs test now passes after regeneration. ruff check, ruff format and mypy are clean, as they were before. `generate.py --check` and `build_architecture_doc.py --check` are up to date. The wheel holds `gernas/*`, `py.typed` and `LICENSE`, with no tests. Agent Mesh offline suite: 87 passed / 5 failed, identical to the documented baseline.
 - **Known issues.** `docs/adr/0004` cites `tests/test_streaming.py` and `docs/user-guide/identifier-lifecycle.md` cites `tests/test_async_context.py`. Neither file exists; both references were already stale before this change.
+
+## 2026-10-23 · Agent Mesh imports the SDK directly; `agent-mesh/src/observability/` removed
+
+- **Why.** The mesh reached the SDK through `src/observability/gernas_telemetry.py`, a wrapper that re-exported the decorators (`_gt.*`) and added helpers. The user asked for no intermediary: every call site now imports `gernas`. Mesh logging and request baggage lived in the same package; the pieces with telemetry meaning moved into the SDK.
+- **SDK additions.** `app_context` / `app_value` (`context.py`): application baggage under `app.*`, propagated and never recorded (`_BaggageSpanProcessor` copies only `BAGGAGE_ATTRIBUTES`). `CorrelationLogFilter` (`logs.py`). `extract_usage` / `extract_stop_reason` / model version accept a raw HTTP response (`_http_body`, `decorators/llm.py`). Public API test, FACTS and generated docs updated.
+- **Agent Mesh.**
+  - Entry points call `gernas.init_gernas(service_name=…)` and catch `GernasConfigError` (telemetry off with one warning). Entry points other than DevUI also call `disable_native_telemetry()`. They set `OTEL_INSTRUMENTATION_A2A_SDK_ENABLED=false` before `a2a` is imported, and shut down via the handle.
+  - Executors use `trace_step(…, step_type="workflow_executor")` and the orchestrator run uses `trace_agent("agent_mesh", agent_type="orchestrator")`. `handle_request(channel=…)` replaces the per-process channel global.
+  - The raw chat calls became local `@trace_llm(provider=Config.LLM_PROVIDER, prompt_template_id=…)` functions. The adapters (`gernas_middleware`, `GernasA2AInterceptor`, `GernasASGIMiddleware`) are used directly.
+  - The `fab.*` baggage became `gernas.app_context` / `app_value`. `logging_config.py` moved to `src/utils/` and uses `gernas.CorrelationLogFilter`. `gernas` is now a hard dependency of the mesh: decorators are no-ops without `init_gernas`.
+- **Tests run.**
+  - SDK: **227 passed, 91.59 %**. ruff, format, mypy and `generate.py --check` are clean, and the architecture docs were regenerated.
+  - Agent Mesh, file by file: 87 passed / 5 failed. That is identical to HEAD run in a clean worktree: the failures are `test_rbac_blocks_invalid_role`, cache tests 04/06/11 and `test_ingest_wrapper_delegates`. `test_rbac_matrix.py` hangs at `test_all_roles_pass_rbac_benign_query` on HEAD as well.
+  - Offline smoke run (A2A mocked, in-memory exporter): `use_case.request` (channel=cli, task_id, outcome=success) → `agent.run` → 7 `agent.step`. App baggage reaches the A2A seam and the role is absent from spans. JSON request logs carry `trace_id` / `request_id`.
+- **Known issues.** None new. Historical docs (`my_KB/`, `beacon_kit_improvement_plan.md`, the BLUEPRINT_TRACEABILITY F-row) still mention the old package as history.
+

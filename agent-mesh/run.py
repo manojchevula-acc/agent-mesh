@@ -21,9 +21,20 @@ if project_root not in sys.path:
 from dotenv import load_dotenv
 load_dotenv(pathlib.Path(__file__).resolve().parent / ".env", override=False)
 
-# Gernas SDK: one startup call (GERNAS_* env) — traces/metrics/logs to the OTel Collector.
-from src.observability import gernas_telemetry
-gernas_telemetry.init_telemetry("agent_mesh_cli", channel="cli")
+# Gernas SDK: one init per process (GERNAS_* env) — traces/metrics/logs to the OTel Collector.
+# a2a-sdk's own tracing is switched off before ``a2a`` is imported: Gernas is the single
+# instrumentation path (agent.delegate + the ASGI server span cover the A2A hop).
+os.environ.setdefault("OTEL_INSTRUMENTATION_A2A_SDK_ENABLED", "false")
+import logging
+import gernas
+try:
+    _telemetry = gernas.init_gernas(service_name="agent_mesh_cli")
+except gernas.GernasConfigError as _exc:
+    _telemetry = None
+    logging.getLogger("mesh.system").warning("Gernas SDK telemetry disabled: %s", _exc)
+else:
+    from gernas.adapters.agent_framework import disable_native_telemetry
+    disable_native_telemetry()
 
 from rich.console import Console
 from rich.panel import Panel
@@ -175,7 +186,8 @@ async def main() -> None:
             )
 
     # Flush and close telemetry.
-    gernas_telemetry.shutdown()
+    if _telemetry is not None:
+        _telemetry.shutdown()
 
 
 async def _run_query(user, user_input: str) -> None:
@@ -190,7 +202,7 @@ async def _run_query(user, user_input: str) -> None:
     try:
         # Pass the tracer's request_id through so log records, per-request files,
         # and the CLI summary all share one id.
-        result = await handle_request(user, user_input, request_id=tracer.request_id)
+        result = await handle_request(user, user_input, request_id=tracer.request_id, channel="cli")
     finally:
         clear_active_tracer(token)
 

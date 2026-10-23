@@ -45,12 +45,24 @@ os.environ.setdefault("PYTHONWARNINGS", "ignore")
 from dotenv import load_dotenv
 load_dotenv(pathlib.Path(__file__).resolve().parent / ".env", override=False)
 
-# Gernas SDK: one startup call (GERNAS_* env) — traces/metrics/logs to the OTel Collector.
-from src.observability import gernas_telemetry
-gernas_telemetry.init_telemetry("agent_mesh_api", channel="api")
+# Gernas SDK: one init per process (GERNAS_* env) — traces/metrics/logs to the OTel Collector.
+# a2a-sdk's own tracing is switched off before ``a2a`` is imported: Gernas is the single
+# instrumentation path (agent.delegate + the ASGI server span cover the A2A hop).
+os.environ.setdefault("OTEL_INSTRUMENTATION_A2A_SDK_ENABLED", "false")
+import logging
+import gernas
+try:
+    _telemetry = gernas.init_gernas(service_name="agent_mesh_api")
+except gernas.GernasConfigError as _exc:
+    _telemetry = None
+    logging.getLogger("mesh.system").warning("Gernas SDK telemetry disabled: %s", _exc)
+else:
+    from gernas.adapters.agent_framework import disable_native_telemetry
+    disable_native_telemetry()
 
 import httpx
 import uvicorn
+from gernas.adapters.asgi import GernasASGIMiddleware
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
@@ -64,7 +76,7 @@ from src.feedback.store import record_feedback, record_structured_feedback, get_
 from src.mesh.orchestrator import handle_request, handle_request_stream
 from src.hitl.approval_store import approval_store, CHECKPOINT_DIR
 from src.memory import ConversationStore
-from src.observability import get_logger, CAT_SYSTEM
+from src.utils.logging_config import get_logger, CAT_SYSTEM
 from src.tracing.execution_trace import ExecutionTracer, set_active_tracer, clear_active_tracer
 
 _log = get_logger(CAT_SYSTEM)
@@ -143,7 +155,7 @@ async def post_query(request: Request) -> JSONResponse:
     tracer = ExecutionTracer(user=user.username, query=query, request_id=shared_request_id)
     token = set_active_tracer(tracer)
     try:
-        result = await handle_request(user, query, session_id, request_id=shared_request_id, bypass_cache=bypass_cache)
+        result = await handle_request(user, query, session_id, request_id=shared_request_id, bypass_cache=bypass_cache, channel="api")
     except Exception as exc:
         _log.exception("mesh query error: %s", exc)
         return JSONResponse(
@@ -833,7 +845,8 @@ async def _lifespan(app):
             _log.info("UC-5: Restored %d pending HITL approval(s) from data/checkpoints/", restored)
     yield
     _log.info("api_server shutting down — flushing Gernas SDK telemetry.")
-    gernas_telemetry.shutdown()
+    if _telemetry is not None:
+        _telemetry.shutdown()
 
 
 _API_SERVER_HOST = os.getenv("API_SERVER_HOST", "127.0.0.1")
@@ -878,7 +891,7 @@ async def post_query_stream(request: Request) -> StreamingResponse:
         tracer = ExecutionTracer(user=user.username, query=query, request_id=shared_request_id)
         token = set_active_tracer(tracer)
         pipeline_task = asyncio.ensure_future(
-            handle_request_stream(user, query, session_id, request_id=shared_request_id, event_queue=event_queue, bypass_cache=bypass_cache)
+            handle_request_stream(user, query, session_id, request_id=shared_request_id, event_queue=event_queue, bypass_cache=bypass_cache, channel="api")
         )
         try:
             while True:
@@ -1142,10 +1155,9 @@ app = Starlette(
             allow_headers=["*"],
         ),
         # Gernas SDK: one SERVER span per request (kept open across SSE streams),
-        # inbound traceparent/baggage extraction. No middleware without the SDK.
+        # inbound traceparent/baggage extraction.
         # Read-only UI / admin views are not traced (each would be its own trace in Opik).
-        *([Middleware(gernas_telemetry.asgi_middleware(), channel="api", exclude_paths=_UNTRACED_PATHS)]
-          if gernas_telemetry.asgi_middleware() is not None else []),
+        Middleware(GernasASGIMiddleware, channel="api", exclude_paths=_UNTRACED_PATHS),
     ],
     routes=[
         Route("/health",               health,              methods=["GET"]),
@@ -1189,7 +1201,11 @@ def main() -> None:
     else:
         print(f"[api_server] {msg}")
 
-    obs_dest = gernas_telemetry.describe()
+    if _telemetry is None:
+        obs_dest = "Gernas SDK telemetry disabled"
+    else:
+        _cfg = _telemetry.config
+        obs_dest = f"Gernas SDK {gernas.__version__} -> {_cfg.exporter} {_cfg.otlp_endpoint or ''}".rstrip()
 
     print("=" * 64)
     print("  AGENT MESH — REST API Server")

@@ -10,6 +10,8 @@ load_dotenv(_ENV_FILE, override=True)
 class Config:
     # LLM provider — OpenAI-compatible endpoint (Groq by default; swap for Ollama/Cerebras)
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "https://api.groq.com/openai/v1")
+    # Model provider behind LLM_BASE_URL, recorded on every Gernas llm.call span.
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "groq")
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
     GROQ_MODEL:   str = os.getenv("GROQ_MODEL",   "openai/gpt-oss-20b")
 
@@ -61,7 +63,7 @@ class Config:
 
     # ----------------------------------------------------------------------
     # Telemetry (traces / metrics / logs export) is configured ONLY through the
-    # Gernas SDK GERNAS_* variables (src/observability/gernas_telemetry.py);
+    # Gernas SDK GERNAS_* variables (``gernas.init_gernas`` in each entry point);
     # there is no application-level exporter or backend selection here.
     # ----------------------------------------------------------------------
 

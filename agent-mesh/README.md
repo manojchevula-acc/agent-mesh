@@ -73,7 +73,7 @@ agent-mesh/
 │   ├── mesh/{orchestrator,workflow}.py
 │   ├── agents/                      # gateway, price_assist, data, rag, policy, compliance, factory, registry
 │   ├── tools/collaboration_tools.py # A2A peer tools used by price_assist
-│   ├── guardrails/ middleware/ observability/ memory/ utils/
+│   ├── guardrails/ middleware/ memory/ utils/
 └── data/policies.json + audit_trail.jsonl
 ```
 

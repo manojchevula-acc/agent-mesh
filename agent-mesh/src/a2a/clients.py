@@ -25,15 +25,14 @@ project_root = str(pathlib.Path(__file__).resolve().parents[2])
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+import gernas
 from agent_framework.a2a import A2AAgent
+from gernas.adapters.a2a import GernasA2AInterceptor
 
 from src.config import Config
-from src.observability import get_logger, CAT_A2A
+from src.utils.logging_config import get_logger, CAT_A2A
 
 _log = get_logger(CAT_A2A)
-
-from src.observability import gernas_telemetry as _gt
-from src.observability.baggage import get_request_id
 
 
 def get_remote_agent(name: str) -> A2AAgent:
@@ -43,20 +42,16 @@ def get_remote_agent(name: str) -> A2AAgent:
     propagated by the Gernas A2A interceptor, so the remote node joins this
     caller's distributed trace.
     """
-    kwargs = {}
-    interceptor = _gt.a2a_interceptor()
-    if interceptor is not None:
-        kwargs["auth_interceptor"] = interceptor
     return A2AAgent(
         name=name,
         url=Config.agent_url(name),
         supported_protocol_bindings=["JSONRPC"],
         timeout=httpx.Timeout(connect=10.0, read=Config.A2A_TIMEOUT, write=10.0, pool=5.0),
-        **kwargs,
+        auth_interceptor=GernasA2AInterceptor(),
     )
 
 
-@_gt.trace_delegation(child_arg="name")
+@gernas.trace_delegation(child_arg="name")
 async def ask_remote(
     name: str,
     prompt: str,
@@ -80,7 +75,7 @@ async def ask_remote(
     except Exception as e:
         error = str(e)
         _p = " ".join((prompt or "").split())[:200]
-        rid = get_request_id() or "-"
+        rid = gernas.app_value("request_id") or "-"
         _log.error("A2A call to node '%s' failed: %s | sent: \"%s\"", name, error, _p,
                    extra={"node": name, "status": "ERROR", "request_id": rid})
         raise
@@ -90,7 +85,7 @@ async def ask_remote(
             # Truncated previews so the log shows *what* was sent/received, not just sizes.
             _p = " ".join((prompt or "").split())[:200]
             _r = " ".join((result or "").split())[:200]
-            rid = get_request_id() or "-"
+            rid = gernas.app_value("request_id") or "-"
             _log.info("A2A call node=%s ok (%d ms, %d chars) | sent: \"%s\" | recv: \"%s\"",
                       name, duration_ms, len(result or ""), _p, _r,
                       extra={"node": name, "status": "SUCCESS", "request_id": rid,

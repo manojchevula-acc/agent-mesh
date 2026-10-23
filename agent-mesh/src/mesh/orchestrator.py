@@ -35,9 +35,8 @@ from src.auth.identity_provider import User
 from src.guardrails.deterministic_filters import screen_input, redact_pii  # re-exported for tests/back-compat
 from src.a2a.clients import ask_remote
 from src.utils.console_logger import AgentLogger
-from src.observability import get_logger, CAT_SYSTEM
-from src.observability.baggage import set_request_baggage, detach_baggage
-from src.observability import gernas_telemetry as _gt
+from src.utils.logging_config import get_logger, CAT_SYSTEM
+import gernas
 from src.mesh.workflow import MeshState, build_mesh_workflow, build_hitl_resume_workflow, build_intent_resume_workflow, _stream_queue, _emit_stream_event
 from src.tracing.execution_trace import get_active_tracer
 from src.tracing.llm_reasoning import strip_reasoning_markers
@@ -105,14 +104,24 @@ class MeshResult:
     intent_match_similarity: float = 0.0
 
 
-@_gt.trace_mesh_run()
+@gernas.trace_agent("agent_mesh", agent_type="orchestrator", name="Agent Mesh Orchestrator",
+                    framework="agent_framework")
 async def _run_workflow(workflow, state):
     """One workflow execution = one ``agent.run`` of the mesh orchestrator (executors are its steps)."""
     return await workflow.run(state)
 
 
-@_gt.trace_use_case(channel=_gt.current_channel, outcome_from=_gt.business_outcome)
-async def handle_request(user: User, query: str, session_id: str | None = None, request_id: str | None = None, bypass_cache: bool = False) -> MeshResult:
+def _business_outcome(result: MeshResult) -> str:
+    """Use-case outcome for Task Success Rate: blocked → failure, pending HITL → partial."""
+    if result.blocked:
+        return "failure"
+    if result.hitl_pending:
+        return "partial"
+    return "success" if result.answer else "failure"
+
+
+@gernas.trace_use_case(channel=lambda *_a, channel=None, **_k: channel, outcome_from=_business_outcome)
+async def handle_request(user: User, query: str, session_id: str | None = None, request_id: str | None = None, bypass_cache: bool = False, channel: str | None = None) -> MeshResult:
     """Runs one request through the full mesh workflow.
 
     Traced as ``use_case.request`` (``@trace_use_case``, the root of the request trace)
@@ -123,21 +132,23 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
     ``session_id`` ties consecutive turns into one conversation. When omitted, a
     fresh per-conversation id is generated; callers (api_server) should echo the
     returned ``MeshResult.session_id`` back on the next turn to continue the thread.
+
+    ``channel`` (cli / api / ...) is the entry channel recorded on the request trace.
     """
     if not session_id:
         session_id = f"{user.username}_{uuid.uuid4().hex[:8]}"
     request_id = request_id or uuid.uuid4().hex[:8].upper()
     AgentLogger.print_agent_header("Mesh", "Dispatching request through the workflow graph")
 
-    # Set W3C baggage BEFORE opening the root span so the baggage is inherited by
-    # every child span and propagated via traceparent+baggage headers in A2A hops.
-    _baggage_ctx, _baggage_token = set_request_baggage(
-        request_id=request_id,
-        user=user.username,
-        role=user.role.value,
-        session_id=session_id,
-    )
-    _gernas_ctx = _gt.request_context(request_id=request_id, session_id=session_id, user=user.username)
+    # Application baggage (request id, user, role, session) for the audit trail and the
+    # cross-process reasoning files on every A2A node; never recorded as telemetry.
+    _app_ctx = gernas.app_context(request_id=request_id, user=user.username,
+                                  role=user.role.value, session_id=session_id)
+    _app_ctx.__enter__()
+    # GERNAS request context: session, task (= mesh request id), channel and the initiating
+    # human principal (tokenized by the SDK; the banking role is not a Blueprint field).
+    _gernas_ctx = gernas.request_context(session_id=session_id, task_id=request_id, channel=channel,
+                                         user_id=user.username, principal_type="human")
     _gernas_ctx.__enter__()
 
     # Emit input_processing events to the active tracer (set by the CLI/API caller).
@@ -212,7 +223,7 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
                       extra={"request_id": request_id, "user": user.username,
                              "outcome": "SUCCESS", "duration_ms": int(duration_ms)})
         _gernas_ctx.__exit__(None, None, None)
-        detach_baggage(_baggage_token)
+        _app_ctx.__exit__(None, None, None)
 
     if final is None:
         _log.error("Workflow produced no output", extra={"user": user.username})
@@ -446,7 +457,7 @@ async def handle_request(user: User, query: str, session_id: str | None = None, 
             if Config.ENABLE_ROLLING_SUMMARIZATION:
                 try:
                     from src.memory.summarizer import summarize_and_persist
-                    _gt.spawn(  # Gernas: background task stays in this request's trace
+                    gernas.gernas_task(  # Gernas: background task stays in this request's trace
                         summarize_and_persist(session_id, _prior_summary, query, final.answer),
                         name="rolling_summary",
                     )
@@ -486,6 +497,7 @@ async def handle_request_stream(
     request_id: str | None = None,
     event_queue: "asyncio.Queue | None" = None,
     bypass_cache: bool = False,
+    channel: str | None = None,
 ) -> MeshResult:
     """Same as handle_request() but pushes per-stage events into event_queue for SSE streaming.
 
@@ -496,7 +508,7 @@ async def handle_request_stream(
     if event_queue is not None:
         token = _stream_queue.set(event_queue)
     try:
-        result = await handle_request(user, query, session_id, request_id, bypass_cache=bypass_cache)
+        result = await handle_request(user, query, session_id, request_id, bypass_cache=bypass_cache, channel=channel)
     except Exception:
         if event_queue is not None:
             event_queue.put_nowait(None)

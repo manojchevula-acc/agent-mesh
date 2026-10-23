@@ -476,3 +476,24 @@ async def test_cancelled_child_span_is_unset_not_ok(spans):
     span = spans(SpanName.TOOL)[0]
     assert span.status.status_code == StatusCode.UNSET
     assert attrs(span)[Ctx.EXECUTION_STATUS] == "cancelled" and attrs(span)[Ctx.ERROR_CATEGORY] == "cancelled"
+
+
+def test_llm_call_reads_usage_from_a_raw_http_response(spans):
+    class HttpResponse:  # httpx.Response shape
+        status_code = 200
+
+        def json(self):
+            return {
+                "model": "m-1",
+                "usage": {"prompt_tokens": 12, "completion_tokens": 3},
+                "choices": [{"finish_reason": "length"}],
+            }
+
+    @gernas.trace_llm(provider="groq", prompt_template_id="judge")
+    def post(model):
+        return HttpResponse()
+
+    assert isinstance(post(model="m-1"), HttpResponse)
+    a = attrs(spans(SpanName.LLM)[0])
+    assert a[Ctx.MODEL_ID] == "m-1" and a[Ctx.PROMPT_TEMPLATE_ID] == "judge"
+    assert a[Ctx.TOKEN_INPUT] == 12 and a[Ctx.TOKEN_OUTPUT] == 3 and a[Ctx.STOP_REASON] == "length"

@@ -15,8 +15,8 @@ Sources, so the documents cannot drift from the implementation:
 
 * API definitions, signatures and line numbers: ``ast`` over ``gernas/``;
 * span name / kind / required attributes: ``registry/spans.yaml``;
-* Agent Mesh and service call sites: ``ast`` over the application code, resolved through
-  the mesh integration module (``src/observability/gernas_telemetry.py``) to SDK APIs;
+* Agent Mesh and service call sites: ``ast`` over the application code (every service
+  imports ``gernas`` directly; there is no integration module in between);
 * tests per API: ``ast`` over ``tests/``;
 * SOW statuses, the five-aspect map, findings, gaps and the test log: ``../checklist.md``.
 
@@ -43,7 +43,6 @@ REPO = SDK.parent
 CHECKLIST = REPO / "checklist.md"
 OUT_HTML = SDK / "docs" / "reference" / "GERNAS_SDK_ARCHITECTURE_AND_INSTRUMENTATION.html"
 OUT_MD = SDK / "docs" / "reference" / "INSTRUMENTATION_MAP.md"
-MESH_INTEGRATION = REPO / "agent-mesh" / "src" / "observability" / "gernas_telemetry.py"
 
 APP_SOURCES = [
     ("Agent Mesh", REPO / "agent-mesh", ["src/**/*.py", "*.py", "demos/*.py"]),
@@ -286,6 +285,29 @@ FACTS: dict[str, dict[str, str]] = {
         "errors": "As the wrapped callable.",
         "async": "sync",
     },
+    "app_context": {
+        "group": "Context",
+        "span": "No span: context manager that sets application baggage (app.<name>) for the block.",
+        "context": "Travels on every remote hop with the GERNAS baggage; never copied onto spans "
+        "(_BaggageSpanProcessor copies only the allow-listed GERNAS keys). None values are skipped.",
+        "errors": "Detaches on exit.",
+        "async": "context manager; works in sync and async code",
+    },
+    "app_value": {
+        "group": "Context",
+        "span": "No span: reads one application baggage entry set by app_context (locally or upstream).",
+        "context": "Reads the current context.",
+        "errors": "Never raises (None when absent).",
+        "async": "sync",
+    },
+    "CorrelationLogFilter": {
+        "group": "Logging",
+        "span": "No span: logging.Filter that stamps trace_id, span_id, agent_id, agent_run_id, session_id, "
+        "task_id and the named app_fields onto every log record ('-' when absent; explicit extra= values are kept).",
+        "context": "Reads correlation() and app_value() at emit time.",
+        "errors": "Never raises; always lets the record through.",
+        "async": "sync",
+    },
     "set_redaction_hook": {
         "group": "Privacy",
         "span": "No span: installs a custom redaction hook run by safe_set before every attribute write.",
@@ -368,25 +390,22 @@ SEQUENCES: list[Seq] = [
         SOURCE + "; covered by tests/packaging/test_packaging.py, tests/unit/test_config.py and every live start-up",
         [
             ("app", "run.py / api_server.py"),
-            ("gt", "gernas_telemetry"),
             ("cfg", "GernasConfig"),
             ("sdk", "gernas.tracer"),
             ("otel", "OpenTelemetry SDK"),
             ("maf", "agent_framework"),
         ],
         [
-            ("call", "app", "gt", "init_telemetry(service_name, channel)"),
-            ("call", "gt", "cfg", "GernasConfig.from_env(service_name)"),
-            ("ret", "cfg", "gt", "cfg  (or GernasConfigError → telemetry off + warning)"),
-            ("call", "gt", "sdk", "init_gernas(cfg)"),
+            ("call", "app", "sdk", "init_gernas(service_name=…)"),
+            ("call", "sdk", "cfg", "GernasConfig.from_env(service_name)"),
+            ("ret", "cfg", "sdk", "cfg  (or GernasConfigError → app logs a warning, telemetry off)"),
             ("call", "sdk", "otel", "TracerProvider(resource, ParentBased sampler)"),
             ("call", "sdk", "otel", "add _BaggageSpanProcessor, _GernasBatchSpanProcessor"),
             ("self", "sdk", "CountingSpanExporter(OTLP exporter)"),
             ("call", "sdk", "otel", "set_global_textmap(TraceContext + GernasBaggage)"),
             ("call", "sdk", "otel", "MeterProvider, LoggerProvider"),
-            ("ret", "sdk", "gt", "GernasHandle"),
-            ("call", "gt", "maf", "disable_native_telemetry()"),
-            ("ret", "gt", "app", "ready (one init per process)"),
+            ("ret", "sdk", "app", "GernasHandle (one init per process)"),
+            ("call", "app", "maf", "disable_native_telemetry()"),
         ],
     ),
     Seq(
@@ -425,21 +444,18 @@ SEQUENCES: list[Seq] = [
         LIVE + " — conversation_summary → llm.call",
         [
             ("sum", "memory.summarizer"),
-            ("gt", "gernas_telemetry"),
             ("eng", "_core / LLMSpec"),
             ("http", "httpx client"),
             ("groq", "Groq API"),
         ],
         [
-            ("call", "sum", "gt", "chat_post(client, url, json, model, template_id)"),
-            ("note", "gt", "trace_llm(provider, usage_from=_usage)"),
-            ("call", "gt", "eng", "_begin: llm.call (CLIENT) + envelope + run context"),
-            ("call", "gt", "http", "client.post(url, json)"),
+            ("call", "sum", "eng", "_post_chat(client, url, json, model)  @trace_llm(provider, prompt_template_id)"),
+            ("self", "eng", "_begin: llm.call (CLIENT) + envelope + run context"),
+            ("call", "eng", "http", "client.post(url, json)"),
             ("call", "http", "groq", "POST /chat/completions"),
             ("ret", "groq", "http", "200 + usage"),
-            ("ret", "http", "gt", "response"),
-            ("self", "gt", "_annotate: prompt_template_id, stop_reason"),
-            ("call", "gt", "eng", "success: tokens, estimated_cost (rate card)"),
+            ("ret", "http", "eng", "httpx response"),
+            ("self", "eng", "success: response JSON → tokens, stop_reason, estimated_cost (rate card)"),
             ("ret", "eng", "sum", "response (span ended, OK)"),
         ],
     ),
@@ -699,47 +715,6 @@ def _is_sdk_module(module: str | None) -> bool:
     return module == "gernas" or (module or "").startswith("gernas.")
 
 
-def mesh_helper_map() -> dict[str, list[str]]:
-    """gernas_telemetry helper name → SDK APIs it delegates to."""
-    tree = ast.parse(MESH_INTEGRATION.read_text(encoding="utf-8"))
-    out: dict[str, list[str]] = {}
-
-    def sdk_refs(node: ast.AST) -> list[str]:
-        refs: list[str] = []
-        for sub in ast.walk(node):
-            if isinstance(sub, ast.Attribute) and isinstance(sub.value, ast.Name) and sub.value.id == "gernas":
-                if sub.attr not in ("GernasConfigError", "__version__") and sub.attr not in refs:
-                    refs.append(sub.attr)
-            elif isinstance(sub, ast.ImportFrom) and _is_sdk_module(sub.module):
-                refs += [a.name for a in sub.names if a.name not in refs]
-            elif (
-                isinstance(sub, ast.Attribute)
-                and isinstance(sub.value, ast.Name)
-                and sub.value.id == "_handle"
-                and sub.attr in ("flush", "shutdown")
-                and "GernasHandle" not in refs
-            ):
-                refs.append("GernasHandle")
-            elif (
-                isinstance(sub, ast.Call)
-                and isinstance(sub.func, ast.Name)
-                and sub.func.id == "_get"
-                and sub.args
-                and isinstance(sub.args[0], ast.Constant)
-            ):
-                refs.append(str(sub.args[0].value))
-        return refs
-
-    for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            out[node.name] = sdk_refs(node)
-        elif isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    out[target.id] = sdk_refs(node.value)
-    return out
-
-
 @dataclass
 class Site:
     service: str
@@ -754,7 +729,6 @@ class Site:
 class _SiteVisitor(ast.NodeVisitor):
     def __init__(self, service: str, file: str, tree: ast.Module) -> None:
         self.service, self.file = service, file
-        self.mesh_aliases: set[str] = set()
         self.sdk_aliases: set[str] = set()
         self.imported: dict[str, str] = {}  # local name → gernas symbol
         self.local: dict[str, tuple[str, str]] = {}  # local decorator name → (alias kind, helper)
@@ -764,9 +738,7 @@ class _SiteVisitor(ast.NodeVisitor):
             if isinstance(node, ast.ImportFrom):
                 mod = node.module or ""
                 for a in node.names:
-                    if a.name == "gernas_telemetry" and mod.endswith("observability"):
-                        self.mesh_aliases.add(a.asname or a.name)
-                    elif _is_sdk_module(mod):
+                    if _is_sdk_module(mod):
                         self.imported[a.asname or a.name] = a.name
             elif isinstance(node, ast.Import):
                 for a in node.names:
@@ -774,12 +746,10 @@ class _SiteVisitor(ast.NodeVisitor):
                         self.sdk_aliases.add(a.asname or a.name)
 
     def _ref(self, node: ast.AST) -> tuple[str, str] | None:
-        """(kind, helper) if *node* refers to an SDK / mesh-integration symbol."""
+        """(kind, helper) if *node* refers to an SDK symbol."""
         if isinstance(node, ast.Call):
             return self._ref(node.func)
         if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
-            if node.value.id in self.mesh_aliases:
-                return ("mesh", node.attr)
             if node.value.id in self.sdk_aliases:
                 return ("sdk", node.attr)
         if isinstance(node, ast.Name):
@@ -793,7 +763,7 @@ class _SiteVisitor(ast.NodeVisitor):
         return ".".join(self.stack) or "<module>"
 
     def _add(self, line: int, how: str, ref: tuple[str, str], where: str | None = None) -> None:
-        kind, helper = ref
+        _kind, helper = ref
         if helper in ("AVAILABLE", "Ctx", "GernasConfig", "GernasConfigError", "__version__"):
             return
         self.sites.append(
@@ -803,7 +773,7 @@ class _SiteVisitor(ast.NodeVisitor):
                 line,
                 where or self._where(),
                 how,
-                f"{'_gt' if kind == 'mesh' else 'gernas'}.{helper}",
+                f"gernas.{helper}",
             )
         )
 
@@ -839,15 +809,18 @@ class _SiteVisitor(ast.NodeVisitor):
         ref = self._ref(node.func)
         if ref is not None:
             self._add(node.lineno, "call", ref)
+        for arg in node.args:  # an SDK class handed over uncalled, e.g. Middleware(GernasASGIMiddleware, ...)
+            if isinstance(arg, ast.Name) and arg.id in self.imported:
+                self._add(arg.lineno, "argument", ("sdk", self.imported[arg.id]))
         self.generic_visit(node)
 
 
-def call_sites(helpers: dict[str, list[str]]) -> list[Site]:
+def call_sites() -> list[Site]:
     sites: list[Site] = []
     for service, base, patterns in APP_SOURCES:
         files = sorted({p for pat in patterns for p in base.glob(pat)})
         for path in files:
-            if path.resolve() == MESH_INTEGRATION.resolve() or "tests" in path.parts or ".venv" in path.parts:
+            if "tests" in path.parts or ".venv" in path.parts:
                 continue
             text = path.read_text(encoding="utf-8", errors="replace")
             if "gernas" not in text:
@@ -859,8 +832,7 @@ def call_sites(helpers: dict[str, list[str]]) -> list[Site]:
             visitor = _SiteVisitor(service, rel(path), tree)
             visitor.visit(tree)
             for site in visitor.sites:
-                name = site.helper.split(".", 1)[1]
-                site.apis = helpers.get(name, [name]) if site.helper.startswith("_gt.") else [name]
+                site.apis = [site.helper.split(".", 1)[1]]
             sites.extend(visitor.sites)
     return sorted(sites, key=lambda s: (s.service, s.file, s.line))
 
@@ -1211,8 +1183,7 @@ def build(data: dict) -> tuple[str, str]:
     catalogue_names = api_names + [n for n in adapter_names if n not in api_names]
     spans = span_registry()
     tests = tests_by_api(catalogue_names)
-    helpers = mesh_helper_map()
-    sites = call_sites(helpers)
+    sites = call_sites()
     aspects = compute_aspects(data)
     usage: dict[str, list[Site]] = defaultdict(list)
     for s in sites:
@@ -1253,8 +1224,8 @@ def build(data: dict) -> tuple[str, str]:
         "",
         "## 2. Call sites (Agent Mesh, DataLayer MCP, RAG service)",
         "",
-        "`_gt` is the mesh's single integration module `agent-mesh/src/observability/gernas_telemetry.py`; "
-        "the SDK API column is what that helper delegates to.",
+        "Every service imports `gernas` directly (no integration module in between); "
+        "the Helper column is the SDK symbol as written at the call site.",
         "",
         "| Service | Location | Where | How | Helper | SDK API |",
         "|---|---|---|---|---|---|",
@@ -1323,8 +1294,8 @@ def build(data: dict) -> tuple[str, str]:
         "<dt>Gernas SDK</dt><dd>The central toolkit (<code>pip install gernas-telemetry</code>, <code>import gernas</code>): "
         "one init call, decorators and adapters that emit blueprint-named spans, metrics and logs, context propagation, "
         "PDPL redaction. No vendor SDK; OTLP only.</dd>"
-        "<dt>Agent Mesh</dt><dd>The reference use case. It consumes the SDK through one integration module "
-        "(<code>src/observability/gernas_telemetry.py</code>) and decorators at its business seams.</dd>"
+        "<dt>Agent Mesh</dt><dd>The reference use case. It imports <code>gernas</code> directly: one "
+        "<code>init_gernas()</code> per entry point and decorators / adapters at its business seams.</dd>"
         "<dt>OpenTelemetry Collector</dt><dd>The gateway: receives OTLP, applies the PDPL denylist and allow-list, "
         "samples, reshapes for Opik and fans out to Opik and the ADX data plane.</dd>"
         "<dt>Opik</dt><dd>Developer trace view (traces only).</dd>"
@@ -1457,8 +1428,8 @@ def build(data: dict) -> tuple[str, str]:
     # F. instrumentation map
     add(
         "<section id='map'><h2>F. Agent Mesh instrumentation map</h2>"
-        "<p><code>_gt</code> = <code>agent-mesh/src/observability/gernas_telemetry.py</code>, the mesh's single "
-        "integration module; it degrades to pass-through decorators when the SDK is absent.</p>"
+        "<p>Every call site imports <code>gernas</code> directly; with no <code>init_gernas()</code> (or a "
+        "configuration error) the decorators run on OpenTelemetry's no-op tracer.</p>"
         "<div class='filters'><input class='search' data-target='maptable' placeholder='Search call sites…'>"
         "<select class='colfilter' data-target='maptable' data-col='0'><option value=''>All services</option>"
     )
@@ -1480,15 +1451,7 @@ def build(data: dict) -> tuple[str, str]:
             f"<tr id='site-{anchor(s.file)}-{s.line}'><td>{esc(s.service)}</td><td><code>{esc(s.file)}:{s.line}</code></td>"
             f"<td><code>{esc(s.where)}</code></td><td>{s.how}</td><td><code>{esc(s.helper)}</code></td><td>{apis}</td></tr>"
         )
-    add("</tbody></table>")
-    add(
-        "<details><summary>Integration helpers in <code>gernas_telemetry.py</code> → SDK APIs</summary><table class='data'>"
-        "<tr><th>Helper</th><th>Delegates to</th></tr>"
-    )
-    for k, v in helpers.items():
-        if v:
-            add(f"<tr><td><code>{esc(k)}</code></td><td>{', '.join(f'<code>{esc(x)}</code>' for x in v)}</td></tr>")
-    add("</table></details></section>")
+    add("</tbody></table></section>")
 
     # G. quick start
     add(f"<section id='run'><h2>G. End-to-end execution (quick start)</h2>{QUICKSTART}</section>")

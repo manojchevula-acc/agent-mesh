@@ -38,7 +38,7 @@ There is one git repository, `agent-mesh/`. All paths below are relative to it.
 | `gernas-sdk/` | **Gernas SDK** (`gernas-telemetry`, `import gernas`): the central telemetry toolkit, plus the Collector config, scripts and docs |
 | `gernas-sdk/collector/` | Collector config (`otel-collector-config.yaml`), local overlay, AKS manifests (`k8s/`, `kustomization.yaml`), ADX tables (`adx/`) |
 | `gernas-sdk/scripts/` | `run_collector.py`, `opik_verify.py`, `inspect_trace.py`, `mcp_probe.py`, `load_env.ps1`, `build_architecture_doc.py` |
-| `agent-mesh/` | Agent Mesh reference use case. Its single SDK integration module is `src/observability/gernas_telemetry.py` |
+| `agent-mesh/` | Agent Mesh reference use case. It imports `gernas` directly at every call site (no integration module) |
 | `datalayer-as-service/` | DataLayer MCP server (fastmcp → MySQL), instrumented with `GernasFastMCPMiddleware` |
 | `rag-as-a-service/` | RAG MCP server and REST API (`trace_retrieval`, `trace_document`) |
 | `checklist.md` | Authoritative audit record |
@@ -130,7 +130,7 @@ $ports=4317,13133,9000,9100,8015,8016,8017,8018
 $ports | ForEach-Object { "$_ $(Test-NetConnection 127.0.0.1 -Port $_ -WarningAction SilentlyContinue -InformationLevel Quiet)" }
 ```
 
-**SDK initialisation** happens inside each process: `gernas_telemetry.init_telemetry(...)` in `run.py`, `api_server.py`, `a2a_server.py`, `devui_app.py` and `demos/`, and `gernas.init_gernas(...)` in the services. To confirm a process can reach the Collector and Opik before running a workflow:
+**SDK initialisation** happens inside each process: `gernas.init_gernas(service_name=...)` in `run.py`, `api_server.py`, `a2a_server.py`, `devui_app.py` and `demos/`, and in the services. To confirm a process can reach the Collector and Opik before running a workflow:
 
 ```powershell
 . .\gernas-sdk\scripts\load_env.ps1 -Path .\agent-mesh\.env -Prefix GERNAS_,OPIK_
@@ -285,7 +285,7 @@ All of these were met during verification.
 | `agent.run(data_agent / rag_agent)` ERROR with HTTP 404 | `DATA_AGENT_MODEL` / `RAG_AGENT_MODEL` names a model your Groq key cannot use (`qwen/qwen3.6-27b` returned 404) | Set a model available to your key. Telemetry is correct: this shows error recording |
 | Q2 blocked at `compliance` | The compliance LLM classified the question as out of scope (fails closed) | Expected behaviour; still a valid trace |
 | Duplicate-looking spans | Framework-native tracing switched on | Keep `ENABLE_INSTRUMENTATION=false` and `OTEL_INSTRUMENTATION_A2A_SDK_ENABLED=false`; the DataLayer MCP server sets `GERNAS_SUPPRESSED_SCOPES=fastmcp` itself |
-| Spans missing at exit | Process killed before flush | Entrypoints call `gernas_telemetry.shutdown()`; own code should call `handle.shutdown()` |
+| Spans missing at exit | Process killed before flush | Entrypoints call `handle.shutdown()` on the handle `init_gernas` returned; own code should do the same |
 | `gernas.sdk.dropped_spans` > 0 | Collector unreachable or queue full | `gernas doctor`; check Collector health on `:13133` |
 
 ---

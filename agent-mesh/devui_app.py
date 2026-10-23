@@ -32,7 +32,7 @@ DevUI is a development tool only — it is not a production hosting surface.
 import os
 
 # Single-process dev tool: Gernas telemetry export is switched off below
-# (init_telemetry(exporter="off")); DevUI shows its own local trace view.
+# (GERNAS_EXPORTER=off); DevUI shows its own local trace view.
 os.environ.setdefault("PYTHONWARNINGS", "ignore")
 
 import sys
@@ -43,11 +43,18 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 # Gernas SDK in single-process DevUI mode: decorators stay active but export is "off"
-# (DevUI is its own tracing surface); unchanged from the previous behaviour.
-from src.observability import get_logger, CAT_SYSTEM
-from src.observability import gernas_telemetry
-gernas_telemetry.init_telemetry("agent_mesh_devui", channel="devui", exporter="off",
-                                framework_native_telemetry=True)
+# (DevUI is its own tracing surface), and Agent Framework's native tracing stays on for
+# DevUI's trace view. a2a-sdk's own tracing is switched off before ``a2a`` is imported.
+os.environ.setdefault("OTEL_INSTRUMENTATION_A2A_SDK_ENABLED", "false")
+os.environ["GERNAS_EXPORTER"] = "off"
+import logging
+import gernas
+try:
+    gernas.init_gernas(service_name="agent_mesh_devui")
+except gernas.GernasConfigError as _exc:
+    logging.getLogger("mesh.system").warning("Gernas SDK telemetry disabled: %s", _exc)
+
+from src.utils.logging_config import get_logger, CAT_SYSTEM
 
 from agent_framework.devui import serve
 

@@ -216,3 +216,18 @@ def test_spans_outside_any_run_get_no_run_context(spans):
 
     tool()
     assert Ctx.AGENT_RUN_ID not in attrs(spans(SpanName.TOOL)[0])
+
+
+def test_app_context_crosses_the_hop_but_is_never_recorded(spans):
+    @gernas.trace_tool("t")
+    def tool():
+        return gernas.app_value("request_id"), gernas.app_value("role")
+
+    with gernas.app_context(request_id="r-1", role="credit_officer", skipped=None):
+        headers = gernas.inject_context()
+        assert tool() == ("r-1", "credit_officer")
+    assert gernas.app_value("request_id") is None
+    with gernas.attach_headers(headers):
+        assert gernas.app_value("request_id") == "r-1" and gernas.app_value("skipped") is None
+    recorded = [str(v) for v in attrs(spans(SpanName.TOOL)[0]).values()]
+    assert "r-1" not in recorded and "credit_officer" not in recorded

@@ -48,8 +48,23 @@ def _int(v: Any) -> int | None:
     return int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
 
 
+def _http_body(result: Any) -> Any:
+    """The parsed JSON body of a raw HTTP response (httpx / requests), else *result* unchanged."""
+    if isinstance(result, dict) or get_field(result, *_USAGE, "choices") is not None:
+        return result
+    body = getattr(result, "json", None)
+    if not callable(body) or getattr(result, "status_code", None) is None:
+        return result
+    try:
+        parsed = body()
+    except Exception:  # noqa: BLE001 - not JSON: nothing to read
+        return result
+    return parsed if isinstance(parsed, dict) else result
+
+
 def extract_usage(result: Any) -> tuple[int | None, int | None, int | None]:
     """``(input, output, cached)`` token counts from any supported response shape."""
+    result = _http_body(result)
     usage = get_field(result, *_USAGE)
     if usage is None and isinstance(result, dict) and any(k in result for k in _IN + _OUT):
         usage = result
@@ -64,6 +79,7 @@ def extract_usage(result: Any) -> tuple[int | None, int | None, int | None]:
 
 
 def extract_stop_reason(result: Any) -> str | None:
+    result = _http_body(result)
     choices = get_field(result, "choices")
     if isinstance(choices, (list, tuple)) and choices:
         reason = get_field(choices[0], "finish_reason")
@@ -166,6 +182,8 @@ class LLMSpec(_ModelSpec):
         safe_set(span, Ctx.PROMPT_VERSION, None if self.prompt_version is None else str(self.prompt_version))
 
     def success(self, span: Any, call: Call, result: Any) -> None:
+        if self.usage_from is None:
+            result = _http_body(result)  # parse a raw HTTP response once
         if self.usage_from is not None:
             usage = resolve(self.usage_from, call, result) or ()
             usage = (tuple(usage) + (None, None, None))[:3]

@@ -16,7 +16,7 @@ import re
 from dataclasses import dataclass, field
 from typing import List
 
-from src.observability import gernas_telemetry as _gt
+import gernas
 
 # --- Pattern banks -----------------------------------------------------------
 
@@ -123,7 +123,7 @@ def _screen_input(text: str) -> GuardrailResult:
 
 # Gernas: one guardrail.check span per screen (deny keeps status OK; categories become
 # the risk classification).
-screen_input = _gt.trace_guardrail(
+screen_input = gernas.trace_guardrail(
     "input_screen",
     decision_from=lambda r: ("allow" if r.allowed else "deny", ",".join(r.categories) or None),
 )(_screen_input)
@@ -137,7 +137,7 @@ class OutputRedaction:
     category: str = "pii"
 
 
-@_gt.trace_content_safety("pii", policy="output_redaction")
+@gernas.trace_content_safety("pii", policy="output_redaction")
 def redact_output(text: str) -> OutputRedaction:
     """``redact_pii`` plus a content-safety record of whether anything was rewritten."""
     redacted = redact_pii(text)

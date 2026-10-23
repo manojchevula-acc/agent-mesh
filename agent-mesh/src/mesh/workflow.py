@@ -49,7 +49,7 @@ from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
 
 from src.guardrails.deterministic_filters import screen_input, redact_pii, redact_output
 from src.auth.identity_provider import BankingRole
-from src.observability import get_logger, CAT_WORKFLOW
+from src.utils.logging_config import get_logger, CAT_WORKFLOW
 from src.tracing.execution_trace import get_active_tracer, infer_route_and_scores
 from src.tracing.llm_reasoning import extract_reasoning, strip_reasoning_markers
 from src.tracing.state_trace import log_state_handoff
@@ -58,10 +58,9 @@ from src.config import Config
 
 _log = get_logger(CAT_WORKFLOW)
 
-# Gernas SDK: every executor stage is an ``agent.run`` span (run id, termination
-# reason, step/loop/retry detection, gernas.agent.* metrics). Pass-through when
-# the SDK is unavailable.
-from src.observability import gernas_telemetry as _gt
+# Gernas SDK: every executor stage is an ``agent.step`` of the mesh orchestrator's
+# ``agent.run`` (step/loop/retry detection, termination reason, gernas.agent.* metrics).
+import gernas
 
 # Type alias for the injected dependency.
 AskRemote = Callable[..., Awaitable[str]]
@@ -102,7 +101,7 @@ _ALLOWED_ROLES = {r.value for r in BankingRole}
 
 # Gernas: the RBAC decision is a guardrail.check span (Blueprint §2 authorization_decision;
 # deny keeps status OK and ends the run with termination_reason=policy_block).
-@_gt.trace_guardrail(
+@gernas.trace_guardrail(
     "rbac_role_check",
     decision_from=lambda allowed: ("allow", None) if allowed else ("deny", "unrecognised_role"),
 )
@@ -224,7 +223,7 @@ class InputGuardrailExecutor(Executor):
     """Deterministic input screen (hard gate, pre-review). Workflow start node."""
 
     @handler
-    @_gt.trace_workflow_step("input-guardrail")
+    @gernas.trace_step("input-guardrail", step_type="workflow_executor")
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
         tracer = get_active_tracer()
         if tracer:
@@ -238,7 +237,7 @@ class InputGuardrailExecutor(Executor):
 
             state.blocked = True
             state.block_stage = "input_guardrail"
-            _gt.mark_policy_block()
+            gernas.set_termination_reason("policy_block")
             state.answer = (
                 f"Request blocked by security guardrails ({', '.join(screen.categories)})."
             )
@@ -286,7 +285,7 @@ class RBACValidationExecutor(Executor):
     """
 
     @handler
-    @_gt.trace_workflow_step("rbac-validator")
+    @gernas.trace_step("rbac-validator", step_type="workflow_executor")
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
         tracer = get_active_tracer()
         if tracer:
@@ -298,7 +297,7 @@ class RBACValidationExecutor(Executor):
 
             state.blocked = True
             state.block_stage = "rbac_validation"
-            _gt.mark_policy_block()
+            gernas.set_termination_reason("policy_block")
             state.answer = (
                 f"Access denied: role '{state.role}' is not a recognised FAB banking role. "
                 "Please authenticate with valid FAB credentials."
@@ -356,7 +355,7 @@ class CacheCheckExecutor(Executor):
     """
 
     @handler
-    @_gt.trace_workflow_step("cache-check")
+    @gernas.trace_step("cache-check", step_type="workflow_executor")
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
         tracer = get_active_tracer()
         if tracer:
@@ -773,7 +772,7 @@ class ComplianceExecutor(Executor):
         self._enabled = enabled
 
     @handler
-    @_gt.trace_workflow_step("compliance-gate")
+    @gernas.trace_step("compliance-gate", step_type="workflow_executor")
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState, MeshState]) -> None:
         tracer = get_active_tracer()
 
@@ -835,14 +834,13 @@ class ComplianceExecutor(Executor):
 
             state.blocked = True
             state.block_stage = "compliance"
-            _gt.mark_policy_block()
+            gernas.set_termination_reason("policy_block")
             state.answer = "Request blocked by the Compliance agent (semantic safety review)."
             state.trail.append("compliance_failed")
-            from src.observability.baggage import get_request_id as _grid
             _log.warning("Compliance FAIL req=%s verdict=%s",
-                         _grid() or "-", verdict[:160],
+                         gernas.app_value("request_id") or "-", verdict[:160],
                          extra={"user": state.user_name, "status": "FAIL",
-                                "request_id": _grid() or "-",
+                                "request_id": gernas.app_value("request_id") or "-",
                                 "verdict": "COMPLIANCE_FAILED"})
             if tracer:
                 tracer.record_blocked("compliance")
@@ -862,10 +860,9 @@ class ComplianceExecutor(Executor):
 
 
         state.trail.append("compliance_pass")
-        from src.observability.baggage import get_request_id as _grid
-        _log.info("Compliance PASS req=%s", _grid() or "-",
+        _log.info("Compliance PASS req=%s", gernas.app_value("request_id") or "-",
                   extra={"user": state.user_name, "status": "PASS",
-                         "request_id": _grid() or "-",
+                         "request_id": gernas.app_value("request_id") or "-",
                          "verdict": "COMPLIANCE_PASSED"})
         if tracer:
             tracer.emit_stage(
@@ -959,7 +956,7 @@ class DomainExecutor(Executor):
     _HALLUCINATION_RE = re.compile(r'\[(?![A-Z]{2,}[0-9])[A-Za-z][A-Za-z0-9 /-]{1,40}\]')
 
     @handler
-    @_gt.trace_workflow_step("domain-processor")
+    @gernas.trace_step("domain-processor", step_type="workflow_executor")
     async def run(self, state: MeshState, ctx: WorkflowContext[MeshState]) -> None:
         tracer = get_active_tracer()
         t0 = time.perf_counter()
@@ -1084,7 +1081,7 @@ class DomainExecutor(Executor):
                 answer_visible = strip_reasoning_markers(answer or "")
                 if self._TOOL_CALL_RE.search(answer_visible):
                     retry_reason = "tool_call_echo"
-                    _gt.record_retry()
+                    gernas.record_retry()
                     _log.warning(
                         "price_assist returned bare tool-call text; retrying once.",
                         extra={"status": "RETRY"},
@@ -1093,7 +1090,7 @@ class DomainExecutor(Executor):
                     answer = await self._ask("price_assist", base_prompt)
                 elif self._META_RESPONSE_RE.search(answer_visible):
                     retry_reason = "meta_response"
-                    _gt.record_retry()
+                    gernas.record_retry()
                     _log.warning(
                         "price_assist returned meta-response without data; retrying once.",
                         extra={"status": "RETRY"},
@@ -1109,7 +1106,7 @@ class DomainExecutor(Executor):
                     answer = await self._ask("price_assist", retry_prompt)
                 elif self._HALLUCINATION_RE.search(answer_visible):
                     retry_reason = "hallucination"
-                    _gt.record_retry()
+                    gernas.record_retry()
                     _log.warning(
                         "price_assist returned hallucinated placeholder text; retrying once.",
                         extra={"status": "RETRY"},
@@ -1178,8 +1175,7 @@ class DomainExecutor(Executor):
                 try:
                     import json as _json
                     import pathlib as _pl
-                    from src.observability.baggage import get_request_id as _grid
-                    _rid = (_grid() or "").upper().strip()
+                    _rid = (gernas.app_value("request_id") or "").upper().strip()
                     if _rid and _rid != "-":
                         _pf = _pl.Path("data/logs") / f".peer_{_rid}.json"
                         if _pf.exists():
@@ -1366,7 +1362,7 @@ class OutputRedactionExecutor(Executor):
     """Deterministic output redaction (PII). Terminal node — yields the answer."""
 
     @handler
-    @_gt.trace_workflow_step("output-redaction")
+    @gernas.trace_step("output-redaction", step_type="workflow_executor")
     async def run(self, state: MeshState, ctx: WorkflowContext[Never, MeshState]) -> None:
         _emit_stream_event({"stage": "output_redaction", "status": "started", "message": "Redacting output..."})
         redaction = redact_output(state.answer)

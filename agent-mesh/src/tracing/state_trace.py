@@ -23,7 +23,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from src.config import Config
-from src.observability import get_logger, CAT_STATE
+from src.utils.logging_config import get_logger, CAT_STATE
 
 _log = get_logger(CAT_STATE)
 

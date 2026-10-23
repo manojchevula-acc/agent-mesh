@@ -195,6 +195,9 @@ def test_public_api_is_exact():
             "attach_headers",
             "gernas_task",
             "wrap_in_context",
+            "app_context",
+            "app_value",
+            "CorrelationLogFilter",
             "set_redaction_hook",
             "DROP",
         ]

@@ -29,8 +29,14 @@ if project_root not in sys.path:
 from dotenv import load_dotenv
 load_dotenv(pathlib.Path(__file__).resolve().parent / ".env", override=False)
 
+# a2a-sdk's own tracing is switched off before ``a2a`` is imported: the Gernas SDK is the
+# single instrumentation path (agent.delegate + the ASGI server span cover the A2A hop).
+import os
+os.environ.setdefault("OTEL_INSTRUMENTATION_A2A_SDK_ENABLED", "false")
+
+import logging
+import gernas
 from src.config import Config
-from src.observability import gernas_telemetry
 from src.agents.node_registry import build_node, NODE_NAMES, MCP_BACKED_NODES
 from src.a2a.hosting import build_agent_card, serve, build_starlette_app
 
@@ -110,7 +116,13 @@ def main():
     args = parser.parse_args()
 
     # Gernas SDK: per-node service name so each node is a distinct service in the trace.
-    gernas_telemetry.init_telemetry(f"agent_mesh_{args.agent}", channel="a2a")
+    try:
+        gernas.init_gernas(service_name=f"agent_mesh_{args.agent}")
+    except gernas.GernasConfigError as exc:
+        logging.getLogger("mesh.system").warning("Gernas SDK telemetry disabled: %s", exc)
+    else:
+        from gernas.adapters.agent_framework import disable_native_telemetry
+        disable_native_telemetry()
 
     Config.validate()
 
@@ -118,7 +130,6 @@ def main():
     # will return a 401, which is confusing to debug at query time.
     ok, msg = Config.check_groq()
     if not ok:
-        import logging
         logging.getLogger("mesh.system").error("Node '%s' startup blocked: %s", args.agent, msg)
         print(f"[mesh] ERROR: {msg}")
         sys.exit(1)

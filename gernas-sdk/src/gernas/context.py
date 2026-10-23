@@ -9,6 +9,8 @@
   run links to its parent (Blueprint §3 multi-agent "parent agent, delegation path").
 * :func:`gernas_task` / :func:`wrap_in_context` — keep background tasks and threads
   in the caller's trace.
+* :func:`app_context` / :func:`app_value` — application baggage that crosses the
+  same hops but is never recorded as telemetry.
 """
 
 from __future__ import annotations
@@ -183,6 +185,34 @@ def baggage_value(key: str, ctx: Context | None = None) -> str | None:
         return None if value is None else str(value)
     except Exception:  # noqa: BLE001
         return None
+
+
+_APP_PREFIX = "app."
+
+
+@contextmanager
+def app_context(**entries: Any) -> Iterator[None]:
+    """Attach application baggage (``app.<name>``) for everything inside the block.
+
+    For the application's own request data (request ids, roles, ...) that has to
+    reach remote services: it rides on the same W3C baggage propagation as the
+    GERNAS context but is **never** written to telemetry (only the GERNAS keys are
+    copied onto spans). Read it back with :func:`app_value`. None values are skipped.
+    """
+    ctx = context.get_current()
+    for name, value in entries.items():
+        if value is not None:
+            ctx = baggage.set_baggage(_APP_PREFIX + name, str(value), ctx)
+    token = context.attach(ctx)
+    try:
+        yield
+    finally:
+        context.detach(token)
+
+
+def app_value(name: str, ctx: Context | None = None) -> str | None:
+    """An application baggage entry set by :func:`app_context` (here or upstream). Never raises."""
+    return baggage_value(_APP_PREFIX + name, ctx) or None
 
 
 def correlation() -> dict[str, str | None]:

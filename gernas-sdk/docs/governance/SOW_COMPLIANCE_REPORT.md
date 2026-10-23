@@ -63,7 +63,7 @@
 | Expected behaviour | The 13 canonical context domains use the exact blueprint field names on every signal. No raw prompts, responses, customer data, secrets or tokens. KPI signals and consumption are attributable along Use Case → Agent → Run → User → Model → Cost |
 | SDK implementation | `registry/domains/*.yaml` → `registry/generate.py` → `src/gernas/attributes.py` (`Ctx`, `SpanName`, `Metric`, `REQUIRED_ATTRIBUTES`, `DENYLIST`). Collector allow-list and denylist are generated from the same registry. Every write goes through `src/gernas/tracer.py:74` `safe_set` → `src/gernas/redaction.py:41` `redact` |
 | Public APIs | `gernas.Ctx`, `gernas.annotate`, `gernas.set_redaction_hook`, `gernas.request_context` (HMAC-tokenized user) |
-| Agent Mesh integration | Uses `Ctx.*` only (`gernas_telemetry.py` `_annotate`). No hand-typed `gernas.*` keys (AST lint `test_no_handtyped_attrs`) |
+| Agent Mesh integration | Sets no attributes by hand: prompt template and stop reason come from `trace_llm(prompt_template_id=…)` and the response. No hand-typed `gernas.*` keys (AST lint `test_no_handtyped_attrs`) |
 | Telemetry output | `gernas.<blueprint_field>` attributes. The envelope (`business_domain`, `use_case_id`, `application_id`, `environment`, `operation`, `execution_status`) is on every span |
 | Tests | `test_naming` (9), `test_registry` (8), `test_security` (11), `test_no_handtyped_attrs`, `test_conformance` (10) |
 | Verification result | **U, O.** GERNAS conformance rules pass on Opik's own copy of all 5 traces. No payload keys in Opik |
@@ -78,7 +78,7 @@
 | Expected behaviour | One correlated trace per request across processes, agents, tools and MCP, with run, session and task context on every span, so the Use Case → Agent → Run → Step → Span drill-down is possible |
 | SDK implementation | Global propagator: W3C TraceContext + `GernasBaggagePropagator` (`src/gernas/context.py:113`), installed by `init_gernas`. Run context: `RunState` ContextVar (`src/gernas/run_state.py:28`, `bind` at `:139`), so it is isolated per asyncio task. `_BaggageSpanProcessor` (`tracer.py:178`) copies allow-listed baggage onto every span. `stamp_context` (`_core.py:167`) adds run context, with a baggage fallback for remote servers |
 | Public APIs | `request_context` (`context.py:50`), `inject_context` / `extract_context` / `attach_headers` (`:124` / `:136` / `:145`), `gernas_task` (`:190`), `wrap_in_context` (`:195`), `correlation` (`:163`); adapters `GernasA2AInterceptor`, `GernasASGIMiddleware`, `GernasFastMCPMiddleware`, `mcp_meta_context` |
-| Agent Mesh integration | `orchestrator.py:140` `request_context`; `orchestrator.py:449` `spawn` → `gernas_task`; `src/a2a/clients.py:47` `GernasA2AInterceptor`; `src/a2a/hosting.py:83` and `api_server.py:1129` `GernasASGIMiddleware`; `datalayer-as-service/mcp_server/server.py:78` `GernasFastMCPMiddleware`; `rag-as-a-service/mcp_integration/server.py:173` `mcp_meta_context`; `logging_config.py:120` and `audit_middleware.py:30` `correlation()` |
+| Agent Mesh integration | `orchestrator.py:150` `request_context`; `orchestrator.py:145` `app_context`; `orchestrator.py:460` `gernas_task`; `src/a2a/clients.py:50` `GernasA2AInterceptor`; `src/a2a/hosting.py:85` and `api_server.py:1160` `GernasASGIMiddleware`; `datalayer-as-service/mcp_server/server.py:78` `GernasFastMCPMiddleware`; `rag-as-a-service/mcp_integration/server.py:173` `mcp_meta_context`; `src/utils/logging_config.py:153` `CorrelationLogFilter` and `audit_middleware.py:29` `correlation()` |
 | Telemetry output | One `trace_id` per request; `gernas.session_id`, `task_id`, `tokenized_user_id` and `channel` on every span; `parent_run_id` and `delegation_path` across agents |
 | Tests | `test_context` (11), `test_adapter_transport` (8), `test_decorators::test_async_nested_and_concurrent_runs_stay_isolated`, `test_lifecycle::test_request_context_baggage_is_isolated_per_concurrent_task` |
 | Verification result | **U, O.** "request is one Opik trace" and "every parent link resolves" PASS for all 5 traces. `LIVE18A002` spans 5 processes (CLI orchestrator + compliance, price_assist, data_agent, rag_agent nodes). `MCPPROBE18A`: the server span in the DataLayer process carries the client run's `agent_id` |
@@ -162,7 +162,6 @@ Behaviour that differs between decorators (verified in source and tests):
 
 | Finding | Location | Assessment |
 |---|---|---|
-| `baggage.set_baggage` ×4 | `agent-mesh/src/observability/baggage.py:42-45` | **Justified**: mesh business context (`fab.*` request, user, role) used for the audit trail and peer-reasoning files. It is never copied onto spans (the SDK copies only allow-listed `gernas.*` baggage; `test_context::test_unknown_baggage_is_not_copied_to_spans`). It travels over the SDK propagator |
 | `get_tracer`, `start_as_current_span`, `set_attribute("fab.eval.*")` | `agent-mesh/workflow_evaluations/evaluators/trace_linker.py:64-98` | **Competing implementation, offline tooling (F-16, open).** The harness never calls `init_telemetry`, so these spans go to the no-op provider and nothing is exported today. Its 20 evaluator names do not map onto the 8 §6 metrics accepted by `gernas.record_evaluation`; choosing the mapping is a mesh-team decision |
 | `workflow_evaluations/workflow/grafana_push.py` | offline harness | Direct Grafana push of evaluation metrics (F-16); not part of the runtime |
 | Anything else | — | **None.** No provider, exporter, span creation or hand-typed attribute in any runtime path |
@@ -180,7 +179,7 @@ Every live trace passes "only Gernas SDK spans".
 
 | SOW expectation | Where in Agent Mesh | SDK API | Telemetry | Verified |
 |---|---|---|---|---|
-| Initialisation / shutdown | `run.py:26/178`, `api_server.py:50/836`, `a2a_server.py:113`, `devui_app.py:49`, `demos/gernas_e2e_queries.py:32/60` via `gernas_telemetry.init_telemetry` / `shutdown` | `init_gernas`, `GernasHandle` | providers, resource | O (`gernas doctor --opik` PASS; every live run) |
+| Initialisation / shutdown | `run.py:31/190`, `api_server.py:55/849`, `a2a_server.py:120`, `devui_app.py:53`, `demos/gernas_e2e_queries.py:38/67` via `gernas.init_gernas` / `handle.shutdown()` | `init_gernas`, `GernasHandle` | providers, resource | O (`gernas doctor --opik` PASS; every live run) |
 | Root request | `src/mesh/orchestrator.py:114` `handle_request` | `trace_use_case` | `use_case.request` | O |
 | Request context | `orchestrator.py:140` | `request_context` | session, task, tokenized user baggage | O |
 | Orchestrator run | `orchestrator.py:108` `_run_workflow` | `trace_agent` | `agent.run(agent_mesh)` | O |
@@ -197,7 +196,7 @@ Every live trace passes "only Gernas SDK spans".
 | Memory | `src/memory/conversation_store.py:45/56/81` | `trace_memory` | `memory.access` | O |
 | Background task | `orchestrator.py:449` `spawn` | `gernas_task` | summary step in the request trace | O |
 | HITL | `src/hitl/approval_store.py:72/104/125/143` | `start_hitl` / `complete_hitl` | `hitl.approval` | U only (needs a human approver) |
-| Log correlation | `logging_config.py:120`, `audit_middleware.py:30` | `correlation` | ids on log records | U |
+| Log correlation | `src/utils/logging_config.py:153`, `audit_middleware.py:29` | `CorrelationLogFilter`, `correlation` | ids on log records | U |
 | MCP servers | `datalayer-as-service/mcp_server/server.py:76/78`; `rag-as-a-service/mcp_integration/server.py:53/54/173/177` | `init_gernas`, `GernasFastMCPMiddleware`, `mcp_meta_context`, `trace_retrieval` | server `tool.call`, `retrieval.search` | DataLayer O (`MCPPROBE18A`); RAG U (store down) |
 | Document ingestion | `rag-as-a-service/src/gernas_rag/ingestion/pipeline.py:53/103` | `trace_document`, `trace_step` | `document.process`, extraction `agent.step` | U + L (scratch) |
 

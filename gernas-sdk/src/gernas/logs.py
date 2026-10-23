@@ -38,6 +38,38 @@ def _severity(levelno: int) -> Any:
     return SeverityNumber(_SEVERITY[logging.DEBUG])
 
 
+class CorrelationLogFilter(logging.Filter):
+    """Stamp every log record with the correlation ids of the active trace.
+
+    Sets ``trace_id`` / ``span_id`` / ``agent_id`` / ``agent_run_id`` / ``session_id`` /
+    ``task_id`` (from :func:`gernas.correlation`) and each application baggage entry
+    named in ``app_fields`` (:func:`gernas.app_value`) as record attributes, ``"-"``
+    when unavailable, so text and JSON formatters can reference them. A value already
+    on the record (``logger.info(..., extra={...})``) is kept. Never raises.
+    """
+
+    _FIELDS = ("trace_id", "span_id", "agent_id", "agent_run_id", "session_id", "task_id")
+
+    def __init__(self, app_fields: tuple[str, ...] = (), name: str = "") -> None:
+        super().__init__(name)
+        self._app_fields = tuple(app_fields)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        corr: dict[str, Any] = {}
+        try:
+            from gernas.context import app_value, correlation
+
+            corr = correlation()
+            for field in self._app_fields:
+                corr[field] = app_value(field)
+        except Exception:  # noqa: BLE001 - logging must never raise into the application
+            pass
+        for field in self._FIELDS + self._app_fields:
+            if getattr(record, field, None) in (None, "", "-"):  # an explicit ``extra=`` value wins
+                setattr(record, field, corr.get(field) or "-")
+        return True
+
+
 class GernasLogHandler(logging.Handler):
     """Forward stdlib log records to an OTel ``LoggerProvider``."""
 

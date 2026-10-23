@@ -8,8 +8,8 @@ Design
 ------
 - One rotating file sink at ``Config.LOG_FILE`` (durable; survives restarts).
 - One console sink at ``Config.LOG_LEVEL`` for local dev.
-- ``TraceContextFilter`` injects ``trace_id`` / ``span_id`` / ``agent_run_id``
-  onto every record from the current span context (no-op safe if OTel is off).
+- ``gernas.CorrelationLogFilter`` stamps ``trace_id`` / ``span_id`` / ``agent_run_id``
+  and the mesh ``request_id`` (application baggage) onto every record ("-" when absent).
 - Named logger categories let each layer log independently:
   ``mesh.agent``, ``mesh.workflow``, ``mesh.tools``, ``mesh.a2a``, ``mesh.mcp``,
   ``mesh.transport``, ``mesh.approvals``, ``mesh.system``.
@@ -26,6 +26,8 @@ import logging.handlers
 import os
 from collections import OrderedDict
 from typing import Any
+
+import gernas
 
 from src.config import Config
 
@@ -103,31 +105,6 @@ class PerRequestFileHandler(logging.Handler):
         super().close()
 
 
-class TraceContextFilter(logging.Filter):
-    """Stamps every log record with the active trace/span ids.
-
-    Correlation ids come from the Gernas SDK (``gernas.correlation()``); the mesh
-    request id is application baggage. Degrades to ``-`` when unavailable.
-    """
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        corr: dict = {}
-        request_id = None
-        try:
-            from src.observability import gernas_telemetry
-            from src.observability.baggage import get_request_id
-
-            corr = gernas_telemetry.correlation()
-            request_id = get_request_id()
-        except Exception:
-            pass
-        record.trace_id = corr.get("trace_id") or "-"
-        record.span_id = corr.get("span_id") or "-"
-        record.agent_run_id = corr.get("agent_run_id") or "-"
-        record.request_id = request_id or "-"
-        return True
-
-
 class _JsonFormatter(logging.Formatter):
     """Compact JSON formatter for structured log ingestion (prod option)."""
 
@@ -173,7 +150,7 @@ def configure_logging(service_name: str | None = None) -> None:
         root = logging.getLogger()
         root.setLevel(level)
 
-        trace_filter = TraceContextFilter()
+        trace_filter = gernas.CorrelationLogFilter(app_fields=("request_id",))
         formatter: logging.Formatter = (
             _JsonFormatter() if Config.LOG_JSON else logging.Formatter(_TEXT_FORMAT)
         )

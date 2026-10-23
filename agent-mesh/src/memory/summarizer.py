@@ -13,10 +13,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import gernas
 import httpx
 
 from src.config import Config
-from src.observability import gernas_telemetry as _gt
 
 _log = logging.getLogger(__name__)
 
@@ -26,6 +26,12 @@ _SYSTEM_PROMPT = (
     "(≤200 words) capturing all key facts, decisions, and user intent. "
     "Be factual and concise. Do not add commentary or greetings."
 )
+
+
+@gernas.trace_llm(provider=Config.LLM_PROVIDER, prompt_template_id="conversation_summary")
+async def _post_chat(client: httpx.AsyncClient, url: str, *, json: dict, headers: dict, model: str) -> httpx.Response:
+    """One ``llm.call`` span per request; tokens and stop reason are read from the response."""
+    return await client.post(url, json=json, headers=headers)
 
 
 async def _call_groq(user_prompt: str) -> str:
@@ -46,14 +52,13 @@ async def _call_groq(user_prompt: str) -> str:
         "Content-Type": "application/json",
     }
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await _gt.chat_post(client, url, json=payload, headers=headers, model=model,
-                                   template_id="conversation_summary")
+        resp = await _post_chat(client, url, json=payload, headers=headers, model=model)
         resp.raise_for_status()
         data = resp.json()
     return data["choices"][0]["message"]["content"].strip()
 
 
-@_gt.trace_step("conversation_summary", step_type="background_task")
+@gernas.trace_step("conversation_summary", step_type="background_task")
 async def summarize_and_persist(
     session_id: str,
     prior_summary: str,

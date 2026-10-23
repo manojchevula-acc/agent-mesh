@@ -21,6 +21,8 @@ from gernas._version import __version__
 from gernas.attributes import Ctx, Metric, SpanName
 from gernas.config import GernasConfig, GernasConfigError
 from gernas.context import (
+    app_context,
+    app_value,
     attach_headers,
     correlation,
     extract_context,
@@ -47,6 +49,7 @@ from gernas.decorators import (
 )
 from gernas.evaluation import record_evaluation
 from gernas.hitl import complete_hitl, start_hitl, trace_hitl
+from gernas.logs import CorrelationLogFilter
 from gernas.redaction import DROP, set_redaction_hook
 from gernas.run_state import record_retry, set_termination_reason
 from gernas.tracer import GernasHandle, init_gernas
@@ -106,6 +109,10 @@ __all__ = [
     "attach_headers",
     "gernas_task",
     "wrap_in_context",
+    "app_context",
+    "app_value",
+    # logging
+    "CorrelationLogFilter",
     # privacy
     "set_redaction_hook",
     "DROP",

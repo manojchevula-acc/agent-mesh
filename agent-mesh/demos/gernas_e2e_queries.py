@@ -27,9 +27,16 @@ from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv(ROOT / ".env", override=False)
 
-from src.observability import gernas_telemetry  # noqa: E402
+import os  # noqa: E402
 
-gernas_telemetry.init_telemetry("agent_mesh_e2e", channel="cli")
+# a2a-sdk's own tracing off before ``a2a`` is imported: Gernas is the single instrumentation path.
+os.environ.setdefault("OTEL_INSTRUMENTATION_A2A_SDK_ENABLED", "false")
+
+import gernas  # noqa: E402
+from gernas.adapters.agent_framework import disable_native_telemetry  # noqa: E402
+
+telemetry = gernas.init_gernas(service_name="agent_mesh_e2e")  # this demo needs telemetry: fail loudly
+disable_native_telemetry()
 
 from src.auth.identity_provider import login  # noqa: E402
 from src.mesh.orchestrator import handle_request  # noqa: E402
@@ -49,7 +56,7 @@ async def main(username: str, prefix: str) -> int:
         t0 = time.perf_counter()
         request_id = f"{prefix}{len(results):03d}"
         try:
-            res = await handle_request(user, query, request_id=request_id)
+            res = await handle_request(user, query, request_id=request_id, channel="cli")
             outcome = {"blocked": res.blocked, "block_stage": res.block_stage,
                        "answer_chars": len(res.answer or ""), "trail": res.trail[-4:]}
         except Exception as exc:  # report, keep going
@@ -57,7 +64,7 @@ async def main(username: str, prefix: str) -> int:
         outcome.update(label=label, request_id=request_id, seconds=round(time.perf_counter() - t0, 1))
         results.append(outcome)
         print(json.dumps(outcome), flush=True)
-    gernas_telemetry.shutdown()
+    telemetry.shutdown()
     out = ROOT.parent / "gernas-sdk" / "reports" / "mesh_e2e_requests.json"
     out.parent.mkdir(exist_ok=True)
     out.write_text(json.dumps(results, indent=2), encoding="utf-8")
